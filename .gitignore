@@ -1,0 +1,25 @@
+# dependencies & build output (dist is rebuilt by `npm run prepare` on install)
+node_modules/
+dist/
+
+# logs, caches, coverage
+*.log
+npm-debug.log*
+.vitest-cache/
+coverage/
+*.tsbuildinfo
+
+# packaging
+*.tgz
+
+# local env / secrets
+.env
+.env.*
+
+# OS & editor
+.DS_Store
+.idea/
+.vscode/
+
+# agent-team runtime data should never live in this repo (home is ~/agent-team-config)
+agent-team-config/

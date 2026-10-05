@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import readline from "node:readline/promises";
+import { Command } from "commander";
+import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
+import { newRunId, runTeam } from "./dispatcher.js";
+import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
+import { addProject, initHome, removeProject } from "./scaffold.js";
+import { formatStatus } from "./status.js";
+import { prepareTask, readTaskFile } from "./task.js";
+import { formatEnforcement, validateProject } from "./validate.js";
+
+const program = new Command();
+program
+  .name("agent-team")
+  .description("Configure and run a team of Claude Code / Codex agents with scoped context and file mailboxes.")
+  .option("--home <dir>", "agent-team home (default: $AGENT_TEAM_HOME or ~/agent-team-config)");
+
+const home = () => resolveHome(program.opts().home);
+
+function fail(msg: string, code = 1): never {
+  console.error(msg);
+  process.exit(code);
+}
+
+function loadProject(projectOpt: string | undefined): ResolvedProject {
+  const h = home();
+  let name = projectOpt;
+  if (name) assertName("project", name);
+  if (!name) {
+    name = findProjectForCwd(h, process.cwd());
+    if (!name) {
+      const known = listProjects(h);
+      fail(
+        `No project given and the current directory is not inside a registered project.\n` +
+          (known.length
+            ? `Registered projects:\n${known.map((p) => `  ${p.name}  ->  ${p.dir}`).join("\n")}\nUse --project <name>.`
+            : `No projects registered. Use: agent-team project add <name> --dir <repo>`),
+      );
+    }
+  }
+  if (!fs.existsSync(projectPaths(h, name).config)) fail(`Project "${name}" is not registered in ${h}.`);
+  return resolveProject(h, name);
+}
+
+program
+  .command("init")
+  .description("Create the agent-team home with a global agent library")
+  .option("-y, --yes", "do not ask for confirmation of the home path")
+  .action(async (opts: { yes?: boolean }) => {
+    const h = home();
+    const explicit = program.opts().home || process.env.AGENT_TEAM_HOME;
+    if (!opts.yes && !explicit && !fs.existsSync(h) && process.stdin.isTTY) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const ans = (await rl.question(`Create agent-team home at ${h}? [Y/n] `)).trim().toLowerCase();
+      rl.close();
+      if (ans === "n" || ans === "no") fail("Aborted. Set AGENT_TEAM_HOME or pass --home to choose another location.");
+    }
+    const r = initHome(h);
+    console.log(`Home: ${r.home}`);
+    for (const f of r.created) console.log(`  created  ${path.relative(h, f)}`);
+    for (const f of r.skipped) console.log(`  kept     ${path.relative(h, f)}`);
+    console.log(`\nNext: agent-team project add <name> --dir <your-repo>`);
+  });
+
+const project = program.command("project").description("Manage registered projects");
+project
+  .command("add <name>")
+  .description("Register a project (config and context live in the home, not in the repo)")
+  .requiredOption("--dir <repo>", "the repo agents will work in")
+  .action((name: string, opts: { dir: string }) => {
+    try {
+      const r = addProject(home(), name, opts.dir);
+      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-team validate --project ${name}`);
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+project
+  .command("list")
+  .description("List registered projects")
+  .action(() => {
+    const list = listProjects(home());
+    if (!list.length) console.log("No projects registered.");
+    for (const p of list) console.log(`${p.name}  ->  ${p.dir}`);
+  });
+project
+  .command("remove <name>")
+  .description("Unregister a project (keeps its context unless --purge)")
+  .option("--purge", "also delete all of the project's context")
+  .action((name: string, opts: { purge?: boolean }) => {
+    try {
+      assertName("project", name);
+      console.log(removeProject(home(), name, !!opts.purge));
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
+program
+  .command("validate")
+  .description("Validate the merged configuration and report enforcement levels")
+  .option("-p, --project <name>")
+  .option("--task-file <path>", "also check a task file")
+  .action((opts: { project?: string; taskFile?: string }) => {
+    try {
+      const pr = loadProject(opts.project);
+      const res = validateProject(pr);
+      console.log(`Project: ${pr.name}  (repo: ${pr.dir})\n`);
+      console.log(formatEnforcement(res.enforcement));
+      console.log("");
+      for (const i of res.issues) console.log(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (opts.taskFile) {
+        try {
+          const t = readTaskFile(absPath(opts.taskFile, process.cwd()));
+          console.log(`task file OK (${Buffer.byteLength(t)} bytes)`);
+        } catch (e) {
+          console.log(`ERROR  ${(e as Error).message}`);
+          res.ok = false;
+        }
+      }
+      console.log(res.ok ? "\nValid." : "\nInvalid.");
+      process.exit(res.ok ? 0 : 1);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).stack ?? String(e));
+    }
+  });
+
+program
+  .command("run [task]")
+  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>.')
+  .option("-p, --project <name>")
+  .option("--task-file <path>", "read the task from a file")
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string }) => {
+    try {
+      const pr = loadProject(opts.project);
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+
+      const runDir = path.join(pr.paths.runs, newRunId());
+      const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
+      console.log(`Project ${pr.name} — repo ${pr.dir}`);
+      console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
+      console.log(`\nContext protection:\n${formatEnforcement(res.enforcement)}\n`);
+
+      const summary = await runTeam({ project: pr, task: prepared, runDir });
+      console.log(`\nRun ${summary.runId} ended: ${summary.endReason} after ${summary.rounds} round(s). Logs: ${runDir}`);
+      if (summary.doneMessage) console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
+      if (summary.endReason === "idle") console.log("Note: all mailboxes were empty but the lead never sent a \"done\" message.");
+      process.exit(summary.endReason === "done" || summary.endReason === "idle" ? 0 : 2);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+program
+  .command("status")
+  .description("Show agents, unread mail, protection levels and the last run")
+  .option("-p, --project <name>")
+  .action((opts: { project?: string }) => {
+    try {
+      console.log(formatStatus(loadProject(opts.project)));
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+program.parseAsync().catch((e) => fail((e as Error).message));
+
