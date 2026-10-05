@@ -4,7 +4,6 @@ import { RESULT_FILE, type RunState, type WakeTopic } from "./dispatcher.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
-import { enforcementFor } from "./policy.js";
 
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
   const root = project.paths.runs;
@@ -89,13 +88,6 @@ function stateColor(c: Paint, label: string): string {
 }
 
 const okText = (c: Paint, ok: boolean) => (ok ? c.green("成功") : c.red("失敗"));
-const LEVEL_ZH: Record<string, string> = {
-  os: "系統強制",
-  "tool-rules": "工具規則",
-  "post-hoc": "事後偵測",
-  "prompt-only": "僅提示",
-  "n/a": "不適用",
-};
 
 /** Terminal columns: CJK characters take two. */
 const cols = (t: string) => [...t].reduce((n, ch) => n + ((ch.codePointAt(0) ?? 0) >= 0x2e80 ? 2 : 1), 0);
@@ -237,16 +229,13 @@ export function formatMonitor(project: ResolvedProject, now = Date.now(), color 
 export function formatStatus(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = latestRun(project);
-  const rows = [["成員", "執行環境", "未讀", "防護", "上次喚醒"]];
+  const rows = [["成員", "執行環境", "未讀", "上次喚醒"]];
   for (const a of Object.values(project.agents)) {
-    const e = enforcementFor(project, a);
     const lw = run?.state.last_wake[a.name];
-    const levels = [...new Set([e.memory, e.agentMd, e.otherContext, e.repoInstructions])].map((l) => LEVEL_ZH[l] ?? l).join("/");
     rows.push([
       a.name + (a.name === project.lead ? " (lead)" : ""),
       a.runtime ?? "?",
       String(listUnread(project, a.name).length),
-      levels,
       lw ? `${lw.ok ? "成功" : "失敗"} ${lw.at}` : "-",
     ]);
   }
@@ -257,7 +246,7 @@ export function formatStatus(project: ResolvedProject, now = Date.now(), color =
     if (ri === 0) return c.bold(t);
     if (i === 0) return r[0].endsWith("(lead)") ? c.cyan(t) : t;
     if (i === 2) return r[2] === "0" ? c.dim(t) : c.yellow(t);
-    if (i === 4) return r[4].startsWith("失敗") ? c.red(t) : r[4].startsWith("成功") ? c.green(t) : c.dim(t);
+    if (i === 3) return r[3].startsWith("失敗") ? c.red(t) : r[3].startsWith("成功") ? c.green(t) : c.dim(t);
     return t;
   };
   const table = rows.map((r, ri) => r.map((_, i) => cell(r, ri, i)).join("  ").trimEnd());

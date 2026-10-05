@@ -153,7 +153,6 @@ program
       const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
       console.log(`Project ${pr.name} — repo ${pr.dir}`);
       console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-      console.log(`\nContext protection:\n${formatEnforcement(res.enforcement)}\n`);
 
       reportRun(await runTeam({ project: pr, task: prepared, runDir }), runDir);
     } catch (e) {
@@ -196,7 +195,6 @@ program
 
       console.log(`Project ${pr.name} — repo ${pr.dir}`);
       console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
-      console.log(`\nContext protection:\n${formatEnforcement(res.enforcement)}\n`);
       reportRun(await runTeam({ project: pr, resume: state, runDir: dir }), dir);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
@@ -212,7 +210,7 @@ function useColor(): boolean {
 
 program
   .command("status")
-  .description("Show agents, unread mail, protection levels and the last run")
+  .description("Show agents, unread mail and the last run")
   .option("-p, --project <name>")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
