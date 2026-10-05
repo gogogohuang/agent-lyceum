@@ -1,22 +1,48 @@
 {
-  "name": "agent-team",
+  "name": "@gogogohuang/agent-team",
   "version": "0.1.0",
   "description": "Config + dispatcher for teams of Claude Code / Codex agents with scoped context and file-based mailboxes",
+  "keywords": [
+    "ai",
+    "agent",
+    "multi-agent",
+    "claude-code",
+    "codex",
+    "cli",
+    "mailbox"
+  ],
+  "author": "Jin-Ze Huang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gogogohuang/agent-team.git"
+  },
+  "homepage": "https://github.com/gogogohuang/agent-team#readme",
+  "bugs": {
+    "url": "https://github.com/gogogohuang/agent-team/issues"
+  },
   "type": "module",
   "bin": {
     "agent-team": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "dev": "tsx src/cli.ts"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -28,10 +54,5 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gogogohuang/agent-team.git"
-  },
-  "license": "MIT"
+  }
 }

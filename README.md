@@ -12,6 +12,8 @@ npx github:gogogohuang/agent-team run --task-file spec.md  # inside the repo, th
 npx github:gogogohuang/agent-team status
 ```
 
+Once published to npm, the same commands work as `npx @gogogohuang/agent-team <command>` (the installed binary is `agent-team`).
+
 Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged in). macOS and Linux (Linux needs `bwrap` for OS sandboxing); Windows only gets warnings.
 
 ## Commands
@@ -96,3 +98,21 @@ npm run build   # tsc -> dist/ (also runs on install via `prepare`, so `npx gith
 ```
 
 Not in v1: cost/time caps, git-worktree isolation between parallel agents, MCP messaging, other runtimes, native Windows, task attachments. Codex session resume is implemented but untested.
+
+## Releasing
+
+Releases follow the same flow as `agentflowctl`: a local script verifies and tags, GitHub Actions publishes to npm.
+
+```bash
+npm run release -- patch --dry-run   # checks only: on main, clean tree, in sync with origin, gh logged in, typecheck/test/build
+npm run release -- patch             # or minor | major | x.y.z; bumps package.json, pushes, creates the GitHub Release
+```
+
+`.github/workflows/npm-publish.yml` then runs on the published Release, sets the version from the tag, and runs `npm publish --provenance` (pre-releases go to the `next` dist-tag). It uses npm Trusted Publishing (OIDC), so no `NPM_TOKEN` is needed.
+
+One-time setup:
+1. First version only: log in locally (`npm login`) and run `npm publish --access public` — a Trusted Publisher can only be configured on an existing package.
+2. On npmjs.com, package **Settings → Trusted Publisher**: GitHub Actions, repo `gogogohuang/agent-team`, workflow `npm-publish.yml`, environment `npm`.
+3. In the GitHub repo, create an environment named `npm` (Settings → Environments).
+4. Because the first version is published by hand, create its tag/Release afterwards (or skip straight to the next version with `npm run release -- 0.1.1`).
+

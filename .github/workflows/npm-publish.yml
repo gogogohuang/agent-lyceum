@@ -1,0 +1,41 @@
+# 在 GitHub 發布 Release 時自動發布到 npm。
+# 版本號取自 Release 的 tag（v1.2.3 → 1.2.3）；標記為 pre-release 的會發布到 npm 的 next 標籤。
+#
+# 使用 npm Trusted Publishing（OIDC），不需要 NPM_TOKEN；
+# 需先在 npmjs.com 的套件設定中把這個 repo 與 npm-publish.yml 加為 Trusted Publisher
+# （套件須已存在，所以第一版要先在本機手動發布）。
+name: npm publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # npm Trusted Publishing 與 provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: 以 Release tag 設定版本
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag $TAG 不是有效的版本號，請用 v1.2.3 或 v1.2.3-beta.1 的格式"
+            exit 1
+          fi
+          npm pkg set version="$version"
+      - run: npm install -g npm@latest # Trusted Publishing 需要 npm 11.5.1 以上
+      - run: npm ci
+      # prepublishOnly 會再跑 typecheck、test、build
+      - run: npm publish --provenance --access public --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
