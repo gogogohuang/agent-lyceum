@@ -9,14 +9,14 @@ Configure and run a **team of agents** (Claude Code and/or Codex) that talk to e
 The tool **never writes into your repo**. Everything lives in one visible folder, `~/agent-team-config/` (override with `AGENT_TEAM_HOME` or `--home`).
 
 ```bash
-npx github:gogogohuang/agent-team init                     # create the home + global agent library
-npx github:gogogohuang/agent-team project add web --dir ~/code/web-app
-npx github:gogogohuang/agent-team validate --project web   # check config + show enforcement levels
-npx github:gogogohuang/agent-team run --task-file spec.md  # inside the repo, the project is auto-detected
-npx github:gogogohuang/agent-team status
+npx @gogogohuang/agent-team init                     # create the home + global agent library
+npx @gogogohuang/agent-team project add web --dir ~/code/web-app
+npx @gogogohuang/agent-team validate --project web   # check config + show enforcement levels
+npx @gogogohuang/agent-team run --task-file spec.md  # inside the repo, the project is auto-detected
+npx @gogogohuang/agent-team status
 ```
 
-Once published to npm, the same commands work as `npx @gogogohuang/agent-team <command>` (the installed binary is `agent-team`).
+The installed binary is `agent-team`. To run the latest unreleased code straight from GitHub, use `npx github:gogogohuang/agent-team <command>` instead.
 
 Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged in). macOS and Linux (Linux needs `bwrap` for OS sandboxing); Windows only gets warnings.
 

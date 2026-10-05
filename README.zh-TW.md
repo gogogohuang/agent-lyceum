@@ -9,14 +9,14 @@
 此工具**絕不會寫入你的 repo**。所有內容都放在一個看得到的資料夾 `~/agent-team-config/`（可用 `AGENT_TEAM_HOME` 或 `--home` 覆寫）。
 
 ```bash
-npx github:gogogohuang/agent-team init                     # 建立 home 與全域 agent 庫
-npx github:gogogohuang/agent-team project add web --dir ~/code/web-app
-npx github:gogogohuang/agent-team validate --project web   # 檢查設定並顯示各項防護等級
-npx github:gogogohuang/agent-team run --task-file spec.md  # 在 repo 內執行時會自動偵測專案
-npx github:gogogohuang/agent-team status
+npx @gogogohuang/agent-team init                     # 建立 home 與全域 agent 庫
+npx @gogogohuang/agent-team project add web --dir ~/code/web-app
+npx @gogogohuang/agent-team validate --project web   # 檢查設定並顯示各項防護等級
+npx @gogogohuang/agent-team run --task-file spec.md  # 在 repo 內執行時會自動偵測專案
+npx @gogogohuang/agent-team status
 ```
 
-發佈到 npm 之後，同樣的指令可改用 `npx @gogogohuang/agent-team <command>`（安裝後的執行檔名稱為 `agent-team`）。
+安裝後的執行檔名稱為 `agent-team`。若要直接跑 GitHub 上尚未發佈的最新程式碼，可改用 `npx github:gogogohuang/agent-team <command>`。
 
 需求：Node 20+，以及 `PATH` 中有 `claude` 和／或 `codex`（且已登入）。支援 macOS 與 Linux（Linux 需要 `bwrap` 才有 OS 沙箱）；Windows 只會顯示警告。
 
