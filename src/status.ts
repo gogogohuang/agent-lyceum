@@ -26,6 +26,80 @@ export function latestRun(project: ResolvedProject): { dir: string; state: RunSt
   return undefined;
 }
 
+export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
+  const root = project.paths.runs;
+  if (!fs.existsSync(root)) return [];
+  const out: { dir: string; state: RunState }[] = [];
+  const dirs = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort()
+    .reverse();
+  for (const d of dirs) {
+    if (out.length >= limit) break;
+    try {
+      out.push({ dir: path.join(root, d), state: JSON.parse(fs.readFileSync(path.join(root, d, "state.json"), "utf8")) as RunState });
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  return out;
+}
+
+function alive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export function runStateLabel(s: RunState): string {
+  if (s.end_reason) return `ended: ${s.end_reason}`;
+  return alive(s.pid) ? "running" : "interrupted";
+}
+
+const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+const tokens = (n: number | undefined) => (n ? n.toLocaleString("en-US") : "0");
+
+function since(iso: string, now: number): string {
+  const sec = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`;
+}
+
+function handlingText(h: { from: string; type: string; subject: string }[]): string {
+  return h.length ? h.map((m) => `${m.type} from ${m.from}: "${clip(m.subject, 60)}"`).join("; ") : "(no messages)";
+}
+
+/** What a run is doing / did, one line per wake. */
+function describeRun(s: RunState, now: number): string[] {
+  const lines = [
+    `Run ${s.run_id}  [${runStateLabel(s)}]  rounds ${s.rounds}/${s.max_rounds}  output tokens ${tokens(s.output_tokens)}`,
+    `  task: ${s.task_summary ?? (s.task_source === "file" ? `file ${s.task_path}` : "text")}`,
+  ];
+  for (const w of s.wakes ?? []) {
+    lines.push(
+      `  #${w.round} ${w.agent} ${w.ok ? "ok" : "FAILED"} (${Math.round(w.duration_ms / 1000)}s, ${tokens(w.output_tokens)} tok) — ${handlingText(w.handling)}`,
+    );
+  }
+  for (const [agent, a] of Object.entries(s.active ?? {})) {
+    lines.push(`  #${a.round} ${agent} WORKING for ${since(a.since, now)} — ${handlingText(a.handling)}`);
+  }
+  return lines;
+}
+
+/** Live view: agent table plus the most recent runs, each with what it is doing. */
+export function formatMonitor(project: ResolvedProject, runLimit = 3, now = Date.now()): string {
+  const runs = listRuns(project, runLimit);
+  const out = [formatStatus(project), "", "Runs (newest first):"];
+  if (runs.length === 0) out.push("  none");
+  for (const r of runs) out.push("", ...describeRun(r.state, now));
+  return out.join("\n");
+}
+
 export function formatStatus(project: ResolvedProject): string {
   const run = latestRun(project);
   const rows = [["agent", "runtime", "unread", "protection", "last wake"]];
@@ -53,8 +127,8 @@ export function formatStatus(project: ResolvedProject): string {
       `Last run: ${s.run_id}`,
       `  task:    ${s.task_source === "file" ? `file ${s.task_path}` : "text"}`,
       `  rounds:  ${s.rounds}/${s.max_rounds}`,
-      `  ended:   ${s.end_reason ?? "still running or interrupted"}`,
-      `  cost:    ${s.cost_usd ? `$${s.cost_usd.toFixed(4)} (Claude Code only)` : "n/a"}`,
+      `  state:   ${runStateLabel(s)}`,
+      `  output tokens: ${tokens(s.output_tokens)}`,
     );
   }
   return lines.join("\n");

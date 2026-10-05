@@ -89,7 +89,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
         ok,
         text: String(j.result ?? ""),
         sessionId: j.session_id,
-        costUsd: j.total_cost_usd,
+        outputTokens: j.usage?.output_tokens,
         error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
       };
     },
@@ -99,7 +99,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
 interface ClaudeResult {
   result?: string;
   session_id?: string;
-  total_cost_usd?: number;
+  usage?: { output_tokens?: number };
   is_error?: boolean;
 }
 

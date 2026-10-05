@@ -7,7 +7,7 @@ import { ConfigError, findProjectForCwd, listProjects, resolveProject, type Reso
 import { newRunId, runTeam } from "./dispatcher.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatStatus } from "./status.js";
+import { formatMonitor, formatStatus } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -159,9 +159,30 @@ program
   .command("status")
   .description("Show agents, unread mail, protection levels and the last run")
   .option("-p, --project <name>")
-  .action((opts: { project?: string }) => {
+  .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
+  .option("--interval <sec>", "refresh interval for --monitor", "2")
+  .action(async (opts: { project?: string; monitor?: boolean; interval: string }) => {
     try {
-      console.log(formatStatus(loadProject(opts.project)));
+      const pr = loadProject(opts.project);
+      if (!opts.monitor) {
+        console.log(formatStatus(pr));
+        return;
+      }
+      const sec = Number(opts.interval);
+      if (!(sec > 0)) fail("--interval must be a positive number of seconds.");
+      const draw = () => {
+        // Reload each tick so new mail, config edits and runs show up.
+        let text: string;
+        try {
+          text = formatMonitor(loadProject(opts.project));
+        } catch (e) {
+          text = `(error: ${(e as Error).message})`;
+        }
+        process.stdout.write(`\x1b[2J\x1b[H${text}\n\nRefreshing every ${sec}s — ${new Date().toLocaleTimeString()} — Ctrl-C to quit\n`);
+      };
+      draw();
+      setInterval(draw, sec * 1000);
+      await new Promise(() => {});
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }

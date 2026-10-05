@@ -22,8 +22,39 @@ export interface RunState {
   max_rounds: number;
   end_reason?: EndReason;
   sessions: Record<string, string>;
-  cost_usd: number;
+  output_tokens: number;
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
+  /** Process running this dispatcher, so a monitor can tell "running" from "interrupted". */
+  pid: number;
+  /** One line describing the run's task. */
+  task_summary: string;
+  /** Agents being woken right now and what they were asked to handle. */
+  active: Record<string, ActiveWake>;
+  /** Finished wakes, oldest first. */
+  wakes: WakeRecord[];
+}
+
+export interface WakeTopic {
+  from: string;
+  type: string;
+  subject: string;
+}
+
+export interface ActiveWake {
+  round: number;
+  since: string;
+  handling: WakeTopic[];
+}
+
+export interface WakeRecord {
+  round: number;
+  agent: string;
+  at: string;
+  duration_ms: number;
+  ok: boolean;
+  output_tokens?: number;
+  handling: WakeTopic[];
+  error?: string;
 }
 
 export interface RunSummary {
@@ -59,6 +90,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   const log = (event: string, data: Record<string, unknown> = {}) =>
     fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), event, ...data }) + "\n");
 
+  const t = taskMessageBody(task);
   const state: RunState = {
     run_id: runId,
     project: project.name,
@@ -68,15 +100,18 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     rounds: 0,
     max_rounds: cfg.max_rounds,
     sessions: {},
-    cost_usd: 0,
+    output_tokens: 0,
     last_wake: {},
+    pid: process.pid,
+    task_summary: t.subject,
+    active: {},
+    wakes: [],
   };
   const saveState = () => atomicWrite(path.join(runDir, "state.json"), JSON.stringify(state, null, 2));
 
   const guard = new ProtectedGuard(project);
   guard.saveSnapshot(path.join(runDir, "snapshots"));
 
-  const t = taskMessageBody(task);
   deliver(project, { from: "user", to: project.lead, type: "task", subject: t.subject, body: t.body });
   log("start", { task_source: task.source, bytes: task.bytes, inline: task.inline });
   saveState();
@@ -130,10 +165,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         result = { ok: false, text: "", exitCode: null, timedOut: false, error: "round limit reached" };
         break;
       }
-      state.rounds++;
+      const round = ++state.rounds;
       const started = Date.now();
       say(`[round ${state.rounds}/${cfg.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
+      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject }));
+      state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
+      saveState();
       result = await invoke({ ...base, sessionId }).catch((e: Error) => ({
         ok: false,
         text: "",
@@ -142,7 +180,18 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         error: e.message,
       }));
       if (result.sessionId && agent.resume) state.sessions[agent.name] = result.sessionId;
-      if (result.costUsd) state.cost_usd += result.costUsd;
+      if (result.outputTokens) state.output_tokens += result.outputTokens;
+      delete state.active[agent.name];
+      state.wakes.push({
+        round,
+        agent: agent.name,
+        at: new Date().toISOString(),
+        duration_ms: Date.now() - started,
+        ok: result.ok,
+        output_tokens: result.outputTokens,
+        handling,
+        error: result.error,
+      });
       state.last_wake[agent.name] = { at: new Date().toISOString(), ok: result.ok, error: result.error };
       log("wake", {
         agent: agent.name,

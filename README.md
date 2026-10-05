@@ -29,7 +29,7 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `project list` / `project remove <name> [--purge]` | List projects / unregister (keeps context unless `--purge`). |
 | `validate [-p name] [--task-file f]` | Validate the merged config and print each agent's enforcement level. Exit 1 on errors. |
 | `run ["task"] [--task-file f] [-p name]` | Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`. |
-| `status [-p name]` | Agents, unread mail, protection levels, last run (task source, rounds, end reason, cost). |
+| `status [-p name] [--monitor]` | Agents, unread mail, protection levels, last run (task source, rounds, end reason, output tokens). `--monitor` keeps a live page open showing what each run and agent is doing.. |
 
 Without `--project`, the project is the registered one whose `dir` is the longest prefix of the current directory; if none matches the command lists the registered projects and stops.
 
@@ -102,7 +102,7 @@ npm test        # vitest: config, validation, mailbox, adapters, dispatcher (wit
 npm run build   # tsc -> dist/ (also runs on install via `prepare`, so `npx github:...` works)
 ```
 
-Not in v1: cost/time caps, git-worktree isolation between parallel agents, MCP messaging, other runtimes, native Windows, task attachments. Codex session resume is implemented but untested.
+Not in v1: token/time caps, git-worktree isolation between parallel agents, MCP messaging, other runtimes, native Windows, task attachments. Codex session resume is implemented but untested.
 
 ## Releasing
 

@@ -97,17 +97,17 @@ describe("Claude Code adapter", () => {
   it("parses the json result", () => {
     env = makeEnv();
     const inv = buildClaudeInvocation(input(env, "lead"));
-    const ok = inv.parse({ stdout: JSON.stringify({ result: "hi", session_id: "s9", total_cost_usd: 0.02, is_error: false }), stderr: "", code: 0 });
-    expect(ok).toMatchObject({ ok: true, text: "hi", sessionId: "s9", costUsd: 0.02 });
+    const ok = inv.parse({ stdout: JSON.stringify({ result: "hi", session_id: "s9", usage: { output_tokens: 42 }, is_error: false }), stderr: "", code: 0 });
+    expect(ok).toMatchObject({ ok: true, text: "hi", sessionId: "s9", outputTokens: 42 });
     expect(inv.parse({ stdout: JSON.stringify({ result: "boom", is_error: true }), stderr: "", code: 1 }).ok).toBe(false);
     expect(inv.parse({ stdout: "garbage", stderr: "x", code: 1 }).ok).toBe(false);
     // newer Claude Code versions print an array of events; the result is the "result" element
     const events = [
       { type: "system", subtype: "init", session_id: "s-init" },
       { type: "assistant", message: {} },
-      { type: "result", subtype: "success", is_error: false, result: "from array", session_id: "s-arr", total_cost_usd: 0.5 },
+      { type: "result", subtype: "success", is_error: false, result: "from array", session_id: "s-arr", usage: { output_tokens: 7 } },
     ];
-    expect(inv.parse({ stdout: JSON.stringify(events), stderr: "", code: 0 })).toMatchObject({ ok: true, text: "from array", sessionId: "s-arr", costUsd: 0.5 });
+    expect(inv.parse({ stdout: JSON.stringify(events), stderr: "", code: 0 })).toMatchObject({ ok: true, text: "from array", sessionId: "s-arr", outputTokens: 7 });
     expect(inv.parse({ stdout: JSON.stringify([events[0]]), stderr: "e", code: 0 }).ok).toBe(false);
   });
 });
@@ -164,5 +164,14 @@ describe("effort", () => {
   it("omits the flag when effort is unset", () => {
     env = makeEnv();
     expect(buildClaudeInvocation(input(env, "lead")).args).not.toContain("--effort");
+  });
+});
+
+describe("codexOutputTokens", () => {
+  it("sums output_tokens over turn.completed events", async () => {
+    const { codexOutputTokens } = await import("../src/adapters/codex.js");
+    const out = ['{"type":"turn.completed","usage":{"output_tokens":5}}', "noise", '{"type":"turn.completed","usage":{"output_tokens":7}}'].join("\n");
+    expect(codexOutputTokens(out)).toBe(12);
+    expect(codexOutputTokens("nothing")).toBeUndefined();
   });
 });

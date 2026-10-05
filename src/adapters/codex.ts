@@ -26,6 +26,21 @@ function findSessionId(jsonl: string): string | undefined {
   return undefined;
 }
 
+/** Sum `output_tokens` over `turn.completed` events in `codex exec --json` output. */
+export function codexOutputTokens(jsonl: string): number | undefined {
+  let total: number | undefined;
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const j = JSON.parse(line);
+      if (j.type === "turn.completed" && typeof j.usage?.output_tokens === "number") total = (total ?? 0) + j.usage.output_tokens;
+    } catch {
+      /* not json */
+    }
+  }
+  return total;
+}
+
 export function buildCodexInvocation(input: WakeInput): Invocation {
   const { project, agent, workDir } = input;
   fs.mkdirSync(workDir, { recursive: true });
@@ -66,6 +81,7 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
         ok,
         text,
         sessionId: findSessionId(stdout),
+        outputTokens: codexOutputTokens(stdout),
         error: ok ? undefined : (stderr || stdout || `exit code ${code}`).slice(-500),
       };
     },
