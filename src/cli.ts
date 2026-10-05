@@ -4,7 +4,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
-import { newRunId, runTeam, type RunSummary } from "./dispatcher.js";
+import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { formatMonitor, formatStatus, latestRun, runIsAlive } from "./status.js";
@@ -129,7 +129,10 @@ program
 
 function reportRun(summary: RunSummary, runDir: string): never {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason} after ${summary.rounds} round(s). Logs: ${runDir}`);
-  if (summary.doneMessage) console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
+  if (summary.doneMessage) {
+    console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
+    console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
+  }
   if (summary.endReason === "idle") console.log("Note: all mailboxes were empty but the lead never sent a \"done\" message.");
   process.exit(summary.endReason === "done" || summary.endReason === "idle" ? 0 : 2);
 }
@@ -182,7 +185,12 @@ program
       }
       const { dir, state } = found!;
       if (!state.end_reason && runIsAlive(state)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
-      if (state.end_reason === "done") fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
+      if (state.end_reason === "done") {
+        const result = path.join(dir, RESULT_FILE);
+        if (!fs.existsSync(result)) fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
+        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+        process.exit(0);
+      }
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 

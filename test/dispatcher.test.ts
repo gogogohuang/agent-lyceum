@@ -40,6 +40,7 @@ describe("dispatcher", () => {
     expect(s.endReason).toBe("done");
     expect(s.rounds).toBe(3);
     expect(s.doneMessage?.subject).toBe("all good");
+    expect(fs.readFileSync(path.join(s.runDir, "result.md"), "utf8")).toMatch(/^# all good\n/);
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
     expect(state.end_reason).toBe("done");
     expect(state.task_source).toBe("text");

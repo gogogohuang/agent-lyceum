@@ -10,6 +10,8 @@ import { ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
+export const RESULT_FILE = "result.md";
+
 export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed";
 
 export interface RunState {
@@ -300,6 +302,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     if (route.done) {
       doneMessage = { subject: route.done.subject, body: route.done.body };
+      fs.writeFileSync(path.join(runDir, RESULT_FILE), `# ${route.done.subject}\n\n${route.done.body.trimEnd()}\n`);
       log("done", { subject: route.done.subject });
       endReason = "done";
       return;

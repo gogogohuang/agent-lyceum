@@ -59,7 +59,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     "",
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
-    "- `done` has no required headings.",
+    isLead
+      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Use these headings (a missing one is not rejected): `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Not done` (anything skipped or unverified, or `None`)."
+      : "- `done` has no required headings.",
     ...(isLead
       ? [
           "",
