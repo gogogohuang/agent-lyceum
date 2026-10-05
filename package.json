@@ -1,6 +1,6 @@
 {
   "name": "@gogogohuang/agent-team",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Config + dispatcher for teams of Claude Code / Codex agents with scoped context and file-based mailboxes",
   "keywords": [
     "ai",
