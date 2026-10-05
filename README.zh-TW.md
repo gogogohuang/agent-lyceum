@@ -29,7 +29,7 @@ npx @gogogohuang/agent-team status
 | `project list` / `project remove <name> [--purge]` | 列出專案／取消註冊（除非加 `--purge`，否則保留 context）。 |
 | `validate [-p name] [--task-file f]` | 驗證合併後的設定，並印出每個 agent 的防護等級。有錯誤時 exit 1。 |
 | `run ["task"] [--task-file f] [-p name]` | 把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。 |
-| `status [-p name] [--monitor]` | 顯示 agent、未讀信件、防護等級、上次執行（任務來源、輪數、結束原因、output token 數）。`--monitor` 會常駐並持續更新，顯示每個 run 與每個 agent 正在做什麼。 |
+| `status [-p name] [--monitor]` | 顯示 agent、未讀信件、防護等級、目前正在執行的 agent（耗時、處理中的信件）、上次執行（任務來源、輪數、結束原因、output token 數）。`--monitor` 會常駐並持續更新，顯示每個 run 與每個 agent 正在做什麼。 |
 
 未指定 `--project` 時，會選用 `dir` 為目前目錄最長前綴的已註冊專案；若沒有符合的專案，指令會列出已註冊專案後停止。
 
