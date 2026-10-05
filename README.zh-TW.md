@@ -59,7 +59,7 @@ agents:
   qa-member: { can_message: [lead], owns: ["tests/**"] }
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`）、`model`、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`owns`（repo glob）。
+Agent 欄位：`runtime`（`claude-code`|`codex`）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`owns`（repo glob）。
 
 `validate` 檢查的規則：至少 3 個 agent、lead 在 agent 清單內、每個 agent 都有 runtime 且 `AGENT.md` 存在、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`。
 

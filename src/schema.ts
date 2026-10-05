@@ -3,6 +3,16 @@ import { z } from "zod";
 export const RUNTIMES = ["claude-code", "codex"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
 
+/** Union of both runtimes' levels; `validate` rejects the ones a given runtime does not accept. */
+export const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+/** Levels each runtime's CLI accepts (`claude --effort`, codex `model_reasoning_effort`). */
+export const RUNTIME_EFFORTS: Record<Runtime, readonly Effort[]> = {
+  "claude-code": ["low", "medium", "high", "xhigh", "max"],
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+};
+
 const Memory = z
   .object({
     global: z.string().optional(),
@@ -14,6 +24,7 @@ export const AgentPartial = z
   .object({
     runtime: z.enum(RUNTIMES).optional(),
     model: z.string().optional(),
+    effort: z.enum(EFFORTS).optional(),
     agent_md: z.string().optional(),
     memory: Memory.optional(),
     resume: z.boolean().optional(),

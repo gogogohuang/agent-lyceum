@@ -147,3 +147,22 @@ describe("prompts", () => {
     expect(buildSystemPrompt(p, p.agents.lead)).toContain("type: reply        # task | reply | done");
   });
 });
+
+describe("effort", () => {
+  it("passes effort to claude as --effort and to codex as model_reasoning_effort", () => {
+    env = makeEnv();
+    const claude = input(env, "lead");
+    claude.agent = { ...claude.agent, effort: "high" };
+    const c = buildClaudeInvocation(claude);
+    expect(c.args.slice(c.args.indexOf("--effort"), c.args.indexOf("--effort") + 2)).toEqual(["--effort", "high"]);
+
+    const codex = input(env, "fe-member");
+    codex.agent = { ...codex.agent, effort: "low" };
+    expect(buildCodexInvocation(codex).args).toContain('model_reasoning_effort="low"');
+  });
+
+  it("omits the flag when effort is unset", () => {
+    env = makeEnv();
+    expect(buildClaudeInvocation(input(env, "lead")).args).not.toContain("--effort");
+  });
+});
