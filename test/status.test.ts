@@ -32,21 +32,21 @@ const active = { lead: { round: 1, since: "2026-01-01T00:00:18Z", handling: [{ f
 describe("status: active now", () => {
   it("says idle when there is no run", () => {
     env = makeEnv();
-    expect(formatStatus(env.project(), NOW)).toContain("Now:      idle");
+    expect(formatStatus(env.project(), NOW)).toContain("現在：    閒置");
   });
 
   it("shows a working agent with elapsed time and handled message", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, active });
-    expect(formatStatus(env.project(), NOW)).toContain('lead working for 42s on task from user: "Build it"');
+    expect(formatStatus(env.project(), NOW)).toContain('lead 工作中 42s，處理 來自 user 的 task：「Build it」');
   });
 
   it("marks a dead run's active agent as interrupted", () => {
     env = makeEnv();
     writeRun(env, { pid: 2 ** 22 + 12345, active });
     const out = formatStatus(env.project(), NOW);
-    expect(out).toContain("was working (interrupted)");
-    expect(out).not.toContain("working for");
+    expect(out).toContain("曾在工作（已中斷）");
+    expect(out).not.toContain("工作中");
   });
 });
 
@@ -54,13 +54,13 @@ describe("status: progress, next, flow", () => {
   it("shows checklist progress and the next step", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, steps: [{ text: "design", done: true }, { text: "build", done: false }, { text: "test", done: false }] });
-    expect(formatStatus(env.project(), NOW)).toContain("1/3 steps — next step: build");
+    expect(formatStatus(env.project(), NOW)).toContain("1/3 步驟 — 下一步：build");
   });
 
   it("falls back to rounds when there is no checklist", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid });
-    expect(formatStatus(env.project(), NOW)).toContain("no checklist; 1/10 rounds used");
+    expect(formatStatus(env.project(), NOW)).toContain("無清單；已用 1/10 輪");
   });
 
   it("names who is woken next, lead first", () => {
@@ -70,8 +70,8 @@ describe("status: progress, next, flow", () => {
     deliver(p, { from: "lead", to: "fe-member", type: "task", subject: "Build UI", body: "x" });
     deliver(p, { from: "qa-member", to: "lead", type: "reply", subject: "Tested", body: "x" });
     const out = formatStatus(p, NOW);
-    expect(out).toContain('Next:     lead ← reply from qa-member: "Tested"');
-    expect(out).toContain('fe-member ← task from lead: "Build UI"');
+    expect(out).toContain('下一個：  lead ← 來自 qa-member 的 reply：「Tested」');
+    expect(out).toContain('fe-member ← 來自 lead 的 task：「Build UI」');
   });
 
   it("shows what the last wake handed off and the flow", () => {
@@ -86,15 +86,15 @@ describe("status: progress, next, flow", () => {
       active: { lead: { round: 3, since: "2026-01-01T00:00:50Z", handling: [] } },
     });
     const out = formatStatus(env.project(), NOW);
-    expect(out).toContain('Last:     #2 fe-member ok → lead ← reply "UI built"');
-    expect(out).toContain("Flow:     lead → fe-member → [lead]");
+    expect(out).toContain('上一次：  #2 fe-member 成功 → lead ← reply「UI built」');
+    expect(out).toContain("流程：    lead → fe-member → [lead]");
   });
 
   it("includes a brief of the handled message", () => {
     env = makeEnv();
     const h = [{ from: "lead", type: "task", subject: "Review", brief: "check the auth middleware" }];
     writeRun(env, { pid: process.pid, active: { lead: { round: 1, since: "2026-01-01T00:00:50Z", handling: h } } });
-    expect(formatStatus(env.project(), NOW)).toContain('"Review" — check the auth middleware');
+    expect(formatStatus(env.project(), NOW)).toContain('「Review」 — check the auth middleware');
   });
 });
 
@@ -116,5 +116,16 @@ describe("format helpers", () => {
     expect(briefOf("## Changes\n- added login\n\n## Risks\nNone")).toBe("added login");
     expect(briefOf("[agent-team] Format warning: x\n\n## Goal\nShip it")).toBe("Ship it");
     expect(briefOf("# Title\n\nJust text")).toBe("Just text");
+  });
+});
+
+describe("status: color", () => {
+  it("is plain by default and adds ANSI codes when asked", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid, active });
+    expect(formatStatus(env.project(), NOW)).not.toContain("\x1b[");
+    const colored = formatStatus(env.project(), NOW, true);
+    expect(colored).toContain("\x1b[32m執行中\x1b[0m");
+    expect(colored.replace(/\x1b\[\d+m/g, "")).toBe(formatStatus(env.project(), NOW));
   });
 });

@@ -155,6 +155,13 @@ program
     }
   });
 
+/** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
+function useColor(): boolean {
+  if (process.env.NO_COLOR) return false;
+  if (process.env.FORCE_COLOR) return process.env.FORCE_COLOR !== "0";
+  return !!process.stdout.isTTY;
+}
+
 program
   .command("status")
   .description("Show agents, unread mail, protection levels and the last run")
@@ -165,7 +172,7 @@ program
     try {
       const pr = loadProject(opts.project);
       if (!opts.monitor) {
-        console.log(formatStatus(pr));
+        console.log(formatStatus(pr, Date.now(), useColor()));
         return;
       }
       const sec = Number(opts.interval);
@@ -174,7 +181,7 @@ program
         // Reload each tick so new mail, config edits and runs show up.
         let text: string;
         try {
-          text = formatMonitor(loadProject(opts.project));
+          text = formatMonitor(loadProject(opts.project), 3, Date.now(), useColor());
         } catch (e) {
           text = `(error: ${(e as Error).message})`;
         }
