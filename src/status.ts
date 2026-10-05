@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { RunState, WakeTopic } from "./dispatcher.js";
+import { RESULT_FILE, type RunState, type WakeTopic } from "./dispatcher.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
@@ -164,7 +164,7 @@ function queuedNext(project: ResolvedProject): { agent: string; msg: Message }[]
 const mailText = (m: Message) => `來自 ${m.meta.from} 的 ${m.meta.type}：「${clip(m.meta.subject, 60)}」`;
 
 /** The readable top block: what is happening, what is next, how far along the task is. */
-function summaryBlock(project: ResolvedProject, run: { state: RunState } | undefined, now: number, c: Paint): string[] {
+function summaryBlock(project: ResolvedProject, run: { dir?: string; state: RunState } | undefined, now: number, c: Paint): string[] {
   const L = (label: string) => c.bold(c.cyan(label)) + " ".repeat(Math.max(1, 10 - cols(label)));
   if (!run) return [`${L("現在：")}${c.dim("閒置（尚無執行紀錄）")}`];
   const s = run.state;
@@ -193,6 +193,11 @@ function summaryBlock(project: ResolvedProject, run: { state: RunState } | undef
   } else if (active.length && live) lines.push(`${L("下一個：")}${c.dim("等工作中的 agent 完成後，再轉送其信件")}`);
   else lines.push(`${L("下一個：")}${c.dim(s.end_reason === "done" ? "無 — lead 已完成任務" : "無待處理")}`);
 
+  const result = run.dir ? path.join(run.dir, RESULT_FILE) : "";
+  if (s.end_reason === "done" && result && fs.existsSync(result)) {
+    const head = fs.readFileSync(result, "utf8").split("\n").filter((l) => l.trim()).slice(0, 4).map((l) => clip(l, 80));
+    lines.push(`${L("結果：")}${result}`, ...head.map((l) => c.dim("          " + l)));
+  }
   const lastWake = (s.wakes ?? []).at(-1);
   if (lastWake) lines.push(`${L("上一次：")}#${lastWake.round} ${c.cyan(lastWake.agent)} ${okText(c, lastWake.ok)} → ${sentText(lastWake.sent)}`);
   lines.push(`${L("流程：")}${flowLine(s, live, c)}`);

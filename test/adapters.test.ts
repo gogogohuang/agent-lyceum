@@ -145,6 +145,8 @@ describe("prompts", () => {
     expect(s).toContain("You may send to: lead.");
     expect(s).not.toContain("| done");
     expect(buildSystemPrompt(p, p.agents.lead)).toContain("type: reply        # task | reply | done");
+    expect(buildSystemPrompt(p, p.agents.lead)).toContain("## Result");
+    expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("## Not done");
   });
 });
 
