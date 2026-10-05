@@ -235,6 +235,36 @@ describe("dispatcher", () => {
     expect(s.endReason).toBe("done");
     expect(maxActive).toBe(2);
   });
+
+  it("hands the lead all waiting replies in one wake-up, but workers get one message at a time", async () => {
+    env = makeEnv();
+    env.editProjectYaml((t) =>
+      t
+        .replace("max_parallel: 1", "max_parallel: 2")
+        .replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]')
+        .replace('    # owns: ["tests/**"]', '    owns: ["tests/**"]'),
+    );
+    const leadPrompts: string[] = [];
+    const s = await run(async (i) => {
+      if (i.agent.name === "lead") {
+        leadPrompts.push(i.userPrompt);
+        if (leadPrompts.length === 1) {
+          mail(i, "fe-member", "a", "task");
+          mail(i, "qa-member", "b", "task");
+        } else mail(i, "lead", "bye", "done");
+      } else mail(i, "lead", `reply from ${i.agent.name}`);
+      return OK;
+    });
+    expect(s.endReason).toBe("done");
+    expect(s.rounds).toBe(4);
+    expect(leadPrompts).toHaveLength(2);
+    expect(leadPrompts[1]).toContain("Messages to handle now (2");
+    expect(leadPrompts[1]).toContain("body of reply from fe-member");
+    expect(leadPrompts[1]).toContain("body of reply from qa-member");
+    expect(leadPrompts[1]).not.toContain("Queued messages");
+    const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
+    expect(state.wakes.find((w: { round: number }) => w.round === 4).handling).toHaveLength(2);
+  });
 });
 
 describe("task input", () => {
