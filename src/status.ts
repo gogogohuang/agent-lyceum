@@ -122,11 +122,16 @@ export function progressBar(done: number, total: number, width = 10, c: Paint = 
   return c.green("█".repeat(n)) + c.dim("░".repeat(width - n));
 }
 
-function stepsLine(steps: Step[] | undefined, c: Paint): string | undefined {
+function stepsLine(steps: Step[] | undefined, c: Paint, finished = false): string | undefined {
   if (!steps?.length) return undefined;
   const done = steps.filter((x) => x.done).length;
   const cur = steps.find((x) => !x.done);
-  return `${progressBar(done, steps.length, 10, c)} ${done}/${steps.length} 步驟${cur ? ` — 下一步：${clip(cur.text, 60)}` : " — 全部完成"}`;
+  const tail = !cur
+    ? " — 全部完成"
+    : finished
+      ? ` — ${c.yellow(`⚠ lead 宣告完成，但仍有 ${steps.length - done} 項未勾選（如：${clip(cur.text, 60)}）`)}`
+      : ` — 下一步：${clip(cur.text, 60)}`;
+  return `${progressBar(done, steps.length, 10, c)} ${done}/${steps.length} 步驟${tail}`;
 }
 
 /** Agents in wake order, newest last; the ones working now are bracketed. */
@@ -165,7 +170,7 @@ function summaryBlock(project: ResolvedProject, run: { state: RunState } | undef
     `${L("任務：")}${s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字")}`,
   ];
 
-  const steps = stepsLine(s.steps, c);
+  const steps = stepsLine(s.steps, c, s.end_reason === "done");
   lines.push(`${L("進度：")}${steps ?? `無清單；已用 ${s.rounds}/${s.max_rounds} 輪（lead 可在信中加入 "## Steps" 清單）`}`);
 
   const active = Object.entries(s.active ?? {});
