@@ -93,30 +93,3 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 `validate` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md` 與其他 agent 的 context 都由 OS 強制保護，否則拒絕執行。
 
 已知缺口：Claude Code 內建的 Edit/Write 工具不在沙箱內（由 `Edit` 規則涵蓋）；Codex 的 MCP 工具與 hooks 在其沙箱之外執行；`--dangerously-bypass-approvals-and-sandbox` / `danger-full-access` 會停用所有防護。啟用 `can_edit_agent_md` 時，Codex lead 的可寫根目錄會擴大到整個 agent 目錄。
-
-## 開發
-
-```bash
-npm install
-npm test        # vitest：設定、驗證、信箱、adapter、dispatcher（使用假 runtime）
-npm run build   # tsc -> dist/（安裝時也會透過 `prepare` 執行，所以 `npx github:...` 可用）
-```
-
-v1 不包含：花費／時間上限、平行 agent 之間的 git worktree 隔離、MCP 訊息傳遞、其他 runtime、原生 Windows、任務附件。Codex session resume 已實作但尚未測試。
-
-## 發佈
-
-發佈流程與 `agentflowctl` 相同：本機腳本負責驗證並打 tag，GitHub Actions 負責發佈到 npm。
-
-```bash
-npm run release -- patch --dry-run   # 只做檢查：在 main、工作樹乾淨、與 origin 同步、gh 已登入、typecheck/test/build
-npm run release -- patch             # 或 minor | major | x.y.z；更新 package.json、push、建立 GitHub Release
-```
-
-`.github/workflows/npm-publish.yml` 會在 Release 發佈時執行，從 tag 設定版本號，並執行 `npm publish --provenance`（預發行版本會發到 `next` dist-tag）。它使用 npm Trusted Publishing（OIDC），所以不需要 `NPM_TOKEN`。
-
-一次性設定：
-1. 僅限第一個版本：在本機登入（`npm login`）並執行 `npm publish --access public`——Trusted Publisher 只能在已存在的套件上設定。
-2. 在 npmjs.com 的套件 **Settings → Trusted Publisher**：選 GitHub Actions、repo `gogogohuang/agent-team`、workflow `npm-publish.yml`、environment `npm`。
-3. 在 GitHub repo 建立名為 `npm` 的 environment（Settings → Environments）。
-4. 因為第一個版本是手動發佈，之後再補建它的 tag／Release（或直接跳到下一個版本：`npm run release -- 0.1.1`）。
