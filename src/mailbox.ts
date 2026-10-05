@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
-import { formatWarning, missingSections } from "./format.js";
+import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
 import { inboxDir, outboxDir } from "./policy.js";
 
 export const MESSAGE_TYPES = ["task", "reply", "failure", "done"] as const;
@@ -128,11 +128,13 @@ export function markRead(files: string[]): void {
 }
 
 export interface RouteResult {
-  delivered: { from: string; to: string; id: string; file: string }[];
+  delivered: { from: string; to: string; id: string; file: string; type: MessageType; subject: string }[];
   rejected: { from: string; file: string; reason: string }[];
   /** Mail that was delivered but lacks required sections (see format.ts). */
   warnings: { from: string; id: string; subject: string; missing: string[] }[];
   done?: { from: string; subject: string; body: string };
+  /** Latest `## Steps` checklist the lead sent, if any. */
+  steps?: Step[];
 }
 
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. */
@@ -186,6 +188,8 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(file, dest);
         res.done = { from: sender.name, subject, body: parsed.body };
+        const ds = parseSteps(parsed.body);
+        if (ds.length) res.steps = ds;
         continue;
       }
 
@@ -211,9 +215,13 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
       const thread = d.thread ? String(d.thread) : undefined;
       const missing = missingSections(type, parsed.body);
       const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
+      if (sender.name === project.lead) {
+        const st = parseSteps(parsed.body);
+        if (st.length) res.steps = st;
+      }
       for (const to of targets) {
         const m = deliver(project, { from: sender.name, to, type, subject, body, thread, reply_to: replyTo });
-        res.delivered.push({ from: sender.name, to, id: m.meta.id, file: m.file });
+        res.delivered.push({ from: sender.name, to, id: m.meta.id, file: m.file, type, subject });
         if (missing.length) res.warnings.push({ from: sender.name, id: m.meta.id, subject, missing });
       }
       fs.mkdirSync(path.join(dir, "sent"), { recursive: true });

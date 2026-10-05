@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
+import { briefOf, parseSteps, type Step } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { atomicWrite, deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from "./mailbox.js";
 import { isInside } from "./paths.js";
@@ -32,10 +33,20 @@ export interface RunState {
   active: Record<string, ActiveWake>;
   /** Finished wakes, oldest first. */
   wakes: WakeRecord[];
+  /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps`. */
+  steps?: Step[];
 }
 
 export interface WakeTopic {
   from: string;
+  type: string;
+  subject: string;
+  /** What the message is about, in one line. */
+  brief?: string;
+}
+
+export interface SentTopic {
+  to: string;
   type: string;
   subject: string;
 }
@@ -54,6 +65,8 @@ export interface WakeRecord {
   ok: boolean;
   output_tokens?: number;
   handling: WakeTopic[];
+  /** Mail this wake handed to others; `to` is "(done)" for the lead's final message. */
+  sent?: SentTopic[];
   error?: string;
 }
 
@@ -107,6 +120,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     active: {},
     wakes: [],
   };
+  const seed = parseSteps(task.content, false);
+  if (seed.length) state.steps = seed;
   const saveState = () => atomicWrite(path.join(runDir, "state.json"), JSON.stringify(state, null, 2));
 
   const guard = new ProtectedGuard(project);
@@ -171,7 +186,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       const started = Date.now();
       say(`[round ${state.rounds}/${cfg.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
-      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject }));
+      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
       saveState();
       result = await invoke({ ...base, sessionId }).catch((e: Error) => ({
@@ -253,6 +268,14 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
     const route = routeOutboxes(project);
     for (const d of route.delivered) log("route", d);
+    const handedOff = (from: string, t: SentTopic) => {
+      const w = [...state.wakes].reverse().find((x) => x.agent === from);
+      if (w) (w.sent ??= []).push(t);
+    };
+    for (const d of route.delivered) handedOff(d.from, { to: d.to, type: d.type, subject: d.subject });
+    if (route.done) handedOff(route.done.from, { to: "(done)", type: "done", subject: route.done.subject });
+    if (route.steps) state.steps = route.steps;
+    saveState();
     for (const w of route.warnings) {
       say(`  format warning: mail ${w.id} from ${w.from} lacks ${w.missing.join(", ")}`);
       log("format-warning", w);
