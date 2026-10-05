@@ -226,6 +226,37 @@ export function formatMonitor(project: ResolvedProject, now = Date.now(), color 
   return out.join("\n");
 }
 
+/** Every run of the project, newest first: id, state, rounds, progress and task. */
+export function formatTaskList(project: ResolvedProject, color = false): string {
+  const c = paint(color);
+  const runs = listRuns(project, Infinity);
+  const head = `${c.bold("專案：")}${project.name}  ${c.dim(`（共 ${runs.length} 個任務）`)}`;
+  if (!runs.length) return `${head}\n\n無執行紀錄。`;
+  const rows = [["ID", "狀態", "輪次", "步驟", "任務"]];
+  for (const { state: s } of runs) {
+    const done = s.steps?.filter((x) => x.done).length ?? 0;
+    rows.push([
+      s.run_id,
+      runStateLabel(s),
+      `${s.rounds}/${s.max_rounds}`,
+      s.steps?.length ? `${done}/${s.steps.length}` : "-",
+      clip(s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字"), 60),
+    ]);
+  }
+  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => cols(r[i]))));
+  const line = (r: string[], ri: number) =>
+    r
+      .map((t, i) => {
+        const p = i === r.length - 1 ? t : padCols(t, w[i]);
+        return ri === 0 ? c.bold(p) : i === 1 ? stateColor(c, t) + " ".repeat(Math.max(0, w[i] - cols(t))) : p;
+      })
+      .join("  ")
+      .trimEnd();
+  const table = rows.map(line);
+  table.splice(1, 0, c.dim(w.map((n) => "-".repeat(n)).join("  ")));
+  return [head, "", ...table, "", c.dim("接續中斷的任務：agent-team resume <ID> -p " + project.name)].join("\n");
+}
+
 export function formatStatus(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = latestRun(project);

@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
-import { formatStatus } from "../src/status.js";
+import { formatStatus, formatTaskList } from "../src/status.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -135,5 +135,26 @@ describe("status: color", () => {
     const colored = formatStatus(env.project(), NOW, true);
     expect(colored).toContain("\x1b[32m執行中\x1b[0m");
     expect(colored.replace(/\x1b\[\d+m/g, "")).toBe(formatStatus(env.project(), NOW));
+  });
+});
+
+describe("status --task-list", () => {
+  it("lists every run with id and state, newest first", () => {
+    env = makeEnv();
+    writeRun(env, { pid: 2 ** 22 + 12345, task_summary: "Build it", steps: [{ text: "a", done: true }, { text: "b", done: false }] });
+    write(
+      path.join(env.project().paths.runs, "20260102-000000", "state.json"),
+      JSON.stringify({ run_id: "20260102-000000", rounds: 3, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "done", task_summary: "Ship it" }),
+    );
+    const out = formatTaskList(env.project());
+    expect(out).toContain("共 2 個任務");
+    expect(out.indexOf("20260102-000000")).toBeLessThan(out.indexOf("20260101-000000"));
+    expect(out).toMatch(/20260102-000000\s+已結束：完成\s+3\/10\s+-\s+Ship it/);
+    expect(out).toMatch(/20260101-000000\s+已中斷\s+1\/10\s+1\/2\s+Build it/);
+  });
+
+  it("says so when there are no runs", () => {
+    env = makeEnv();
+    expect(formatTaskList(env.project())).toContain("無執行紀錄");
   });
 });

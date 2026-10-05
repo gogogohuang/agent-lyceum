@@ -7,7 +7,7 @@ import { ConfigError, findProjectForCwd, listProjects, resolveProject, type Reso
 import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatMonitor, formatStatus, latestRun, runIsAlive } from "./status.js";
+import { formatMonitor, formatStatus, formatTaskList, latestRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -212,11 +212,16 @@ program
   .command("status")
   .description("Show agents, unread mail and the last run")
   .option("-p, --project <name>")
+  .option("--task-list [project]", "list every task (run) of the project with its id and state")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
-  .action(async (opts: { project?: string; monitor?: boolean; interval: string }) => {
+  .action(async (opts: { project?: string; taskList?: string | boolean; monitor?: boolean; interval: string }) => {
     try {
-      const pr = loadProject(opts.project);
+      const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
+      if (opts.taskList) {
+        console.log(formatTaskList(pr, useColor()));
+        return;
+      }
       if (!opts.monitor) {
         console.log(formatStatus(pr, Date.now(), useColor()));
         return;
