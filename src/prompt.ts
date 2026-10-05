@@ -60,6 +60,14 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
     "- `done` has no required headings.",
+    ...(isLead
+      ? [
+          "",
+          "## Progress tracking (optional, shown in `agent-team status`)",
+          "Put a `## Steps` heading with a checklist (`- [ ] step`, `- [x] finished step`) in the mail you send. Each time you send mail, re-list the full",
+          "checklist with finished steps ticked; the latest one you send is what `status` reports as task progress.",
+        ]
+      : []),
     "",
     "## Memory",
   );

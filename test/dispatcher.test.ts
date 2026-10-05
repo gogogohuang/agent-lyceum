@@ -47,6 +47,30 @@ describe("dispatcher", () => {
     expect(events(s.runDir).filter((e) => e.event === "wake")).toHaveLength(3);
   });
 
+  it("records handoffs, message briefs and the lead's Steps checklist in state.json", async () => {
+    env = makeEnv();
+    const s = await run(async (i) => {
+      const out = outboxDir(i.project, i.agent.name);
+      const send = (to: string, type: string, subject: string, body: string) =>
+        write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\n${body}\n`);
+      if (i.agent.name === "lead" && !i.userPrompt.includes("from: fe-member"))
+        send("fe-member", "task", "implement login", "## Goal\nBuild the login form\n\n## Steps\n- [x] design\n- [ ] build\n");
+      else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n");
+      else send("lead", "done", "all good", "## Steps\n- [x] design\n- [x] build\n");
+      return OK;
+    }, { task: "ship login\n\n- [ ] design\n- [ ] build" });
+    const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
+    expect(state.wakes[0].sent).toEqual([{ to: "fe-member", type: "task", subject: "implement login" }]);
+    expect(state.wakes[1].handling[0].brief).toBe("Build the login form");
+    expect(state.wakes[1].sent[0].to).toBe("lead");
+    expect(state.wakes[2].handling[0].brief).toBe("added login.ts");
+    expect(state.wakes[2].sent).toEqual([{ to: "(done)", type: "done", subject: "all good" }]);
+    expect(state.steps).toEqual([
+      { text: "design", done: true },
+      { text: "build", done: true },
+    ]);
+  });
+
   it("handles the oldest message first and keeps the rest unread for later wake-ups", async () => {
     env = makeEnv();
     const prompts: string[] = [];

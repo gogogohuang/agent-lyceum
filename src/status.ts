@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { RunState } from "./dispatcher.js";
+import type { RunState, WakeTopic } from "./dispatcher.js";
 import type { ResolvedProject } from "./config.js";
-import { listUnread } from "./mailbox.js";
+import type { Step } from "./format.js";
+import { listUnread, type Message } from "./mailbox.js";
 import { enforcementFor } from "./policy.js";
 
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
@@ -70,8 +71,85 @@ function since(iso: string, now: number): string {
   return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`;
 }
 
-function handlingText(h: { from: string; type: string; subject: string }[]): string {
-  return h.length ? h.map((m) => `${m.type} from ${m.from}: "${clip(m.subject, 60)}"`).join("; ") : "(no messages)";
+function handlingText(h: WakeTopic[]): string {
+  if (!h.length) return "(no messages)";
+  return h
+    .map((m) => `${m.type} from ${m.from}: "${clip(m.subject, 60)}"${m.brief ? ` — ${clip(m.brief, 80)}` : ""}`)
+    .join("; ");
+}
+
+const sentText = (sent: { to: string; type: string; subject: string }[] | undefined): string =>
+  sent?.length
+    ? sent.map((m) => (m.to === "(done)" ? `finished: "${clip(m.subject, 50)}"` : `${m.to} ← ${m.type} "${clip(m.subject, 50)}"`)).join("; ")
+    : "no mail sent";
+
+export function progressBar(done: number, total: number, width = 10): string {
+  const n = total ? Math.round((done / total) * width) : 0;
+  return "█".repeat(n) + "░".repeat(width - n);
+}
+
+function stepsLine(steps: Step[] | undefined): string | undefined {
+  if (!steps?.length) return undefined;
+  const done = steps.filter((x) => x.done).length;
+  const cur = steps.find((x) => !x.done);
+  return `${progressBar(done, steps.length)} ${done}/${steps.length} steps${cur ? ` — next step: ${clip(cur.text, 60)}` : " — all done"}`;
+}
+
+/** Agents in wake order, newest last; the ones working now are bracketed. */
+function flowLine(s: RunState, live: boolean): string {
+  const names = (s.wakes ?? []).map((w) => w.agent);
+  const shown = names.slice(-7);
+  const parts = shown.map((n) => n);
+  const activeNames = live ? Object.keys(s.active ?? {}) : [];
+  const out = (names.length > shown.length ? "… → " : "") + parts.join(" → ");
+  if (!activeNames.length) return out || "(nothing yet)";
+  return `${out}${out ? " → " : ""}[${activeNames.join(", ")}]`;
+}
+
+/** Order the dispatcher will wake agents: the lead first, otherwise the oldest mail. */
+function queuedNext(project: ResolvedProject): { agent: string; msg: Message }[] {
+  const rows = Object.values(project.agents)
+    .map((a) => ({ agent: a.name, msg: listUnread(project, a.name)[0] }))
+    .filter((r): r is { agent: string; msg: Message } => !!r.msg);
+  rows.sort((x, y) => {
+    if ((x.agent === project.lead) !== (y.agent === project.lead)) return x.agent === project.lead ? -1 : 1;
+    return path.basename(x.msg.file).localeCompare(path.basename(y.msg.file));
+  });
+  return rows;
+}
+
+const mailText = (m: Message) => `${m.meta.type} from ${m.meta.from}: "${clip(m.meta.subject, 60)}"`;
+
+/** The readable top block: what is happening, what is next, how far along the task is. */
+function summaryBlock(project: ResolvedProject, run: { state: RunState } | undefined, now: number): string[] {
+  if (!run) return ["Now:      idle (no runs yet)"];
+  const s = run.state;
+  const live = alive(s.pid) && !s.end_reason;
+  const lines = [`Run ${s.run_id}  [${runStateLabel(s)}]  round ${s.rounds}/${s.max_rounds}`, `Task:     ${s.task_summary ?? (s.task_source === "file" ? `file ${s.task_path}` : "text")}`];
+
+  const steps = stepsLine(s.steps);
+  lines.push(`Progress: ${steps ?? `no checklist; ${s.rounds}/${s.max_rounds} rounds used (the lead can add a "## Steps" checklist to its mail)`}`);
+
+  const active = Object.entries(s.active ?? {});
+  if (active.length) {
+    active.forEach(([agent, a], i) =>
+      lines.push(
+        `${i === 0 ? "Now:      " : "          "}${agent} ${live ? `working for ${since(a.since, now)}` : "was working (interrupted)"} on ${handlingText(a.handling)}`,
+      ),
+    );
+  } else lines.push(`Now:      idle${s.end_reason ? ` (run ended: ${s.end_reason})` : live ? "" : " (run is not running)"}`);
+
+  const queue = live || !s.end_reason ? queuedNext(project) : [];
+  if (queue.length) {
+    queue.slice(0, 3).forEach((q, i) => lines.push(`${i === 0 ? "Next:     " : "          "}${q.agent} ← ${mailText(q.msg)}`));
+    if (queue.length > 3) lines.push(`          … and ${queue.length - 3} more`);
+  } else if (active.length && live) lines.push("Next:     waiting for the working agent(s) to finish, then their mail is routed");
+  else lines.push(`Next:     ${s.end_reason === "done" ? "nothing — the lead finished the task" : "nothing queued"}`);
+
+  const lastWake = (s.wakes ?? []).at(-1);
+  if (lastWake) lines.push(`Last:     #${lastWake.round} ${lastWake.agent} ${lastWake.ok ? "ok" : "FAILED"} → ${sentText(lastWake.sent)}`);
+  lines.push(`Flow:     ${flowLine(s, live)}`);
+  return lines;
 }
 
 /** What a run is doing / did, one line per wake. */
@@ -80,9 +158,12 @@ function describeRun(s: RunState, now: number): string[] {
     `Run ${s.run_id}  [${runStateLabel(s)}]  rounds ${s.rounds}/${s.max_rounds}  output tokens ${tokens(s.output_tokens)}`,
     `  task: ${s.task_summary ?? (s.task_source === "file" ? `file ${s.task_path}` : "text")}`,
   ];
+  const steps = stepsLine(s.steps);
+  if (steps) lines.push(`  progress: ${steps}`);
   for (const w of s.wakes ?? []) {
     lines.push(
       `  #${w.round} ${w.agent} ${w.ok ? "ok" : "FAILED"} (${Math.round(w.duration_ms / 1000)}s, ${tokens(w.output_tokens)} tok) — ${handlingText(w.handling)}`,
+      `      → ${sentText(w.sent)}`,
     );
   }
   for (const [agent, a] of Object.entries(s.active ?? {})) {
@@ -91,28 +172,13 @@ function describeRun(s: RunState, now: number): string[] {
   return lines;
 }
 
-/** Live view: agent table plus the most recent runs, each with what it is doing. */
+/** Live view: summary and agent table, plus the most recent runs wake by wake. */
 export function formatMonitor(project: ResolvedProject, runLimit = 3, now = Date.now()): string {
   const runs = listRuns(project, runLimit);
   const out = [formatStatus(project, now), "", "Runs (newest first):"];
   if (runs.length === 0) out.push("  none");
   for (const r of runs) out.push("", ...describeRun(r.state, now));
   return out.join("\n");
-}
-
-/** What is running right now in the latest run (or was, if its process died). */
-function activeNow(run: { state: RunState } | undefined, now: number): string[] {
-  const entries = Object.entries(run?.state.active ?? {});
-  if (!run || entries.length === 0) return ["Active now: idle"];
-  const live = alive(run.state.pid) && !run.state.end_reason;
-  return [
-    "Active now:",
-    ...entries.map(([agent, a]) =>
-      live
-        ? `  #${a.round} ${agent} WORKING for ${since(a.since, now)} — ${handlingText(a.handling)}`
-        : `  #${a.round} ${agent} interrupted (was working on) — ${handlingText(a.handling)}`,
-    ),
-  ];
 }
 
 export function formatStatus(project: ResolvedProject, now = Date.now()): string {
@@ -134,17 +200,7 @@ export function formatStatus(project: ResolvedProject, now = Date.now()): string
   const table = rows.map((r) => r.map((c, i) => c.padEnd(w[i])).join("  ").trimEnd());
   table.splice(1, 0, w.map((n) => "-".repeat(n)).join("  "));
 
-  const lines = [`Project: ${project.name}  (repo: ${project.dir})`, "", ...table, "", ...activeNow(run, now), ""];
-  if (!run) lines.push("No runs yet.");
-  else {
-    const s = run.state;
-    lines.push(
-      `Last run: ${s.run_id}`,
-      `  task:    ${s.task_source === "file" ? `file ${s.task_path}` : "text"}`,
-      `  rounds:  ${s.rounds}/${s.max_rounds}`,
-      `  state:   ${runStateLabel(s)}`,
-      `  output tokens: ${tokens(s.output_tokens)}`,
-    );
-  }
+  const lines = [`Project: ${project.name}  (repo: ${project.dir})`, "", ...summaryBlock(project, run, now), "", ...table];
+  if (run) lines.push("", `Output tokens: ${tokens(run.state.output_tokens)}`);
   return lines.join("\n");
 }
