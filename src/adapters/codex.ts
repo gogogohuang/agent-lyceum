@@ -41,6 +41,7 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
     lastFile,
   ];
   if (agent.model) common.push("-m", agent.model);
+  if (agent.effort) common.push("-c", `model_reasoning_effort="${agent.effort}"`);
 
   const args = input.sessionId
     ? ["exec", "resume", input.sessionId, "-c", 'sandbox_mode="workspace-write"', ...common, "-"]

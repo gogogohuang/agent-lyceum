@@ -71,6 +71,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
     systemFile,
   ];
   if (agent.model) args.push("--model", agent.model);
+  if (agent.effort) args.push("--effort", agent.effort);
   if (input.sessionId) args.push("--resume", input.sessionId);
   for (const d of [...new Set(addDirs)]) args.push("--add-dir", d);
 

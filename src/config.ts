@@ -14,6 +14,7 @@ import {
   ProjectConfig,
   type AgentPartialT,
   type DispatcherSettings,
+  type Effort,
   type Runtime,
 } from "./schema.js";
 
@@ -25,6 +26,7 @@ export interface ResolvedAgent {
   name: string;
   runtime?: Runtime; // undefined => validate() reports an error
   model?: string;
+  effort?: Effort;
   agentMd: string;
   memory: { global?: string; project?: string };
   resume: boolean;
@@ -165,6 +167,7 @@ export function resolveProject(home: string, name: string): ResolvedProject {
       name: agentName,
       runtime: pick("runtime"),
       model: pick("model"),
+      effort: pick("effort"),
       agentMd,
       memory,
       resume: resume ?? isLead,

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import type { ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, ownsDirs, type AgentEnforcement } from "./policy.js";
 import { isInside } from "./paths.js";
+import { RUNTIME_EFFORTS } from "./schema.js";
 
 export interface Issue {
   level: "error" | "warn";
@@ -28,6 +29,9 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 
   for (const a of Object.values(project.agents)) {
     if (!a.runtime) err(`Agent "${a.name}" has no runtime (set it in team.yaml or project.yaml).`);
+    if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
+      err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
+    }
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {
