@@ -47,23 +47,26 @@ describe("dispatcher", () => {
     expect(events(s.runDir).filter((e) => e.event === "wake")).toHaveLength(3);
   });
 
-  it("passes only the latest message in full and lists older ones", async () => {
+  it("handles the oldest message first and keeps the rest unread for later wake-ups", async () => {
     env = makeEnv();
-    let prompt = "";
+    const prompts: string[] = [];
     let first = true;
     await run(async (i) => {
       if (i.agent.name === "lead" && first) {
         first = false;
         mail(i, "fe-member", "older job", "task");
         mail(i, "fe-member", "newer job", "task");
-      } else if (i.agent.name === "fe-member") prompt = i.userPrompt;
+      } else if (i.agent.name === "fe-member") prompts.push(i.userPrompt);
       return OK;
     });
-    expect(prompt).toContain("# Message to handle now");
-    expect(prompt).toContain("subject: newer job");
-    expect(prompt).toContain("body of newer job");
-    expect(prompt).not.toContain("body of older job");
-    expect(prompt).toMatch(/Other unread messages[\s\S]*"older job"/);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("subject: older job");
+    expect(prompts[0]).toContain("body of older job");
+    expect(prompts[0]).not.toContain("body of newer job");
+    const queued = /Queued messages[\s\S]*"newer job" -> (\S+)/.exec(prompts[0]);
+    expect(queued).not.toBeNull();
+    expect(prompts[1]).toContain("subject: newer job");
+    expect(prompts[1]).toContain("body of newer job");
   });
 
   it("stops at max_rounds", async () => {
