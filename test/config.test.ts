@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { findProjectForCwd, resolveProject } from "../src/config.js";
+import { inferRuntime } from "../src/schema.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -64,5 +65,27 @@ describe("config merge", () => {
     fs.mkdirSync(sub, { recursive: true });
     expect(findProjectForCwd(env.home, sub)).toBe("demo");
     expect(findProjectForCwd(env.home, env.root)).toBeUndefined();
+  });
+});
+
+describe("runtime inference from model", () => {
+  it("recognizes Claude and OpenAI/Codex model names", () => {
+    for (const m of ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5[1m]"]) expect(inferRuntime(m)).toBe("claude-code");
+    for (const m of ["gpt-5", "gpt-5-codex", "o3", "codex-mini-latest"]) expect(inferRuntime(m)).toBe("codex");
+    expect(inferRuntime("mystery")).toBeUndefined();
+    expect(inferRuntime(undefined)).toBeUndefined();
+  });
+
+  it("a project model overrides the inherited global runtime; an explicit runtime still wins", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) =>
+      t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    model: gpt-5\n    can_message: [lead]"),
+    );
+    const fe = env.project().agents["fe-member"];
+    expect(fe.runtime).toBe("codex");
+    expect(fe.sources.runtime).toBe("model");
+
+    env.editProjectYaml((t) => t.replace("    model: gpt-5\n", "    model: gpt-5\n    runtime: claude-code\n"));
+    expect(env.project().agents["fe-member"].runtime).toBe("claude-code");
   });
 });

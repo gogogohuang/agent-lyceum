@@ -28,7 +28,7 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   }
 
   for (const a of Object.values(project.agents)) {
-    if (!a.runtime) err(`Agent "${a.name}" has no runtime (set it in team.yaml or project.yaml).`);
+    if (!a.runtime) err(`Agent "${a.name}" has no runtime (set runtime, or a recognizable model such as opus/sonnet/haiku/claude-* or gpt-*/codex-*).`);
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
