@@ -15,7 +15,7 @@ export interface WakeResult {
   ok: boolean;
   text: string;
   sessionId?: string;
-  costUsd?: number;
+  outputTokens?: number;
   exitCode: number | null;
   timedOut: boolean;
   error?: string;
@@ -32,7 +32,7 @@ export interface Invocation {
     ok: boolean;
     text: string;
     sessionId?: string;
-    costUsd?: number;
+    outputTokens?: number;
     error?: string;
   };
 }
