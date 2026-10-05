@@ -202,6 +202,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
     const route = routeOutboxes(project);
     for (const d of route.delivered) log("route", d);
+    for (const w of route.warnings) {
+      say(`  format warning: mail ${w.id} from ${w.from} lacks ${w.missing.join(", ")}`);
+      log("format-warning", w);
+    }
     for (const r of route.rejected) {
       say(`  rejected mail from ${r.from}: ${r.reason}`);
       log("rejected", r);

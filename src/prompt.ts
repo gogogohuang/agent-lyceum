@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
 import { commonFile, memoryDirs, outboxDir } from "./policy.js";
@@ -51,6 +52,14 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       ? `When the whole job is finished, send a message with \`type: done\` (no \`to\` needed). That ends the run.`
       : `Report results to the lead by mail; the lead decides what happens next.`,
     "Each wake-up handles one message. Do the work it asks, then send the replies that are needed, then stop.",
+    "",
+    "## Message format",
+    "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
+    "Mail missing a heading is still delivered, but is flagged to the recipient.",
+    "",
+    `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
+    `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
+    "- `done` has no required headings.",
     "",
     "## Memory",
   );
