@@ -54,14 +54,14 @@ describe("status: progress, next, flow", () => {
   it("shows checklist progress and the next step", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, steps: [{ text: "design", done: true }, { text: "build", done: false }, { text: "test", done: false }] });
-    expect(formatStatus(env.project(), NOW)).toContain("1/3 步驟 — 下一步：build");
+    expect(formatStatus(env.project(), NOW)).toContain("目前：build");
   });
 
   it("warns when the lead is done with unticked steps", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, end_reason: "done", steps: [{ text: "design", done: true }, { text: "build", done: false }] });
     const out = formatStatus(env.project(), NOW);
-    expect(out).toContain("仍有 1 項未勾選（如：build）");
+    expect(out).toContain("步驟「build」尚未勾選");
     expect(out).not.toContain("下一步：");
   });
 
@@ -150,7 +150,7 @@ describe("status --task-list", () => {
     expect(out).toContain("共 2 個任務");
     expect(out.indexOf("20260102-000000")).toBeLessThan(out.indexOf("20260101-000000"));
     expect(out).toMatch(/20260102-000000\s+已結束：完成\s+3\/10\s+-\s+Ship it/);
-    expect(out).toMatch(/20260101-000000\s+已中斷\s+1\/10\s+1\/2\s+Build it/);
+    expect(out).toMatch(/20260101-000000\s+已中斷\s+1\/10\s+b\s+Build it/);
   });
 
   it("says so when there are no runs", () => {

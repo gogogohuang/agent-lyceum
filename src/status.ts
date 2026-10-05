@@ -125,14 +125,10 @@ export function progressBar(done: number, total: number, width = 10, c: Paint = 
 
 function stepsLine(steps: Step[] | undefined, c: Paint, finished = false): string | undefined {
   if (!steps?.length) return undefined;
-  const done = steps.filter((x) => x.done).length;
   const cur = steps.find((x) => !x.done);
-  const tail = !cur
-    ? " — 全部完成"
-    : finished
-      ? ` — ${c.yellow(`⚠ lead 宣告完成，但仍有 ${steps.length - done} 項未勾選（如：${clip(cur.text, 60)}）`)}`
-      : ` — 下一步：${clip(cur.text, 60)}`;
-  return `${progressBar(done, steps.length, 10, c)} ${done}/${steps.length} 步驟${tail}`;
+  if (!cur) return "全部完成";
+  if (finished) return c.yellow(`⚠ lead 宣告完成，但步驟「${clip(cur.text, 60)}」尚未勾選`);
+  return `目前：${clip(cur.text, 60)}`;
 }
 
 /** Agents in wake order, newest last; the ones working now are bracketed. */
@@ -260,14 +256,14 @@ export function formatTaskList(project: ResolvedProject, color = false): string 
   const runs = listRuns(project, Infinity);
   const head = `${c.bold("專案：")}${project.name}  ${c.dim(`（共 ${runs.length} 個任務）`)}`;
   if (!runs.length) return `${head}\n\n無執行紀錄。`;
-  const rows = [["ID", "狀態", "輪次", "步驟", "任務"]];
+  const rows = [["ID", "狀態", "輪次", "目前步驟", "任務"]];
   for (const { state: s } of runs) {
-    const done = s.steps?.filter((x) => x.done).length ?? 0;
+    const cur = s.steps?.find((x) => !x.done);
     rows.push([
       s.run_id,
       runStateLabel(s),
       `${s.rounds}/${s.max_rounds}`,
-      s.steps?.length ? `${done}/${s.steps.length}` : "-",
+      s.steps?.length ? (cur ? clip(cur.text, 30) : "全部完成") : "-",
       clip(s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字"), 60),
     ]);
   }
