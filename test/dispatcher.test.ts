@@ -141,7 +141,20 @@ describe("dispatcher", () => {
     env = makeEnv();
     const s = await run(async () => OK);
     expect(s.endReason).toBe("idle");
-    expect(s.rounds).toBe(1);
+    expect(s.rounds).toBe(2); // first wake + one reminder wake
+  });
+
+  it("reminds the lead once when it ends a run without done, and accepts done then", async () => {
+    env = makeEnv();
+    const prompts: string[] = [];
+    const s = await run(async (i) => {
+      prompts.push(i.userPrompt);
+      if (prompts.length === 2) mail(i, "lead", "finished", "done");
+      return OK;
+    });
+    expect(prompts[1]).toContain("No done message sent");
+    expect(s.endReason).toBe("done");
+    expect(s.rounds).toBe(2);
   });
 
   it("reverts unauthorized edits to protected files and warns the lead", async () => {
