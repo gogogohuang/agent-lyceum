@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { ProtectedGuard } from "../src/guard.js";
-import { outboxDir } from "../src/policy.js";
+import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
@@ -266,6 +266,51 @@ describe("task input", () => {
     expect(() => prepareTask({ ...base, text: "a", file: empty })).toThrow(/not both/);
     expect(() => prepareTask({ ...base })).toThrow(/No task/);
     expect(fs.readFileSync(huge, "utf8")).toHaveLength(TASK_FILE_MAX + 1);
+  });
+});
+
+describe("resume", () => {
+  const stateOf = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
+
+  it("continues an interrupted run: keeps the run dir and sessions, redoes the unread mail, does not resend the task", async () => {
+    env = makeEnv();
+    const s1 = await run(async () => {
+      throw new Error("killed");
+    });
+    expect(s1.endReason).toBe("lead_failed");
+    const runDir = s1.runDir;
+    // Make it look like a killed process: no end reason, a wake still active, a session recorded.
+    const st = stateOf(runDir);
+    delete st.end_reason;
+    delete st.ended_at;
+    st.sessions = { lead: "sess-1" };
+    st.active = { lead: { round: st.rounds, since: new Date().toISOString(), handling: [] } };
+    fs.writeFileSync(path.join(runDir, "state.json"), JSON.stringify(st));
+    // A killed wake never marked its mail read; undo the failed wake's markRead.
+    const leadInbox = inboxDir(env.project(), "lead");
+    for (const f of fs.readdirSync(path.join(leadInbox, "read"))) fs.renameSync(path.join(leadInbox, "read", f), path.join(leadInbox, f));
+
+    const seenSessions: (string | undefined)[] = [];
+    const s2 = await runTeam({
+      project: env.project(),
+      resume: stateOf(runDir),
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        seenSessions.push(i.sessionId);
+        mail(i, "lead", "finished", "done");
+        return OK;
+      },
+    });
+    expect(s2.runDir).toBe(runDir);
+    expect(s2.endReason).toBe("done");
+    expect(seenSessions).toEqual(["sess-1"]);
+    const after = stateOf(runDir);
+    expect(after.rounds).toBe(s1.rounds + 1);
+    expect(after.wakes.some((w: { error?: string }) => w.error === "interrupted")).toBe(true);
+    expect(events(runDir).filter((e) => e.event === "start")).toHaveLength(1);
+    expect(events(runDir).some((e) => e.event === "resume")).toBe(true);
+    expect(fs.readdirSync(leadInbox).filter((f) => f.includes("-user-"))).toHaveLength(0);
   });
 });
 
