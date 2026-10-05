@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, ownsDirs, type AgentEnforcement } from "./policy.js";
 import { isInside } from "./paths.js";
-import { RUNTIME_EFFORTS } from "./schema.js";
+import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
 
 export interface Issue {
   level: "error" | "warn";
@@ -29,6 +29,10 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 
   for (const a of Object.values(project.agents)) {
     if (!a.runtime) err(`Agent "${a.name}" has no runtime (set runtime, or a recognizable model such as opus/sonnet/haiku/claude-* or gpt-*/codex-*).`);
+    const modelRuntime = inferRuntime(a.model);
+    if (a.runtime && modelRuntime && modelRuntime !== a.runtime) {
+      warn(`Agent "${a.name}": model "${a.model}" looks like a ${modelRuntime} model but runtime is ${a.runtime}.`);
+    }
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
