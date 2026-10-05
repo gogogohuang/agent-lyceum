@@ -94,16 +94,6 @@ Enforcement is layered because no single mechanism is complete:
 
 Known gaps: Claude Code's built-in Edit/Write tools are not sandboxed (covered by the `Edit` rules); Codex MCP tools and hooks run outside its sandbox; `--dangerously-bypass-approvals-and-sandbox` / `danger-full-access` disable everything. With `can_edit_agent_md`, a Codex lead's writable roots widen to whole agent directories.
 
-## Development
-
-```bash
-npm install
-npm test        # vitest: config, validation, mailbox, adapters, dispatcher (with a fake runtime)
-npm run build   # tsc -> dist/ (also runs on install via `prepare`, so `npx github:...` works)
-```
-
-Not in v1: token/time caps, git-worktree isolation between parallel agents, MCP messaging, other runtimes, native Windows, task attachments. Codex session resume is implemented but untested.
-
 ## Releasing
 
 Releases follow the same flow as `agentflowctl`: a local script verifies and tags, GitHub Actions publishes to npm.
