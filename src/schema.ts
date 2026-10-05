@@ -13,6 +13,15 @@ export const RUNTIME_EFFORTS: Record<Runtime, readonly Effort[]> = {
   codex: ["minimal", "low", "medium", "high", "xhigh"],
 };
 
+/** Guess the runtime from a model name: Claude aliases/IDs -> claude-code, GPT/o-series/codex names -> codex. */
+export function inferRuntime(model: string | undefined): Runtime | undefined {
+  if (!model) return undefined;
+  const m = model.trim().toLowerCase();
+  if (/^(claude|anthropic|opus|sonnet|haiku|fable|best|default|opusplan)\b/.test(m) || m.includes("claude")) return "claude-code";
+  if (/^(gpt|codex|o\d)/.test(m) || m.includes("codex")) return "codex";
+  return undefined;
+}
+
 const Memory = z
   .object({
     global: z.string().optional(),
