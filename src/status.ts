@@ -48,6 +48,10 @@ export function listRuns(project: ResolvedProject, limit: number): { dir: string
   return out;
 }
 
+export function runIsAlive(s: { pid?: number }): boolean {
+  return alive(s.pid);
+}
+
 function alive(pid: number | undefined): boolean {
   if (!pid) return false;
   try {

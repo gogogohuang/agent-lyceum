@@ -80,7 +80,10 @@ export interface RunSummary {
 
 export interface RunOptions {
   project: ResolvedProject;
-  task: PreparedTask;
+  /** The task for a new run; omit when resuming. */
+  task?: PreparedTask;
+  /** Continue this earlier run (same run dir, sessions and counters) instead of starting a new one. */
+  resume?: RunState;
   runDir: string;
   invoker?: Invoker;
   log?: (line: string) => void;
@@ -91,7 +94,8 @@ export function newRunId(d = new Date()): string {
 }
 
 export async function runTeam(opts: RunOptions): Promise<RunSummary> {
-  const { project, task, runDir } = opts;
+  const { project, task, resume, runDir } = opts;
+  if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
   const invoke = opts.invoker ?? realInvoker;
   const say = opts.log ?? ((s: string) => console.log(s));
   const cfg = project.dispatcher;
@@ -103,32 +107,53 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   const log = (event: string, data: Record<string, unknown> = {}) =>
     fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), event, ...data }) + "\n");
 
-  const t = taskMessageBody(task);
-  const state: RunState = {
-    run_id: runId,
-    project: project.name,
-    task_source: task.source,
-    task_path: task.sourcePath,
-    started_at: new Date().toISOString(),
-    rounds: 0,
-    max_rounds: cfg.max_rounds,
-    sessions: {},
-    output_tokens: 0,
-    last_wake: {},
-    pid: process.pid,
-    task_summary: t.subject,
-    active: {},
-    wakes: [],
-  };
-  const seed = parseSteps(task.content, false);
-  if (seed.length) state.steps = seed;
+  let state: RunState;
+  if (resume) {
+    state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, active: {}, wakes: [...resume.wakes] };
+    // A wake that was running when the process died never finished; keep it in the history as interrupted.
+    for (const [agent, a] of Object.entries(resume.active ?? {})) {
+      state.wakes.push({
+        round: a.round,
+        agent,
+        at: new Date().toISOString(),
+        duration_ms: Date.now() - Date.parse(a.since),
+        ok: false,
+        handling: a.handling,
+        error: "interrupted",
+      });
+    }
+  } else {
+    const t = taskMessageBody(task!);
+    state = {
+      run_id: runId,
+      project: project.name,
+      task_source: task!.source,
+      task_path: task!.sourcePath,
+      started_at: new Date().toISOString(),
+      rounds: 0,
+      max_rounds: cfg.max_rounds,
+      sessions: {},
+      output_tokens: 0,
+      last_wake: {},
+      pid: process.pid,
+      task_summary: t.subject,
+      active: {},
+      wakes: [],
+    };
+    const seed = parseSteps(task!.content, false);
+    if (seed.length) state.steps = seed;
+  }
   const saveState = () => atomicWrite(path.join(runDir, "state.json"), JSON.stringify(state, null, 2));
 
   const guard = new ProtectedGuard(project);
-  guard.saveSnapshot(path.join(runDir, "snapshots"));
-
-  deliver(project, { from: "user", to: project.lead, type: "task", subject: t.subject, body: t.body });
-  log("start", { task_source: task.source, bytes: task.bytes, inline: task.inline });
+  if (resume) {
+    log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
+  } else {
+    const t = taskMessageBody(task!);
+    guard.saveSnapshot(path.join(runDir, "snapshots"));
+    deliver(project, { from: "user", to: project.lead, type: "task", subject: t.subject, body: t.body });
+    log("start", { task_source: task!.source, bytes: task!.bytes, inline: task!.inline });
+  }
   saveState();
 
   let endReason: EndReason | undefined;
@@ -240,19 +265,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     return { ok: true };
   };
 
-  while (!endReason) {
-    const pending = pendingAgents();
-    if (pending.length === 0) {
-      endReason = "idle";
-      break;
-    }
-    if (state.rounds >= cfg.max_rounds) {
-      endReason = "max_rounds";
-      break;
-    }
-    const batch = pickBatch(pending);
-    const results = await Promise.all(batch.map((a) => wake(a)));
-
+  /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
+  const settle = (batch: ResolvedAgent[], results: { ok: boolean }[]): void => {
     const violations = guard.check(batch);
     for (const v of violations) {
       say(`  protected file ${v.action}: ${v.file} (suspects: ${v.suspects.join(", ")})`);
@@ -288,13 +302,30 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       doneMessage = { subject: route.done.subject, body: route.done.body };
       log("done", { subject: route.done.subject });
       endReason = "done";
-      break;
+      return;
     }
     const leadIdx = batch.findIndex((a) => a.name === project.lead);
     if (leadIdx >= 0 && !results[leadIdx].ok) {
       endReason = "lead_failed";
+      return;
+    }
+  };
+
+  if (resume) settle([], []);
+
+  while (!endReason) {
+    const pending = pendingAgents();
+    if (pending.length === 0) {
+      endReason = "idle";
       break;
     }
+    if (state.rounds >= cfg.max_rounds) {
+      endReason = "max_rounds";
+      break;
+    }
+    const batch = pickBatch(pending);
+    const results = await Promise.all(batch.map((a) => wake(a)));
+    settle(batch, results);
   }
 
   state.end_reason = endReason;
