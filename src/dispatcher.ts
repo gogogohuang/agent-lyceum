@@ -148,15 +148,17 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   };
 
   const wake = async (agent: ResolvedAgent): Promise<{ ok: boolean }> => {
-    const unread = listUnread(project, agent.name);
-    if (unread.length === 0) return { ok: true };
+    const queue = listUnread(project, agent.name);
+    if (queue.length === 0) return { ok: true };
+    // One message per wake-up, oldest first; the rest stay unread for later wake-ups.
+    const unread = queue.slice(0, 1);
     const workDir = path.join(runDir, "agents", agent.name);
     const base = {
       project,
       agent,
       workDir,
       systemPrompt: buildSystemPrompt(project, agent),
-      userPrompt: buildUserPrompt(project, agent, unread),
+      userPrompt: buildUserPrompt(project, agent, queue),
       timeoutSec: cfg.wake_timeout_sec,
     };
     let result: WakeResult | undefined;

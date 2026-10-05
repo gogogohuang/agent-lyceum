@@ -113,27 +113,23 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   }
 
   const sorted = [...unread].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
-  const latest = sorted[sorted.length - 1];
-  const older = sorted.slice(0, -1);
+  const [current, ...queued] = sorted;
   parts.push("", "# Message to handle now");
-  if (!latest) parts.push("(no message)");
+  if (!current) parts.push("(no message)");
   else {
     parts.push(
-      `id: ${latest.meta.id}`,
-      `from: ${latest.meta.from}`,
-      `type: ${latest.meta.type}`,
-      `thread: ${latest.meta.thread}`,
-      `subject: ${latest.meta.subject}`,
+      `id: ${current.meta.id}`,
+      `from: ${current.meta.from}`,
+      `type: ${current.meta.type}`,
+      `thread: ${current.meta.thread}`,
+      `subject: ${current.meta.subject}`,
       "",
-      latest.body,
+      current.body,
     );
   }
-  if (older.length) {
-    parts.push("", "# Other unread messages (titles only; read the file if you need it)");
-    for (const m of older) {
-      const readPath = path.join(path.dirname(m.file), "read", path.basename(m.file));
-      parts.push(`- from ${m.meta.from} [${m.meta.type}] "${m.meta.subject}" -> ${readPath}`);
-    }
+  if (queued.length) {
+    parts.push("", "# Queued messages (not handled in this wake-up; each gets its own wake-up later, titles only)");
+    for (const m of queued) parts.push(`- from ${m.meta.from} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
   }
   return parts.join("\n");
 }
