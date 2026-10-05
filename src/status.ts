@@ -94,13 +94,28 @@ function describeRun(s: RunState, now: number): string[] {
 /** Live view: agent table plus the most recent runs, each with what it is doing. */
 export function formatMonitor(project: ResolvedProject, runLimit = 3, now = Date.now()): string {
   const runs = listRuns(project, runLimit);
-  const out = [formatStatus(project), "", "Runs (newest first):"];
+  const out = [formatStatus(project, now), "", "Runs (newest first):"];
   if (runs.length === 0) out.push("  none");
   for (const r of runs) out.push("", ...describeRun(r.state, now));
   return out.join("\n");
 }
 
-export function formatStatus(project: ResolvedProject): string {
+/** What is running right now in the latest run (or was, if its process died). */
+function activeNow(run: { state: RunState } | undefined, now: number): string[] {
+  const entries = Object.entries(run?.state.active ?? {});
+  if (!run || entries.length === 0) return ["Active now: idle"];
+  const live = alive(run.state.pid) && !run.state.end_reason;
+  return [
+    "Active now:",
+    ...entries.map(([agent, a]) =>
+      live
+        ? `  #${a.round} ${agent} WORKING for ${since(a.since, now)} — ${handlingText(a.handling)}`
+        : `  #${a.round} ${agent} interrupted (was working on) — ${handlingText(a.handling)}`,
+    ),
+  ];
+}
+
+export function formatStatus(project: ResolvedProject, now = Date.now()): string {
   const run = latestRun(project);
   const rows = [["agent", "runtime", "unread", "protection", "last wake"]];
   for (const a of Object.values(project.agents)) {
@@ -119,7 +134,7 @@ export function formatStatus(project: ResolvedProject): string {
   const table = rows.map((r) => r.map((c, i) => c.padEnd(w[i])).join("  ").trimEnd());
   table.splice(1, 0, w.map((n) => "-".repeat(n)).join("  "));
 
-  const lines = [`Project: ${project.name}  (repo: ${project.dir})`, "", ...table, ""];
+  const lines = [`Project: ${project.name}  (repo: ${project.dir})`, "", ...table, "", ...activeNow(run, now), ""];
   if (!run) lines.push("No runs yet.");
   else {
     const s = run.state;
