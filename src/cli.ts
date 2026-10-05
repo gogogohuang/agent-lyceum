@@ -229,7 +229,7 @@ program
         // Reload each tick so new mail, config edits and runs show up.
         let text: string;
         try {
-          text = formatMonitor(loadProject(opts.project), 3, Date.now(), useColor());
+          text = formatMonitor(loadProject(opts.project), Date.now(), useColor());
         } catch (e) {
           text = `(error: ${(e as Error).message})`;
         }
