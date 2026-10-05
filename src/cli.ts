@@ -202,6 +202,26 @@ program
   });
 
 /** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
+program
+  .command("clear <run-id>")
+  .description("Delete a task (run) by id: removes its run directory (state, log, result, snapshots). Refuses if it is still running.")
+  .option("-p, --project <name>")
+  .action((runId: string, opts: { project?: string }) => {
+    try {
+      assertName("run", runId);
+      const pr = loadProject(opts.project);
+      const dir = path.join(pr.paths.runs, runId);
+      const f = path.join(dir, "state.json");
+      if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+      const state = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (!state.end_reason && runIsAlive(state)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
 function useColor(): boolean {
   if (process.env.NO_COLOR) return false;
   if (process.env.FORCE_COLOR) return process.env.FORCE_COLOR !== "0";
