@@ -7,7 +7,7 @@ import { ProtectedGuard } from "./guard.js";
 import { atomicWrite, deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from "./mailbox.js";
 import { isInside } from "./paths.js";
 import { ownsDirs } from "./policy.js";
-import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
+import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
 export const RESULT_FILE = "result.md";
@@ -192,15 +192,15 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   const wake = async (agent: ResolvedAgent): Promise<{ ok: boolean }> => {
     const queue = listUnread(project, agent.name);
     if (queue.length === 0) return { ok: true };
-    // One message per wake-up, oldest first; the rest stay unread for later wake-ups.
-    const unread = queue.slice(0, 1);
+    // Oldest message per wake-up (the lead takes a run of replies at once); the rest stay unread for later wake-ups.
+    const unread = pickMessages(project, agent, queue);
     const workDir = path.join(runDir, "agents", agent.name);
     const base = {
       project,
       agent,
       workDir,
       systemPrompt: buildSystemPrompt(project, agent),
-      userPrompt: buildUserPrompt(project, agent, queue),
+      userPrompt: buildUserPrompt(project, agent, queue, unread.length),
       timeoutSec: cfg.wake_timeout_sec,
     };
     let result: WakeResult | undefined;

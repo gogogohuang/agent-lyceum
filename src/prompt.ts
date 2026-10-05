@@ -7,6 +7,8 @@ import { commonFile, memoryDirs, outboxDir } from "./policy.js";
 
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
+export const LEAD_BATCH_LIMIT = 5;
+const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
 function readCapped(file: string, limit: number): { text: string; truncated: boolean } | undefined {
   if (!fs.existsSync(file)) return undefined;
@@ -51,7 +53,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     isLead
       ? `When the whole job is finished, send a message with \`type: done\` (no \`to\` needed). That ends the run.`
       : `Report results to the lead by mail; the lead decides what happens next.`,
-    "Each wake-up handles one message. Do the work it asks, then send the replies that are needed, then stop.",
+    isLead
+      ? "Each wake-up handles one message, except that several `reply`/`failure` messages waiting together are handed to you in one wake-up: weigh them together, then decide the next step once."
+      : "Each wake-up handles one message. Do the work it asks, then send the replies that are needed, then stop.",
     "",
     "## Message format",
     "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
@@ -100,7 +104,19 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   return lines.join("\n");
 }
 
-export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[]): string {
+/** Messages one wake-up handles: the oldest one, or for the lead a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so it decides once on all of it. */
+export function pickMessages(project: ResolvedProject, agent: ResolvedAgent, queue: Message[]): Message[] {
+  const sorted = [...queue].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
+  if (agent.name !== project.lead || !BATCHABLE.has(sorted[0]?.meta.type)) return sorted.slice(0, 1);
+  const run: Message[] = [];
+  for (const m of sorted) {
+    if (!BATCHABLE.has(m.meta.type) || run.length >= LEAD_BATCH_LIMIT) break;
+    run.push(m);
+  }
+  return run;
+}
+
+export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1): string {
   const parts: string[] = [];
 
   const common = readCapped(commonFile(project), COMMON_LIMIT);
@@ -125,20 +141,22 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   }
 
   const sorted = [...unread].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
-  const [current, ...queued] = sorted;
-  parts.push("", "# Message to handle now");
-  if (!current) parts.push("(no message)");
-  else {
+  const current = sorted.slice(0, handleCount);
+  const queued = sorted.slice(handleCount);
+  parts.push("", current.length > 1 ? `# Messages to handle now (${current.length}, oldest first — decide on them together)` : "# Message to handle now");
+  if (current.length === 0) parts.push("(no message)");
+  current.forEach((m, i) => {
+    if (current.length > 1) parts.push("", `## Message ${i + 1} of ${current.length}`);
     parts.push(
-      `id: ${current.meta.id}`,
-      `from: ${current.meta.from}`,
-      `type: ${current.meta.type}`,
-      `thread: ${current.meta.thread}`,
-      `subject: ${current.meta.subject}`,
+      `id: ${m.meta.id}`,
+      `from: ${m.meta.from}`,
+      `type: ${m.meta.type}`,
+      `thread: ${m.meta.thread}`,
+      `subject: ${m.meta.subject}`,
       "",
-      current.body,
+      m.body,
     );
-  }
+  });
   if (queued.length) {
     parts.push("", "# Queued messages (not handled in this wake-up; each gets its own wake-up later, titles only)");
     for (const m of queued) parts.push(`- from ${m.meta.from} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
