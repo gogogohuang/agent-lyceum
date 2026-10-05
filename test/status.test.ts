@@ -57,6 +57,14 @@ describe("status: progress, next, flow", () => {
     expect(formatStatus(env.project(), NOW)).toContain("1/3 步驟 — 下一步：build");
   });
 
+  it("warns when the lead is done with unticked steps", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid, end_reason: "done", steps: [{ text: "design", done: true }, { text: "build", done: false }] });
+    const out = formatStatus(env.project(), NOW);
+    expect(out).toContain("仍有 1 項未勾選（如：build）");
+    expect(out).not.toContain("下一步：");
+  });
+
   it("falls back to rounds when there is no checklist", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid });

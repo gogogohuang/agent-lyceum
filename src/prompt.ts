@@ -66,6 +66,8 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
           "## Progress tracking (optional, shown in `agent-team status`)",
           "Put a `## Steps` heading with a checklist (`- [ ] step`, `- [x] finished step`) in the mail you send. Each time you send mail, re-list the full",
           "checklist with finished steps ticked; the latest one you send is what `status` reports as task progress.",
+          "Your final `done` mail must also include the full `## Steps` checklist. Tick only steps that were actually done and verified; leave undone ones",
+          "(e.g. build, app start, commit) unticked and say so in the mail instead of reporting them as finished.",
         ]
       : []),
     "",
