@@ -316,8 +316,24 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
   if (resume) settle([], []);
 
+  // When the lead was the last one woken and left every mailbox empty without a `done`, remind it once instead of ending silently.
+  let leadWasLast = false;
+  let nudged = false;
   while (!endReason) {
-    const pending = pendingAgents();
+    let pending = pendingAgents();
+    if (pending.length === 0 && leadWasLast && !nudged) {
+      nudged = true;
+      say("  lead left no mail and no done: reminding it to send one");
+      log("nudge", { to: project.lead });
+      deliver(project, {
+        from: "dispatcher",
+        to: project.lead,
+        type: "failure",
+        subject: "No done message sent",
+        body: `All mailboxes are empty and you have not sent a \`done\` message, so the run would end without a final report. If the job is finished and verified, send \`type: done\` now (with \`## Result\`, \`## Files\`, \`## Not done\`${state.steps ? " and the full `## Steps` checklist" : ""}). If work remains, send the \`task\` that continues it. Writing a summary in your reply text does not count: only mail is delivered.`,
+      });
+      pending = pendingAgents();
+    }
     if (pending.length === 0) {
       endReason = "idle";
       break;
@@ -328,6 +344,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     const batch = pickBatch(pending);
     const results = await Promise.all(batch.map((a) => wake(a)));
+    leadWasLast = batch.some((a) => a.name === project.lead);
+    if (batch.some((a) => a.name !== project.lead)) nudged = false;
     settle(batch, results);
   }
 

@@ -51,7 +51,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     "",
     `You may send to: ${recipients.join(", ") || "(nobody)"}.`,
     isLead
-      ? `When the whole job is finished, send a message with \`type: done\` (no \`to\` needed). That ends the run.`
+      ? `When the whole job is finished, send a message with \`type: done\` (no \`to\` needed). That ends the run. A summary in your reply text is never delivered and does not end the run: after the last teammate reply is verified you MUST send \`done\` (or a \`task\` for the remaining work), or the run stops as "idle" with no final report.`
       : `Report results to the lead by mail; the lead decides what happens next.`,
     isLead
       ? "Each wake-up handles one message, except that several `reply`/`failure` messages waiting together are handed to you in one wake-up: weigh them together, then decide the next step once."
