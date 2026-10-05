@@ -224,11 +224,11 @@ function describeRun(s: RunState, now: number, c: Paint): string[] {
   return lines;
 }
 
-/** Live view: summary and agent table, plus the most recent runs wake by wake. */
-export function formatMonitor(project: ResolvedProject, runLimit = 3, now = Date.now(), color = false): string {
+/** Live view: summary and agent table, plus the latest run and any run still going, wake by wake. */
+export function formatMonitor(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
-  const runs = listRuns(project, runLimit);
-  const out = [formatStatus(project, now, color), "", c.bold("執行紀錄（新到舊）：")];
+  const runs = listRuns(project, 50).filter((r, i) => i === 0 || (!r.state.end_reason && runIsAlive(r.state)));
+  const out = [formatStatus(project, now, color), "", c.bold("執行紀錄（最新／執行中）：")];
   if (runs.length === 0) out.push("  無");
   for (const r of runs) out.push("", ...describeRun(r.state, now, c));
   return out.join("\n");
