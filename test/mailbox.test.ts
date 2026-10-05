@@ -1,12 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { missingSections } from "../src/format.js";
 import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes } from "../src/mailbox.js";
 import { outboxDir } from "../src/policy.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
+
+const REPLY_BODY = "## Changes\nNone\n## Verification\nNone\n## Open items\nNone\n## Risks\nNone";
 
 function send(project: ReturnType<TestEnv["project"]>, from: string, name: string, fm: string, body = "hello") {
   write(path.join(outboxDir(project, from), name), `---\n${fm}\n---\n\n${body}\n`);
@@ -17,7 +20,7 @@ describe("mailbox routing", () => {
     env = makeEnv();
     const p = env.project();
     ensureProjectDirs(p);
-    send(p, "fe-member", "a.md", "to: lead\nfrom: qa-member\nsubject: done\nreply_to: abc123");
+    send(p, "fe-member", "a.md", "to: lead\nfrom: qa-member\nsubject: done\nreply_to: abc123", REPLY_BODY);
     const r = routeOutboxes(p);
     expect(r.rejected).toEqual([]);
     expect(r.delivered).toHaveLength(1);
@@ -25,7 +28,7 @@ describe("mailbox routing", () => {
     expect(m.meta.from).toBe("fe-member"); // spoofed `from` ignored
     expect(m.meta.thread).toBe("abc123");
     expect(m.meta.subject).toBe("done");
-    expect(m.body).toBe("hello");
+    expect(m.body).toBe(REPLY_BODY);
     expect(fs.existsSync(path.join(outboxDir(p, "fe-member"), "a.md"))).toBe(false);
   });
 
@@ -83,5 +86,42 @@ describe("mailbox routing", () => {
     expect(listUnread(p, "lead")).toHaveLength(0);
     expect(readMessage(path.join(path.dirname(a.file), "read", path.basename(a.file))).body).toBe("1");
     expect(b.meta.id).not.toBe(a.meta.id);
+  });
+});
+
+describe("message format check", () => {
+  it("matches headings case-insensitively at any level", () => {
+    expect(missingSections("reply", "# changes\n### Verification:\n## OPEN ITEMS ##\n## Risks")).toEqual([]);
+    expect(missingSections("reply", "## Changes\nx")).toEqual(["Verification", "Open items", "Risks"]);
+    expect(missingSections("task", "Goal: do it")).toEqual(["Goal", "Acceptance criteria", "Scope", "Upstream"]);
+  });
+
+  it("exempts done and failure", () => {
+    expect(missingSections("done", "all good")).toEqual([]);
+    expect(missingSections("failure", "oops")).toEqual([]);
+  });
+
+  it("delivers non-conforming mail with a warning note instead of rejecting it", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "fe-member", "w.md", "to: lead\nsubject: partial", "## Changes\nsrc/a.ts");
+    const r = routeOutboxes(p);
+    expect(r.rejected).toEqual([]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0].missing).toEqual(["Verification", "Open items", "Risks"]);
+    const [m] = listUnread(p, "lead");
+    expect(m.body).toMatch(/^\[agent-team\] Format warning:.*`## Verification`/);
+    expect(m.body).toContain("src/a.ts");
+  });
+
+  it("does not warn on conforming mail or on done", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "fe-member", "ok.md", "to: lead\nsubject: ok", REPLY_BODY);
+    expect(routeOutboxes(p).warnings).toEqual([]);
+    send(p, "lead", "d.md", "type: done\nsubject: shipped", "summary");
+    expect(routeOutboxes(p).warnings).toEqual([]);
   });
 });

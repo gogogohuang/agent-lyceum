@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
+import { formatWarning, missingSections } from "./format.js";
 import { inboxDir, outboxDir } from "./policy.js";
 
 export const MESSAGE_TYPES = ["task", "reply", "failure", "done"] as const;
@@ -129,12 +130,14 @@ export function markRead(files: string[]): void {
 export interface RouteResult {
   delivered: { from: string; to: string; id: string; file: string }[];
   rejected: { from: string; file: string; reason: string }[];
+  /** Mail that was delivered but lacks required sections (see format.ts). */
+  warnings: { from: string; id: string; subject: string; missing: string[] }[];
   done?: { from: string; subject: string; body: string };
 }
 
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. */
 export function routeOutboxes(project: ResolvedProject): RouteResult {
-  const res: RouteResult = { delivered: [], rejected: [] };
+  const res: RouteResult = { delivered: [], rejected: [], warnings: [] };
   for (const sender of Object.values(project.agents)) {
     const dir = outboxDir(project, sender.name);
     if (!fs.existsSync(dir)) continue;
@@ -206,9 +209,12 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
 
       const replyTo = d.reply_to ? String(d.reply_to) : undefined;
       const thread = d.thread ? String(d.thread) : undefined;
+      const missing = missingSections(type, parsed.body);
+      const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
       for (const to of targets) {
-        const m = deliver(project, { from: sender.name, to, type, subject, body: parsed.body, thread, reply_to: replyTo });
+        const m = deliver(project, { from: sender.name, to, type, subject, body, thread, reply_to: replyTo });
         res.delivered.push({ from: sender.name, to, id: m.meta.id, file: m.file });
+        if (missing.length) res.warnings.push({ from: sender.name, id: m.meta.id, subject, missing });
       }
       fs.mkdirSync(path.join(dir, "sent"), { recursive: true });
       fs.renameSync(file, path.join(dir, "sent", path.basename(file)));
