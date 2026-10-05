@@ -26,6 +26,11 @@ export function latestRun(project: ResolvedProject): { dir: string; state: RunSt
   return undefined;
 }
 
+/** Newest run that can still be resumed: not done and not currently running. */
+export function latestUnfinishedRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
+  return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !alive(r.state.pid)));
+}
+
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
   const root = project.paths.runs;
   if (!fs.existsSync(root)) return [];
