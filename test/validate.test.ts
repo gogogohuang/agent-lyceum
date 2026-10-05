@@ -75,4 +75,31 @@ describe("validate", () => {
     const e = validateProject(env.project()).enforcement.find((x) => x.agent === "fe-member")!;
     expect(e.repoInstructions).toBe("post-hoc");
   });
+
+  const feAgent = "  fe-member:\n    can_message";
+
+  it("errors when runtime cannot be determined", () => {
+    env = makeEnv();
+    const file = path.join(env.home, "team.yaml");
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/\n    runtime: claude-code\n    agent_md: agents\/fe-member/, "\n    agent_md: agents/fe-member"));
+    env.editProjectYaml((t) => t.replace(feAgent, "  fe-member:\n    model: my-custom-model\n    can_message"));
+    expect(errors(env).join("\n")).toMatch(/Agent "fe-member" has no runtime/);
+  });
+
+  it("rejects an effort level the runtime does not support", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(feAgent, "  fe-member:\n    runtime: codex\n    effort: max\n    can_message"));
+    expect(errors(env).join("\n")).toMatch(/effort "max" is not supported by codex/);
+
+    env.editProjectYaml((t) => t.replace("effort: max", "effort: minimal").replace("runtime: codex", "runtime: claude-code"));
+    expect(errors(env).join("\n")).toMatch(/effort "minimal" is not supported by claude-code/);
+  });
+
+  it("warns when runtime contradicts the model name", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(feAgent, "  fe-member:\n    runtime: claude-code\n    model: gpt-5\n    can_message"));
+    const res = validateProject(env.project());
+    expect(res.ok).toBe(true);
+    expect(res.issues.map((i) => i.message).join("\n")).toMatch(/model "gpt-5" looks like a codex model/);
+  });
 });
