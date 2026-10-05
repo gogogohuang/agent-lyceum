@@ -29,7 +29,7 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `project list` / `project remove <name> [--purge]` | List projects / unregister (keeps context unless `--purge`). |
 | `validate [-p name] [--task-file f]` | Validate the merged config and print each agent's enforcement level. Exit 1 on errors. |
 | `run ["task"] [--task-file f] [-p name]` | Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`. |
-| `resume [run-id] [-p name]` | Continue an interrupted or failed run (default: the latest): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive or already done. |
+| `resume [run-id] [-p name]` | Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive or already done. |
 | `status [-p name] [--monitor]` | Agents, unread mail, what is running right now (agent, elapsed time, message being handled), last run (task source, rounds, end reason, output tokens). `--monitor` keeps a live page open showing what each run and agent is doing. `--task-list [project]` lists every run of the project with its id, state, rounds and task (feed the id to `resume`). |
 
 Without `--project`, the project is the registered one whose `dir` is the longest prefix of the current directory; if none matches the command lists the registered projects and stops.

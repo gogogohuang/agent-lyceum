@@ -7,7 +7,7 @@ import { ConfigError, findProjectForCwd, listProjects, resolveProject, type Reso
 import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatMonitor, formatStatus, formatTaskList, latestRun, runIsAlive } from "./status.js";
+import { formatMonitor, formatStatus, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -162,7 +162,7 @@ program
 
 program
   .command("resume [run-id]")
-  .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent. Defaults to the latest run.")
+  .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent. Without an id, picks the newest run that is not done or running; with an id, continues that run.")
   .option("-p, --project <name>")
   .action(async (runId: string | undefined, opts: { project?: string }) => {
     try {
@@ -171,7 +171,7 @@ program
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
 
-      let found: ReturnType<typeof latestRun>;
+      let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
         assertName("run", runId);
         const dir = path.join(pr.paths.runs, runId);
@@ -179,8 +179,8 @@ program
         if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
         found = { dir, state: JSON.parse(fs.readFileSync(f, "utf8")) };
       } else {
-        found = latestRun(pr);
-        if (!found) fail("No runs to resume. Start one with: agent-team run \"<task>\"");
+        found = latestUnfinishedRun(pr);
+        if (!found) fail("No unfinished run to resume. Start one with: agent-team run \"<task>\"");
       }
       const { dir, state } = found!;
       if (!state.end_reason && runIsAlive(state)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
