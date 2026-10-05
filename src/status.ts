@@ -202,14 +202,16 @@ function summaryBlock(project: ResolvedProject, run: { dir?: string; state: RunS
 }
 
 /** What a run is doing / did, one line per wake. */
-function describeRun(s: RunState, now: number, c: Paint): string[] {
+function describeRun(s: RunState, now: number, c: Paint, limit = Infinity): string[] {
   const lines = [
     `${c.bold("執行 " + s.run_id)}  [${stateColor(c, runStateLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
     `  任務：${s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字")}`,
   ];
   const steps = stepsLine(s.steps, c);
   if (steps) lines.push(`  進度：${steps}`);
-  for (const w of s.wakes ?? []) {
+  const wakes = s.wakes ?? [];
+  if (wakes.length > limit) lines.push(c.dim(`  … 省略較早的 ${wakes.length - limit} 筆（不帶 --monitor 可看完整紀錄）`));
+  for (const w of limit < wakes.length ? wakes.slice(-limit) : wakes) {
     lines.push(
       `  #${w.round} ${c.cyan(w.agent)} ${okText(c, w.ok)} (${Math.round(w.duration_ms / 1000)}s, ${tokens(w.output_tokens)} tok) — ${handlingText(w.handling)}`,
       `      → ${sentText(w.sent)}`,
@@ -221,13 +223,34 @@ function describeRun(s: RunState, now: number, c: Paint): string[] {
   return lines;
 }
 
+const MONITOR_WAKES = 3;
+
 /** Live view: summary and agent table, plus the latest run and any run still going, wake by wake. */
 export function formatMonitor(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
   const runs = listRuns(project, 50).filter((r, i) => i === 0 || (!r.state.end_reason && runIsAlive(r.state)));
   const out = [formatStatus(project, now, color), "", c.bold("執行紀錄（最新／執行中）：")];
   if (runs.length === 0) out.push("  無");
-  for (const r of runs) out.push("", ...describeRun(r.state, now, c));
+  for (const r of runs) out.push("", ...describeRun(r.state, now, c, MONITOR_WAKES));
+  return out.join("\n");
+}
+
+/** Plain `status`: the status page followed by the full wake-by-wake record of the latest run. */
+export function formatStatusWithLog(project: ResolvedProject, now = Date.now(), color = false): string {
+  const c = paint(color);
+  const run = latestRun(project);
+  const out = [formatStatus(project, now, color)];
+  if (run) out.push("", c.bold("執行紀錄："), ...describeRun(run.state, now, c));
+  return out.join("\n");
+}
+
+/** One run in full: header, every wake, the final result, and where its logs live. */
+export function formatRunDetail(run: { dir: string; state: RunState }, now = Date.now(), color = false): string {
+  const c = paint(color);
+  const out = [...describeRun(run.state, now, c)];
+  const result = path.join(run.dir, RESULT_FILE);
+  if (fs.existsSync(result)) out.push("", c.bold("結果（" + result + "）："), fs.readFileSync(result, "utf8").trimEnd());
+  out.push("", c.dim(`目錄：${run.dir}`));
   return out.join("\n");
 }
 

@@ -7,7 +7,7 @@ import { ConfigError, findProjectForCwd, listProjects, resolveProject, type Reso
 import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatMonitor, formatStatus, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
+import { formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -233,17 +233,26 @@ program
   .description("Show agents, unread mail and the last run")
   .option("-p, --project <name>")
   .option("--task-list [project]", "list every task (run) of the project with its id and state")
+  .option("--task-id <id>", "show everything about one task (run): every wake and its result")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
-  .action(async (opts: { project?: string; taskList?: string | boolean; monitor?: boolean; interval: string }) => {
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string }) => {
     try {
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
       if (opts.taskList) {
         console.log(formatTaskList(pr, useColor()));
         return;
       }
+      if (opts.taskId) {
+        assertName("run", opts.taskId);
+        const dir = path.join(pr.paths.runs, opts.taskId);
+        const f = path.join(dir, "state.json");
+        if (!fs.existsSync(f)) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+        console.log(formatRunDetail({ dir, state: JSON.parse(fs.readFileSync(f, "utf8")) }, Date.now(), useColor()));
+        return;
+      }
       if (!opts.monitor) {
-        console.log(formatStatus(pr, Date.now(), useColor()));
+        console.log(formatStatusWithLog(pr, Date.now(), useColor()));
         return;
       }
       const sec = Number(opts.interval);
