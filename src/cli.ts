@@ -210,7 +210,7 @@ function useColor(): boolean {
 
 program
   .command("status")
-  .description("Show agents, unread mail, protection levels and the last run")
+  .description("Show agents, unread mail and the last run")
   .option("-p, --project <name>")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
