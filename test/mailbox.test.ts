@@ -111,7 +111,7 @@ describe("message format check", () => {
     expect(r.warnings).toHaveLength(1);
     expect(r.warnings[0].missing).toEqual(["Verification", "Open items", "Risks"]);
     const [m] = listUnread(p, "lead");
-    expect(m.body).toMatch(/^\[agent-team\] Format warning:.*`## Verification`/);
+    expect(m.body).toMatch(/^\[agent-lyceum\] Format warning:.*`## Verification`/);
     expect(m.body).toContain("src/a.ts");
   });
 

@@ -19,7 +19,7 @@ if (args[0] === "--help") {
 }
 fs.readFileSync(0);
 
-const me = process.env.AGENT_TEAM_AGENT ?? "";
+const me = process.env.AGENT_LYCEUM_AGENT ?? "";
 const dirs = args.flatMap((x, i) => (x === "--add-dir" ? [args[i + 1]] : []));
 const outbox = dirs.find((d) => d.endsWith(path.join("outbox", me)));
 const FULL = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Not done\nNone\n";

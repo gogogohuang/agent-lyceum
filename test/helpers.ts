@@ -15,7 +15,7 @@ export interface TestEnv {
 }
 
 export function makeEnv(name = "demo"): TestEnv {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-test-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-lyceum-test-"));
   const home = path.join(root, "home");
   const repo = path.join(root, "repo");
   fs.mkdirSync(repo, { recursive: true });

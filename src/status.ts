@@ -278,7 +278,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string): Status
   let run: { dir: string; state: RunState } | undefined;
   if (runId) {
     const dir = path.join(base.paths.runs, runId);
-    if (!fs.existsSync(path.join(dir, "state.json"))) throw new Error(`Run "${runId}" not found in ${base.paths.runs}. List ids with: agent-team status --task-list`);
+    if (!fs.existsSync(path.join(dir, "state.json"))) throw new Error(`Run "${runId}" not found in ${base.paths.runs}. List ids with: agent-lyceum status --task-list`);
     run = { dir, state: loadRunState(dir) };
   } else run = latestRun(base);
   // Mail is per run: count the unread mail of the run being shown.
@@ -450,7 +450,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
       .trimEnd();
   const table = rows.map(line);
   table.splice(1, 0, c.dim(w.map((n) => "-".repeat(n)).join("  ")));
-  return [head, "", ...table, "", c.dim("接續中斷的任務：agent-team resume <ID> -p " + report.project.name)].join("\n");
+  return [head, "", ...table, "", c.dim("接續中斷的任務：agent-lyceum resume <ID> -p " + report.project.name)].join("\n");
 }
 
 export function formatStatus(base: ResolvedProject, now = Date.now(), color = false): string {

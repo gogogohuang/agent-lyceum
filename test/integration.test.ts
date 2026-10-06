@@ -152,7 +152,7 @@ describe("integrateAgentChanges", () => {
     expect(r.status).toBe("blocked");
     if (r.status !== "blocked") return;
     expect(r.reason).toMatch(/src\/web\/a\.txt.*changed since/);
-    expect(r.branch).toBe("agent-team/run-1/fe-member");
+    expect(r.branch).toBe("agent-lyceum/run-1/fe-member");
     expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("my later edit\n"); // not overwritten
     expect(fs.existsSync(path.join(env.repo, "src/web/ok.txt"))).toBe(false); // all or nothing
     expect(git(env.repo, "show", `${r.branch}:src/web/a.txt`)).toBe("fe version"); // agent's work kept on its branch
@@ -275,10 +275,10 @@ describe("dispatcher integration", () => {
       return OK;
     });
     expect(leadPrompt).toContain("could not be brought into the repo");
-    expect(leadPrompt).toContain("agent-team/run-1/fe-member");
+    expect(leadPrompt).toContain("agent-lyceum/run-1/fe-member");
     expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n");
     expect(summary.outcome).toBe("blocked");
-    expect(summary.outcomeNote).toMatch(/fe-member.*agent-team\/run-1\/fe-member/);
+    expect(summary.outcomeNote).toMatch(/fe-member.*agent-lyceum\/run-1\/fe-member/);
     expect(loadRunState(runDir).blocked_integrations?.map((b) => b.agent)).toEqual(["fe-member"]);
   });
 

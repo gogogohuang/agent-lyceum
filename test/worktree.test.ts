@@ -37,7 +37,7 @@ describe("snapshotBase", () => {
     const status = git(env.repo, "status", "--porcelain");
 
     const ref = snapshotBase(env.project(), "run-1", 1);
-    expect(ref).toBe("refs/agent-team/run-1/base-1");
+    expect(ref).toBe("refs/agent-lyceum/run-1/base-1");
     expect(git(env.repo, "show", `${ref}:src/web/a.txt`)).toBe("lead edit");
     expect(git(env.repo, "show", `${ref}:src/web/new.txt`)).toBe("lead new file");
     expect(() => git(env.repo, "show", `${ref}:ignored.log`)).toThrow();
@@ -75,7 +75,7 @@ describe("prepareAgentWorkspace", () => {
     const qa = prepareAgentWorkspace(p, "run-1", "qa-member", ref);
     expect(fe.dir).toBe(path.join(p.paths.root, "worktrees", "run-1", "fe-member"));
     expect(fs.readFileSync(path.join(fe.dir, "src/web/a.txt"), "utf8")).toBe("lead edit\n");
-    expect(fe.branch).toBe("agent-team/run-1/fe-member");
+    expect(fe.branch).toBe("agent-lyceum/run-1/fe-member");
     expect(fs.existsSync(fe.gitDir)).toBe(true);
 
     write(path.join(fe.dir, "src/web/fe-only.txt"), "fe\n");

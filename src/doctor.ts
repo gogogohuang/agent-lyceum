@@ -40,7 +40,7 @@ type Probe = { state: "ok" | "missing" | "timeout" | "failed"; out: string };
 
 /** Run a read-only CLI query (`--version`, `--help`): bounded in time and output, never an agent task. */
 async function query(cmd: string, args: string[], opts: ProbeOptions): Promise<Probe> {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-probe-"));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-lyceum-probe-"));
   const inv: Invocation = {
     cmd,
     args,
@@ -121,7 +121,7 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
     const need = (cap: Cap, what: string, agents: string[]) => {
       if (!agents.length) return;
       if (cap === "no") checks.push({ level: "error", subject: c.runtime, message: `${agents.map((n) => `Agent "${n}"`).join(", ")}: the ${cmd} CLI does not support ${what}.` });
-      else if (cap === "unknown") checks.push({ level: "warn", subject: c.runtime, message: `Whether the ${cmd} CLI supports ${what} is unknown (needed by ${agents.join(", ")}); agent-team will try anyway.` });
+      else if (cap === "unknown") checks.push({ level: "warn", subject: c.runtime, message: `Whether the ${cmd} CLI supports ${what} is unknown (needed by ${agents.join(", ")}); agent-lyceum will try anyway.` });
     };
     need(c.json, "machine-readable (JSON) output, which every agent needs", users.map((a) => a.name));
     need(c.resume, "resuming sessions (resume: true)", users.filter((a) => a.resume).map((a) => `${a.name}`));
@@ -145,7 +145,7 @@ export async function preflightRuntimes(project: ResolvedProject, opts: ProbeOpt
   };
 }
 
-/** Everything `agent-team doctor` reports. Reads configuration and asks the CLIs for `--version`/`--help`; never runs an agent. */
+/** Everything `agent-lyceum doctor` reports. Reads configuration and asks the CLIs for `--version`/`--help`; never runs an agent. */
 export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptions = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const v = validateProject(project);
@@ -166,13 +166,13 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     checks.push({
       level: "warn",
       subject: "lock",
-      message: alive ? `A run is active: ${lock.run_id} (pid ${lock.pid}).` : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-team unlock --force\` clears it.`,
+      message: alive ? `A run is active: ${lock.run_id} (pid ${lock.pid}).` : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum unlock --force\` clears it.`,
     });
   }
 
   const runtimes = await probeProjectRuntimes(project, opts);
   checks.push(...judgeRuntimes(project, runtimes));
-  checks.push({ level: "info", subject: "login", message: "Login status is unknown: agent-team does not read credentials, and the CLIs offer no read-only login check it can rely on." });
+  checks.push({ level: "info", subject: "login", message: "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on." });
   return { project: project.name, ok: !checks.some((c) => c.level === "error"), checks, runtimes };
 }
 

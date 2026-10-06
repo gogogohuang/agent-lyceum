@@ -478,7 +478,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         : endReason === "max_rounds"
           ? "Stopped at the round limit before the lead sent done."
           : endReason === "cancelled"
-            ? "Cancelled before the lead finished. Unread mail was kept; continue with `agent-team resume`."
+            ? "Cancelled before the lead finished. Unread mail was kept; continue with `agent-lyceum resume`."
             : "The lead's wake-up failed.";
   state.end_reason = endReason;
   state.outcome = outcome;

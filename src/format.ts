@@ -18,7 +18,7 @@ export function missingSections(type: MessageType, body: string): string[] {
 }
 
 export function formatWarning(type: MessageType, missing: string[]): string {
-  return `[agent-team] Format warning: this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`;
+  return `[agent-lyceum] Format warning: this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`;
 }
 
 export interface Step {
@@ -50,7 +50,7 @@ export function briefOf(body: string): string | undefined {
       .trim()
       .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
       .trim();
-  const usable = (l: string) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-team]") && !/^none\.?$/i.test(l);
+  const usable = (l: string) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l);
   for (const want of ["changes", "goal"]) {
     const i = lines.findIndex((l) => new RegExp(`^#{1,6}[ \\t]+${want}[ \\t]*:?[ \\t]*#*[ \\t]*$`, "i").test(l));
     if (i < 0) continue;

@@ -56,7 +56,7 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   const runDir = path.join(project.paths.runs, runId);
   const hasRun = lexists(path.join(runDir, "state.json"));
   const hasJournal = fs.existsSync(journalFile(project, runId));
-  if (!hasRun && !hasJournal) throw new Error(`Run "${runId}" not found in ${project.paths.runs}. List ids with: agent-team status --task-list`);
+  if (!hasRun && !hasJournal) throw new Error(`Run "${runId}" not found in ${project.paths.runs}. List ids with: agent-lyceum status --task-list`);
 
   const plan: CleanupPlan = { project, runId, runDir, keepWorktrees, items: [], refusals: [], keep: [], summary: runId };
   if (hasRun) {
@@ -83,7 +83,7 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
     plan.items.push({ kind: "workspace", agent, path: w.root, label: `worktree and branch of ${agent} (${w.root}, ${w.branch}): its work is in the repo` });
   }
   if (!keepWorktrees && listSnapshotRefs(project, runId).length) {
-    plan.items.push({ kind: "refs", label: `snapshot refs refs/agent-team/${runId}/*` });
+    plan.items.push({ kind: "refs", label: `snapshot refs refs/agent-lyceum/${runId}/*` });
   }
   const mem = path.join(project.paths.taskMemory, runId);
   if (lexists(mem)) plan.items.push({ kind: "task-memory", path: mem, label: `task memory ${mem}` });

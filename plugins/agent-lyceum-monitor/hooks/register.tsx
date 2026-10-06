@@ -4,8 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { History, Report, Snapshots } from '../types'
 import { agentStats, runtimeTokens, clip, elapsed, line, overviewLine, parseProjects, progress, runLabel, tagToast, transition } from './summary'
 
-const PANE = 'agent-team'
-const snapshot = atom({ plugin: 'agent-team-monitor', key: 'snapshot' } as const, {} as Snapshots)
+const PANE = 'agent-lyceum'
+const snapshot = atom({ plugin: 'agent-lyceum-monitor', key: 'snapshot' } as const, {} as Snapshots)
 
 type Target = { key: string; status: string[]; tasks: string[] }
 
@@ -57,7 +57,7 @@ async function pollHistory($: EngineInterface, t: Target) {
 }
 
 export const register: Register = (on, options) => {
-  const base = String(options.command ?? 'agent-team').trim().split(/\s+/)
+  const base = String(options.command ?? 'agent-lyceum').trim().split(/\s+/)
   const names = parseProjects(options.project)
   several = names.length > 1
   const targets: Target[] = names.map(name => {
@@ -67,16 +67,16 @@ export const register: Register = (on, options) => {
   const every = Math.max(1, Number(options.intervalSeconds ?? 3)) * 1000
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'team-monitor', description: 'Show the agent-team run status in a pane' })
+    await $.command.register({ name: 'team-monitor', description: 'Show the agent-lyceum run status in a pane' })
     pollAll($, targets)
     $.clock.every(every, () => pollAll($, targets))
     return next(e)
   })
 
   on('command.run', { command: 'team-monitor' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'agent-team' })
+    await $.ui.open({ id: PANE, title: 'agent-lyceum' })
     pollAll($, targets)
-    return { text: 'agent-team pane opened.' }
+    return { text: 'agent-lyceum pane opened.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -183,7 +183,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Box>
-          <Text bold>agent-team {several ? `（${targets.length} 個專案）` : ''}</Text>
+          <Text bold>agent-lyceum {several ? `（${targets.length} 個專案）` : ''}</Text>
           <Button key="close" label="關閉" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
         {targets.map(section)}

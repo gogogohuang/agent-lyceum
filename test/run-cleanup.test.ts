@@ -187,8 +187,8 @@ describe("clear: worktrees and the work in them", () => {
     expect(plan.items.map((i) => i.kind)).toEqual(["workspace", "refs", "task-memory", "run"]);
     expect(executeRunCleanup(plan).failed).toEqual([]);
     expect(fs.existsSync(ws.root)).toBe(false);
-    expect(git(env.repo, "branch", "--list", "agent-team/*")).toBe("");
-    expect(git(env.repo, "for-each-ref", "refs/agent-team")).toBe("");
+    expect(git(env.repo, "branch", "--list", "agent-lyceum/*")).toBe("");
+    expect(git(env.repo, "for-each-ref", "refs/agent-lyceum")).toBe("");
     expect(git(env.repo, "worktree", "list", "--porcelain")).not.toContain("worktrees/run-a");
     expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("feature\n"); // the integrated work stays
   });
@@ -219,7 +219,7 @@ describe("clear: worktrees and the work in them", () => {
     expect(git(ws.root, "status", "--porcelain")).toBe("");
     const plan = planRunCleanup(p, "run-a");
     expect(plan.refusals.join("\n")).toMatch(/not (in|brought into) the repo|unintegrated/i);
-    expect(plan.refusals.join("\n")).toContain("agent-team/run-a/fe-member");
+    expect(plan.refusals.join("\n")).toContain("agent-lyceum/run-a/fe-member");
   });
 
   it("--keep-worktrees keeps the worktree and its branch but still clears the run and task memory", () => {
@@ -231,7 +231,7 @@ describe("clear: worktrees and the work in them", () => {
     expect(fs.existsSync(runDir)).toBe(false);
     expect(exists(p.paths.taskMemory, "run-a")).toBe(false);
     expect(fs.readFileSync(path.join(ws.dir, "src/web/feature.txt"), "utf8")).toBe("feature\n");
-    expect(git(env.repo, "branch", "--list", "agent-team/run-a/fe-member")).toContain("agent-team/run-a/fe-member");
+    expect(git(env.repo, "branch", "--list", "agent-lyceum/run-a/fe-member")).toContain("agent-lyceum/run-a/fe-member");
   });
 });
 

@@ -21,8 +21,8 @@ coverage/
 .idea/
 .vscode/
 
-# agent-team runtime data should never live in this repo (home is ~/agent-team-config)
-agent-team-config/
+# agent-lyceum runtime data should never live in this repo (home is ~/agent-lyceum-config)
+agent-lyceum-config/
 
 # devlog-tracker records your prompts verbatim: keep it out of version control
 .devlog/
