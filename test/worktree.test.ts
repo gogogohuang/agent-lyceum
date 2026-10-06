@@ -219,7 +219,7 @@ describe("dispatcher with worktrees", () => {
     expect(s.endReason).toBe("done");
     expect(where.lead).toBeUndefined();
     expect(where["fe-member"]).toBe(path.join(env.project().paths.root, "worktrees", "run-1", "fe-member"));
-    expect(fs.existsSync(path.join(env.repo, "src/web/from-fe.txt"))).toBe(false); // not in the main repo (Task 8 integrates it)
+    expect(fs.readFileSync(path.join(env.repo, "src/web/from-fe.txt"), "utf8")).toBe("fe\n"); // brought into the main repo once fe-member finished
     expect(fs.existsSync(path.join(where["fe-member"]!, "src/web/from-fe.txt"))).toBe(true);
   });
 

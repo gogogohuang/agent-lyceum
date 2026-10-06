@@ -152,13 +152,13 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `snapshotBase(project: ResolvedProject, runId: string, n: number): string`（回傳快照 ref）；`prepareAgentWorkspace(project: ResolvedProject, runId: string, agent: string, baseRef: string): AgentWorkspace`；`removeAgentWorkspace(workspace: AgentWorkspace): void`。
 
-- [ ] 寫臨時 Git repo 測試：成員修改彼此不可見；run 啟動時主 repo 已有使用者未提交修改則拒絕平行模式（記錄 `baseline_dirty_paths` 於 run state）；run 期間 lead 自己產生的修改不觸發拒絕，且成員 worktree 能看到它們；沒有 Git 時僅序列可用。
-- [ ] 執行 `npm test -- test/worktree.test.ts`，確認先失敗。
-- [ ] 平行回合開始前，以 `git commit-tree` 對主 repo 工作樹（含 lead 未提交修改）建立快照 commit，存為 `refs/agent-team/<run-id>/base-<n>`，不改動 HEAD 與使用者 branch。不屬於 tracked 或 lead 產生的無關未追蹤檔案處理方式須在文件說明。
-- [ ] worktree 放在專案 home 的 `worktrees/<run-id>/<agent>`，以同一快照建立專屬 branch；新增 `dispatcher.workspace_mode: "auto" | "shared" | "worktree"`，auto 在 max_parallel >1 使用 worktree，shared 與平行組合拒絕。
-- [ ] adapter cwd 與 writable roots 使用 agent workspace；resume 重用既有 worktree。
-- [ ] 執行 worktree、validate、adapters、dispatcher 測試及 typecheck，預期全部通過；文件說明 worktree 仍不能隔離外部服務副作用。
-- [ ] 提交：`feat: isolate parallel agents in git worktrees`。
+- [x] 寫臨時 Git repo 測試：成員修改彼此不可見；run 啟動時主 repo 已有使用者未提交修改則拒絕平行模式（記錄 `baseline_dirty_paths` 於 run state）；run 期間 lead 自己產生的修改不觸發拒絕，且成員 worktree 能看到它們；沒有 Git 時僅序列可用。
+- [x] 執行 `npm test -- test/worktree.test.ts`，確認先失敗。
+- [x] 平行回合開始前，以 `git commit-tree` 對主 repo 工作樹（含 lead 未提交修改）建立快照 commit，存為 `refs/agent-team/<run-id>/base-<n>`，不改動 HEAD 與使用者 branch。不屬於 tracked 或 lead 產生的無關未追蹤檔案處理方式須在文件說明。
+- [x] worktree 放在專案 home 的 `worktrees/<run-id>/<agent>`，以同一快照建立專屬 branch；新增 `dispatcher.workspace_mode: "auto" | "shared" | "worktree"`，auto 在 max_parallel >1 使用 worktree，shared 與平行組合拒絕。
+- [x] adapter cwd 與 writable roots 使用 agent workspace；resume 重用既有 worktree。
+- [x] 執行 worktree、validate、adapters、dispatcher 測試及 typecheck，預期全部通過；文件說明 worktree 仍不能隔離外部服務副作用。
+- [x] 提交：`feat: isolate parallel agents in git worktrees`。
 
 ### Task 8：變更收集與整合
 
@@ -166,13 +166,13 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `collectAgentChanges(workspace: AgentWorkspace, owns: string[]): ChangeSet`；`integrateAgentChanges(project: ResolvedProject, changes: ChangeSet): IntegrationResult`。IntegrationResult 為 `integrated | blocked` 並包含原因及保存路徑。
 
-- [ ] 寫臨時 Git repo 測試：越出 owns 的 diff 被拒絕整合；刪除與 rename 都驗證邊界；符號連結逃逸被拒絕；整合衝突保留 agent commit 與報告。
-- [ ] 補測試：兩成員修改不同檔案皆整合成功；同檔衝突時 blocked 並保留兩邊；整合前同一路徑又被修改時標示 blocked，不 reset 或覆寫；整合結果不移動使用者的 HEAD 或 branch。
-- [ ] 執行 `npm test -- test/integration.test.ts`，確認先失敗。
-- [ ] 成員完成後在其 worktree 提交；整合以 `git diff base-<n>..<member>` 搭配 `git apply --3way` 套用到主 repo 工作樹，且僅在這些路徑自快照後未被改動時進行，否則 blocked。owns 以 repo-relative diff 驗證。
-- [ ] 整合在專案鎖下序列進行，與 lead 不並行；blocked 時結果對應 Task 6 的 `blocked` outcome。
-- [ ] 執行 integration、worktree、dispatcher 測試及 typecheck，預期全部通過。
-- [ ] 提交：`feat: integrate agent worktree changes safely`。
+- [x] 寫臨時 Git repo 測試：越出 owns 的 diff 被拒絕整合；刪除與 rename 都驗證邊界；符號連結逃逸被拒絕；整合衝突保留 agent commit 與報告。
+- [x] 補測試：兩成員修改不同檔案皆整合成功；同檔衝突時 blocked 並保留兩邊；整合前同一路徑又被修改時標示 blocked，不 reset 或覆寫；整合結果不移動使用者的 HEAD 或 branch。
+- [x] 執行 `npm test -- test/integration.test.ts`，確認先失敗。
+- [x] 成員完成後在其 worktree 提交；整合以 `git diff base-<n>..<member>` 搭配 `git apply --3way` 套用到主 repo 工作樹，且僅在這些路徑自快照後未被改動時進行，否則 blocked。owns 以 repo-relative diff 驗證。
+- [x] 整合在專案鎖下序列進行，與 lead 不並行；blocked 時結果對應 Task 6 的 `blocked` outcome。
+- [x] 執行 integration、worktree、dispatcher 測試及 typecheck，預期全部通過。
+- [x] 提交：`feat: integrate agent worktree changes safely`。
 
 ### Task 9：取消、timeout 與串流程序輸出
 
@@ -244,7 +244,8 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 - Phase A（Task 1–6）已於分支 `feat/reliable-runs-phase-a` 實作並通過 `npm run typecheck`、`npm test`（117 項）、`npm run build`。
 - 與計畫的差異：專案鎖以暫存檔＋hard link 原子建立並記錄 `ps` 啟動時間（不另記 boot id）；新增 `unlock --force` 指令；`recoverRunMail` 另回傳 `ready`、`interrupted` 供 dispatcher 使用。
-- 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 驗證）。
+- Task 7、8 已實作（commit `feat: isolate parallel agents in git worktrees`、`feat: integrate agent worktree changes safely`）。與計畫的差異：快照包含 lead 未提交的修改與「新增且未被 ignore」的檔案（而非只含已追蹤檔）；整合用 `git apply`（不加 `--3way`，因為已先逐檔確認自快照後未被改動，`--3way` 會連帶動到使用者的 index）；run 啟動時主 repo 有未提交修改就拒絕，因此沒有另存 `baseline_dirty_paths`；整合被擋時以 `blocked_integrations` 記在 run state，run 不能以 `completed` 結束。
+- 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準
 

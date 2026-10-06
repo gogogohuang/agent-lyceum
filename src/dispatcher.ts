@@ -11,7 +11,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, existingAgentWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
@@ -256,6 +256,36 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     return { ok: true };
   };
 
+  /**
+   * A finished member's files go from its worktree into the repo before anyone reads its mail, so the lead
+   * sees them. When that cannot be done, nothing is applied, the member's work stays on its branch, and the lead is told.
+   */
+  const integrateMember = (agent: ResolvedAgent, ws: AgentWorkspace, key: string): void => {
+    const changes = collectAgentChanges(ws, agent.owns);
+    const r = integrateAgentChanges(project, changes);
+    log("integrate", { agent: agent.name, status: r.status, files: changes.files.map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
+    const blocked = (state.blocked_integrations ?? []).filter((b) => b.agent !== agent.name);
+    if (r.status === "integrated") {
+      state.blocked_integrations = blocked;
+      if (r.files.length) say(`  ${agent.name}: ${r.files.length} changed file(s) brought into the repo`);
+      return;
+    }
+    state.blocked_integrations = [...blocked, { agent: agent.name, branch: r.branch, reason: r.reason, report: r.report }];
+    say(`  ${agent.name}: changes NOT brought into the repo (${r.reason.split("\n")[0]})`);
+    deliverOnce(project, journal(), `integration:${key}`, {
+      from: "dispatcher",
+      to: project.lead,
+      type: "failure",
+      subject: `${agent.name}'s changes could not be brought into the repo`,
+      body:
+        `${agent.name} finished, but its changes could not be brought into the repo, and nothing was applied.\n\n${r.reason}\n\n` +
+        `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
+        `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. ` +
+        `Do not report the job \`completed\` while this work is missing from the repo.`,
+    });
+    saveState();
+  };
+
   /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
   const settle = (batch: ResolvedAgent[], results: { ok: boolean }[]): void => {
     const violations = guard.check(batch);
@@ -271,6 +301,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       });
     }
 
+    batch.forEach((a, i) => {
+      const ws = batchSpaces[a.name];
+      if (ws && results[i]?.ok) integrateMember(a, ws, claims.get(a.name)?.id ?? `${a.name}-${state.rounds}`);
+    });
     const route = routeOutboxes(project);
     // A done that breaks the completion contract goes back to the lead (a limited number of times).
     let contract: DoneContract | undefined;
@@ -326,6 +360,11 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       doneOutcome = ok ? contract!.outcome! : "partial";
       doneVerification = contract?.verification;
       doneNote = ok ? undefined : `Completion contract not met after ${state.done_rejections ?? 0} reminder(s): missing ${contract!.missing.join("; ")}. Reported as partial; the lead's report is kept as written.`;
+      const unintegrated = state.blocked_integrations ?? [];
+      if (doneOutcome === "completed" && unintegrated.length) {
+        doneOutcome = "blocked";
+        doneNote = `Not completed: work of ${unintegrated.map((b) => `${b.agent} (branch ${b.branch})`).join(", ")} was never brought into the repo; see ${unintegrated.map((b) => b.report).join(", ")}.`;
+      }
       atomicWrite(
         path.join(runDir, RESULT_FILE),
         `# ${route.done.subject}\n\n**Outcome:** ${doneOutcome}${doneNote ? ` (${doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`,
@@ -352,6 +391,14 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     if (rec.abandoned.length || rec.finalized.length || rec.ready.length) {
       log("recover", { abandoned: rec.abandoned.map((c) => c.id), finalized: rec.finalized, ready: rec.ready.map((c) => c.id) });
+    }
+    // A member whose wake-up finished before the crash: bring its files in (repeating is harmless) before its mail is routed.
+    if (wsMode === "worktree") {
+      for (const c of rec.ready) {
+        const agent = project.agents[c.agent];
+        const ws = agent && agent.name !== project.lead ? existingAgentWorkspace(project, runId, agent.name) : undefined;
+        if (agent && ws) integrateMember(agent, ws, c.id);
+      }
     }
     for (const c of rec.abandoned) say(`  ${c.agent}'s unfinished wake-up is redone: its ${c.message_ids.length} message(s) stay unread`);
     settle([], []);

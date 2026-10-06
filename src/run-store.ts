@@ -72,6 +72,8 @@ export interface RunState {
   notes?: string[];
   /** "worktree": non-lead agents work in their own git worktrees. */
   workspace_mode?: "shared" | "worktree";
+  /** Agents whose finished work could not be brought into the repo yet; their work is kept on their branch. */
+  blocked_integrations?: { agent: string; branch: string; reason: string; report: string }[];
   /** Snapshots of the repo taken so far (`refs/agent-team/<run>/base-<n>`). */
   snapshots?: number;
   sessions: Record<string, string>;
