@@ -5,6 +5,11 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
 import { commonFile, memoryDirs, outboxDir } from "./policy.js";
 
+function memoryLabel(agent: ResolvedAgent, dir: string): string {
+  if (dir === agent.memory.task) return "task (this task only, isolated)";
+  return dir === agent.memory.global ? "global (all projects)" : "project (all tasks of this project)";
+}
+
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
 export const LEAD_BATCH_LIMIT = 5;
@@ -82,13 +87,15 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   const mems = memoryDirs(agent);
   if (mems.length === 0) lines.push("You have no long-term memory directory.");
   for (const m of mems) {
-    const label = m === agent.memory.global ? "global (all projects)" : "this project";
+    const label = memoryLabel(agent, m);
     lines.push(`- ${label}: \`${m}\``);
   }
   if (mems.length) {
     lines.push(
       "Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt",
-      "on every wake-up; read other memory files on demand. Save durable facts, decisions and lessons there; you can write only inside these directories.",
+      "on every wake-up; read other memory files on demand; you can write only inside these directories.",
+      "Put anything specific to the current task (decisions, progress, findings, branch names) in the **task** memory: it is private to this task and starts empty for every new task.",
+      "Use the global/project memory only for durable lessons that stay true across tasks; never record task-specific details there.",
     );
   }
   lines.push("", "## Rules");
@@ -131,7 +138,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
 
   for (const dir of memoryDirs(agent)) {
     const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
-    const label = dir === agent.memory.global ? "global" : "project";
+    const label = memoryLabel(agent, dir).split(" ")[0];
     parts.push("", `# Your ${label} memory index (${dir}/MEMORY.md)`);
     if (!idx) parts.push("(no MEMORY.md yet — create one when you have something worth keeping)");
     else {

@@ -47,7 +47,7 @@ export function repoInstructionFiles(project: ResolvedProject): string[] {
 }
 
 export function memoryDirs(a: ResolvedAgent): string[] {
-  return [a.memory.global, a.memory.project].filter((x): x is string => !!x);
+  return [a.memory.global, a.memory.project, a.memory.task].filter((x): x is string => !!x);
 }
 
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {

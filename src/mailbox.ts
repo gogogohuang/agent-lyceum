@@ -64,7 +64,7 @@ export function ensureProjectDirs(project: ResolvedProject): void {
     fs.mkdirSync(path.join(inboxDir(project, name), "read"), { recursive: true });
     fs.mkdirSync(path.join(outboxDir(project, name), "rejected"), { recursive: true });
     const a = project.agents[name];
-    for (const m of [a.memory.global, a.memory.project]) if (m) fs.mkdirSync(m, { recursive: true });
+    for (const m of [a.memory.global, a.memory.project, a.memory.task]) if (m) fs.mkdirSync(m, { recursive: true });
   }
 }
 

@@ -144,6 +144,21 @@ describe("dispatcher", () => {
     expect(s.rounds).toBe(2); // first wake + one reminder wake
   });
 
+  it("gives every run its own task memory dir per agent", async () => {
+    env = makeEnv();
+    const dirs: string[] = [];
+    const s = await run(async (i) => {
+      dirs.push(i.agent.memory.task ?? "");
+      if (i.agent.name === "lead") mail(i, "lead", "bye", "done");
+      return OK;
+    });
+    const p = env.project();
+    expect(dirs[0]).toBe(path.join(p.paths.taskMemory, s.runId, "lead"));
+    expect(fs.existsSync(dirs[0])).toBe(true);
+    const other = path.join(p.paths.taskMemory, "other-run", "lead");
+    expect(dirs[0]).not.toBe(other);
+  });
+
   it("reminds the lead once when it ends a run without done, and accepts done then", async () => {
     env = makeEnv();
     const prompts: string[] = [];
