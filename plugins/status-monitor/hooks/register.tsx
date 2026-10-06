@@ -79,6 +79,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'status-monitor' }, async ($, e) => {
+    const { isFullscreen, columns } = e.presentation
     // No closeOnEscape: Esc must not touch the pane. Running the command again closes it.
     if ((await $.ui.panes()).some(x => x.id === PANE && x.isPlaced)) {
       await $.ui.close({ id: PANE })
@@ -87,7 +88,9 @@ export const register: Register = (on, options) => {
     const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
-    return { text: 'agent-lyceum pane opened. Click 關閉 or run /status-monitor again to close it; click a tab to switch task.' }
+    // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
+    const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns)`
+    return { text: `agent-lyceum pane opened, ${where}. Click 關閉 or run /status-monitor again to close it; click a tab to switch task.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
