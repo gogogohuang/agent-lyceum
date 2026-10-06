@@ -171,9 +171,9 @@ export const register: Register = (on, options) => {
         )}
         {(history ?? []).length > 1 && <Text bold>歷史執行</Text>}
         {(history ?? []).length > 1 &&
-          (history ?? []).slice(-5).map(h => (
-            <Text dimColor={h.run_id !== run?.run_id}>
-              {h.run_id} {runLabel(h as never)} {h.rounds}/{h.max_rounds} 輪 · {h.output_tokens.toLocaleString('en-US')} tok · {clip(h.task_summary, 40)}
+          (history ?? []).slice(-5).map(past => (
+            <Text dimColor={past.run_id !== run?.run_id}>
+              {past.run_id} {runLabel(past as never)} {past.rounds}/{past.max_rounds} 輪 · {past.output_tokens.toLocaleString('en-US')} tok · {clip(past.task_summary, 40)}
             </Text>
           ))}
         </Box>
