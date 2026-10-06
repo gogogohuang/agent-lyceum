@@ -346,7 +346,8 @@ describe("resume", () => {
     st.sessions = { lead: "sess-1" };
     st.active = { lead: { round: st.rounds, since: new Date().toISOString(), handling: [] } };
     fs.writeFileSync(path.join(runDir, "state.json"), JSON.stringify(st));
-    // A killed wake never marked its mail read; undo the failed wake's markRead.
+    // A killed wake never consumed its mail: undo the failed wake's commit (mail back in the inbox, no claim record).
+    fs.rmSync(path.join(runDir, "mail", "claims"), { recursive: true, force: true });
     const leadInbox = inboxDir(bindRunProject(env.project(), runDir, "run"), "lead");
     for (const f of fs.readdirSync(path.join(leadInbox, "read"))) fs.renameSync(path.join(leadInbox, "read", f), path.join(leadInbox, f));
 

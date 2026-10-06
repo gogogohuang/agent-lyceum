@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
-import { atomicWrite } from "./mailbox.js";
+import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 
 export const STATE_FILE = "state.json";

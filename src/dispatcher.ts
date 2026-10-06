@@ -4,10 +4,12 @@ import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js"
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { briefOf, parseSteps } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from "./mailbox.js";
+import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, routeOutboxes } from "./mailbox.js";
+import { claimMessages, commitClaim, markOutputReady, recoverRunMail, RouteJournal, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
+import { atomicWrite } from "./fs-util.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
@@ -98,6 +100,11 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
   let endReason: EndReason | undefined;
   let doneMessage: RunSummary["doneMessage"];
+  /** The lead's done file; it leaves the outbox only after the result and end state are stored. */
+  let pendingDoneFile: string | undefined;
+  /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
+  const claims = new Map<string, ClaimRecord>();
+  const journal = () => new RouteJournal(runDir);
 
   const pendingAgents = (): ResolvedAgent[] => {
     const rows = Object.values(project.agents)
@@ -132,6 +139,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     if (queue.length === 0) return { ok: true };
     // Oldest message per wake-up (the lead takes a run of replies at once); the rest stay unread for later wake-ups.
     const unread = pickMessages(project, agent, queue);
+    const claim = claimMessages(runDir, agent.name, unread);
+    claims.set(agent.name, claim);
     const workDir = path.join(runDir, "agents", agent.name);
     const base = {
       project,
@@ -190,10 +199,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       if (result.ok) break;
       say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
     }
-    markRead(unread.map((m) => m.file));
+    if (result?.ok) markOutputReady(runDir, claim.id);
     if (!result?.ok) {
       if (agent.name === project.lead) return { ok: false };
-      deliver(project, {
+      deliverOnce(project, journal(), `wakefail:${claim.id}`, {
         from: "dispatcher",
         to: project.lead,
         type: "failure",
@@ -230,6 +239,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     if (route.done) handedOff(route.done.from, { to: "(done)", type: "done", subject: route.done.subject });
     if (route.steps) state.steps = route.steps;
     saveState();
+    // Output is routed: only now is the input these wake-ups handled consumed.
+    for (const a of batch) {
+      const c = claims.get(a.name);
+      if (!c) continue;
+      commitClaim(runDir, c.id);
+      claims.delete(a.name);
+    }
     for (const w of route.warnings) {
       say(`  format warning: mail ${w.id} from ${w.from} lacks ${w.missing.join(", ")}`);
       log("format-warning", w);
@@ -240,7 +256,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     if (route.done) {
       doneMessage = { subject: route.done.subject, body: route.done.body };
-      fs.writeFileSync(path.join(runDir, RESULT_FILE), `# ${route.done.subject}\n\n${route.done.body.trimEnd()}\n`);
+      atomicWrite(path.join(runDir, RESULT_FILE), `# ${route.done.subject}\n\n${route.done.body.trimEnd()}\n`);
+      pendingDoneFile = route.done.file;
       log("done", { subject: route.done.subject });
       endReason = "done";
       return;
@@ -252,7 +269,16 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
   };
 
-  if (resume) settle([], []);
+  if (resume) {
+    const rec = recoverRunMail(runDir);
+    if (rec.abandoned.length || rec.finalized.length || rec.ready.length) {
+      log("recover", { abandoned: rec.abandoned.map((c) => c.id), finalized: rec.finalized, ready: rec.ready.map((c) => c.id) });
+    }
+    for (const c of rec.abandoned) say(`  ${c.agent}'s unfinished wake-up is redone: its ${c.message_ids.length} message(s) stay unread`);
+    settle([], []);
+    // Wake-ups that had finished before the crash: their output is routed now, so their input is consumed.
+    for (const c of rec.ready) commitClaim(runDir, c.id);
+  }
 
   // When the lead was the last one woken and left every mailbox empty without a `done`, remind it once instead of ending silently.
   let leadWasLast = false;
@@ -263,7 +289,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       nudged = true;
       say("  lead left no mail and no done: reminding it to send one");
       log("nudge", { to: project.lead });
-      deliver(project, {
+      deliverOnce(project, journal(), `nudge:${state.rounds}`, {
         from: "dispatcher",
         to: project.lead,
         type: "failure",
@@ -291,5 +317,6 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   state.ended_at = new Date().toISOString();
   log("end", { reason: endReason, rounds: state.rounds });
   saveState();
+  if (pendingDoneFile) finishDone(pendingDoneFile);
   return { runId, runDir, rounds: state.rounds, endReason, doneMessage };
 }

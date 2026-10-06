@@ -59,7 +59,7 @@ describe("mailbox routing", () => {
     expect(r.rejected[0].reason).toMatch(/only the lead/);
 
     send(p, "lead", "d2.md", "type: done\nsubject: shipped", "summary");
-    expect(routeOutboxes(p).done).toEqual({ from: "lead", subject: "shipped", body: "summary" });
+    expect(routeOutboxes(p).done).toMatchObject({ from: "lead", subject: "shipped", body: "summary" });
   });
 
   it("rejects malformed mail", () => {

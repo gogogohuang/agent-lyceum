@@ -128,7 +128,8 @@ describe("run-scoped mailboxes", () => {
       log: () => {},
     });
     expect(seen).toEqual(["fe-member:true"]);
-    expect(fs.existsSync(path.join(runDir, "mail"))).toBe(false);
+    expect(fs.existsSync(path.join(runDir, "mail", "inbox"))).toBe(false);
+    expect(fs.existsSync(path.join(runDir, "mail", "outbox"))).toBe(false);
     expect(loadRunState(runDir).mail_layout).toBe("legacy");
   });
 });

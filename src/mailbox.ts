@@ -4,7 +4,11 @@ import path from "node:path";
 import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
 import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
+import { atomicWrite } from "./fs-util.js";
+import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir } from "./policy.js";
+
+export { atomicWrite };
 
 export const MESSAGE_TYPES = ["task", "reply", "failure", "done"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
@@ -52,14 +56,6 @@ export function parseRaw(text: string): { data: Record<string, unknown>; body: s
   return { data: data as Record<string, unknown>, body: m[2].trim() };
 }
 
-/** Atomic write: temp file in the same dir, then rename. */
-export function atomicWrite(file: string, content: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
-  fs.writeFileSync(tmp, content);
-  fs.renameSync(tmp, file);
-}
-
 export function ensureProjectDirs(project: ResolvedProject): void {
   fs.mkdirSync(path.join(project.paths.shared, "common"), { recursive: true });
   for (const name of Object.keys(project.agents)) {
@@ -70,12 +66,19 @@ export function ensureProjectDirs(project: ResolvedProject): void {
   }
 }
 
+export interface DeliverInput {
+  from: string;
+  to: string;
+  type: MessageType;
+  subject: string;
+  body: string;
+  thread?: string;
+  reply_to?: string;
+}
+
 /** Deliver a message into `to`'s inbox (dispatcher-side; senders other than agents allowed). */
-export function deliver(
-  project: ResolvedProject,
-  input: { from: string; to: string; type: MessageType; subject: string; body: string; thread?: string; reply_to?: string },
-): Message {
-  const id = newId();
+export function deliver(project: ResolvedProject, input: DeliverInput & { id?: string; created?: string; fileName?: string }): Message {
+  const id = input.id ?? newId();
   const meta: MessageMeta = {
     id,
     from: input.from,
@@ -84,12 +87,57 @@ export function deliver(
     ...(input.reply_to ? { reply_to: input.reply_to } : {}),
     type: input.type,
     subject: input.subject,
-    created: new Date().toISOString(),
+    created: input.created ?? new Date().toISOString(),
     ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
   };
-  const file = path.join(inboxDir(project, input.to), `${stamp()}-${input.from}-${id}.md`);
+  const file = path.join(inboxDir(project, input.to), input.fileName ?? `${stamp()}-${input.from}-${id}.md`);
   atomicWrite(file, serialize(meta, input.body));
   return { meta, body: input.body, file };
+}
+
+/**
+ * Deliver the mail identified by `(sourceKey, input.to)` at most once, even across crashes and restarts:
+ * the plan (id, file name, timestamp) is journaled before anything is written, a retry writes the identical file,
+ * and mail the recipient already read is never written again. Without a run (no journal) it just delivers.
+ */
+export function deliverOnce(project: ResolvedProject, journal: RouteJournal | undefined, sourceKey: string, input: DeliverInput): { msg: Message; fresh: boolean } {
+  if (!journal) return { msg: deliver(project, input), fresh: true };
+  const prior = journal.get(sourceKey, input.to);
+  const planned =
+    prior ??
+    journal.intent({
+      source: sourceKey,
+      to: input.to,
+      msg_id: deterministicId(sourceKey, input.to),
+      file: `${stamp()}-${input.from}-${deterministicId(sourceKey, input.to)}.md`,
+      created: new Date().toISOString(),
+    });
+  fault("route:intent");
+  const dest = path.join(inboxDir(project, input.to), planned.file);
+  const meta = deliveredMeta(project, input, planned);
+  const want = serialize(meta, input.body);
+  const alreadyRead = fs.existsSync(path.join(path.dirname(dest), "read", planned.file));
+  // Write the planned file; if one is already there, verify it instead of trusting it. Mail already read is never written again.
+  if (!alreadyRead && (!fs.existsSync(dest) || fs.readFileSync(dest, "utf8") !== want)) atomicWrite(dest, want);
+  fault("route:written");
+  const fresh = !planned.delivered;
+  if (fresh) journal.delivered(sourceKey, input.to);
+  fault("route:delivered");
+  return { msg: { meta, body: input.body, file: dest }, fresh };
+}
+
+function deliveredMeta(project: ResolvedProject, input: DeliverInput, planned: { msg_id: string; created: string }): MessageMeta {
+  return {
+    id: planned.msg_id,
+    from: input.from,
+    to: input.to,
+    thread: input.thread ?? input.reply_to ?? planned.msg_id,
+    ...(input.reply_to ? { reply_to: input.reply_to } : {}),
+    type: input.type,
+    subject: input.subject,
+    created: planned.created,
+    ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
+  };
 }
 
 export function readMessage(file: string): Message {
@@ -131,18 +179,29 @@ export function markRead(files: string[]): void {
 }
 
 export interface RouteResult {
+  /** Mail delivered by this pass (mail a previous pass already delivered is not repeated). */
   delivered: { from: string; to: string; id: string; file: string; type: MessageType; subject: string }[];
   rejected: { from: string; file: string; reason: string }[];
   /** Mail that was delivered but lacks required sections (see format.ts). */
   warnings: { from: string; id: string; subject: string; missing: string[] }[];
-  done?: { from: string; subject: string; body: string };
+  /** The lead's `done`. Its file stays in the outbox until the caller has stored the result and calls `finishDone`. */
+  done?: { from: string; subject: string; body: string; file: string };
   /** Latest `## Steps` checklist the lead sent, if any. */
   steps?: Step[];
 }
 
-/** Validate each agent's outbox and move accepted mail into recipients' inboxes. */
+/** Move a handled `done` file out of the outbox (to `read/`). */
+export function finishDone(file: string): void {
+  if (!fs.existsSync(file)) return;
+  const dest = path.join(path.dirname(file), "read", path.basename(file));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.renameSync(file, dest);
+}
+
+/** Validate each agent's outbox and move accepted mail into recipients' inboxes. Safe to run again after a crash. */
 export function routeOutboxes(project: ResolvedProject): RouteResult {
   const res: RouteResult = { delivered: [], rejected: [], warnings: [] };
+  const journal = project.run ? new RouteJournal(project.run.dir) : undefined;
   for (const sender of Object.values(project.agents)) {
     const dir = outboxDir(project, sender.name);
     if (!fs.existsSync(dir)) continue;
@@ -153,18 +212,20 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
       .sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs || a.localeCompare(b));
 
     for (const file of files) {
+      const source = sourceIdOf(sender.name, file);
       const reject = (reason: string) => {
-        const dest = path.join(dir, "rejected", path.basename(file));
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.renameSync(file, dest);
-        res.rejected.push({ from: sender.name, file: dest, reason });
-        deliver(project, {
+        deliverOnce(project, journal, `reject:${source}`, {
           from: "dispatcher",
           to: sender.name,
           type: "failure",
           subject: `Message ${path.basename(file)} was rejected`,
           body: `Your outbox message \`${path.basename(file)}\` was not delivered: ${reason}\n\nIt was moved to \`rejected/\`.`,
         });
+        const dest = path.join(dir, "rejected", path.basename(file));
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.renameSync(file, dest);
+        fault("route:moved");
+        res.rejected.push({ from: sender.name, file: dest, reason });
       };
 
       let parsed: { data: Record<string, unknown>; body: string };
@@ -191,10 +252,7 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
           reject(`only the lead ("${project.lead}") may send a "done" message.`);
           continue;
         }
-        const dest = path.join(path.dirname(file), "read", path.basename(file));
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.renameSync(file, dest);
-        res.done = { from: sender.name, subject, body: parsed.body };
+        res.done = { from: sender.name, subject, body: parsed.body, file };
         const ds = parseSteps(parsed.body);
         if (ds.length) res.steps = ds;
         continue;
@@ -227,12 +285,15 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         if (st.length) res.steps = st;
       }
       for (const to of targets) {
-        const m = deliver(project, { from: sender.name, to, type, subject, body, thread, reply_to: replyTo });
-        res.delivered.push({ from: sender.name, to, id: m.meta.id, file: m.file, type, subject });
-        if (missing.length) res.warnings.push({ from: sender.name, id: m.meta.id, subject, missing });
+        const { msg, fresh } = deliverOnce(project, journal, source, { from: sender.name, to, type, subject, body, thread, reply_to: replyTo });
+        if (!fresh) continue;
+        res.delivered.push({ from: sender.name, to, id: msg.meta.id, file: msg.file, type, subject });
+        if (missing.length) res.warnings.push({ from: sender.name, id: msg.meta.id, subject, missing });
       }
+      fault("route:source-done");
       fs.mkdirSync(path.join(dir, "sent"), { recursive: true });
       fs.renameSync(file, path.join(dir, "sent", path.basename(file)));
+      fault("route:moved");
     }
   }
   return res;
