@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { writePolicy } from "../policy.js";
+import { repoDirFor, writePolicy } from "../policy.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
-import type { Invocation, WakeInput } from "./types.js";
+import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 /** Claude Code path rules: `//abs/path` — a leading "/" plus the absolute path. */
 const rule = (tool: string, p: string) => `${tool}(/${p})`;
@@ -22,11 +22,13 @@ function denyRules(p: string): string[] {
 
 export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent): Record<string, unknown> {
   const pol = writePolicy(project, agent);
+  const ws = project.workspaces?.[agent.name];
+  const repo = repoDirFor(project, agent.name);
   const allow = ["Bash", "Read", "Glob", "Grep"];
   if (pol.restrictRepoToOwns) {
-    for (const g of pol.owns) allow.push(rule("Edit", path.join(project.dir, g)));
+    for (const g of pol.owns) allow.push(rule("Edit", path.join(repo, g)));
   } else {
-    allow.push(rule("Edit", `${project.dir}/**`));
+    allow.push(rule("Edit", `${repo}/**`));
   }
   for (const d of pol.allowDirs) allow.push(rule("Edit", `${d}/**`));
   for (const f of pol.allowFiles) allow.push(rule("Edit", f));
@@ -39,7 +41,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
       enabled: true,
       allowUnsandboxedCommands: false,
       filesystem: {
-        allowWrite: [project.dir, ...pol.allowDirs, ...pol.allowFiles],
+        allowWrite: [ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
         denyWrite: pol.deny,
       },
     },
@@ -55,9 +57,8 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
   fs.writeFileSync(systemFile, input.systemPrompt);
 
   const pol = writePolicy(project, agent);
-  const addDirs = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter(
-    (d) => !(d === project.dir || d.startsWith(project.dir + path.sep)),
-  );
+  const repo = repoDirFor(project, agent.name);
+  const addDirs = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
 
   const args = [
     "-p",
@@ -79,19 +80,46 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
     cmd: "claude",
     args,
     stdin: input.userPrompt, // prompt via stdin: --add-dir is variadic and would swallow a positional prompt
-    cwd: project.dir,
+    cwd: repo,
     env: { ...process.env, AGENT_TEAM_AGENT: agent.name },
     parse({ stdout, stderr, code }) {
-      const j = extractClaudeResult(stdout);
-      if (!j) return { ok: false, text: stdout, error: (stderr || stdout || `exit code ${code}`).slice(0, 500) };
-      const ok = code === 0 && !j.is_error;
-      return {
-        ok,
-        text: String(j.result ?? ""),
-        sessionId: j.session_id,
-        outputTokens: j.usage?.output_tokens,
-        error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
-      };
+      return interpretClaude(extractClaudeResult(stdout), stdout, stderr, code);
+    },
+    stream: () => claudeStream(),
+  };
+}
+
+function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: string, code: number | null): Parsed {
+  if (!j) return { ok: false, text: stdout, error: (stderr || stdout || `exit code ${code}`).slice(0, 500) };
+  const ok = code === 0 && !j.is_error;
+  return {
+    ok,
+    text: String(j.result ?? ""),
+    sessionId: j.session_id,
+    outputTokens: j.usage?.output_tokens,
+    error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
+  };
+}
+
+/** Reads `--output-format json` output line by line: only JSON lines are kept, and only the last few, so a flood of other output costs nothing. */
+function claudeStream(): StreamParser {
+  const candidates: unknown[] = [];
+  return {
+    line(text) {
+      if (text[0] !== "{" && text[0] !== "[") return;
+      try {
+        candidates.push(JSON.parse(text));
+        if (candidates.length > 8) candidates.shift();
+      } catch {
+        /* not JSON: ignore the line */
+      }
+    },
+    finish({ code, stdoutTail, stderrTail }) {
+      for (const parsed of [...candidates].reverse()) {
+        const j = pickClaudeResult(parsed);
+        if (j) return interpretClaude(j, stdoutTail, stderrTail, code);
+      }
+      return interpretClaude(undefined, stdoutTail, stderrTail, code);
     },
   };
 }
@@ -104,6 +132,14 @@ interface ClaudeResult {
 }
 
 /** `--output-format json` prints either one result object or (newer versions) an array of events. */
+function pickClaudeResult(parsed: unknown): ClaudeResult | undefined {
+  if (Array.isArray(parsed)) {
+    return [...parsed].reverse().find((e) => e && typeof e === "object" && (e as { type?: string }).type === "result") as ClaudeResult | undefined;
+  }
+  if (parsed && typeof parsed === "object") return parsed as ClaudeResult;
+  return undefined;
+}
+
 export function extractClaudeResult(stdout: string): ClaudeResult | undefined {
   let parsed: unknown;
   try {
@@ -119,11 +155,5 @@ export function extractClaudeResult(stdout: string): ClaudeResult | undefined {
       }
     }
   }
-  if (Array.isArray(parsed)) {
-    return [...parsed].reverse().find((e) => e && typeof e === "object" && (e as { type?: string }).type === "result") as
-      | ClaudeResult
-      | undefined;
-  }
-  if (parsed && typeof parsed === "object") return parsed as ClaudeResult;
-  return undefined;
+  return pickClaudeResult(parsed);
 }

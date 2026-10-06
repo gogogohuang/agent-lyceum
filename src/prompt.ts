@@ -3,7 +3,7 @@ import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
-import { commonFile, memoryDirs, outboxDir } from "./policy.js";
+import { commonFile, memoryDirs, outboxDir, repoDirFor } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -36,7 +36,12 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   const lines: string[] = [];
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-team)", "");
   lines.push(
-    `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${project.dir}\`.`,
+    `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    ...(project.workspaces?.[agent.name]
+      ? [
+          `That directory is your own isolated git worktree (branch \`${project.workspaces[agent.name].branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
+        ]
+      : []),
     `The team lead is **${project.lead}**${isLead ? " (that is you)" : ""}. Teammates: ${mates.join(", ") || "(none)"}.`,
     "",
     "## Sending mail",
@@ -69,7 +74,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
     isLead
-      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Use these headings (a missing one is not rejected): `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Not done` (anything skipped or unverified, or `None`)."
+      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run."
       : "- `done` has no required headings.",
     ...(isLead
       ? [

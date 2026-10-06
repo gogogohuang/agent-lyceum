@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findProjectForCwd, resolveProject } from "../src/config.js";
+import { findProjectForCwd, flattenResolved, resolveProject, resolveProjectWithSources } from "../src/config.js";
 import { inferRuntime } from "../src/schema.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -87,5 +87,64 @@ describe("runtime inference from model", () => {
 
     env.editProjectYaml((t) => t.replace("    model: gpt-5\n", "    model: gpt-5\n    runtime: claude-code\n"));
     expect(env.project().agents["fe-member"].runtime).toBe("claude-code");
+  });
+});
+
+describe("resolved configuration with sources", () => {
+  const where = (e: TestEnv, key: string) => resolveProjectWithSources(e.home, "demo").sources[key];
+
+  it("says where each value came from: project file, global library, a default, or inferred from the model", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) =>
+      t.replace("max_rounds: 30", "max_rounds: 12").replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    model: gpt-5\n    can_message: [lead, qa-member]"),
+    );
+    const projectFile = path.join(env.home, "projects/demo/project.yaml");
+    const globalFile = path.join(env.home, "team.yaml");
+    expect(where(env, "dispatcher.max_rounds")).toEqual({ file: projectFile, key: "dispatcher.max_rounds" });
+    expect(where(env, "dispatcher.retry")).toEqual({ file: projectFile, key: "dispatcher.retry" }); // the template writes it out
+    expect(where(env, "agents.lead.runtime")).toEqual({ file: globalFile, key: "agents.lead.runtime" });
+    expect(where(env, "agents.fe-member.can_message")).toEqual({ file: projectFile, key: "agents.fe-member.can_message" });
+    expect(where(env, "agents.fe-member.runtime")).toEqual({ inferred_from: { file: projectFile, key: "agents.fe-member.model" } });
+    expect(where(env, "agents.qa-member.resume")).toEqual({ default: true });
+    expect(where(env, "dir")).toEqual({ file: projectFile, key: "dir" });
+  });
+
+  it("falls back to defaults for dispatcher fields the project does not set", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(/^  workspace_mode:.*\n/m, ""));
+    expect(where(env, "dispatcher.workspace_mode")).toEqual({ default: true });
+  });
+
+  it("project values replace global ones, arrays are replaced rather than merged, and the winner is the one reported", () => {
+    env = makeEnv();
+    fs.writeFileSync(
+      path.join(env.home, "team.yaml"),
+      "agents:\n  lead: { runtime: claude-code }\n  fe-member: { runtime: claude-code, owns: ['a/**', 'b/**'] }\n  qa-member: { runtime: claude-code }\n",
+    );
+    env.editProjectYaml((t) => t.replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]'));
+    const r = resolveProjectWithSources(env.home, "demo");
+    expect(r.project.agents["fe-member"].owns).toEqual(["src/web/**"]);
+    expect((r.sources["agents.fe-member.owns"] as any).file).toContain("project.yaml");
+  });
+
+  it("resolves relative paths against the file they were written in and reports that file", () => {
+    env = makeEnv();
+    const r = resolveProjectWithSources(env.home, "demo");
+    expect(r.project.agents.lead.memory.global).toBe(path.join(env.home, "agents/lead/memory")); // team.yaml is relative to the home
+    expect(r.sources["agents.lead.memory.global"]).toEqual({ file: path.join(env.home, "team.yaml"), key: "agents.lead.memory.global" });
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    memory: { project: mem/fe }\n    can_message: [lead]"));
+    const r2 = resolveProjectWithSources(env.home, "demo");
+    expect(r2.project.agents["fe-member"].memory.project).toBe(path.join(env.home, "projects/demo/mem/fe")); // project.yaml is relative to the project folder
+    expect((r2.sources["agents.fe-member.memory.project"] as any).file).toBe(path.join(env.home, "projects/demo/project.yaml"));
+  });
+
+  it("flattens the resolved values under the same keys as the sources", () => {
+    env = makeEnv();
+    const r = resolveProjectWithSources(env.home, "demo");
+    const values = flattenResolved(r.project);
+    expect(values["agents.lead.runtime"]).toBe("claude-code");
+    expect(values["dispatcher.max_parallel"]).toBe(1);
+    expect(values["team.lead"]).toBe("lead");
+    for (const key of Object.keys(r.sources)) expect(key in values).toBe(true);
   });
 });

@@ -3,11 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
-import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
-import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
+import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
+import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
+import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
+import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
+import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
+import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -127,14 +132,51 @@ program
     }
   });
 
+/** Ask the runtime CLIs what they support: refuse to start when something the team needs is explicitly missing, warn when unknown. */
+async function preflight(pr: ResolvedProject): Promise<void> {
+  const r = await preflightRuntimes(pr);
+  for (const w of r.warnings) console.error(`warn   ${w}`);
+  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-team doctor\`).`);
+}
+
+/** Take the project's single-run lock, or exit with the reason. */
+function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
+  try {
+    return acquireProjectLock(pr.paths.root, runId);
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+}
+
+/**
+ * Ctrl-C (or SIGTERM) stops the run cleanly: the first signal cancels it (agents are killed, unread mail is kept,
+ * the lock is released, exit code 130); a second one quits at once.
+ */
+function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
+  const ac = new AbortController();
+  let seen = 0;
+  const handler = (name: string) => () => {
+    if (++seen === 1) {
+      console.error(`\n${name}: stopping the run (running agents are being stopped; unread mail is kept). Press Ctrl-C again to quit at once.`);
+      ac.abort();
+    } else process.exit(130);
+  };
+  const onInt = handler("Interrupted");
+  const onTerm = handler("Terminated");
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
+  return { signal: ac.signal, dispose: () => (process.off("SIGINT", onInt), process.off("SIGTERM", onTerm)) };
+}
+
 function reportRun(summary: RunSummary, runDir: string): never {
-  console.log(`\nRun ${summary.runId} ended: ${summary.endReason} after ${summary.rounds} round(s). Logs: ${runDir}`);
+  console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
+  if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
+  if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-team): ${summary.verification}`);
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
   }
-  if (summary.endReason === "idle") console.log("Note: all mailboxes were empty but the lead never sent a \"done\" message.");
-  process.exit(summary.endReason === "done" || summary.endReason === "idle" ? 0 : 2);
+  process.exit(exitCodeForOutcome(summary.outcome));
 }
 
 program
@@ -148,13 +190,23 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      await preflight(pr);
 
-      const runDir = path.join(pr.paths.runs, newRunId());
-      const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
-      console.log(`Project ${pr.name} — repo ${pr.dir}`);
-      console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-
-      reportRun(await runTeam({ project: pr, task: prepared, runDir }), runDir);
+      const runId = newRunId();
+      const runDir = path.join(pr.paths.runs, runId);
+      const lease = takeLock(pr, runId);
+      let summary: RunSummary;
+      const cancel = cancelOnSignals();
+      try {
+        const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
+        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
+        summary = await runTeam({ project: pr, task: prepared, runDir, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      reportRun(summary, runDir);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -170,32 +222,43 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      await preflight(pr);
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
         assertName("run", runId);
         const dir = path.join(pr.paths.runs, runId);
-        const f = path.join(dir, "state.json");
-        if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
-        found = { dir, state: JSON.parse(fs.readFileSync(f, "utf8")) };
+        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
+        found = { dir, state: loadRunState(dir) };
       } else {
         found = latestUnfinishedRun(pr);
         if (!found) fail("No unfinished run to resume. Start one with: agent-team run \"<task>\"");
       }
       const { dir, state } = found!;
-      if (!state.end_reason && runIsAlive(state)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
+      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
       if (state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);
         if (!fs.existsSync(result)) fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
-        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
-        process.exit(0);
+        const o = outcomeOf(state)!;
+        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+        process.exit(exitCodeForOutcome(o.outcome));
       }
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 
-      console.log(`Project ${pr.name} — repo ${pr.dir}`);
-      console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
-      reportRun(await runTeam({ project: pr, resume: state, runDir: dir }), dir);
+      const lease = takeLock(pr, state.run_id);
+      let summary: RunSummary;
+      const cancel = cancelOnSignals();
+      try {
+        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
+        // Read the state again under the lock: another process may have changed it while we were checking.
+        summary = await runTeam({ project: pr, resume: loadRunState(dir), runDir: dir, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      reportRun(summary, dir);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -204,19 +267,114 @@ program
 /** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
 program
   .command("clear <run-id>")
-  .description("Delete a task (run) by id: removes its run directory (state, log, result, snapshots). Refuses if it is still running.")
+  .description(
+    "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots. " +
+      "Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo.",
+  )
   .option("-p, --project <name>")
-  .action((runId: string, opts: { project?: string }) => {
+  .option("--dry-run", "only list what would be deleted and what would be kept")
+  .option("--keep-worktrees", "keep the agents' worktrees and branches (and their snapshots), and still clear the run and its task memory")
+  .action((runId: string, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean }) => {
     try {
       assertName("run", runId);
       const pr = loadProject(opts.project);
-      const dir = path.join(pr.paths.runs, runId);
-      const f = path.join(dir, "state.json");
-      if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-      const state = JSON.parse(fs.readFileSync(f, "utf8"));
-      if (!state.end_reason && runIsAlive(state)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
-      fs.rmSync(dir, { recursive: true, force: true });
-      console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
+      const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
+        console.log(`Run ${plan.summary}`);
+        for (const i of plan.items) console.log(`  ${opts.dryRun ? "would delete" : "delete      "}  ${i.label}`);
+        for (const k of plan.keep) console.log(`  kept          worktree of ${k.agent}: ${k.path} (branch ${k.branch})${k.files.length ? `, holding ${k.files.join(", ")}` : ""}`);
+      };
+      const refuse = (plan: ReturnType<typeof planRunCleanup>): never => {
+        for (const r of plan.refusals) console.error(`REFUSED  ${r}`);
+        return fail("Nothing was deleted.");
+      };
+      if (opts.dryRun) {
+        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        console.log("Dry run: nothing is deleted.");
+        showPlan(plan);
+        if (plan.refusals.length) refuse(plan);
+        return;
+      }
+      const lease = takeLock(pr, runId);
+      try {
+        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        if (plan.refusals.length) refuse(plan);
+        showPlan(plan);
+        const report = executeRunCleanup(plan);
+        if (report.failed.length) {
+          for (const f of report.failed) console.error(`FAILED  ${f.item.label}: ${f.error}`);
+          fail("Cleanup stopped at the first failure; fix it and repeat the same command to finish.");
+        }
+        console.log(`Deleted run ${runId}: ${plan.summary.slice(runId.length + 2)}`);
+      } finally {
+        lease.release();
+      }
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
+const configCmd = program.command("config").description("Inspect configuration");
+configCmd
+  .command("show")
+  .description("Show the effective configuration of a project and where each value comes from")
+  .requiredOption("--resolved", "merge global library, project file and defaults (currently the only view)")
+  .option("-p, --project <name>")
+  .option("--json", "print as JSON")
+  .action((opts: { project?: string; json?: boolean }) => {
+    try {
+      const h = home();
+      const pr = loadProject(opts.project);
+      const { project, sources } = resolveProjectWithSources(h, pr.name);
+      const values = flattenResolved(project);
+      if (opts.json) {
+        console.log(JSON.stringify({ schema_version: 1, project: project.name, values, sources }, null, 2));
+        return;
+      }
+      const rel = (f: string) => path.relative(h, f) || f;
+      const where = (s: SourceInfo): string => ("default" in s ? "default" : "inferred_from" in s ? `inferred from ${s.inferred_from.key} (${rel(s.inferred_from.file)})` : rel(s.file));
+      const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+      const keys = Object.keys(sources).filter((k) => values[k] !== undefined);
+      const w = Math.max(...keys.map((k) => `${k} = ${show(values[k])}`.length));
+      for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(sources[k])}`);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Check the setup without running any agent: configuration, git, the project lock, and what each runtime CLI supports (from --version/--help).")
+  .option("-p, --project <name>")
+  .option("--json", "print the report as JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const report = await diagnoseProject(loadProject(opts.project));
+      console.log(opts.json ? JSON.stringify({ schema_version: 1, ...report }, null, 2) : formatDoctor(report));
+      process.exit(report.ok ? 0 : 1);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+program
+  .command("unlock")
+  .description("Remove a project's run lock left behind by a crashed run. Shows the lock first; needs --force to remove it.")
+  .option("-p, --project <name>")
+  .option("--force", "remove the lock even though its owner cannot be confirmed dead")
+  .action((opts: { project?: string; force?: boolean }) => {
+    try {
+      const pr = loadProject(opts.project);
+      const info = inspectProjectLock(pr.paths.root);
+      if (!info && !fs.existsSync(path.join(pr.paths.root, "lock.json"))) {
+        console.log(`Project ${pr.name} has no run lock.`);
+        return;
+      }
+      if (info) {
+        console.log(`Lock held for run ${info.run_id} by pid ${info.pid} on ${info.hostname}, last heartbeat ${info.heartbeat_at}${lockHolderAlive(info) ? " (that process is still alive)" : " (that process is gone)"}.`);
+      } else console.log("The lock file exists but cannot be read.");
+      if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
+      forceUnlock(pr.paths.root);
+      console.log("Lock removed. Resume the run with: agent-team resume");
     } catch (e) {
       fail((e as Error).message);
     }
@@ -236,9 +394,17 @@ program
   .option("--task-id <id>", "show everything about one task (run): every wake and its result")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string }) => {
+  .option("--json", "print the report as JSON (no colour); works with --task-list and --task-id")
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean }) => {
     try {
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
+      if (opts.json) {
+        if (opts.monitor) fail("--json cannot be combined with --monitor.");
+        if (opts.taskId) assertName("run", opts.taskId);
+        const report = opts.taskList ? buildTaskListReport(pr) : buildStatusReport(pr, opts.taskId);
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
       if (opts.taskList) {
         console.log(formatTaskList(pr, useColor()));
         return;
@@ -246,9 +412,8 @@ program
       if (opts.taskId) {
         assertName("run", opts.taskId);
         const dir = path.join(pr.paths.runs, opts.taskId);
-        const f = path.join(dir, "state.json");
-        if (!fs.existsSync(f)) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-        console.log(formatRunDetail({ dir, state: JSON.parse(fs.readFileSync(f, "utf8")) }, Date.now(), useColor()));
+        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+        console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor(), pr));
         return;
       }
       if (!opts.monitor) {

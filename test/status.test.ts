@@ -3,7 +3,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
-import { formatStatus, formatTaskList } from "../src/status.js";
+import { acquireProjectLock } from "../src/project-lock.js";
+import { loadRunState } from "../src/run-store.js";
+import { formatRunDetail, formatStatus, formatTaskList } from "../src/status.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -149,12 +151,50 @@ describe("status --task-list", () => {
     const out = formatTaskList(env.project());
     expect(out).toContain("共 2 個任務");
     expect(out.indexOf("20260102-000000")).toBeLessThan(out.indexOf("20260101-000000"));
-    expect(out).toMatch(/20260102-000000\s+已結束：完成\s+3\/10\s+-\s+Ship it/);
+    expect(out).toMatch(/20260102-000000\s+已結束：完成（未驗證）\s+3\/10\s+-\s+Ship it/);
     expect(out).toMatch(/20260101-000000\s+已中斷\s+1\/10\s+b\s+Build it/);
   });
 
   it("says so when there are no runs", () => {
     env = makeEnv();
     expect(formatTaskList(env.project())).toContain("無執行紀錄");
+  });
+});
+
+describe("status: project lock decides whether a run is running", () => {
+  it("trusts the lock holder over the recorded pid for schema-2 runs", () => {
+    env = makeEnv();
+    const pr = env.project();
+    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: 2 ** 22 + 12345, active });
+    expect(formatStatus(pr, NOW)).toContain("曾在工作（已中斷）");
+    const lease = acquireProjectLock(pr.paths.root, "20260101-000000");
+    try {
+      expect(formatStatus(pr, NOW)).toContain("lead 工作中 42s");
+    } finally {
+      lease.release();
+    }
+  });
+
+  it("does not call a run running because a different run holds the lock", () => {
+    env = makeEnv();
+    const pr = env.project();
+    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: process.pid, active });
+    const lease = acquireProjectLock(pr.paths.root, "some-other-run");
+    try {
+      expect(formatStatus(pr, NOW)).toContain("曾在工作（已中斷）");
+    } finally {
+      lease.release();
+    }
+  });
+});
+
+describe("status: recovery notes", () => {
+  it("shows what recovery warned about", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid, notes: ["fe-member attempt 1 was interrupted; side effects may have happened."] });
+    const out = formatTaskList(env.project());
+    expect(out).toContain("20260101-000000");
+    const detail = formatRunDetail({ dir: "/x", state: loadRunState(path.join(env.project().paths.runs, "20260101-000000")) }, NOW);
+    expect(detail).toContain("⚠ fe-member attempt 1 was interrupted");
   });
 });

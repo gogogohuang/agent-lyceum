@@ -8,6 +8,7 @@ import {
   projectPaths,
   type ProjectPaths,
 } from "./paths.js";
+import type { AgentWorkspace } from "./worktree.js";
 import {
   DISPATCHER_DEFAULTS,
   GlobalConfig,
@@ -47,6 +48,10 @@ export interface ResolvedProject {
   dispatcher: DispatcherSettings;
   agents: Record<string, ResolvedAgent>;
   paths: ProjectPaths;
+  /** Set once the project is bound to one run (see `bindRunProject`): which run, and where its mail lives. */
+  run?: { id: string; dir: string; layout: "run" | "legacy" };
+  /** Agents working in their own git worktree instead of `dir` (set by the dispatcher for the wake-ups in progress). */
+  workspaces?: Record<string, AgentWorkspace>;
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {
@@ -232,3 +237,67 @@ export function findProjectForCwd(home: string, cwd: string): string | undefined
   return best?.name;
 }
 
+
+/** Where one resolved value came from. */
+export type SourceInfo =
+  | { file: string; key: string }
+  /** The runtime was not written down: it was recognised from this `model` setting. */
+  | { inferred_from: { file: string; key: string } }
+  | { default: true };
+
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "owns"] as const;
+
+/** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
+export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
+  const project = resolveProject(home, name);
+  const raw = loadProjectRaw(home, name);
+  const globalFile = homePaths(home).globalConfig;
+  const projectFile = project.paths.config;
+  const sources: Record<string, SourceInfo> = {
+    dir: { file: projectFile, key: "dir" },
+    "team.lead": { file: projectFile, key: "team.lead" },
+  };
+  for (const k of Object.keys(DISPATCHER_DEFAULTS) as (keyof DispatcherSettings)[]) {
+    sources[`dispatcher.${k}`] = raw.dispatcher[k] !== undefined ? { file: projectFile, key: `dispatcher.${k}` } : { default: true };
+  }
+  for (const a of Object.values(project.agents)) {
+    const at = (src: Source | undefined, field: string): SourceInfo => {
+      const key = `agents.${a.name}.${field}`;
+      if (src === "project") return { file: projectFile, key };
+      if (src === "global") return { file: globalFile, key };
+      return { default: true };
+    };
+    for (const f of AGENT_FIELDS) {
+      const src = a.sources[f];
+      if (src === undefined) continue; // not set anywhere (e.g. no effort)
+      if (src === "model") sources[`agents.${a.name}.${f}`] = (() => {
+        const m = at(a.sources.model, "model");
+        return "file" in m ? { inferred_from: m } : { default: true };
+      })();
+      // A project-level AGENT.md found by convention is not a setting in project.yaml.
+      else if (f === "agent_md" && src === "project" && raw.agents[a.name]?.agent_md === undefined) sources[`agents.${a.name}.${f}`] = { default: true };
+      else sources[`agents.${a.name}.${f}`] = at(src, f);
+    }
+  }
+  return { project, sources };
+}
+
+/** Every effective setting under the same keys as `resolveProjectWithSources` reports sources for. */
+export function flattenResolved(project: ResolvedProject): Record<string, unknown> {
+  const v: Record<string, unknown> = { dir: project.dir, "team.lead": project.lead };
+  for (const [k, val] of Object.entries(project.dispatcher)) v[`dispatcher.${k}`] = val;
+  for (const a of Object.values(project.agents)) {
+    const p = `agents.${a.name}`;
+    v[`${p}.runtime`] = a.runtime;
+    v[`${p}.model`] = a.model;
+    v[`${p}.effort`] = a.effort;
+    v[`${p}.agent_md`] = a.agentMd;
+    v[`${p}.memory.global`] = a.memory.global;
+    v[`${p}.memory.project`] = a.memory.project;
+    v[`${p}.resume`] = a.resume;
+    v[`${p}.can_message`] = a.canMessage;
+    v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
+    v[`${p}.owns`] = a.owns;
+  }
+  return v;
+}

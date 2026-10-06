@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { validateProject } from "../src/validate.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { initGitRepo, makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -14,10 +14,23 @@ describe("validate", () => {
     expect(errors(env)).toEqual([]);
   });
 
-  it("requires at least 3 agents", () => {
+  it("accepts a team of two (the lead and one member)", () => {
     env = makeEnv();
     env.editProjectYaml((t) => t.replace(/  qa-member:[\s\S]*$/, ""));
-    expect(errors(env).join("\n")).toMatch(/at least 3 agents/);
+    expect(Object.keys(env.project().agents)).toEqual(["lead", "fe-member"]);
+    expect(errors(env)).toEqual([]);
+  });
+
+  it("rejects a team of one", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(/  fe-member:[\s\S]*$/, ""));
+    expect(errors(env).join("\n")).toMatch(/at least 2 agents/);
+  });
+
+  it("rejects a team without a lead even when it has two members", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("lead: lead", "lead: ghost"));
+    expect(errors(env).join("\n")).toMatch(/Lead "ghost"/);
   });
 
   it("requires the lead to be a listed agent", () => {
@@ -46,6 +59,7 @@ describe("validate", () => {
     expect(errors(env).join("\n")).toMatch(/"owns" overlap/);
 
     env.editProjectYaml((t) => t.replace('owns: ["src/web/**"]', 'owns: ["tests/**"]'));
+    initGitRepo(env.repo); // parallel agents work in git worktrees
     expect(errors(env)).toEqual([]);
   });
 

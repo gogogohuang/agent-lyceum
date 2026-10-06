@@ -4,16 +4,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { ProtectedGuard } from "../src/guard.js";
+import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const mail = (i: WakeInput, to: string, subject: string, type = "reply") =>
-  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\nbody of ${subject}\n`);
+  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`);
 
 async function run(invoker: Invoker, opts: { task?: string; file?: string } = {}): Promise<RunSummary> {
   const project = env.project();
@@ -53,11 +54,11 @@ describe("dispatcher", () => {
     const s = await run(async (i) => {
       const out = outboxDir(i.project, i.agent.name);
       const send = (to: string, type: string, subject: string, body: string) =>
-        write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\n${body}\n`);
+        write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body}\n`);
       if (i.agent.name === "lead" && !i.userPrompt.includes("from: fe-member"))
         send("fe-member", "task", "implement login", "## Goal\nBuild the login form\n\n## Steps\n- [x] design\n- [ ] build\n");
       else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n");
-      else send("lead", "done", "all good", "## Steps\n- [x] design\n- [x] build\n");
+      else send("lead", "done", "all good", `${FULL_DONE}\n## Steps\n- [x] design\n- [x] build\n`);
       return OK;
     }, { task: "ship login\n\n- [ ] design\n- [ ] build" });
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
@@ -237,6 +238,7 @@ describe("dispatcher", () => {
 
   it("runs disjoint-owns agents in parallel but never alongside the lead", async () => {
     env = makeEnv();
+    initGitRepo(env.repo);
     env.editProjectYaml((t) =>
       t
         .replace("max_parallel: 1", "max_parallel: 2")
@@ -266,6 +268,7 @@ describe("dispatcher", () => {
 
   it("hands the lead all waiting replies in one wake-up, but workers get one message at a time", async () => {
     env = makeEnv();
+    initGitRepo(env.repo);
     env.editProjectYaml((t) =>
       t
         .replace("max_parallel: 1", "max_parallel: 2")
@@ -345,8 +348,9 @@ describe("resume", () => {
     st.sessions = { lead: "sess-1" };
     st.active = { lead: { round: st.rounds, since: new Date().toISOString(), handling: [] } };
     fs.writeFileSync(path.join(runDir, "state.json"), JSON.stringify(st));
-    // A killed wake never marked its mail read; undo the failed wake's markRead.
-    const leadInbox = inboxDir(env.project(), "lead");
+    // A killed wake never consumed its mail: undo the failed wake's commit (mail back in the inbox, no claim record).
+    fs.rmSync(path.join(runDir, "mail", "claims"), { recursive: true, force: true });
+    const leadInbox = inboxDir(bindRunProject(env.project(), runDir, "run"), "lead");
     for (const f of fs.readdirSync(path.join(leadInbox, "read"))) fs.renameSync(path.join(leadInbox, "read", f), path.join(leadInbox, f));
 
     const seenSessions: (string | undefined)[] = [];
@@ -385,3 +389,25 @@ describe("guard", () => {
     expect(fs.existsSync(f)).toBe(false);
   });
 });
+
+describe("a team of two", () => {
+  it("runs from task to done with just the lead and one member, and no prompt mentions anyone else", async () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(/  qa-member:[\s\S]*$/, ""));
+    const prompts: string[] = [];
+    const seen: string[] = [];
+    const s = await run(async (i) => {
+      prompts.push(i.systemPrompt, i.userPrompt);
+      seen.push(i.agent.name);
+      if (i.agent.name === "lead" && seen.length === 1) mail(i, "fe-member", "do it", "task");
+      else if (i.agent.name === "fe-member") mail(i, "lead", "did it");
+      else mail(i, "lead", "bye", "done");
+      return OK;
+    });
+    expect(seen).toEqual(["lead", "fe-member", "lead"]);
+    expect(s.outcome).toBe("completed");
+    expect(Object.keys(env.project().agents)).toEqual(["lead", "fe-member"]);
+    for (const p of prompts) expect(p).not.toContain("qa-member");
+  });
+});
+

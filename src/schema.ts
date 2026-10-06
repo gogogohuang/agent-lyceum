@@ -51,6 +51,7 @@ export const DispatcherPartial = z
     wake_timeout_sec: z.number().int().positive().optional(),
     retry: z.number().int().min(0).optional(),
     strict: z.boolean().optional(),
+    workspace_mode: z.enum(["auto", "shared", "worktree"]).optional(),
   })
   .strict();
 
@@ -75,6 +76,8 @@ export interface DispatcherSettings {
   wake_timeout_sec: number;
   retry: number;
   strict: boolean;
+  /** "auto": a git worktree per non-lead agent when agents can run in parallel, otherwise one shared checkout. */
+  workspace_mode: "auto" | "shared" | "worktree";
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {
@@ -83,4 +86,22 @@ export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   wake_timeout_sec: 600,
   retry: 1,
   strict: false,
+  workspace_mode: "auto",
 };
+
+/** How a run turned out, independent of why it stopped (`EndReason`). Only "completed" means success. */
+export const RUN_OUTCOMES = ["completed", "partial", "blocked", "failed", "cancelled"] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
+
+export function exitCodeForOutcome(outcome: RunOutcome): 0 | 1 | 2 | 130 {
+  switch (outcome) {
+    case "completed":
+      return 0;
+    case "failed":
+      return 1;
+    case "cancelled":
+      return 130;
+    default:
+      return 2;
+  }
+}
