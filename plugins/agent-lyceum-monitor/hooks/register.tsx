@@ -6,6 +6,8 @@ import { agentStats, runtimeTokens, clip, elapsed, line, overviewLine, parseProj
 
 const PANE = 'agent-lyceum'
 const snapshot = atom({ plugin: 'agent-lyceum-monitor', key: 'snapshot' } as const, {} as Snapshots)
+/** Id of the tab the pane shows ('' = the first). */
+const tab = atom({ plugin: 'agent-lyceum-monitor', key: 'tab' } as const, '')
 
 type Target = { key: string; status: string[]; tasks: string[] }
 
@@ -74,12 +76,11 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'team-monitor' }, async ($, e) => {
-    // The surface seats the pane: beside the transcript only in the fullscreen layout from 110 columns, else inline above the prompt.
-    await $.ui.open({ id: PANE, title: 'agent-lyceum', closeOnEscape: true, columns: 60, rows: 16 })
+    // No closeOnEscape: the pane is closed by clicking 關閉 only.
+    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     pollAll($, targets)
-    const { isFullscreen, columns } = e.presentation ?? { isFullscreen: false, columns: 80 }
-    if (isFullscreen && columns >= 110) return { text: 'agent-lyceum pane opened beside the transcript. Esc or 關閉 closes it.' }
-    return { text: 'agent-lyceum pane opened above the prompt (a sidebar needs the fullscreen layout, CLAUDE_CODE_NO_FLICKER=1, and 110+ columns). Esc or 關閉 closes it.' }
+    if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
+    return { text: 'agent-lyceum pane opened. Click 關閉 to close it; click a tab to switch task.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -88,7 +89,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
 
     const section = (t: Target) => {
-      const { report, error, history } = snap[t.key] ?? { report: null, error: null }
+      const { report, error } = snap[t.key] ?? { report: null, error: null }
       if (!report) return <Text dimColor>{t.key ? `${t.key}：` : ''}{error ? `無法取得狀態：${error}` : '讀取中…'}</Text>
       const run = report.run
       return (
@@ -172,24 +173,50 @@ export const register: Register = (on, options) => {
             ))}
           </Box>
         )}
-        {(history ?? []).length > 1 && <Text bold>歷史執行</Text>}
-        {(history ?? []).length > 1 &&
-          (history ?? []).slice(-5).map(past => (
-            <Text dimColor={past.run_id !== run?.run_id}>
-              {past.run_id} {runLabel(past as never)} {past.rounds}/{past.max_rounds} 輪 · {past.output_tokens.toLocaleString('en-US')} tok · {clip(past.task_summary, 40)}
-            </Text>
-          ))}
         </Box>
       )
     }
 
+    const pastRun = (r: History) => (
+      <Box flexDirection="column">
+        <Text bold>
+          {r.run_id} [{runLabel(r as never)}]
+        </Text>
+        <Text>任務：{r.task_summary}</Text>
+        <Text>
+          第 {r.rounds}/{r.max_rounds} 輪 · {r.output_tokens.toLocaleString('en-US')} tokens
+        </Text>
+        {r.started_at && <Text dimColor>開始 {new Date(r.started_at).toLocaleString()}</Text>}
+      </Box>
+    )
+
+    // One tab per task: each project's current run, then its most recent past runs.
+    const tabs = targets.flatMap(t => {
+      const s = snap[t.key]
+      const current = s?.report?.run
+      const label = t.key || s?.report?.project.name || '目前'
+      const olds = (s?.history ?? []).filter(r => r.run_id !== current?.run_id).slice(-3).reverse()
+      return [
+        { id: `${t.key}|now`, label: current ? `${label}：${clip(current.task_summary, 12)}` : label, body: () => section(t) },
+        ...olds.map(r => ({ id: `${t.key}|${r.run_id}`, label: `${several ? `${label} ` : ''}${clip(r.task_summary, 12)}`, body: () => pastRun(r) })),
+      ]
+    })
+    const wanted = await read($, tab)
+    const active = tabs.find(x => x.id === wanted) ?? tabs[0]
+    if (!active) return <Text dimColor>沒有可顯示的專案</Text>
+
     return (
       <Box flexDirection="column">
         <Box>
-          <Text bold>agent-lyceum {several ? `（${targets.length} 個專案）` : ''}</Text>
-          <Button key="close" label="關閉" onPress={() => $.ui.close({ id: PANE })} />
+          <Text bold>agent-lyceum </Text>
+          <Button key="close" label="關閉" role="dismiss" variant="primary" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
-        {targets.map(section)}
+        <Box>
+          {tabs.map(x => (
+            <Button key={x.id} label={x.label} variant={x.id === active.id ? 'primary' : 'secondary'} onPress={() => update($, tab, () => x.id)} />
+          ))}
+        </Box>
+        {active.body()}
       </Box>
     )
   })

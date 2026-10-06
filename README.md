@@ -57,7 +57,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/agent-lyceum-monitor
 **Use it.**
 - **Status line:** always on once loaded; shows the run state, round `n/max`, output tokens, the current step and unread mail. With several projects it shows one overview line (`team 1/3 running · a ... | b ...`).
 - **Toasts:** a message pops up when a run finishes, is interrupted, or an agent's wake fails (prefixed `[project]` when several are watched). Nothing to do.
-- **`/team-monitor`:** type it in the prompt to open the pane. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes and the last 5 runs. It refreshes with the polling interval while open. Click **關閉** (Close) to dismiss it.
+- **`/team-monitor`:** type it in the prompt to open the pane. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes. Each task (a project's current run and its last 3 past runs) is a tab; click a tab to switch. It refreshes with the polling interval while open. Click **關閉** (Close) to dismiss it (Esc does not close it).
 
 **Configure it.** In `~/.claude/settings.json` under `pluginConfigs."agent-lyceum-monitor@inline"` (`options`):
 

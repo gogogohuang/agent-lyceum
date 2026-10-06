@@ -42,6 +42,6 @@ export type Snapshots = Record<string, Snapshot>
 
 declare module 'claude-code' {
   interface PluginState {
-    'agent-lyceum-monitor': { snapshot: Snapshots }
+    'agent-lyceum-monitor': { snapshot: Snapshots; tab: string }
   }
 }
