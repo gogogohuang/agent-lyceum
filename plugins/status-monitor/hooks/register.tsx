@@ -85,12 +85,12 @@ export const register: Register = (on, options) => {
       await $.ui.close({ id: PANE })
       return { text: 'agent-lyceum pane closed.' }
     }
-    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
+    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16, focus: true })
     pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns)`
-    return { text: `agent-lyceum pane opened, ${where}. Click 關閉 or run /status-monitor again to close it; click a tab to switch task.` }
+    return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -219,11 +219,11 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         <Box>
           <Text bold>agent-lyceum </Text>
-          <Button key="close" label="關閉" role="dismiss" variant="primary" onPress={() => $.ui.close({ id: PANE })} />
+          <Button key="close" label="關閉 (x)" hotkey="x" role="dismiss" variant="primary" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
         <Box>
-          {tabs.map(x => (
-            <Button key={x.id} label={x.label} variant={x.id === active.id ? 'primary' : 'secondary'} onPress={() => update($, tab, () => x.id)} />
+          {tabs.map((x, i) => (
+            <Button key={x.id} label={`${i + 1} ${x.label}`} hotkey={i < 9 ? String(i + 1) : undefined} variant={x.id === active.id ? 'primary' : 'secondary'} onPress={() => update($, tab, () => x.id)} />
           ))}
         </Box>
         {active.body()}
