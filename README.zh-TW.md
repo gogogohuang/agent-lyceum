@@ -57,7 +57,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/agent-lyceum-monitor
 **操作。**
 - **狀態列：** 載入後常駐，顯示執行狀態、輪數 `n/max`、output tokens、目前步驟與未讀信件。監看多個專案時顯示一行總覽（`team 1/3 執行中 · a ... | b ...`）。
 - **通知：** 執行完成、被中斷或某個 agent 喚醒失敗時會跳出訊息（監看多個專案時前面加 `[專案名]`），不需要任何操作。
-- **`/team-monitor`：** 在輸入框輸入即可開啟面板。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒與最近 5 次執行。面板開著時會依輪詢間隔自動更新，按 **關閉** 即可收起。
+- **`/team-monitor`：** 在輸入框輸入即可開啟面板。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒。每個任務（專案目前的執行與最近 3 次過往執行）是一個分頁，點分頁即可切換。面板開著時會依輪詢間隔自動更新，只能點 **關閉** 收起（Esc 不會關閉）。
 
 **設定。** 在 `~/.claude/settings.json` 的 `pluginConfigs."agent-lyceum-monitor@inline"`（`options`）：
 
