@@ -70,8 +70,7 @@ export const register: Register = (on, options) => {
   const every = Math.max(1, Number(options.intervalSeconds ?? 1)) * 1000
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'team-monitor', description: 'Show the agent-lyceum run status in a pane' })
-    await $.command.register({ name: 'status-monitor', description: 'Alias of /team-monitor' })
+    await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane' })
     $.ui.status('team 讀取中…')
     pollAll($, targets)
     $.clock.every(every, () => pollAll($, targets))
@@ -79,7 +78,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: ['team-monitor', 'status-monitor'] }, async ($, e) => {
+  on('command.run', { command: 'status-monitor' }, async ($, e) => {
     // No closeOnEscape: the pane is closed by clicking 關閉 only.
     const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     pollAll($, targets)
