@@ -5,6 +5,7 @@ import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId } from "./run-store.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
@@ -128,6 +129,15 @@ program
     }
   });
 
+/** Take the project's single-run lock, or exit with the reason. */
+function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
+  try {
+    return acquireProjectLock(pr.paths.root, runId);
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+}
+
 function reportRun(summary: RunSummary, runDir: string): never {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason} after ${summary.rounds} round(s). Logs: ${runDir}`);
   if (summary.doneMessage) {
@@ -150,12 +160,19 @@ program
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
 
-      const runDir = path.join(pr.paths.runs, newRunId());
-      const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
-      console.log(`Project ${pr.name} — repo ${pr.dir}`);
-      console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-
-      reportRun(await runTeam({ project: pr, task: prepared, runDir }), runDir);
+      const runId = newRunId();
+      const runDir = path.join(pr.paths.runs, runId);
+      const lease = takeLock(pr, runId);
+      let summary: RunSummary;
+      try {
+        const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
+        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
+        summary = await runTeam({ project: pr, task: prepared, runDir });
+      } finally {
+        lease.release();
+      }
+      reportRun(summary, runDir);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -183,7 +200,7 @@ program
         if (!found) fail("No unfinished run to resume. Start one with: agent-team run \"<task>\"");
       }
       const { dir, state } = found!;
-      if (!state.end_reason && runIsAlive(state)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
+      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
       if (state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);
         if (!fs.existsSync(result)) fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
@@ -193,9 +210,17 @@ program
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 
-      console.log(`Project ${pr.name} — repo ${pr.dir}`);
-      console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
-      reportRun(await runTeam({ project: pr, resume: state, runDir: dir }), dir);
+      const lease = takeLock(pr, state.run_id);
+      let summary: RunSummary;
+      try {
+        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
+        // Read the state again under the lock: another process may have changed it while we were checking.
+        summary = await runTeam({ project: pr, resume: loadRunState(dir), runDir: dir });
+      } finally {
+        lease.release();
+      }
+      reportRun(summary, dir);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -213,9 +238,38 @@ program
       const dir = path.join(pr.paths.runs, runId);
       if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
       const state = loadRunState(dir);
-      if (!state.end_reason && runIsAlive(state)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
-      fs.rmSync(dir, { recursive: true, force: true });
+      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
+      const lease = takeLock(pr, runId);
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } finally {
+        lease.release();
+      }
       console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
+program
+  .command("unlock")
+  .description("Remove a project's run lock left behind by a crashed run. Shows the lock first; needs --force to remove it.")
+  .option("-p, --project <name>")
+  .option("--force", "remove the lock even though its owner cannot be confirmed dead")
+  .action((opts: { project?: string; force?: boolean }) => {
+    try {
+      const pr = loadProject(opts.project);
+      const info = inspectProjectLock(pr.paths.root);
+      if (!info && !fs.existsSync(path.join(pr.paths.root, "lock.json"))) {
+        console.log(`Project ${pr.name} has no run lock.`);
+        return;
+      }
+      if (info) {
+        console.log(`Lock held for run ${info.run_id} by pid ${info.pid} on ${info.hostname}, last heartbeat ${info.heartbeat_at}${lockHolderAlive(info) ? " (that process is still alive)" : " (that process is gone)"}.`);
+      } else console.log("The lock file exists but cannot be read.");
+      if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
+      forceUnlock(pr.paths.root);
+      console.log("Lock removed. Resume the run with: agent-team resume");
     } catch (e) {
       fail((e as Error).message);
     }
@@ -246,7 +300,7 @@ program
         assertName("run", opts.taskId);
         const dir = path.join(pr.paths.runs, opts.taskId);
         if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-        console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor()));
+        console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor(), pr));
         return;
       }
       if (!opts.monitor) {

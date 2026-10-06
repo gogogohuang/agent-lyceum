@@ -5,6 +5,7 @@ import { loadRunState, type RunState, type WakeTopic } from "./run-store.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
+import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
 
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
   const root = project.paths.runs;
@@ -28,7 +29,7 @@ export function latestRun(project: ResolvedProject): { dir: string; state: RunSt
 
 /** Newest run that can still be resumed: not done and not currently running. */
 export function latestUnfinishedRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
-  return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !alive(r.state.pid)));
+  return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !runIsAlive(r.state, project)));
 }
 
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
@@ -52,7 +53,15 @@ export function listRuns(project: ResolvedProject, limit: number): { dir: string
   return out;
 }
 
-export function runIsAlive(s: { pid?: number }): boolean {
+/**
+ * Is this run's dispatcher running now? Runs with a project lock (schema 2) are judged by the lock holder;
+ * the recorded pid is only the fallback for older runs and runs started without a lock.
+ */
+export function runIsAlive(s: RunState, project?: ResolvedProject): boolean {
+  if (project && s.schema_version >= 2) {
+    const l = inspectProjectLock(project.paths.root);
+    if (l) return l.run_id === s.run_id && lockHolderAlive(l);
+  }
   return alive(s.pid);
 }
 
@@ -66,9 +75,9 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
-export function runStateLabel(s: RunState): string {
+export function runStateLabel(s: RunState, live = alive(s.pid)): string {
   if (s.end_reason) return `已結束：${s.end_reason === "done" ? "完成" : s.end_reason}`;
-  return alive(s.pid) ? "執行中" : "已中斷";
+  return live ? "執行中" : "已中斷";
 }
 
 /** ANSI styling; `paint(false)` returns identity functions so output stays plain for pipes and tests. */
@@ -161,9 +170,9 @@ function summaryBlock(project: ResolvedProject, run: { dir?: string; state: RunS
   const L = (label: string) => c.bold(c.cyan(label)) + " ".repeat(Math.max(1, 10 - cols(label)));
   if (!run) return [`${L("現在：")}${c.dim("閒置（尚無執行紀錄）")}`];
   const s = run.state;
-  const live = alive(s.pid) && !s.end_reason;
+  const live = runIsAlive(s, project) && !s.end_reason;
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, runStateLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
+    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, runStateLabel(s, live))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
     `${L("任務：")}${s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字")}`,
   ];
 
@@ -198,9 +207,9 @@ function summaryBlock(project: ResolvedProject, run: { dir?: string; state: RunS
 }
 
 /** What a run is doing / did, one line per wake. */
-function describeRun(s: RunState, now: number, c: Paint, limit = Infinity): string[] {
+function describeRun(s: RunState, now: number, c: Paint, limit = Infinity, project?: ResolvedProject): string[] {
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, runStateLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
+    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, runStateLabel(s, runIsAlive(s, project)))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
     `  任務：${s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字")}`,
   ];
   const steps = stepsLine(s.steps, c);
@@ -224,10 +233,10 @@ const MONITOR_WAKES = 3;
 /** Live view: summary and agent table, plus the latest run and any run still going, wake by wake. */
 export function formatMonitor(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
-  const runs = listRuns(project, 50).filter((r, i) => i === 0 || (!r.state.end_reason && runIsAlive(r.state)));
+  const runs = listRuns(project, 50).filter((r, i) => i === 0 || (!r.state.end_reason && runIsAlive(r.state, project)));
   const out = [formatStatus(project, now, color), "", c.bold("執行紀錄（最新／執行中）：")];
   if (runs.length === 0) out.push("  無");
-  for (const r of runs) out.push("", ...describeRun(r.state, now, c, MONITOR_WAKES));
+  for (const r of runs) out.push("", ...describeRun(r.state, now, c, MONITOR_WAKES, project));
   return out.join("\n");
 }
 
@@ -236,14 +245,14 @@ export function formatStatusWithLog(project: ResolvedProject, now = Date.now(), 
   const c = paint(color);
   const run = latestRun(project);
   const out = [formatStatus(project, now, color)];
-  if (run) out.push("", c.bold("執行紀錄："), ...describeRun(run.state, now, c));
+  if (run) out.push("", c.bold("執行紀錄："), ...describeRun(run.state, now, c, Infinity, project));
   return out.join("\n");
 }
 
 /** One run in full: header, every wake, the final result, and where its logs live. */
-export function formatRunDetail(run: { dir: string; state: RunState }, now = Date.now(), color = false): string {
+export function formatRunDetail(run: { dir: string; state: RunState }, now = Date.now(), color = false, project?: ResolvedProject): string {
   const c = paint(color);
-  const out = [...describeRun(run.state, now, c)];
+  const out = [...describeRun(run.state, now, c, Infinity, project)];
   const result = path.join(run.dir, RESULT_FILE);
   if (fs.existsSync(result)) out.push("", c.bold("結果（" + result + "）："), fs.readFileSync(result, "utf8").trimEnd());
   out.push("", c.dim(`目錄：${run.dir}`));
@@ -261,7 +270,7 @@ export function formatTaskList(project: ResolvedProject, color = false): string 
     const cur = s.steps?.find((x) => !x.done);
     rows.push([
       s.run_id,
-      runStateLabel(s),
+      runStateLabel(s, runIsAlive(s, project)),
       `${s.rounds}/${s.max_rounds}`,
       s.steps?.length ? (cur ? clip(cur.text, 30) : "全部完成") : "-",
       clip(s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字"), 60),

@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
+import { acquireProjectLock } from "../src/project-lock.js";
 import { formatStatus, formatTaskList } from "../src/status.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
@@ -156,5 +157,32 @@ describe("status --task-list", () => {
   it("says so when there are no runs", () => {
     env = makeEnv();
     expect(formatTaskList(env.project())).toContain("無執行紀錄");
+  });
+});
+
+describe("status: project lock decides whether a run is running", () => {
+  it("trusts the lock holder over the recorded pid for schema-2 runs", () => {
+    env = makeEnv();
+    const pr = env.project();
+    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: 2 ** 22 + 12345, active });
+    expect(formatStatus(pr, NOW)).toContain("曾在工作（已中斷）");
+    const lease = acquireProjectLock(pr.paths.root, "20260101-000000");
+    try {
+      expect(formatStatus(pr, NOW)).toContain("lead 工作中 42s");
+    } finally {
+      lease.release();
+    }
+  });
+
+  it("does not call a run running because a different run holds the lock", () => {
+    env = makeEnv();
+    const pr = env.project();
+    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: process.pid, active });
+    const lease = acquireProjectLock(pr.paths.root, "some-other-run");
+    try {
+      expect(formatStatus(pr, NOW)).toContain("曾在工作（已中斷）");
+    } finally {
+      lease.release();
+    }
   });
 });
