@@ -1,6 +1,6 @@
 {
   "name": "agent-lyceum",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "Config + dispatcher for teams of Claude Code / Codex agents with scoped context and file-based mailboxes",
   "keywords": [
     "ai",
