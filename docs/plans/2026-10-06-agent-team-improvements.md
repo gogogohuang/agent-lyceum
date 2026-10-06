@@ -73,11 +73,11 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `newRunId(date?: Date): string`；`loadRunState(runDir: string): RunState`；`saveRunState(runDir: string, state: RunState): void`。`RunState` 新增 `schema_version: 2`、`mail_layout: "run" | "legacy"`，既有欄位保持可讀。
 
-- [ ] 寫測試：固定同一時間產生 10,000 個 ID，全部唯一且通過 `assertName`（含長度與 `NAME_RE` 限制，以及作為路徑與 git ref 片段合法）；舊格式 ID（現有 `newRunId`，`src/dispatcher.ts:94`）仍可被讀取與 resume；舊狀態缺少 `active`、`wakes` 時補成空集合；壞 JSON 或未知版本提供明確錯誤。
-- [ ] 執行 `npm test -- test/run-store.test.ts`，確認新增案例先失敗。
-- [ ] 集中 ID 與 state 的讀寫邏輯；使用 Zod 驗證，禁止 CLI/status 直接將任意 JSON cast 成 RunState；state 保持原子寫入。
-- [ ] 執行上述測試及 `npm run typecheck`，預期全部通過。
-- [ ] 提交：`refactor: centralize versioned run storage`。
+- [x] 寫測試：固定同一時間產生 10,000 個 ID，全部唯一且通過 `assertName`（含長度與 `NAME_RE` 限制，以及作為路徑與 git ref 片段合法）；舊格式 ID（現有 `newRunId`，`src/dispatcher.ts:94`）仍可被讀取與 resume；舊狀態缺少 `active`、`wakes` 時補成空集合；壞 JSON 或未知版本提供明確錯誤。
+- [x] 執行 `npm test -- test/run-store.test.ts`，確認新增案例先失敗。
+- [x] 集中 ID 與 state 的讀寫邏輯；使用 Zod 驗證，禁止 CLI/status 直接將任意 JSON cast 成 RunState；state 保持原子寫入。
+- [x] 執行上述測試及 `npm run typecheck`，預期全部通過。
+- [x] 提交：`refactor: centralize versioned run storage`。
 
 ### Task 2：專案鎖與可靠的執行中判定
 
@@ -85,13 +85,13 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `acquireProjectLock(projectRoot: string, runId: string): ProjectLease`；`ProjectLease.release(): void`；`inspectProjectLock(projectRoot: string): LockInfo | undefined`。LockInfo 包含 token、hostname、pid、run_id、heartbeat_at。
 
-- [ ] 寫程序級競爭測試：同專案兩程序只一個成功、不同專案皆成功、release 不刪除不同 token 的鎖；活程序但 heartbeat 延遲時不能搶鎖。
-- [ ] 執行 `npm test -- test/project-lock.test.ts`，確認先失敗。
-- [ ] 以 `open` 的 `wx` 原子建立鎖；每 5 秒更新 heartbeat。鎖檔放在專案 home（`projects/<name>/lock.json`），不在使用者 repo；`projectRoot` 指專案 home。鎖在 run 目錄建立與任務寫入前取得，run/resume/clear 共用鎖。LockInfo 另記錄程序啟動時間與 boot id，避免 PID 重用誤判；僅在確認該程序（pid＋啟動時間）不存在時回收，不依賴 hostname（macOS 會隨網路變動）。無法判定歸屬的鎖要求人工處理，不憑 heartbeat 過期強行搶鎖。
-- [ ] 新增 `unlock [-p name] --force`：顯示鎖資訊並要求確認後移除，作為人工處理的出口；補測試（PID 重用、hostname 改變、unlock 流程）。
-- [ ] 將鎖資訊作為執行中判定依據，PID 僅為輔助；在 `finally` 釋放自己的 token。
-- [ ] 執行鎖測試、`test/status.test.ts` 及 typecheck，預期全部通過。
-- [ ] 提交：`fix: serialize dispatchers with project leases`。
+- [x] 寫程序級競爭測試：同專案兩程序只一個成功、不同專案皆成功、release 不刪除不同 token 的鎖；活程序但 heartbeat 延遲時不能搶鎖。
+- [x] 執行 `npm test -- test/project-lock.test.ts`，確認先失敗。
+- [x] 以 `open` 的 `wx` 原子建立鎖；每 5 秒更新 heartbeat。鎖檔放在專案 home（`projects/<name>/lock.json`），不在使用者 repo；`projectRoot` 指專案 home。鎖在 run 目錄建立與任務寫入前取得，run/resume/clear 共用鎖。LockInfo 另記錄程序啟動時間（`ps` 的 lstart，跨重開機也不會相同），避免 PID 重用誤判；原子建立改用「寫入暫存檔再 hard link」，效果等同 `wx` 且鎖檔內容不會只寫一半；僅在確認該程序（pid＋啟動時間）不存在時回收，不依賴 hostname（macOS 會隨網路變動）。無法判定歸屬的鎖要求人工處理，不憑 heartbeat 過期強行搶鎖。
+- [x] 新增 `unlock [-p name] --force`：顯示鎖資訊並要求確認後移除，作為人工處理的出口；補測試（PID 重用、hostname 改變、unlock 流程）。
+- [x] 將鎖資訊作為執行中判定依據，PID 僅為輔助；在 `finally` 釋放自己的 token。
+- [x] 執行鎖測試、`test/status.test.ts` 及 typecheck，預期全部通過。
+- [x] 提交：`fix: serialize dispatchers with project leases`。
 
 ### Task 3：信箱依 run 隔離
 
@@ -99,12 +99,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `bindRunProject(project: ResolvedProject, runDir: string, layout: "run" | "legacy"): ResolvedProject`，回傳信箱與 task memory 路徑已綁定的副本；MessageMeta 新增 `run_id?: string`，新格式必填，legacy 可省略。
 
-- [ ] 寫測試：同專案 run A 的未讀信件不能被 run B 看見；A 的 outbox 宣告 B 的 run_id 時進 rejected；resume 沿用 A；legacy 不搬移信件。
-- [ ] 執行 `npm test -- test/run-mailbox.test.ts`，確認先失敗。
-- [ ] 實作 run 路徑綁定並讓 prompt、adapter 寫入根目錄和 status 一致使用；dispatcher 蓋上可信 run_id，不信任 agent 自訂的寄件者。
-- [ ] 為 status 未指定 run 時採用最新 run；task detail 使用指定 run；README 說明 legacy 共享信箱限制。
-- [ ] 執行新測試、mailbox/dispatcher/status 測試及 typecheck，預期全部通過。
-- [ ] 提交：`feat: isolate mailboxes by run`。
+- [x] 寫測試：同專案 run A 的未讀信件不能被 run B 看見；A 的 outbox 宣告 B 的 run_id 時進 rejected；resume 沿用 A；legacy 不搬移信件。
+- [x] 執行 `npm test -- test/run-mailbox.test.ts`，確認先失敗。
+- [x] 實作 run 路徑綁定並讓 prompt、adapter 寫入根目錄和 status 一致使用；dispatcher 蓋上可信 run_id，不信任 agent 自訂的寄件者。
+- [x] 為 status 未指定 run 時採用最新 run；task detail 使用指定 run；README 說明 legacy 共享信箱限制。
+- [x] 執行新測試、mailbox/dispatcher/status 測試及 typecheck，預期全部通過。
+- [x] 提交：`feat: isolate mailboxes by run`。
 
 ### Task 4：訊息處理 journal 與投遞去重
 
@@ -112,12 +112,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `claimMessages(runDir: string, agent: string, messageIds: string[]): ClaimRecord`；`commitClaim(runDir: string, claimId: string): void`；`recoverRunMail(runDir: string): RecoveryReport`。路由 journal 以 `(source_id, recipient)` 唯一識別投遞。attempt 概念由 Task 5 在此之上加入。
 
-- [ ] 寫故障注入測試：每個 journal/rename/投遞步驟後模擬中斷；重啟後已提交訊息不再喚醒，未提交訊息仍可處理，雙收件者各收到一份。
-- [ ] 執行 `npm test -- test/message-store.test.ts`，確認先失敗。
-- [ ] 原子保存輸入 claim，保存輸出副本和路由 journal，完成投遞後才標記輸入已讀並提交；收件者使用決定性 ID，resume 驗證既有內容而非重新產生隨機 ID。
-- [ ] 在開始喚醒前復原 journal；將 done 的持久化納入相同流程，避免 done 已搬走但 result/state 未存的缺口。此處只處理持久化順序；done 的內容契約與 outcome 由 Task 6 負責，Task 6 不得改動 journal 流程。
-- [ ] 執行故障注入、mailbox/dispatcher 測試及 typecheck，預期全部通過。
-- [ ] 提交：`fix: recover mail routing with durable journals`。
+- [x] 寫故障注入測試：每個 journal/rename/投遞步驟後模擬中斷；重啟後已提交訊息不再喚醒，未提交訊息仍可處理，雙收件者各收到一份。
+- [x] 執行 `npm test -- test/message-store.test.ts`，確認先失敗。
+- [x] 原子保存輸入 claim，保存輸出副本和路由 journal，完成投遞後才標記輸入已讀並提交；收件者使用決定性 ID，resume 驗證既有內容而非重新產生隨機 ID。
+- [x] 在開始喚醒前復原 journal；將 done 的持久化納入相同流程，避免 done 已搬走但 result/state 未存的缺口。此處只處理持久化順序；done 的內容契約與 outcome 由 Task 6 負責，Task 6 不得改動 journal 流程。
+- [x] 執行故障注入、mailbox/dispatcher 測試及 typecheck，預期全部通過。
+- [x] 提交：`fix: recover mail routing with durable journals`。
 
 ### Task 5：attempt 追蹤與安全重試
 
@@ -125,12 +125,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `beginAttempt(runDir: string, claimId: string): AttemptRecord`；`finishAttempt(runDir: string, attemptId: string, status: "committed" | "failed"): void`。AttemptRecord 狀態為 `started | output_ready | committed | failed`，輸出目錄以 attempt ID 隔離。
 
-- [ ] 寫測試：第一次 attempt 寫出 outbox 後失敗，舊輸出被隔離在該 attempt 目錄，不混入第二次成果；重試次數有上限；報告記錄可能已產生 repo 副作用。
-- [ ] 執行 `npm test -- test/attempt.test.ts`，確認先失敗。
-- [ ] 將 claim 之後的喚醒包成 attempt：輸出先寫入 attempt 目錄，成功才交給 Task 4 的路由 journal；失敗的 attempt 保留供檢視，不當作成果。
-- [ ] 復原時對 `started` 或 `output_ready` 的 attempt 明示「外部副作用可能已發生」，並出現在 status 與 log。
-- [ ] 執行 attempt、message-store、dispatcher 測試及 typecheck，預期全部通過。
-- [ ] 提交：`feat: track attempts and isolate retry output`。
+- [x] 寫測試：第一次 attempt 寫出 outbox 後失敗，舊輸出被隔離在該 attempt 目錄，不混入第二次成果；重試次數有上限；報告記錄可能已產生 repo 副作用。
+- [x] 執行 `npm test -- test/attempt.test.ts`，確認先失敗。
+- [x] 將 claim 之後的喚醒包成 attempt：輸出先寫入 attempt 目錄，成功才交給 Task 4 的路由 journal；失敗的 attempt 保留供檢視，不當作成果。
+- [x] 復原時對 `started` 或 `output_ready` 的 attempt 明示「外部副作用可能已發生」，並出現在 status 與 log。
+- [x] 執行 attempt、message-store、dispatcher 測試及 typecheck，預期全部通過。
+- [x] 提交：`feat: track attempts and isolate retry output`。
 
 ### Task 6：結果狀態與完成契約
 
@@ -138,13 +138,13 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `RunOutcome = "completed" | "partial" | "blocked" | "failed" | "cancelled"`；`exitCodeForOutcome(outcome: RunOutcome): 0 | 1 | 2 | 130`；done frontmatter 新增 `outcome`，body 要求 `## Result`、`## Files`、`## Verification`、`## Not done`。
 
-- [ ] 寫測試：idle 不回傳 0；blocked/partial 回傳 2；failed 回傳 1；cancelled 回傳 130；缺完成欄位或仍有未完成 Steps 時不能宣告 completed。
-- [ ] 執行 `npm test -- test/outcome.test.ts`，確認先失敗。
-- [ ] done 內容驗證失敗（缺標題、缺 outcome、仍有未完成 Steps）時，dispatcher 不結束 run，而是回信給 lead 說明缺漏並要求補寫，最多 2 次；仍失敗則以 `partial` 結束並保留原報告。寫測試覆蓋補寫成功、超過次數降級、不無限迴圈。
-- [ ] 分離 `end_reason` 與 `outcome`；legacy done 缺 outcome 時保留報告並正規化為 partial，提示補完成契約，不默認成功。
-- [ ] 對 legacy 已結束 run 保留原始資訊並註記結果未驗證；不將 checklist 或 agent 自述視為獨立測試證據。顯示驗證摘要與可追溯 log 路徑。
-- [ ] 執行 outcome、dispatcher/status 測試與 typecheck，預期全部通過；更新兩份 README 的 exit code。
-- [ ] 提交：`feat: distinguish run outcomes from stop reasons`。
+- [x] 寫測試：idle 不回傳 0；blocked/partial 回傳 2；failed 回傳 1；cancelled 回傳 130；缺完成欄位或仍有未完成 Steps 時不能宣告 completed。
+- [x] 執行 `npm test -- test/outcome.test.ts`，確認先失敗。
+- [x] done 內容驗證失敗（缺標題、缺 outcome、仍有未完成 Steps）時，dispatcher 不結束 run，而是回信給 lead 說明缺漏並要求補寫，最多 2 次；仍失敗則以 `partial` 結束並保留原報告。寫測試覆蓋補寫成功、超過次數降級、不無限迴圈。
+- [x] 分離 `end_reason` 與 `outcome`；legacy done 缺 outcome 時保留報告並正規化為 partial，提示補完成契約，不默認成功。
+- [x] 對 legacy 已結束 run 保留原始資訊並註記結果未驗證；不將 checklist 或 agent 自述視為獨立測試證據。顯示驗證摘要與可追溯 log 路徑。
+- [x] 執行 outcome、dispatcher/status 測試與 typecheck，預期全部通過；更新兩份 README 的 exit code。
+- [x] 提交：`feat: distinguish run outcomes from stop reasons`。
 
 ### Task 7：worktree 工作區與平行隔離
 
@@ -239,6 +239,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - [ ] 執行 `npm run typecheck`、`npm test`、`npm run build`，預期全部成功；CI 既有 macOS/Linux × Node 20/22 矩陣皆通過。
 - [ ] 檢查 package 產物仍包含 CLI 需要的模組，執行 `npm pack --dry-run`；檢查中英文指令和新 JSON 範例一致。
 - [ ] 提交：`docs: document reliable runs and verify lifecycle`。
+
+## 實作紀錄
+
+- Phase A（Task 1–6）已於分支 `feat/reliable-runs-phase-a` 實作並通過 `npm run typecheck`、`npm test`（117 項）、`npm run build`。
+- 與計畫的差異：專案鎖以暫存檔＋hard link 原子建立並記錄 `ps` 啟動時間（不另記 boot id）；新增 `unlock --force` 指令；`recoverRunMail` 另回傳 `ready`、`interrupted` 供 dispatcher 使用。
+- 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 驗證）。
 
 ## 覆蓋與完成標準
 
