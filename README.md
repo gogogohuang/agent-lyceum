@@ -42,17 +42,17 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 
 Without `--project`, the project is the registered one whose `dir` is the longest prefix of the current directory; if none matches the command lists the registered projects and stops.
 
-## Monitor plugin (Claude Code)
+## Monitor mod (Claude Code)
 
-`plugins/status-monitor` is a Claude Code **mod**: a plugin made of hooks (status line, toasts, a `/team-monitor` pane) that runs inside the Claude Code session and polls `agent-lyceum status --json`. It needs a Claude Code build that supports mods (the `claude-code` hooks API); it does not change how agent-lyceum itself runs. It shows live run status for one or several projects.
+`plugins/status-monitor` is a Claude Code **mod**, not an ordinary plugin: it is written against Claude Code's mod hooks API (`import type { Register } from 'claude-code'`) and runs inside the Claude Code session, where it adds a status line entry, toasts and a `/team-monitor` pane that poll `agent-lyceum status --json`. It needs a Claude Code build that supports mods; it does not change how agent-lyceum itself runs. It shows live run status for one or several projects.
 
-**Load it.** Build first (`npm run build`; the plugin runs `dist/cli.js`), then start a session with:
+**Load it.** Build first (`npm run build`; the mod runs `dist/cli.js`), then start a session with:
 
 ```
 claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 ```
 
-`--plugin-dir` only applies when a session starts; an already-open session must be restarted (`claude --resume --plugin-dir ...` keeps the conversation). To load it every time, add `alias claude='claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor'` to your shell rc, or, for hosts where you cannot pass a flag (desktop app, SDK), set `CLAUDE_CODE_PLUGIN_DIRS` to the plugin folder. While a session is running, saving a file in the plugin folder hot-reloads it.
+`--plugin-dir` only applies when a session starts; an already-open session must be restarted (`claude --resume --plugin-dir ...` keeps the conversation). To load it every time, add `alias claude='claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor'` to your shell rc, or, for hosts where you cannot pass a flag (desktop app, SDK), set `CLAUDE_CODE_PLUGIN_DIRS` to the mod folder. While a session is running, saving a file in the mod folder hot-reloads it.
 
 **Use it.**
 - **Status line:** always on once loaded (`team 讀取中…` until the first poll, `team 無法取得狀態：…` when the CLI cannot run); shows the run state, round `n/max`, output tokens, the current step and unread mail. With several projects it shows one overview line (`team 1/3 running · a ... | b ...`).
