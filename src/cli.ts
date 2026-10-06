@@ -18,9 +18,9 @@ import { formatEnforcement, validateProject } from "./validate.js";
 
 const program = new Command();
 program
-  .name("agent-team")
+  .name("agent-lyceum")
   .description("Configure and run a team of Claude Code / Codex agents with scoped context and file mailboxes.")
-  .option("--home <dir>", "agent-team home (default: $AGENT_TEAM_HOME or ~/agent-team-config)");
+  .option("--home <dir>", "agent-lyceum home (default: $AGENT_LYCEUM_HOME or ~/agent-lyceum-config)");
 
 const home = () => resolveHome(program.opts().home);
 
@@ -41,7 +41,7 @@ function loadProject(projectOpt: string | undefined): ResolvedProject {
         `No project given and the current directory is not inside a registered project.\n` +
           (known.length
             ? `Registered projects:\n${known.map((p) => `  ${p.name}  ->  ${p.dir}`).join("\n")}\nUse --project <name>.`
-            : `No projects registered. Use: agent-team project add <name> --dir <repo>`),
+            : `No projects registered. Use: agent-lyceum project add <name> --dir <repo>`),
       );
     }
   }
@@ -51,22 +51,22 @@ function loadProject(projectOpt: string | undefined): ResolvedProject {
 
 program
   .command("init")
-  .description("Create the agent-team home with a global agent library")
+  .description("Create the agent-lyceum home with a global agent library")
   .option("-y, --yes", "do not ask for confirmation of the home path")
   .action(async (opts: { yes?: boolean }) => {
     const h = home();
-    const explicit = program.opts().home || process.env.AGENT_TEAM_HOME;
+    const explicit = program.opts().home || process.env.AGENT_LYCEUM_HOME;
     if (!opts.yes && !explicit && !fs.existsSync(h) && process.stdin.isTTY) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const ans = (await rl.question(`Create agent-team home at ${h}? [Y/n] `)).trim().toLowerCase();
+      const ans = (await rl.question(`Create agent-lyceum home at ${h}? [Y/n] `)).trim().toLowerCase();
       rl.close();
-      if (ans === "n" || ans === "no") fail("Aborted. Set AGENT_TEAM_HOME or pass --home to choose another location.");
+      if (ans === "n" || ans === "no") fail("Aborted. Set AGENT_LYCEUM_HOME or pass --home to choose another location.");
     }
     const r = initHome(h);
     console.log(`Home: ${r.home}`);
     for (const f of r.created) console.log(`  created  ${path.relative(h, f)}`);
     for (const f of r.skipped) console.log(`  kept     ${path.relative(h, f)}`);
-    console.log(`\nNext: agent-team project add <name> --dir <your-repo>`);
+    console.log(`\nNext: agent-lyceum project add <name> --dir <your-repo>`);
   });
 
 const project = program.command("project").description("Manage registered projects");
@@ -77,7 +77,7 @@ project
   .action((name: string, opts: { dir: string }) => {
     try {
       const r = addProject(home(), name, opts.dir);
-      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-team validate --project ${name}`);
+      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-lyceum validate --project ${name}`);
     } catch (e) {
       fail((e as Error).message);
     }
@@ -136,7 +136,7 @@ program
 async function preflight(pr: ResolvedProject): Promise<void> {
   const r = await preflightRuntimes(pr);
   for (const w of r.warnings) console.error(`warn   ${w}`);
-  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-team doctor\`).`);
+  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-lyceum doctor\`).`);
 }
 
 /** Take the project's single-run lock, or exit with the reason. */
@@ -171,7 +171,7 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
 function reportRun(summary: RunSummary, runDir: string): never {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
-  if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-team): ${summary.verification}`);
+  if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
@@ -189,7 +189,7 @@ program
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
       await preflight(pr);
 
       const runId = newRunId();
@@ -221,7 +221,7 @@ program
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
       await preflight(pr);
 
       let found: ReturnType<typeof latestUnfinishedRun>;
@@ -232,7 +232,7 @@ program
         found = { dir, state: loadRunState(dir) };
       } else {
         found = latestUnfinishedRun(pr);
-        if (!found) fail("No unfinished run to resume. Start one with: agent-team run \"<task>\"");
+        if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
       }
       const { dir, state } = found!;
       if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
@@ -374,7 +374,7 @@ program
       } else console.log("The lock file exists but cannot be read.");
       if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
       forceUnlock(pr.paths.root);
-      console.log("Lock removed. Resume the run with: agent-team resume");
+      console.log("Lock removed. Resume the run with: agent-lyceum resume");
     } catch (e) {
       fail((e as Error).message);
     }
@@ -412,7 +412,7 @@ program
       if (opts.taskId) {
         assertName("run", opts.taskId);
         const dir = path.join(pr.paths.runs, opts.taskId);
-        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-lyceum status --task-list`);
         console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor(), pr));
         return;
       }

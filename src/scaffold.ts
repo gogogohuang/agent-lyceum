@@ -80,7 +80,7 @@ export function addProject(home: string, name: string, dir: string): { root: str
   assertName("project", name);
   const hp = homePaths(home);
   if (!fs.existsSync(hp.globalConfig)) {
-    throw new Error(`Not initialised: ${hp.globalConfig} is missing. Run \`agent-team init\` first.`);
+    throw new Error(`Not initialised: ${hp.globalConfig} is missing. Run \`agent-lyceum init\` first.`);
   }
   const repo = path.resolve(dir);
   if (!fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) throw new Error(`--dir is not a directory: ${repo}`);

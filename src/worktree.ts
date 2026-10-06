@@ -30,10 +30,10 @@ export interface AgentWorkspace {
 }
 
 const IDENTITY = {
-  GIT_AUTHOR_NAME: "agent-team",
-  GIT_AUTHOR_EMAIL: "agent-team@localhost",
-  GIT_COMMITTER_NAME: "agent-team",
-  GIT_COMMITTER_EMAIL: "agent-team@localhost",
+  GIT_AUTHOR_NAME: "agent-lyceum",
+  GIT_AUTHOR_EMAIL: "agent-lyceum@localhost",
+  GIT_COMMITTER_NAME: "agent-lyceum",
+  GIT_COMMITTER_EMAIL: "agent-lyceum@localhost",
 };
 
 export function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): string {
@@ -84,27 +84,27 @@ export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: 
     const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, ... (${dirty.length} in all)` : "");
     throw new Error(
       `Parallel runs start from a clean repo, but ${project.dir} has uncommitted changes: ${shown}. ` +
-        `Commit or stash them first (agent-team never touches your own edits), or run sequentially with dispatcher.max_parallel: 1.`,
+        `Commit or stash them first (agent-lyceum never touches your own edits), or run sequentially with dispatcher.max_parallel: 1.`,
     );
   }
 }
 
 /**
  * Commit the repo's current working tree (tracked changes and new, non-ignored files) as an unreferenced-by-branch
- * snapshot `refs/agent-team/<run>/base-<n>`. Uses a throwaway index, so HEAD, branches, the real index and the
+ * snapshot `refs/agent-lyceum/<run>/base-<n>`. Uses a throwaway index, so HEAD, branches, the real index and the
  * working tree are not touched. Returns the ref.
  */
 export function snapshotBase(project: ResolvedProject, runId: string, n: number): string {
   const top = toplevel(project.dir);
-  const index = path.join(os.tmpdir(), `agent-team-index-${crypto.randomBytes(6).toString("hex")}`);
+  const index = path.join(os.tmpdir(), `agent-lyceum-index-${crypto.randomBytes(6).toString("hex")}`);
   const env = { ...IDENTITY, GIT_INDEX_FILE: index };
   try {
     const head = tryGit(top, ["rev-parse", "--verify", "HEAD"]);
     if (head) git(top, ["read-tree", head], env);
     git(top, ["add", "-A"], env);
     const tree = git(top, ["write-tree"], env);
-    const commit = git(top, ["commit-tree", tree, ...(head ? ["-p", head] : []), "-m", `agent-team snapshot ${runId} #${n}`], env);
-    const ref = `refs/agent-team/${runId}/base-${n}`;
+    const commit = git(top, ["commit-tree", tree, ...(head ? ["-p", head] : []), "-m", `agent-lyceum snapshot ${runId} #${n}`], env);
+    const ref = `refs/agent-lyceum/${runId}/base-${n}`;
     git(top, ["update-ref", ref, commit]);
     return ref;
   } finally {
@@ -163,7 +163,7 @@ export function prepareAgentWorkspace(project: ResolvedProject, runId: string, a
     return describeWorkspace(project, root, agent, meta);
   }
 
-  const branch = `agent-team/${runId}/${agent}`;
+  const branch = `agent-lyceum/${runId}/${agent}`;
   fs.mkdirSync(path.dirname(root), { recursive: true });
   git(top, ["worktree", "add", "-q", "-B", branch, root, newBase]);
   meta = { branch, base: newBase };
@@ -248,7 +248,7 @@ export function collectAgentChanges(workspace: AgentWorkspace, owns: string[]): 
   git(root, ["add", "-A"]);
   if (tryGit(root, ["diff", "--cached", "--quiet"]) === undefined) {
     // hooks belong to the user's repo (a worktree shares them): do not run them for the dispatcher's own commit
-    git(root, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", `agent-team: changes by ${workspace.agent}`], IDENTITY);
+    git(root, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", `agent-lyceum: changes by ${workspace.agent}`], IDENTITY);
   }
   const head = git(root, ["rev-parse", "HEAD"]);
   const base = workspace.base;
@@ -414,7 +414,7 @@ export function inspectWorkspace(project: ResolvedProject, runId: string, agent:
   const root = workspaceRoot(project, runId, agent);
   if (!fs.existsSync(root)) return undefined;
   const ws = existingAgentWorkspace(project, runId, agent);
-  const branch = ws?.branch ?? `agent-team/${runId}/${agent}`;
+  const branch = ws?.branch ?? `agent-lyceum/${runId}/${agent}`;
   const work: WorkspaceWork = { agent, root, branch, dirty: [], unintegrated: [] };
   if (!ws) return { ...work, unknown: "its metadata is missing, so what it holds cannot be compared with the repo" };
   try {
@@ -441,10 +441,10 @@ export function listWorkspaceAgents(project: ResolvedProject, runId: string): st
   return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
 }
 
-/** The snapshot refs (`refs/agent-team/<run>/...`) of a run. */
+/** The snapshot refs (`refs/agent-lyceum/<run>/...`) of a run. */
 export function listSnapshotRefs(project: ResolvedProject, runId: string): string[] {
   if (!isGitRepo(project.dir)) return [];
-  const out = tryGit(project.dir, ["for-each-ref", "--format=%(refname)", `refs/agent-team/${runId}/`]) ?? "";
+  const out = tryGit(project.dir, ["for-each-ref", "--format=%(refname)", `refs/agent-lyceum/${runId}/`]) ?? "";
   return out.split("\n").filter(Boolean);
 }
 

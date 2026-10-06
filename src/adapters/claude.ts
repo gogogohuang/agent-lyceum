@@ -81,7 +81,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
     args,
     stdin: input.userPrompt, // prompt via stdin: --add-dir is variadic and would swallow a positional prompt
     cwd: repo,
-    env: { ...process.env, AGENT_TEAM_AGENT: agent.name },
+    env: { ...process.env, AGENT_LYCEUM_AGENT: agent.name },
     parse({ stdout, stderr, code }) {
       return interpretClaude(extractClaudeResult(stdout), stdout, stderr, code);
     },

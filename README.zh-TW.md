@@ -1,22 +1,22 @@
-# agent-team
+# agent-lyceum
 
-[![npm version](https://img.shields.io/npm/v/@gogogohuang/agent-team)](https://www.npmjs.com/package/@gogogohuang/agent-team)
+[![npm version](https://img.shields.io/npm/v/agent-lyceum)](https://www.npmjs.com/package/agent-lyceum)
 
 [English](README.md) | **繁體中文**
 
 設定並執行一個由多個 **agent**（Claude Code 和／或 Codex）組成的團隊。agent 之間透過檔案信箱互相溝通，每個 agent 都有自己的人設（`AGENT.md`）與長期記憶資料夾。寫入權限有範圍限制：agent 只能修改自己的記憶與寄件匣（outbox），不能改動其他 agent 的 context，也不能改自己的人設。
 
-此工具**不會把自己的資料放進你的 repo**：設定、信箱、log、任務記憶與 agent 的 worktree 都放在一個看得到的資料夾 `~/agent-team-config/`（可用 `AGENT_TEAM_HOME` 或 `--home` 覆寫）。但 agent *產出的成果*是另一回事：agent 會修改你的 repo（序列執行時直接修改；平行執行時在各自的 git worktree 修改，再把變更整合進你的工作目錄）。agent-team 自己在你的 repository 內唯一新增的是 git 的管理資料：平行 run 存在期間，`.git` 下會有 `refs/agent-team/<run-id>/*` 快照 ref、`agent-team/<run-id>/<agent>` branch 與 worktree 登記，`agent-team clear` 會把它們移除。從舊版升級請見 [docs/upgrading-run-v2.md](docs/upgrading-run-v2.md)。
+此工具**不會把自己的資料放進你的 repo**：設定、信箱、log、任務記憶與 agent 的 worktree 都放在一個看得到的資料夾 `~/agent-lyceum-config/`（可用 `AGENT_LYCEUM_HOME` 或 `--home` 覆寫）。但 agent *產出的成果*是另一回事：agent 會修改你的 repo（序列執行時直接修改；平行執行時在各自的 git worktree 修改，再把變更整合進你的工作目錄）。agent-lyceum 自己在你的 repository 內唯一新增的是 git 的管理資料：平行 run 存在期間，`.git` 下會有 `refs/agent-lyceum/<run-id>/*` 快照 ref、`agent-lyceum/<run-id>/<agent>` branch 與 worktree 登記，`agent-lyceum clear` 會把它們移除。從舊版升級請見 [docs/upgrading-run-v2.md](docs/upgrading-run-v2.md)。
 
 ```bash
-npx @gogogohuang/agent-team init                     # 建立 home 與全域 agent 庫
-npx @gogogohuang/agent-team project add web --dir ~/code/web-app
-npx @gogogohuang/agent-team validate --project web   # 檢查設定並顯示各項防護等級
-npx @gogogohuang/agent-team run --task-file spec.md  # 在 repo 內執行時會自動偵測專案
-npx @gogogohuang/agent-team status
+npx agent-lyceum init                     # 建立 home 與全域 agent 庫
+npx agent-lyceum project add web --dir ~/code/web-app
+npx agent-lyceum validate --project web   # 檢查設定並顯示各項防護等級
+npx agent-lyceum run --task-file spec.md  # 在 repo 內執行時會自動偵測專案
+npx agent-lyceum status
 ```
 
-安裝後的執行檔名稱為 `agent-team`。若要直接跑 GitHub 上尚未發佈的最新程式碼，可改用 `npx github:gogogohuang/agent-team <command>`。
+安裝後的執行檔名稱為 `agent-lyceum`。若要直接跑 GitHub 上尚未發佈的最新程式碼，可改用 `npx github:gogogohuang/agent-lyceum <command>`。
 
 需求：Node 20+，以及 `PATH` 中有 `claude` 和／或 `codex`（且已登入）。支援 macOS 與 Linux（Linux 需要 `bwrap` 才有 OS 沙箱）；Windows 只會顯示警告。
 
@@ -36,7 +36,7 @@ npx @gogogohuang/agent-team status
 | `doctor [-p name] [--json]` | 在不執行任何 agent 的前提下檢查環境：設定、git（平行 run 需要）、專案鎖，以及各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。只要團隊需要的功能被明確判定不支援就 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。 |
 | `unlock [-p name] --force` | 移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。 |
 
-**中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-team resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
+**中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-lyceum resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
 
 **`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
 
@@ -44,26 +44,26 @@ npx @gogogohuang/agent-team status
 
 ## 監控 plugin（Claude Code）
 
-`plugins/agent-team-monitor` 是 Claude Code plugin，會顯示一個或多個專案的即時執行狀態。
+`plugins/agent-lyceum-monitor` 是 Claude Code plugin，會顯示一個或多個專案的即時執行狀態。
 
 **載入。** 先 build（`npm run build`；plugin 會執行 `dist/cli.js`），再用下面的指令啟動 session：
 
 ```
-claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor
+claude --plugin-dir /path/to/agent-lyceum/plugins/agent-lyceum-monitor
 ```
 
-`--plugin-dir` 只在 session 啟動時生效，已開著的 session 要重開（`claude --resume --plugin-dir ...` 可保留對話）。想每次都載入，就在 shell rc 加 `alias claude='claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor'`。
+`--plugin-dir` 只在 session 啟動時生效，已開著的 session 要重開（`claude --resume --plugin-dir ...` 可保留對話）。想每次都載入，就在 shell rc 加 `alias claude='claude --plugin-dir /path/to/agent-lyceum/plugins/agent-lyceum-monitor'`。
 
 **操作。**
 - **狀態列：** 載入後常駐，顯示執行狀態、輪數 `n/max`、output tokens、目前步驟與未讀信件。監看多個專案時顯示一行總覽（`team 1/3 執行中 · a ... | b ...`）。
 - **通知：** 執行完成或失敗時會跳出訊息（監看多個專案時前面加 `[專案名]`），不需要任何操作。
 - **`/team-monitor`：** 在輸入框輸入即可開啟面板。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒與最近 5 次執行。面板開著時會依輪詢間隔自動更新，按 **關閉** 即可收起。
 
-**設定。** 在 `~/.claude/settings.json` 的 `pluginConfigs."agent-team-monitor@inline"`（`options`）：
+**設定。** 在 `~/.claude/settings.json` 的 `pluginConfigs."agent-lyceum-monitor@inline"`（`options`）：
 
 | 選項 | 說明 | 預設 |
 |---|---|---|
-| `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-team/dist/cli.js` | `agent-team` |
+| `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | 已註冊的專案名稱（`-p`）；用逗號分隔可同時監看多個；留空則依 session 所在目錄推斷 | 空 |
 | `intervalSeconds` | 輪詢狀態的間隔（秒） | `3` |
 
@@ -72,7 +72,7 @@ claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor
 ## 目錄結構
 
 ```
-~/agent-team-config/
+~/agent-lyceum-config/
 ├── team.yaml                         # 全域 agent 庫
 ├── agents/<agent>/{AGENT.md, memory/}  # 全域人設 + 跨專案記憶
 └── projects/<project>/
@@ -108,9 +108,9 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 3. 每次喚醒的 prompt 都包含：該 agent 的 `AGENT.md`、團隊協定、`COMMON.md`（唯讀，≤ 8 KB）、每個記憶資料夾的 `MEMORY.md` 索引、**最舊**一封未讀信件全文（每次喚醒只處理一封；lead 例外，會一次拿到連續最多 5 封 `reply`/`failure` 並一併決策），以及排隊中信件的標題；排隊的信維持未讀，等各自的喚醒再處理。
 4. agent 寄信的方式，是在**自己的** `outbox/` 寫一個含 frontmatter（`to`、`type`、`subject`）的 Markdown 檔。dispatcher 會檢查 `can_message`、蓋上真正的寄件者，並移到收件者的 `inbox/`。處理完的信件移至 `inbox/<agent>/read/`。信箱屬於單一 run（`runs/<run-id>/mail/`），信件不會跨 run。舊版本啟動的 run 繼續使用共用的 `shared/{inbox,outbox}/` 信箱（信件不會被搬移），接續這類 run 時會沿用舊版配置。
    每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的信仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。
-5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-team 不會驗證 lead 回報的內容是否屬實。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
+5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
 
-平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。此時每個非 lead 的 agent 都在**自己的 git worktree**（`projects/<name>/worktrees/<run-id>/<agent>`，branch `agent-team/<run-id>/<agent>`）工作；worktree 是從喚醒當下 repo 的快照（`refs/agent-team/<run-id>/base-<n>`，包含 lead 尚未提交的修改與新增、未被 ignore 的檔案）切出來的，你的 HEAD、branch 與工作目錄都不會被動到。`dispatcher.workspace_mode` 可設為 `auto`（`max_parallel > 1` 時用 worktree）、`worktree` 或 `shared`；`shared` 不能與平行 agent 並用。平行 run 在 repo 有你自己未提交的修改時，或 repo 不是 git repository 時，會拒絕啟動（請改為序列執行）。成員完成後，dispatcher 會提交它 worktree 中的修改，並在 lead 讀到該成員的信之前，把變更套用到你的工作目錄（不動你的 index 與 HEAD）。每個被改動的路徑都會先檢查：必須在該成員的 `owns` 內（rename 與刪除也算）、不得是 `CLAUDE.md`／`AGENTS.md`，symlink 不得指向專案或該成員 `owns` 之外。若同一檔案在成員的快照之後又在你的 repo 被改過、檢查未通過，或 `git apply` 失敗，就一個檔案都不套用：成果保留在它的 branch 與 worktree，報告與 patch 寫到 `runs/<run-id>/integration/`，並通知 lead，且這個 run 不能以 `completed` 結束（會以 `blocked` 結束）。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
+平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。此時每個非 lead 的 agent 都在**自己的 git worktree**（`projects/<name>/worktrees/<run-id>/<agent>`，branch `agent-lyceum/<run-id>/<agent>`）工作；worktree 是從喚醒當下 repo 的快照（`refs/agent-lyceum/<run-id>/base-<n>`，包含 lead 尚未提交的修改與新增、未被 ignore 的檔案）切出來的，你的 HEAD、branch 與工作目錄都不會被動到。`dispatcher.workspace_mode` 可設為 `auto`（`max_parallel > 1` 時用 worktree）、`worktree` 或 `shared`；`shared` 不能與平行 agent 並用。平行 run 在 repo 有你自己未提交的修改時，或 repo 不是 git repository 時，會拒絕啟動（請改為序列執行）。成員完成後，dispatcher 會提交它 worktree 中的修改，並在 lead 讀到該成員的信之前，把變更套用到你的工作目錄（不動你的 index 與 HEAD）。每個被改動的路徑都會先檢查：必須在該成員的 `owns` 內（rename 與刪除也算）、不得是 `CLAUDE.md`／`AGENTS.md`，symlink 不得指向專案或該成員 `owns` 之外。若同一檔案在成員的快照之後又在你的 repo 被改過、檢查未通過，或 `git apply` 失敗，就一個檔案都不套用：成果保留在它的 branch 與 worktree，報告與 patch 寫到 `runs/<run-id>/integration/`，並通知 lead，且這個 run 不能以 `completed` 結束（會以 `blocked` 結束）。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
 
 ## 寫入範圍
 

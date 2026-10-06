@@ -77,7 +77,7 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
     // Codex has no flag for a custom instruction file, so the persona travels in the prompt.
     stdin: `${input.systemPrompt}\n\n=====\n\n${input.userPrompt}`,
     cwd: repo,
-    env: { ...process.env, AGENT_TEAM_AGENT: agent.name },
+    env: { ...process.env, AGENT_LYCEUM_AGENT: agent.name },
     parse({ stdout, stderr, code }) {
       return finishCodex(lastFile, findSessionId(stdout), codexOutputTokens(stdout), stdout, stderr, code);
     },

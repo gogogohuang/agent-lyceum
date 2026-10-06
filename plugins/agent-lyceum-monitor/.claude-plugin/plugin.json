@@ -1,14 +1,14 @@
 {
-  "name": "agent-team-monitor",
+  "name": "agent-lyceum-monitor",
   "version": "0.1.0",
-  "description": "Live agent-team run status: status line, finish/failure toasts and a /team-monitor pane, for one or several projects.",
+  "description": "Live agent-lyceum run status: status line, finish/failure toasts and a /team-monitor pane, for one or several projects.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "command": {
       "type": "string",
-      "title": "agent-team command",
-      "description": "Command that runs agent-team (split on spaces, e.g. `node /path/to/dist/cli.js`).",
-      "default": "agent-team"
+      "title": "agent-lyceum command",
+      "description": "Command that runs agent-lyceum (split on spaces, e.g. `node /path/to/dist/cli.js`).",
+      "default": "agent-lyceum"
     },
     "intervalSeconds": {
       "type": "number",
@@ -18,7 +18,7 @@
     },
     "project": {
       "type": "string",
-      "title": "agent-team projects",
+      "title": "agent-lyceum projects",
       "description": "Registered project name(s) (-p); separate several with commas to watch them all. Leave empty to infer from the session's directory.",
       "default": ""
     }

@@ -1,5 +1,5 @@
 {
-  "name": "@gogogohuang/agent-team",
+  "name": "agent-lyceum",
   "version": "0.4.9",
   "description": "Config + dispatcher for teams of Claude Code / Codex agents with scoped context and file-based mailboxes",
   "keywords": [
@@ -15,15 +15,15 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gogogohuang/agent-team.git"
+    "url": "git+https://github.com/gogogohuang/agent-lyceum.git"
   },
-  "homepage": "https://github.com/gogogohuang/agent-team#readme",
+  "homepage": "https://github.com/gogogohuang/agent-lyceum#readme",
   "bugs": {
-    "url": "https://github.com/gogogohuang/agent-team/issues"
+    "url": "https://github.com/gogogohuang/agent-lyceum/issues"
   },
   "type": "module",
   "bin": {
-    "agent-team": "dist/cli.js"
+    "agent-lyceum": "dist/cli.js"
   },
   "files": [
     "dist",

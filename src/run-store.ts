@@ -74,7 +74,7 @@ export interface RunState {
   workspace_mode?: "shared" | "worktree";
   /** Agents whose finished work could not be brought into the repo yet; their work is kept on their branch. */
   blocked_integrations?: { agent: string; branch: string; reason: string; report: string }[];
-  /** Snapshots of the repo taken so far (`refs/agent-team/<run>/base-<n>`). */
+  /** Snapshots of the repo taken so far (`refs/agent-lyceum/<run>/base-<n>`). */
   snapshots?: number;
   sessions: Record<string, string>;
   output_tokens: number;
@@ -176,7 +176,7 @@ export function loadRunState(runDir: string): RunState {
   }
   if ((parsed.data.schema_version ?? 1) > STATE_SCHEMA_VERSION) {
     throw new Error(
-      `Run state ${file} uses schema_version ${parsed.data.schema_version}, newer than this agent-team understands (${STATE_SCHEMA_VERSION}). Upgrade agent-team.`,
+      `Run state ${file} uses schema_version ${parsed.data.schema_version}, newer than this agent-lyceum understands (${STATE_SCHEMA_VERSION}). Upgrade agent-lyceum.`,
     );
   }
   return normalize(parsed.data);

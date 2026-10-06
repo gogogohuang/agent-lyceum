@@ -34,7 +34,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     agent.canMessage === "all" ? mates : agent.canMessage.filter((n) => project.agents[n] && n !== agent.name);
   const isLead = agent.name === project.lead;
   const lines: string[] = [];
-  lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-team)", "");
+  lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-lyceum)", "");
   lines.push(
     `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
     ...(project.workspaces?.[agent.name]
@@ -79,7 +79,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     ...(isLead
       ? [
           "",
-          "## Progress tracking (optional, shown in `agent-team status`)",
+          "## Progress tracking (optional, shown in `agent-lyceum status`)",
           "Put a `## Steps` heading with a checklist (`- [ ] step`, `- [x] finished step`) in the mail you send. Each time you send mail, re-list the full",
           "checklist with finished steps ticked; the latest one you send is what `status` reports as task progress.",
           "Your final `done` mail must also include the full `## Steps` checklist. Tick only steps that were actually done and verified; leave undone ones",

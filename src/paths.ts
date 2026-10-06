@@ -15,7 +15,7 @@ export function absPath(p: string, base: string): string {
 }
 
 export function resolveHome(opt?: string): string {
-  const raw = opt ?? process.env.AGENT_TEAM_HOME ?? path.join(os.homedir(), "agent-team-config");
+  const raw = opt ?? process.env.AGENT_LYCEUM_HOME ?? path.join(os.homedir(), "agent-lyceum-config");
   return path.resolve(expandHome(raw));
 }
 

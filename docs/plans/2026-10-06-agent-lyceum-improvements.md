@@ -1,4 +1,4 @@
-# agent-team 改善實作計畫
+# agent-lyceum 改善實作計畫
 
 > **For agentic workers:** 使用 `superpowers:executing-plans` 逐項執行；只有使用者指定委派時才使用 subagent。以核取方塊追蹤進度。
 
@@ -13,7 +13,7 @@
 ## 全域限制
 
 - 維持 Node.js >=20 與 macOS/Linux 支援。
-- 工具設定、信箱、log、任務記憶放在 agent-team home；agent 的工作成果依執行模式寫入 repo 或 worktree。
+- 工具設定、信箱、log、任務記憶放在 agent-lyceum home；agent 的工作成果依執行模式寫入 repo 或 worktree。
 - 使用既有依賴；只有既有工具無法合理完成需求時才新增依賴。
 - 舊 run 與舊 project.yaml 必須可讀；新增狀態檔使用 `schema_version: 2`。
 - 破壞相容性的 exit code 與信箱行為，必須更新中英文 README 並記錄升級方式。
@@ -154,7 +154,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 - [x] 寫臨時 Git repo 測試：成員修改彼此不可見；run 啟動時主 repo 已有使用者未提交修改則拒絕平行模式（記錄 `baseline_dirty_paths` 於 run state）；run 期間 lead 自己產生的修改不觸發拒絕，且成員 worktree 能看到它們；沒有 Git 時僅序列可用。
 - [x] 執行 `npm test -- test/worktree.test.ts`，確認先失敗。
-- [x] 平行回合開始前，以 `git commit-tree` 對主 repo 工作樹（含 lead 未提交修改）建立快照 commit，存為 `refs/agent-team/<run-id>/base-<n>`，不改動 HEAD 與使用者 branch。不屬於 tracked 或 lead 產生的無關未追蹤檔案處理方式須在文件說明。
+- [x] 平行回合開始前，以 `git commit-tree` 對主 repo 工作樹（含 lead 未提交修改）建立快照 commit，存為 `refs/agent-lyceum/<run-id>/base-<n>`，不改動 HEAD 與使用者 branch。不屬於 tracked 或 lead 產生的無關未追蹤檔案處理方式須在文件說明。
 - [x] worktree 放在專案 home 的 `worktrees/<run-id>/<agent>`，以同一快照建立專屬 branch；新增 `dispatcher.workspace_mode: "auto" | "shared" | "worktree"`，auto 在 max_parallel >1 使用 worktree，shared 與平行組合拒絕。
 - [x] adapter cwd 與 writable roots 使用 agent workspace；resume 重用既有 worktree。
 - [x] 執行 worktree、validate、adapters、dispatcher 測試及 typecheck，預期全部通過；文件說明 worktree 仍不能隔離外部服務副作用。

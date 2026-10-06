@@ -85,8 +85,8 @@ describe("a run from start to clear", () => {
     const cleared = t.sync(["clear", id, "-p", "demo"]);
     expect(cleared.code).toBe(0);
     expect(fs.existsSync(path.join(env.project().paths.runs, id))).toBe(false);
-    expect(git(env.repo, "branch", "--list", "agent-team/*")).toBe("");
-    expect(git(env.repo, "for-each-ref", "refs/agent-team")).toBe("");
+    expect(git(env.repo, "branch", "--list", "agent-lyceum/*")).toBe("");
+    expect(git(env.repo, "for-each-ref", "refs/agent-lyceum")).toBe("");
     expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("built properly\n"); // the integrated work stays
   }, 120_000);
 
@@ -106,7 +106,7 @@ describe("a run from start to clear", () => {
     const r = t.sync(["run", "edit a.txt", "-p", "demo"]);
     expect(r.code).toBe(2);
     expect(r.out).toMatch(/outcome: blocked/);
-    expect(r.out).toMatch(/fe-member.*agent-team\//s);
+    expect(r.out).toMatch(/fe-member.*agent-lyceum\//s);
     expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n"); // never overwritten
 
     const id = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
@@ -117,6 +117,6 @@ describe("a run from start to clear", () => {
 
     const kept = t.sync(["clear", id, "-p", "demo", "--keep-worktrees"]);
     expect(kept.code).toBe(0);
-    expect(git(env.repo, "branch", "--list", `agent-team/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
+    expect(git(env.repo, "branch", "--list", `agent-lyceum/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
   }, 120_000);
 });

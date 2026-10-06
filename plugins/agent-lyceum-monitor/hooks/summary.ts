@@ -66,8 +66,8 @@ export function transition(prev: Report | null, next: Report | null): string | u
   const b = next?.run
   if (!b) return undefined
   if (a && a.run_id === b.run_id) {
-    if (a.state === 'running' && b.state === 'interrupted') return `agent-team 執行 ${b.run_id} 已中斷`
-    if (a.state === 'running' && b.state === 'ended') return `agent-team 執行 ${b.run_id}：${runLabel(b)}`
+    if (a.state === 'running' && b.state === 'interrupted') return `agent-lyceum 執行 ${b.run_id} 已中斷`
+    if (a.state === 'running' && b.state === 'ended') return `agent-lyceum 執行 ${b.run_id}：${runLabel(b)}`
     const seen = a.wakes.length
     const bad = b.wakes.slice(seen).find(w => !w.ok)
     if (bad) return `${bad.agent} 第 ${bad.round} 輪失敗${bad.error ? `：${bad.error.slice(0, 80)}` : ''}`

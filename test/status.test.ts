@@ -124,7 +124,7 @@ describe("format helpers", () => {
 
   it("briefs a message from Changes, Goal, or the first prose line", () => {
     expect(briefOf("## Changes\n- added login\n\n## Risks\nNone")).toBe("added login");
-    expect(briefOf("[agent-team] Format warning: x\n\n## Goal\nShip it")).toBe("Ship it");
+    expect(briefOf("[agent-lyceum] Format warning: x\n\n## Goal\nShip it")).toBe("Ship it");
     expect(briefOf("# Title\n\nJust text")).toBe("Just text");
   });
 });
