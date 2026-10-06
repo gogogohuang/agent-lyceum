@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
 import { acquireProjectLock } from "../src/project-lock.js";
-import { formatStatus, formatTaskList } from "../src/status.js";
+import { loadRunState } from "../src/run-store.js";
+import { formatRunDetail, formatStatus, formatTaskList } from "../src/status.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -184,5 +185,16 @@ describe("status: project lock decides whether a run is running", () => {
     } finally {
       lease.release();
     }
+  });
+});
+
+describe("status: recovery notes", () => {
+  it("shows what recovery warned about", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid, notes: ["fe-member attempt 1 was interrupted; side effects may have happened."] });
+    const out = formatTaskList(env.project());
+    expect(out).toContain("20260101-000000");
+    const detail = formatRunDetail({ dir: "/x", state: loadRunState(path.join(env.project().paths.runs, "20260101-000000")) }, NOW);
+    expect(detail).toContain("⚠ fe-member attempt 1 was interrupted");
   });
 });

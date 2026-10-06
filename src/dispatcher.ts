@@ -5,9 +5,9 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { briefOf, parseSteps } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, routeOutboxes } from "./mailbox.js";
-import { claimMessages, commitClaim, markOutputReady, recoverRunMail, RouteJournal, type ClaimRecord } from "./message-store.js";
+import { beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
-import { ownsDirs } from "./policy.js";
+import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
@@ -17,6 +17,11 @@ export { newRunId };
 export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
 
 export const RESULT_FILE = "result.md";
+
+/** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
+function retryPrompt(prompt: string, attempt: number, error?: string): string {
+  return `${prompt}\n\n# Retry notice\nYour previous attempt at this wake-up failed${error ? ` (${error})` : ""} after possibly changing files already. Its mail was discarded. Check the current state of the repository before redoing the work, and send the mail again.`;
+}
 
 export interface RunSummary {
   runId: string;
@@ -105,6 +110,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
   const claims = new Map<string, ClaimRecord>();
   const journal = () => new RouteJournal(runDir);
+  /** The attempt that produced each batch member's output; committed together with its claim. */
+  const attempts = new Map<string, AttemptRecord>();
+  const note = (text: string) => {
+    (state.notes ??= []).push(text);
+    log("note", { text });
+    say(`  ${text}`);
+  };
 
   const pendingAgents = (): ResolvedAgent[] => {
     const rows = Object.values(project.agents)
@@ -158,12 +170,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       }
       const round = ++state.rounds;
       const started = Date.now();
+      const att = beginAttempt(runDir, claim.id);
       say(`[round ${state.rounds}/${cfg.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
       saveState();
-      result = await invoke({ ...base, sessionId }).catch((e: Error) => ({
+      result = await invoke({ ...base, userPrompt: attempt ? retryPrompt(base.userPrompt, attempt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
         ok: false,
         text: "",
         exitCode: null,
@@ -196,8 +209,18 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         error: result.error,
       });
       saveState();
-      if (result.ok) break;
+      if (result.ok) {
+        attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
+        break;
+      }
+      // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
+      const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+      finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
       say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
+      note(
+        `${agent.name} attempt ${att.n} failed (${result.error ?? "unknown error"})${parked.length ? `; ${parked.length} output file(s) set aside in ${path.join("mail", "attempts", att.id, "outbox")}` : ""}. ` +
+          `Anything it already did outside its mailbox (file edits, commands) was not undone: side effects may have happened.`,
+      );
     }
     if (result?.ok) markOutputReady(runDir, claim.id);
     if (!result?.ok) {
@@ -245,6 +268,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       if (!c) continue;
       commitClaim(runDir, c.id);
       claims.delete(a.name);
+      const att = attempts.get(a.name);
+      if (att) finishAttempt(runDir, att.id, "committed");
+      attempts.delete(a.name);
     }
     for (const w of route.warnings) {
       say(`  format warning: mail ${w.id} from ${w.from} lacks ${w.missing.join(", ")}`);
@@ -270,7 +296,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   };
 
   if (resume) {
-    const rec = recoverRunMail(runDir);
+    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent) });
+    for (const i of rec.interrupted) {
+      note(
+        `${i.attempt.agent} attempt ${i.attempt.n} was interrupted${i.parked.length ? `; ${i.parked.length} output file(s) set aside in ${path.join("mail", "attempts", i.attempt.id, "outbox")}` : ""}. ` +
+          `Anything it already did outside its mailbox (file edits, commands) may have happened and can happen again when the message is redone: side effects may have happened.`,
+      );
+    }
     if (rec.abandoned.length || rec.finalized.length || rec.ready.length) {
       log("recover", { abandoned: rec.abandoned.map((c) => c.id), finalized: rec.finalized, ready: rec.ready.map((c) => c.id) });
     }

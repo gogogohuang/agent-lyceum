@@ -161,6 +161,78 @@ export function commitClaim(runDir: string, claimId: string): void {
   }
 }
 
+// ---- attempts: one invocation of an agent for a claim ----
+
+export type AttemptStatus = "started" | "output_ready" | "committed" | "failed";
+
+export interface AttemptRecord {
+  /** `<claim id>-a<n>` */
+  id: string;
+  claim_id: string;
+  agent: string;
+  n: number;
+  status: AttemptStatus;
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+  /** Outbox files set aside because this attempt did not succeed. */
+  parked?: string[];
+}
+
+const attemptFile = (runDir: string, id: string) => path.join(mailDir(runDir), "attempts", `${id}.json`);
+export const attemptOutboxDir = (runDir: string, id: string): string => path.join(mailDir(runDir), "attempts", id, "outbox");
+
+function saveAttempt(runDir: string, a: AttemptRecord): void {
+  atomicWrite(attemptFile(runDir, a.id), JSON.stringify(a, null, 2));
+}
+
+export function loadAttempt(runDir: string, id: string): AttemptRecord {
+  return JSON.parse(fs.readFileSync(attemptFile(runDir, id), "utf8")) as AttemptRecord;
+}
+
+export function listAttempts(runDir: string): AttemptRecord[] {
+  const dir = path.join(mailDir(runDir), "attempts");
+  if (!fs.existsSync(dir)) return [];
+  const out: AttemptRecord[] = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+    try {
+      out.push(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AttemptRecord);
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
+
+/** Start the next attempt for a claim (a1, a2, ...). */
+export function beginAttempt(runDir: string, claimId: string): AttemptRecord {
+  const claim = loadClaim(runDir, claimId);
+  const n = listAttempts(runDir).filter((a) => a.claim_id === claimId).length + 1;
+  const rec: AttemptRecord = { id: `${claimId}-a${n}`, claim_id: claimId, agent: claim.agent, n, status: "started", started_at: new Date().toISOString() };
+  saveAttempt(runDir, rec);
+  return rec;
+}
+
+export function finishAttempt(runDir: string, attemptId: string, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
+  const rec = { ...loadAttempt(runDir, attemptId), status, finished_at: new Date().toISOString(), ...extra };
+  saveAttempt(runDir, rec);
+  return rec;
+}
+
+/** Move whatever is in an agent's outbox into the attempt's own folder, so it can never be mistaken for a later attempt's result. */
+export function parkOutbox(runDir: string, outbox: string, attemptId: string): string[] {
+  if (!fs.existsSync(outbox)) return [];
+  const moved: string[] = [];
+  const dest = attemptOutboxDir(runDir, attemptId);
+  for (const e of fs.readdirSync(outbox, { withFileTypes: true })) {
+    if (!e.isFile() || e.name.startsWith(".")) continue;
+    fs.mkdirSync(dest, { recursive: true });
+    fs.renameSync(path.join(outbox, e.name), path.join(dest, e.name));
+    moved.push(e.name);
+  }
+  return moved;
+}
+
 export interface RecoveryReport {
   /** Committed claims whose input had not been moved to `read/` yet; now it has. */
   finalized: string[];
@@ -168,11 +240,19 @@ export interface RecoveryReport {
   abandoned: ClaimRecord[];
   /** Claims whose wake-up finished but whose output was not fully routed yet; the caller routes, then commits them. */
   ready: ClaimRecord[];
+  /** Attempts that were running when the process died: failed now, their outbox set aside. External side effects may have happened. */
+  interrupted: { attempt: AttemptRecord; parked: string[] }[];
 }
 
 /** Bring a run's claims back to a consistent state. Call before waking anyone on resume. */
-export function recoverRunMail(runDir: string): RecoveryReport {
-  const report: RecoveryReport = { finalized: [], abandoned: [], ready: [] };
+export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string } = {}): RecoveryReport {
+  const report: RecoveryReport = { finalized: [], abandoned: [], ready: [], interrupted: [] };
+  for (const a of listAttempts(runDir)) {
+    if (a.status !== "started") continue;
+    const parked = opts.outboxOf ? parkOutbox(runDir, opts.outboxOf(a.agent), a.id) : [];
+    const done = finishAttempt(runDir, a.id, "failed", { error: "interrupted", parked });
+    report.interrupted.push({ attempt: done, parked });
+  }
   const dir = path.join(mailDir(runDir), "claims");
   if (!fs.existsSync(dir)) return report;
   for (const name of fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {

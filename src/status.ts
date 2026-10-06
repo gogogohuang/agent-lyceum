@@ -214,6 +214,7 @@ function describeRun(s: RunState, now: number, c: Paint, limit = Infinity, proje
   ];
   const steps = stepsLine(s.steps, c);
   if (steps) lines.push(`  進度：${steps}`);
+  for (const n of s.notes ?? []) lines.push(`  ${c.yellow("⚠ " + clip(n, 200))}`);
   const wakes = s.wakes ?? [];
   if (wakes.length > limit) lines.push(c.dim(`  … 省略較早的 ${wakes.length - limit} 筆（不帶 --monitor 可看完整紀錄）`));
   for (const w of limit < wakes.length ? wakes.slice(-limit) : wakes) {
