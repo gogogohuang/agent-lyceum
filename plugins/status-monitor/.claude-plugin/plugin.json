@@ -16,6 +16,12 @@
       "description": "How often the run status is polled (default 1 second).",
       "default": 1
     },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open the pane automatically",
+      "description": "Open the agent-lyceum pane when a session starts. Off by default; use /status-monitor to open it on demand.",
+      "default": false
+    },
     "project": {
       "type": "string",
       "title": "agent-lyceum projects",
