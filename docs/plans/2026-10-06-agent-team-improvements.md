@@ -233,12 +233,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** 使用前述既有介面，不新增執行模型。
 
-- [ ] 建立 fake CLI 端到端案例：run → 成員回覆 → done；SIGINT → resume；路由中斷 → 去重；worktree 衝突 → blocked；clear dry-run → clear。
-- [ ] 執行 `npm test -- test/run-lifecycle.test.ts`；失敗時回到對應任務修復，不以跳過案例結案。
-- [ ] 編寫 v1/v2 run 差異、legacy 信箱、exit code、dirty repo 限制、doctor unknown、worktree 整合與恢復副作用限制；修正 README「絕不寫入 repo」的描述，區分工具資料與 agent 工作成果。
-- [ ] 執行 `npm run typecheck`、`npm test`、`npm run build`，預期全部成功；CI 既有 macOS/Linux × Node 20/22 矩陣皆通過。
-- [ ] 檢查 package 產物仍包含 CLI 需要的模組，執行 `npm pack --dry-run`；檢查中英文指令和新 JSON 範例一致。
-- [ ] 提交：`docs: document reliable runs and verify lifecycle`。
+- [x] 建立 fake CLI 端到端案例：run → 成員回覆 → done；SIGINT → resume；路由中斷 → 去重；worktree 衝突 → blocked；clear dry-run → clear。
+- [x] 執行 `npm test -- test/run-lifecycle.test.ts`；失敗時回到對應任務修復，不以跳過案例結案。
+- [x] 編寫 v1/v2 run 差異、legacy 信箱、exit code、dirty repo 限制、doctor unknown、worktree 整合與恢復副作用限制；修正 README「絕不寫入 repo」的描述，區分工具資料與 agent 工作成果。
+- [x] 執行 `npm run typecheck`、`npm test`、`npm run build`，預期全部成功；CI 既有 macOS/Linux × Node 20/22 矩陣皆通過。
+- [x] 檢查 package 產物仍包含 CLI 需要的模組，執行 `npm pack --dry-run`；檢查中英文指令和新 JSON 範例一致。
+- [x] 提交：`docs: document reliable runs and verify lifecycle`。
 
 ## 實作紀錄
 
@@ -249,6 +249,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - Task 10 已實作：`doctor`、啟動前的能力檢查（明確 `no` 拒絕、`unknown` 警告）、移除「Codex resume 未測試」的固定警告；CLI 回報沒有 session id 時，對 `resume: true` 的 agent 記一次提醒。`doctor` 已對本機真實安裝的 `claude` 跑過（能力判定為 json/resume/sandbox/effort 皆 yes）；Codex 只用 fixture 驗證。CI 既有的 `npm test` 已涵蓋假 CLI 整合測試，不另加步驟。
 - Task 11 已實作。`status` 改為先建立 `StatusReport`／`RunReport`，文字頁面與 `--json` 都由它產生；`config show --resolved` 與 `resolveProjectWithSources`；最小人數降為 2。JSON 報告刻意不含 session id。
 - Task 12 已實作（`src/run-cleanup.ts`）：「已整合」以「agent 提交的檔案內容已在主 repo 工作樹，或其 commit 已是 HEAD 的祖先」判定，無法判定就視為未整合並拒絕；刪除順序為 worktree → 快照 ref → 任務記憶 → run 目錄（最後），進度 journal 放在 `projects/<name>/cleanup/`；刪除前以 realpath 確認在專案 home 內，symlink 只移除連結本身。
+- Task 13 已完成：`test/run-lifecycle.test.ts` 以真實 CLI 加劇本化的假 `claude` 跑完整流程（run → worktree 成員 → Ctrl-C → resume → 整合 → done → status --json → clear --dry-run → clear，以及 worktree 衝突 → blocked exit 2 → clear 拒絕 → `--keep-worktrees`）；「路由中斷 → 去重」在 `message-store.test.ts` 以故障注入涵蓋，未經 CLI；`docs/upgrading-run-v2.md` 與兩份 README 已更新；`npm run typecheck`、`npm test`（210 項，連跑 3 次皆過）、`npm run build`、`npm pack --dry-run` 都通過。CI 既有的 macOS／Linux × Node 20／22 矩陣只在本機以 macOS 驗證過，尚未在 CI 實際跑。
 - 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準

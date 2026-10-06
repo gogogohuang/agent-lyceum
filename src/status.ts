@@ -258,7 +258,8 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     steps: s.steps,
     current_step: cur?.text ?? null,
     active: s.active,
-    queue: detail && bound && (live || !s.end_reason) ? queueOf(bound) : [],
+    // mail still waiting is what `resume` will pick up, so it is shown for every run that did not finish with a done
+    queue: detail && bound && s.end_reason !== "done" ? queueOf(bound) : [],
     wakes: s.wakes,
     notes: s.notes ?? [],
     blocked_integrations: s.blocked_integrations ?? [],

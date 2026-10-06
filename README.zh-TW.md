@@ -6,7 +6,7 @@
 
 設定並執行一個由多個 **agent**（Claude Code 和／或 Codex）組成的團隊。agent 之間透過檔案信箱互相溝通，每個 agent 都有自己的人設（`AGENT.md`）與長期記憶資料夾。寫入權限有範圍限制：agent 只能修改自己的記憶與寄件匣（outbox），不能改動其他 agent 的 context，也不能改自己的人設。
 
-此工具**絕不會寫入你的 repo**。所有內容都放在一個看得到的資料夾 `~/agent-team-config/`（可用 `AGENT_TEAM_HOME` 或 `--home` 覆寫）。
+此工具**不會把自己的資料放進你的 repo**：設定、信箱、log、任務記憶與 agent 的 worktree 都放在一個看得到的資料夾 `~/agent-team-config/`（可用 `AGENT_TEAM_HOME` 或 `--home` 覆寫）。但 agent *產出的成果*是另一回事：agent 會修改你的 repo（序列執行時直接修改；平行執行時在各自的 git worktree 修改，再把變更整合進你的工作目錄）。agent-team 自己在你的 repository 內唯一新增的是 git 的管理資料：平行 run 存在期間，`.git` 下會有 `refs/agent-team/<run-id>/*` 快照 ref、`agent-team/<run-id>/<agent>` branch 與 worktree 登記，`agent-team clear` 會把它們移除。從舊版升級請見 [docs/upgrading-run-v2.md](docs/upgrading-run-v2.md)。
 
 ```bash
 npx @gogogohuang/agent-team init                     # 建立 home 與全域 agent 庫

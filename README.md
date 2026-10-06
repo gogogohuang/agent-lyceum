@@ -6,7 +6,7 @@
 
 Configure and run a **team of agents** (Claude Code and/or Codex) that talk to each other through file mailboxes, each with its own persona (`AGENT.md`) and long-term memory folder. Writes are scoped: an agent can only change its own memory and outbox, never other agents' context or its own persona.
 
-The tool **never writes into your repo**. Everything lives in one visible folder, `~/agent-team-config/` (override with `AGENT_TEAM_HOME` or `--home`).
+The tool keeps **its own data out of your repo**: configuration, mailboxes, logs, task memory and agent worktrees all live in one visible folder, `~/agent-team-config/` (override with `AGENT_TEAM_HOME` or `--home`). What agents *produce* is a different matter: they edit your repo (directly when they run one at a time, or in git worktrees whose changes are brought into your working tree when they run in parallel). The only things agent-team itself adds inside your repository are git bookkeeping: while a parallel run exists, `refs/agent-team/<run-id>/*` snapshot refs, `agent-team/<run-id>/<agent>` branches and worktree registrations under `.git`; `agent-team clear` removes them. See [docs/upgrading-run-v2.md](docs/upgrading-run-v2.md) if you are coming from an older version.
 
 ```bash
 npx @gogogohuang/agent-team init                     # create the home + global agent library
