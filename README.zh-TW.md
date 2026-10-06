@@ -42,6 +42,16 @@ npx @gogogohuang/agent-team status
 
 未指定 `--project` 時，會選用 `dir` 為目前目錄最長前綴的已註冊專案；若沒有符合的專案，指令會列出已註冊專案後停止。
 
+## 監控 plugin（Claude Code）
+
+`plugins/agent-team-monitor` 是 Claude Code plugin，會顯示一個或多個專案的即時執行狀態（狀態列、完成／失敗通知，以及 `/team-monitor` 面板）。先 build（`npm run build`），再用它啟動任何 session：
+
+```
+claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor
+```
+
+選項（`command`、`project`、`intervalSeconds`）設定在 `~/.claude/settings.json` 的 `pluginConfigs."agent-team-monitor@inline"`。`command` 是要執行的 CLI，例如 `node /path/to/agent-team/dist/cli.js`；`project` 可用逗號列出多個已註冊的專案。
+
 ## 目錄結構
 
 ```

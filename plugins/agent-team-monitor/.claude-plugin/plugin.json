@@ -1,0 +1,26 @@
+{
+  "name": "agent-team-monitor",
+  "version": "0.1.0",
+  "description": "Live agent-team run status: status line, finish/failure toasts and a /team-monitor pane, for one or several projects.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "command": {
+      "type": "string",
+      "title": "agent-team command",
+      "description": "Command that runs agent-team (split on spaces, e.g. `node /path/to/dist/cli.js`).",
+      "default": "agent-team"
+    },
+    "intervalSeconds": {
+      "type": "number",
+      "title": "Refresh interval (seconds)",
+      "description": "How often the run status is polled.",
+      "default": 3
+    },
+    "project": {
+      "type": "string",
+      "title": "agent-team projects",
+      "description": "Registered project name(s) (-p); separate several with commas to watch them all. Leave empty to infer from the session's directory.",
+      "default": ""
+    }
+  }
+}

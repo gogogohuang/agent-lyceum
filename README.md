@@ -42,6 +42,16 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 
 Without `--project`, the project is the registered one whose `dir` is the longest prefix of the current directory; if none matches the command lists the registered projects and stops.
 
+## Monitor plugin (Claude Code)
+
+`plugins/agent-team-monitor` is a Claude Code plugin that shows live run status (status line, finish/failure toasts and a `/team-monitor` pane) for one or several projects. Build first (`npm run build`), then start any session with it:
+
+```
+claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor
+```
+
+Options (`command`, `project`, `intervalSeconds`) are set in `~/.claude/settings.json` under `pluginConfigs."agent-team-monitor@inline"`. `command` is the CLI to run, e.g. `node /path/to/agent-team/dist/cli.js`; `project` may list several registered projects separated by commas.
+
 ## Layout
 
 ```
