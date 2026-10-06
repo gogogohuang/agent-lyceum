@@ -73,10 +73,13 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'team-monitor' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'agent-lyceum' })
+  on('command.run', { command: 'team-monitor' }, async ($, e) => {
+    // The surface seats the pane: beside the transcript only in the fullscreen layout from 110 columns, else inline above the prompt.
+    await $.ui.open({ id: PANE, title: 'agent-lyceum', closeOnEscape: true, columns: 60, rows: 16 })
     pollAll($, targets)
-    return { text: 'agent-lyceum pane opened.' }
+    const { isFullscreen, columns } = e.presentation ?? { isFullscreen: false, columns: 80 }
+    if (isFullscreen && columns >= 110) return { text: 'agent-lyceum pane opened beside the transcript. Esc or 關閉 closes it.' }
+    return { text: 'agent-lyceum pane opened above the prompt (a sidebar needs the fullscreen layout, CLAUDE_CODE_NO_FLICKER=1, and 110+ columns). Esc or 關閉 closes it.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
