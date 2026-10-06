@@ -6,6 +6,14 @@ import path from "node:path";
 const args = process.argv.slice(2);
 const dirs = args.flatMap((x, i) => (x === "--add-dir" ? [args[i + 1]] : []));
 const outbox = dirs.find((d) => d.endsWith(path.join("outbox", process.env.AGENT_TEAM_AGENT ?? "")));
+if (args[0] === "--version") {
+  console.log("2.1.9 (Claude Code, fake)");
+  process.exit(0);
+}
+if (args[0] === "--help") {
+  console.log("  --output-format <f>\n  --resume [id]\n  --settings <file>\n  --effort <level>");
+  process.exit(0);
+}
 fs.readFileSync(0);
 const mode = process.env.FAKE_MODE;
 const full = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Not done\nNone\n";

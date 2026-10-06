@@ -127,6 +127,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
   const claims = new Map<string, ClaimRecord>();
   const journal = () => new RouteJournal(runDir);
+  const noSessionNoted = new Set<string>();
   /** Git worktrees of the non-lead agents in the batch being woken (empty in shared mode and for the lead). */
   let batchSpaces: Record<string, AgentWorkspace> = {};
   /** The attempt that produced each batch member's output; committed together with its claim. */
@@ -232,6 +233,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       saveState();
       if (result.ok) {
         attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
+        if (agent.resume && !result.sessionId && !state.sessions[agent.name] && !noSessionNoted.has(agent.name)) {
+          noSessionNoted.add(agent.name);
+          note(`${agent.name} has resume: true but its ${agent.runtime} CLI reported no session id, so every wake-up starts a fresh session.`);
+        }
         break;
       }
       if (result.cancelled) {

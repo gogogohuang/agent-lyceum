@@ -5,6 +5,7 @@ import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
@@ -130,6 +131,13 @@ program
     }
   });
 
+/** Ask the runtime CLIs what they support: refuse to start when something the team needs is explicitly missing, warn when unknown. */
+async function preflight(pr: ResolvedProject): Promise<void> {
+  const r = await preflightRuntimes(pr);
+  for (const w of r.warnings) console.error(`warn   ${w}`);
+  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-team doctor\`).`);
+}
+
 /** Take the project's single-run lock, or exit with the reason. */
 function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
   try {
@@ -181,6 +189,7 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      await preflight(pr);
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
@@ -212,6 +221,7 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-team validate`).");
+      await preflight(pr);
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
@@ -275,6 +285,21 @@ program
       console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
     } catch (e) {
       fail((e as Error).message);
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Check the setup without running any agent: configuration, git, the project lock, and what each runtime CLI supports (from --version/--help).")
+  .option("-p, --project <name>")
+  .option("--json", "print the report as JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    try {
+      const report = await diagnoseProject(loadProject(opts.project));
+      console.log(opts.json ? JSON.stringify({ schema_version: 1, ...report }, null, 2) : formatDoctor(report));
+      process.exit(report.ok ? 0 : 1);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
   });
 

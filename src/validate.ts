@@ -45,9 +45,6 @@ export function validateProject(project: ResolvedProject): ValidationResult {
         if (t === a.name) warn(`Agent "${a.name}" lists itself in can_message.`);
       }
     }
-    if (a.resume && a.runtime === "codex") {
-      warn(`Agent "${a.name}": resume with Codex is untested; each wake-up may start fresh.`);
-    }
   }
 
   // Memory directories must not overlap between agents (or equal each other).

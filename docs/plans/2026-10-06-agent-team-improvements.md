@@ -193,13 +193,13 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `probeRuntime(runtime: Runtime): Promise<RuntimeCapabilities>`；`diagnoseProject(project: ResolvedProject): Promise<DoctorReport>`；RuntimeCapabilities 包含 binary、version、json、resume、sandbox、effort；未知能力使用 `unknown`。
 
-- [ ] 寫 fixture 測試：binary 缺失、版本輸出不同、help 缺 resume、CLI timeout、不同 JSON 結果、session ID 缺失；確認 doctor 不執行付費 agent 任務。
-- [ ] 執行 `npm test -- test/doctor.test.ts test/adapters.test.ts`，確認新增案例先失敗。
-- [ ] 新增 `doctor [-p name] [--json]`；以有 timeout 的 version/help 探測能力，登入只在 CLI 提供唯讀診斷介面時檢查，其他情況顯示 unknown；不輸出 credential 或完整環境變數。
-- [ ] 用 capability 結果取代「Codex resume 未測試」的固定警告；run 遇到明確不支援的必要功能先拒絕，未知能力明示。版本資料使用 fixture 記錄，不依 model 名稱推定功能。
-- [ ] CI 跑 fake CLI 的程序整合測試；真實 CLI smoke 採手動啟動且說明成本，執行時先查官方文件確認指令相容性。
-- [ ] 執行 doctor、adapters、validate 測試及 typecheck，預期全部通過。
-- [ ] 提交：`feat: diagnose runtime capabilities before dispatch`。
+- [x] 寫 fixture 測試：binary 缺失、版本輸出不同、help 缺 resume、CLI timeout、不同 JSON 結果、session ID 缺失；確認 doctor 不執行付費 agent 任務。
+- [x] 執行 `npm test -- test/doctor.test.ts test/adapters.test.ts`，確認新增案例先失敗。
+- [x] 新增 `doctor [-p name] [--json]`；以有 timeout 的 version/help 探測能力，登入只在 CLI 提供唯讀診斷介面時檢查，其他情況顯示 unknown；不輸出 credential 或完整環境變數。
+- [x] 用 capability 結果取代「Codex resume 未測試」的固定警告；run 遇到明確不支援的必要功能先拒絕，未知能力明示。版本資料使用 fixture 記錄，不依 model 名稱推定功能。
+- [x] CI 跑 fake CLI 的程序整合測試；真實 CLI smoke 採手動啟動且說明成本，執行時先查官方文件確認指令相容性。
+- [x] 執行 doctor、adapters、validate 測試及 typecheck，預期全部通過。
+- [x] 提交：`feat: diagnose runtime capabilities before dispatch`。
 
 ### Task 11：設定來源、JSON 狀態與小團隊
 
@@ -246,6 +246,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - 與計畫的差異：專案鎖以暫存檔＋hard link 原子建立並記錄 `ps` 啟動時間（不另記 boot id）；新增 `unlock --force` 指令；`recoverRunMail` 另回傳 `ready`、`interrupted` 供 dispatcher 使用。
 - Task 7、8 已實作（commit `feat: isolate parallel agents in git worktrees`、`feat: integrate agent worktree changes safely`）。與計畫的差異：快照包含 lead 未提交的修改與「新增且未被 ignore」的檔案（而非只含已追蹤檔）；整合用 `git apply`（不加 `--3way`，因為已先逐檔確認自快照後未被改動，`--3way` 會連帶動到使用者的 index）；run 啟動時主 repo 有未提交修改就拒絕，因此沒有另存 `baseline_dirty_paths`；整合被擋時以 `blocked_integrations` 記在 run state，run 不能以 `completed` 結束。
 - Task 9 已實作。與計畫的差異：adapter 新增 `stream()`（逐行讀取 stdout，只保留所需結果），舊的 `parse()` 保留作為備援；每次嘗試的 log 放在 `mail/attempts/<attempt>/log/`；取消時的 outcome 為 `cancelled`（exit 130），未提交的輸入保留給 `resume`，第二次 Ctrl-C 立即結束。有一個用假 `claude` 執行檔、真實 SIGINT 的 CLI 端到端測試。
+- Task 10 已實作：`doctor`、啟動前的能力檢查（明確 `no` 拒絕、`unknown` 警告）、移除「Codex resume 未測試」的固定警告；CLI 回報沒有 session id 時，對 `resume: true` 的 agent 記一次提醒。`doctor` 已對本機真實安裝的 `claude` 跑過（能力判定為 json/resume/sandbox/effort 皆 yes）；Codex 只用 fixture 驗證。CI 既有的 `npm test` 已涵蓋假 CLI 整合測試，不另加步驟。
 - 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準
