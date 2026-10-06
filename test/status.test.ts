@@ -151,7 +151,7 @@ describe("status --task-list", () => {
     const out = formatTaskList(env.project());
     expect(out).toContain("共 2 個任務");
     expect(out.indexOf("20260102-000000")).toBeLessThan(out.indexOf("20260101-000000"));
-    expect(out).toMatch(/20260102-000000\s+已結束：完成\s+3\/10\s+-\s+Ship it/);
+    expect(out).toMatch(/20260102-000000\s+已結束：完成（未驗證）\s+3\/10\s+-\s+Ship it/);
     expect(out).toMatch(/20260101-000000\s+已中斷\s+1\/10\s+b\s+Build it/);
   });
 

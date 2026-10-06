@@ -7,14 +7,14 @@ import { ProtectedGuard } from "../src/guard.js";
 import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const mail = (i: WakeInput, to: string, subject: string, type = "reply") =>
-  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\nbody of ${subject}\n`);
+  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`);
 
 async function run(invoker: Invoker, opts: { task?: string; file?: string } = {}): Promise<RunSummary> {
   const project = env.project();
@@ -54,11 +54,11 @@ describe("dispatcher", () => {
     const s = await run(async (i) => {
       const out = outboxDir(i.project, i.agent.name);
       const send = (to: string, type: string, subject: string, body: string) =>
-        write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\n${body}\n`);
+        write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body}\n`);
       if (i.agent.name === "lead" && !i.userPrompt.includes("from: fe-member"))
         send("fe-member", "task", "implement login", "## Goal\nBuild the login form\n\n## Steps\n- [x] design\n- [ ] build\n");
       else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n");
-      else send("lead", "done", "all good", "## Steps\n- [x] design\n- [x] build\n");
+      else send("lead", "done", "all good", `${FULL_DONE}\n## Steps\n- [x] design\n- [x] build\n`);
       return OK;
     }, { task: "ship login\n\n- [ ] design\n- [ ] build" });
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));

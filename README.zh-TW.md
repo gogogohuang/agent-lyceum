@@ -32,6 +32,9 @@ npx @gogogohuang/agent-team status
 | `resume [run-id] [-p name]` | 接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行或已完成時會拒絕。 |
 | `status [-p name] [--monitor]` | 顯示 agent、未讀信件、目前正在執行的 agent（耗時、處理中的信件）、上次執行（任務來源、輪數、結束原因、output token 數）。不帶 `--monitor` 時會一併印出最新 run 的完整 wake 紀錄；`--monitor` 會常駐並持續更新，每個 run 只顯示最新三筆 wake。`--task-id <id>` 印出單一任務的完整內容（每次 wake、結果、log 目錄）。`--task-list [project]` 列出專案所有任務（run）的 id、狀態、輪數與任務內容，id 可直接給 `resume` 使用。 |
 | `clear <run-id> [-p name]` | 依 id 刪除一個任務（run）；仍在執行中會拒絕。id 可用 `status --task-list` 查。 |
+| `unlock [-p name] --force` | 移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。 |
+
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
 
 未指定 `--project` 時，會選用 `dir` 為目前目錄最長前綴的已註冊專案；若沒有符合的專案，指令會列出已註冊專案後停止。
 
@@ -74,7 +77,7 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 3. 每次喚醒的 prompt 都包含：該 agent 的 `AGENT.md`、團隊協定、`COMMON.md`（唯讀，≤ 8 KB）、每個記憶資料夾的 `MEMORY.md` 索引、**最舊**一封未讀信件全文（每次喚醒只處理一封；lead 例外，會一次拿到連續最多 5 封 `reply`/`failure` 並一併決策），以及排隊中信件的標題；排隊的信維持未讀，等各自的喚醒再處理。
 4. agent 寄信的方式，是在**自己的** `outbox/` 寫一個含 frontmatter（`to`、`type`、`subject`）的 Markdown 檔。dispatcher 會檢查 `can_message`、蓋上真正的寄件者，並移到收件者的 `inbox/`。處理完的信件移至 `inbox/<agent>/read/`。信箱屬於單一 run（`runs/<run-id>/mail/`），信件不會跨 run。舊版本啟動的 run 繼續使用共用的 `shared/{inbox,outbox}/` 信箱（信件不會被搬移），接續這類 run 時會沿用舊版配置。
    每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的信仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。
-5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
+5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-team 不會驗證 lead 回報的內容是否屬實。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
 
 平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。
 

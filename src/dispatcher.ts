@@ -2,14 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { briefOf, parseSteps } from "./format.js";
+import { briefOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, routeOutboxes } from "./mailbox.js";
-import { beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
+import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes } from "./mailbox.js";
+import { sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
+import type { RunOutcome } from "./schema.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
@@ -17,6 +18,8 @@ export { newRunId };
 export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
 
 export const RESULT_FILE = "result.md";
+/** How many times a non-conforming `done` goes back to the lead before it is accepted as `partial`. */
+export const MAX_DONE_REJECTIONS = 2;
 
 /** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
 function retryPrompt(prompt: string, attempt: number, error?: string): string {
@@ -28,6 +31,10 @@ export interface RunSummary {
   runDir: string;
   rounds: number;
   endReason: EndReason;
+  /** How the work turned out; only "completed" means success. */
+  outcome: RunOutcome;
+  outcomeNote?: string;
+  verification?: string;
   doneMessage?: { subject: string; body: string };
 }
 
@@ -60,7 +67,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
   let state: RunState;
   if (resume) {
-    state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, active: {}, wakes: [...resume.wakes] };
+    state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
     // A wake that was running when the process died never finished; keep it in the history as interrupted.
     for (const [agent, a] of Object.entries(resume.active ?? {})) {
       state.wakes.push({
@@ -107,6 +114,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   let doneMessage: RunSummary["doneMessage"];
   /** The lead's done file; it leaves the outbox only after the result and end state are stored. */
   let pendingDoneFile: string | undefined;
+  let doneOutcome: RunOutcome | undefined;
+  let doneNote: string | undefined;
+  let doneVerification: string | undefined;
   /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
   const claims = new Map<string, ClaimRecord>();
   const journal = () => new RouteJournal(runDir);
@@ -253,6 +263,27 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
 
     const route = routeOutboxes(project);
+    // A done that breaks the completion contract goes back to the lead (a limited number of times).
+    let contract: DoneContract | undefined;
+    if (route.done) {
+      contract = doneContract(route.done.meta, route.done.body, state.steps);
+      if (contract.missing.length && (state.done_rejections ?? 0) < MAX_DONE_REJECTIONS) {
+        state.done_rejections = (state.done_rejections ?? 0) + 1;
+        const list = contract.missing.map((m) => `- ${m}`).join("\n");
+        deliverOnce(project, journal(), `done-reject:${sourceIdOf(route.done.from, route.done.file)}`, {
+          from: "dispatcher",
+          to: project.lead,
+          type: "failure",
+          subject: "Your done report was not accepted",
+          body: `The run was not ended: your \`done\` report does not meet the completion contract. Missing:\n${list}\n\nSend \`type: done\` again with the frontmatter line \`outcome: completed|partial|blocked|failed\` and the headings \`## Result\`, \`## Files\`, \`## Verification\`, \`## Not done\`. \`completed\` needs all four and every step ticked; if work remains, report \`partial\` or \`blocked\` (those need only \`## Result\` and \`## Not done\`) or \`failed\`, or send the task that continues the work. (Reminder ${state.done_rejections} of ${MAX_DONE_REJECTIONS}.)`,
+        });
+        rejectDone(route.done.file);
+        say(`  done report sent back to ${project.lead}: missing ${contract.missing.join("; ")}`);
+        log("done-rejected", { missing: contract.missing, count: state.done_rejections });
+        route.done = undefined;
+        contract = undefined;
+      }
+    }
     for (const d of route.delivered) log("route", d);
     const handedOff = (from: string, t: SentTopic) => {
       const w = [...state.wakes].reverse().find((x) => x.agent === from);
@@ -282,7 +313,14 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     if (route.done) {
       doneMessage = { subject: route.done.subject, body: route.done.body };
-      atomicWrite(path.join(runDir, RESULT_FILE), `# ${route.done.subject}\n\n${route.done.body.trimEnd()}\n`);
+      const ok = !contract || contract.missing.length === 0;
+      doneOutcome = ok ? contract!.outcome! : "partial";
+      doneVerification = contract?.verification;
+      doneNote = ok ? undefined : `Completion contract not met after ${state.done_rejections ?? 0} reminder(s): missing ${contract!.missing.join("; ")}. Reported as partial; the lead's report is kept as written.`;
+      atomicWrite(
+        path.join(runDir, RESULT_FILE),
+        `# ${route.done.subject}\n\n**Outcome:** ${doneOutcome}${doneNote ? ` (${doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`,
+      );
       pendingDoneFile = route.done.file;
       log("done", { subject: route.done.subject });
       endReason = "done";
@@ -326,7 +364,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         to: project.lead,
         type: "failure",
         subject: "No done message sent",
-        body: `All mailboxes are empty and you have not sent a \`done\` message, so the run would end without a final report. If the job is finished and verified, send \`type: done\` now (with \`## Result\`, \`## Files\`, \`## Not done\`${state.steps ? " and the full `## Steps` checklist" : ""}). If work remains, send the \`task\` that continues it. Writing a summary in your reply text does not count: only mail is delivered.`,
+        body: `All mailboxes are empty and you have not sent a \`done\` message, so the run would end without a final report. If the job is finished and verified, send \`type: done\` now (with \`outcome: completed|partial|blocked|failed\` in the frontmatter and \`## Result\`, \`## Files\`, \`## Verification\`, \`## Not done\`${state.steps ? " and the full `## Steps` checklist" : ""}). If work remains, send the \`task\` that continues it. Writing a summary in your reply text does not count: only mail is delivered.`,
       });
       pending = pendingAgents();
     }
@@ -345,10 +383,22 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     settle(batch, results);
   }
 
+  const outcome: RunOutcome = endReason === "done" ? doneOutcome ?? "partial" : endReason === "lead_failed" ? "failed" : "partial";
+  const outcomeNote =
+    endReason === "done"
+      ? doneNote
+      : endReason === "idle"
+        ? "All mailboxes were empty but the lead never sent a done message."
+        : endReason === "max_rounds"
+          ? "Stopped at the round limit before the lead sent done."
+          : "The lead's wake-up failed.";
   state.end_reason = endReason;
+  state.outcome = outcome;
+  state.outcome_note = outcomeNote;
+  state.verification = doneVerification;
   state.ended_at = new Date().toISOString();
-  log("end", { reason: endReason, rounds: state.rounds });
+  log("end", { reason: endReason, outcome, rounds: state.rounds });
   saveState();
   if (pendingDoneFile) finishDone(pendingDoneFile);
-  return { runId, runDir, rounds: state.rounds, endReason, doneMessage };
+  return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: doneVerification, doneMessage };
 }

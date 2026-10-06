@@ -195,3 +195,13 @@ export function bindRunProject(project: ResolvedProject, runDir: string, layout:
       : project.paths;
   return { ...project, agents, paths, run: { id: runId, dir: runDir, layout } };
 }
+
+/**
+ * How a finished run turned out. Runs that ended before outcomes existed have none recorded: they read as
+ * partial (failed for a failed lead) and `verified: false`, never as a success nobody checked.
+ */
+export function outcomeOf(s: RunState): { outcome: RunOutcome; verified: boolean } | undefined {
+  if (s.outcome) return { outcome: s.outcome, verified: true };
+  if (!s.end_reason) return undefined;
+  return { outcome: s.end_reason === "lead_failed" ? "failed" : "partial", verified: false };
+}

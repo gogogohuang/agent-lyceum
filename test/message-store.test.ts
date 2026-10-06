@@ -8,7 +8,7 @@ import { claimMessages, commitClaim, loadClaim, recoverRunMail, setFaultHook } f
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => {
@@ -27,7 +27,7 @@ function bound(): P {
 const sendFile = (p: P, from: string, to: string | string[], subject: string, type = "task") =>
   write(
     path.join(outboxDir(p, from), `${subject.replace(/\W+/g, "-")}.md`),
-    `---\nto: ${JSON.stringify(to)}\ntype: ${type}\nsubject: ${subject}\n---\n\nbody of ${subject}\n`,
+    `---\nto: ${JSON.stringify(to)}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`,
   );
 /** Every copy of a subject that reached `agent`, whether still unread or already read. */
 const copies = (p: P, agent: string, subject: string): string[] => {

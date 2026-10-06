@@ -31,6 +31,9 @@ export function makeEnv(name = "demo"): TestEnv {
   };
 }
 
+/** A `done` body that meets the completion contract for `outcome: completed`. */
+export const FULL_DONE = "## Result\nShipped.\n\n## Files\n- src/x.ts\n\n## Verification\nnpm test: passed\n\n## Not done\nNone\n";
+
 export function write(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);

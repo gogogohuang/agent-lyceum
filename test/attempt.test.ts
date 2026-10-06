@@ -8,7 +8,7 @@ import { beginAttempt, claimMessages, loadAttempt, mailDir } from "../src/messag
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { bindRunProject, loadRunState, newRunState, saveRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -16,7 +16,7 @@ afterEach(() => env?.cleanup());
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const FAIL: WakeResult = { ok: false, text: "", exitCode: 1, timedOut: false, error: "boom" };
 const send = (p: Parameters<typeof outboxDir>[0], from: string, to: string, subject: string, type = "reply") =>
-  write(path.join(outboxDir(p, from), `${subject.replace(/\W+/g, "-")}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\nbody of ${subject}\n`);
+  write(path.join(outboxDir(p, from), `${subject.replace(/\W+/g, "-")}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`);
 const subjectsIn = (dir: string) =>
   (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter((f) => f.endsWith(".md")).map((f) => /subject: (.*)/.exec(fs.readFileSync(path.join(dir, f), "utf8"))![1]);
 const allMail = (p: Parameters<typeof inboxDir>[0], agent: string) => [...subjectsIn(inboxDir(p, agent)), ...subjectsIn(path.join(inboxDir(p, agent), "read"))];

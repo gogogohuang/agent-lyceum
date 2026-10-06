@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, type RunState, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, type RunState, type WakeTopic } from "./run-store.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
@@ -75,8 +75,15 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
+const OUTCOME_ZH = { completed: "完成", partial: "部分完成", blocked: "受阻", failed: "失敗", cancelled: "已取消" } as const;
+
 export function runStateLabel(s: RunState, live = alive(s.pid)): string {
-  if (s.end_reason) return `已結束：${s.end_reason === "done" ? "完成" : s.end_reason}`;
+  if (s.end_reason) {
+    const o = outcomeOf(s)!;
+    // Runs from before outcomes existed: keep what they recorded, but never present it as a checked success.
+    if (!o.verified) return s.end_reason === "done" ? "已結束：完成（未驗證）" : `已結束：${s.end_reason}`;
+    return o.outcome === "completed" ? "已結束：完成" : `已結束：${OUTCOME_ZH[o.outcome]}${s.end_reason === "done" ? "" : `（${s.end_reason}）`}`;
+  }
   return live ? "執行中" : "已中斷";
 }
 
@@ -98,7 +105,8 @@ export function paint(on: boolean): Paint {
 /** Color a run-state label: running green, interrupted yellow, ended done green / otherwise red. */
 function stateColor(c: Paint, label: string): string {
   if (label === "執行中" || label === "已結束：完成") return c.green(label);
-  return label === "已中斷" ? c.yellow(label) : c.red(label);
+  if (label === "已中斷" || label.startsWith("已結束：完成（未驗證") || label.startsWith("已結束：部分完成") || label.startsWith("已結束：受阻")) return c.yellow(label);
+  return c.red(label);
 }
 
 const okText = (c: Paint, ok: boolean) => (ok ? c.green("成功") : c.red("失敗"));
@@ -214,6 +222,8 @@ function describeRun(s: RunState, now: number, c: Paint, limit = Infinity, proje
   ];
   const steps = stepsLine(s.steps, c);
   if (steps) lines.push(`  進度：${steps}`);
+  if (s.outcome_note) lines.push(`  結果說明：${clip(s.outcome_note, 200)}`);
+  if (s.verification) lines.push(`  驗證：${clip(s.verification, 200)}`);
   for (const n of s.notes ?? []) lines.push(`  ${c.yellow("⚠ " + clip(n, 200))}`);
   const wakes = s.wakes ?? [];
   if (wakes.length > limit) lines.push(c.dim(`  … 省略較早的 ${wakes.length - limit} 筆（不帶 --monitor 可看完整紀錄）`));

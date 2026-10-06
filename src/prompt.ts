@@ -69,7 +69,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
     isLead
-      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Use these headings (a missing one is not rejected): `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Not done` (anything skipped or unverified, or `None`)."
+      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run."
       : "- `done` has no required headings.",
     ...(isLead
       ? [

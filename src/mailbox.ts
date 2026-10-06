@@ -185,7 +185,7 @@ export interface RouteResult {
   /** Mail that was delivered but lacks required sections (see format.ts). */
   warnings: { from: string; id: string; subject: string; missing: string[] }[];
   /** The lead's `done`. Its file stays in the outbox until the caller has stored the result and calls `finishDone`. */
-  done?: { from: string; subject: string; body: string; file: string };
+  done?: { from: string; subject: string; body: string; file: string; meta: Record<string, unknown> };
   /** Latest `## Steps` checklist the lead sent, if any. */
   steps?: Step[];
 }
@@ -194,6 +194,14 @@ export interface RouteResult {
 export function finishDone(file: string): void {
   if (!fs.existsSync(file)) return;
   const dest = path.join(path.dirname(file), "read", path.basename(file));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.renameSync(file, dest);
+}
+
+/** Set a `done` that broke the completion contract aside (in the outbox's `rejected/`). */
+export function rejectDone(file: string): void {
+  if (!fs.existsSync(file)) return;
+  const dest = path.join(path.dirname(file), "rejected", path.basename(file));
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.renameSync(file, dest);
 }
@@ -252,7 +260,7 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
           reject(`only the lead ("${project.lead}") may send a "done" message.`);
           continue;
         }
-        res.done = { from: sender.name, subject, body: parsed.body, file };
+        res.done = { from: sender.name, subject, body: parsed.body, file, meta: d };
         const ds = parseSteps(parsed.body);
         if (ds.length) res.steps = ds;
         continue;

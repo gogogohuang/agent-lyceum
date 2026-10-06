@@ -6,7 +6,8 @@ import { Command } from "commander";
 import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
-import { loadRunState, newRunId } from "./run-store.js";
+import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
+import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
@@ -139,13 +140,14 @@ function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
 }
 
 function reportRun(summary: RunSummary, runDir: string): never {
-  console.log(`\nRun ${summary.runId} ended: ${summary.endReason} after ${summary.rounds} round(s). Logs: ${runDir}`);
+  console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
+  if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
+  if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-team): ${summary.verification}`);
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
   }
-  if (summary.endReason === "idle") console.log("Note: all mailboxes were empty but the lead never sent a \"done\" message.");
-  process.exit(summary.endReason === "done" || summary.endReason === "idle" ? 0 : 2);
+  process.exit(exitCodeForOutcome(summary.outcome));
 }
 
 program
@@ -204,8 +206,9 @@ program
       if (state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);
         if (!fs.existsSync(result)) fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
-        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
-        process.exit(0);
+        const o = outcomeOf(state)!;
+        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+        process.exit(exitCodeForOutcome(o.outcome));
       }
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
