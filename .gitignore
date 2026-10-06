@@ -23,3 +23,6 @@ coverage/
 
 # agent-team runtime data should never live in this repo (home is ~/agent-team-config)
 agent-team-config/
+
+# devlog-tracker records your prompts verbatim: keep it out of version control
+.devlog/
