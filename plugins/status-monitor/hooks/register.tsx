@@ -79,11 +79,15 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'status-monitor' }, async ($, e) => {
-    // No closeOnEscape: the pane is closed by clicking 關閉 only.
+    // No closeOnEscape: Esc must not touch the pane. Running the command again closes it.
+    if ((await $.ui.panes()).some(x => x.id === PANE && x.isPlaced)) {
+      await $.ui.close({ id: PANE })
+      return { text: 'agent-lyceum pane closed.' }
+    }
     const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
-    return { text: 'agent-lyceum pane opened. Click 關閉 to close it; click a tab to switch task.' }
+    return { text: 'agent-lyceum pane opened. Click 關閉 or run /status-monitor again to close it; click a tab to switch task.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
