@@ -44,13 +44,30 @@ Without `--project`, the project is the registered one whose `dir` is the longes
 
 ## Monitor plugin (Claude Code)
 
-`plugins/agent-team-monitor` is a Claude Code plugin that shows live run status (status line, finish/failure toasts and a `/team-monitor` pane) for one or several projects. Build first (`npm run build`), then start any session with it:
+`plugins/agent-team-monitor` is a Claude Code plugin that shows live run status for one or several projects.
+
+**Load it.** Build first (`npm run build`; the plugin runs `dist/cli.js`), then start a session with:
 
 ```
 claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor
 ```
 
-Options (`command`, `project`, `intervalSeconds`) are set in `~/.claude/settings.json` under `pluginConfigs."agent-team-monitor@inline"`. `command` is the CLI to run, e.g. `node /path/to/agent-team/dist/cli.js`; `project` may list several registered projects separated by commas.
+`--plugin-dir` only applies when a session starts; an already-open session must be restarted (`claude --resume --plugin-dir ...` keeps the conversation). To load it every time, add `alias claude='claude --plugin-dir /path/to/agent-team/plugins/agent-team-monitor'` to your shell rc.
+
+**Use it.**
+- **Status line:** always on once loaded; shows the run state, round `n/max`, output tokens, the current step and unread mail. With several projects it shows one overview line (`team 1/3 running · a ... | b ...`).
+- **Toasts:** a message pops up when a run finishes or fails (prefixed `[project]` when several are watched). Nothing to do.
+- **`/team-monitor`:** type it in the prompt to open the pane. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes and the last 5 runs. It refreshes with the polling interval while open. Click **關閉** (Close) to dismiss it.
+
+**Configure it.** In `~/.claude/settings.json` under `pluginConfigs."agent-team-monitor@inline"` (`options`):
+
+| Option | Meaning | Default |
+|---|---|---|
+| `command` | CLI to run, split on spaces, e.g. `node /path/to/agent-team/dist/cli.js` | `agent-team` |
+| `project` | Registered project name(s) (`-p`); comma-separate to watch several; empty infers from the session's directory | empty |
+| `intervalSeconds` | How often status is polled | `3` |
+
+Changes take effect on the next session start. If the pane shows `無法取得狀態：...`, the `command` could not run (usually `dist/cli.js` was not built) or the project name is not registered.
 
 ## Layout
 
