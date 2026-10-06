@@ -1,7 +1,7 @@
 {
   "name": "status-monitor",
   "version": "0.1.0",
-  "description": "Live agent team run status (agent-lyceum status --json), refreshed every second: status line, toasts and a /team-monitor pane.",
+  "description": "Live agent team run status (agent-lyceum status --json), refreshed every second: status line, toasts and a /status-monitor pane.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "command": {
