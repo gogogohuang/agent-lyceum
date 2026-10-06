@@ -50,6 +50,8 @@ export interface ProjectPaths {
   inboxRoot: string;
   outboxRoot: string;
   runs: string;
+  /** Per-task memory: <taskMemory>/<run-id>/<agent>. Never shared between runs. */
+  taskMemory: string;
 }
 
 export function projectPaths(home: string, project: string): ProjectPaths {
@@ -64,6 +66,7 @@ export function projectPaths(home: string, project: string): ProjectPaths {
     inboxRoot: path.join(shared, "inbox"),
     outboxRoot: path.join(shared, "outbox"),
     runs: path.join(root, "runs"),
+    taskMemory: path.join(root, "task-memory"),
   };
 }
 

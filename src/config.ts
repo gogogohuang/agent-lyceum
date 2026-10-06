@@ -29,7 +29,7 @@ export interface ResolvedAgent {
   model?: string;
   effort?: Effort;
   agentMd: string;
-  memory: { global?: string; project?: string };
+  memory: { global?: string; project?: string; task?: string };
   resume: boolean;
   canMessage: "all" | string[];
   canEditAgentMd: boolean;

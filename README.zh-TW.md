@@ -45,6 +45,7 @@ npx @gogogohuang/agent-team status
     ├── project.yaml                  # 團隊、repo 路徑、覆寫設定
     ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶
     ├── shared/{common/COMMON.md, inbox/<agent>/, outbox/<agent>/}
+    ├── task-memory/<run-id>/<agent>/   # 任務記憶：每次 run 獨立，不與其他任務共用
     └── runs/<run-id>/{task.md, log.jsonl, state.json, snapshots/, agents/}
 ```
 

@@ -96,12 +96,22 @@ export function newRunId(d = new Date()): string {
 }
 
 export async function runTeam(opts: RunOptions): Promise<RunSummary> {
-  const { project, task, resume, runDir } = opts;
+  const { task, resume, runDir } = opts;
   if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
   const invoke = opts.invoker ?? realInvoker;
   const say = opts.log ?? ((s: string) => console.log(s));
-  const cfg = project.dispatcher;
+  const cfg = opts.project.dispatcher;
   const runId = path.basename(runDir);
+  // Each run gets its own memory directory per agent, so one task's notes never leak into another's.
+  const project: ResolvedProject = {
+    ...opts.project,
+    agents: Object.fromEntries(
+      Object.entries(opts.project.agents).map(([n, a]) => [
+        n,
+        { ...a, memory: { ...a.memory, task: path.join(opts.project.paths.taskMemory, runId, n) } },
+      ]),
+    ),
+  };
 
   ensureProjectDirs(project);
   fs.mkdirSync(runDir, { recursive: true });
