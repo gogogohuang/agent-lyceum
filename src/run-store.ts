@@ -10,7 +10,7 @@ import type { RunOutcome } from "./schema.js";
 export const STATE_FILE = "state.json";
 export const STATE_SCHEMA_VERSION = 2;
 
-export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed";
+export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "cancelled";
 export type MailLayout = "run" | "legacy";
 
 export interface WakeTopic {
@@ -110,7 +110,7 @@ const WireState = z
     ended_at: z.string().optional(),
     rounds: nonNeg.optional(),
     max_rounds: nonNeg.optional(),
-    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed"]).optional(),
+    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed", "cancelled"]).optional(),
     outcome: z.enum(["completed", "partial", "blocked", "failed", "cancelled"]).optional(),
     outcome_note: z.string().optional(),
     verification: z.string().optional(),
@@ -209,5 +209,5 @@ export function bindRunProject(project: ResolvedProject, runDir: string, layout:
 export function outcomeOf(s: RunState): { outcome: RunOutcome; verified: boolean } | undefined {
   if (s.outcome) return { outcome: s.outcome, verified: true };
   if (!s.end_reason) return undefined;
-  return { outcome: s.end_reason === "lead_failed" ? "failed" : "partial", verified: false };
+  return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : "partial", verified: false };
 }

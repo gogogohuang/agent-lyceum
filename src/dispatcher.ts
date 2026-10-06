@@ -5,7 +5,7 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { briefOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes } from "./mailbox.js";
-import { sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
+import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
@@ -47,6 +47,8 @@ export interface RunOptions {
   resume?: RunState;
   runDir: string;
   invoker?: Invoker;
+  /** Stop the run when this fires: running agents are killed, unread mail is kept, the run ends `cancelled` and can be resumed. */
+  signal?: AbortSignal;
   log?: (line: string) => void;
 }
 
@@ -163,7 +165,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     return batch;
   };
 
-  const wake = async (agent: ResolvedAgent): Promise<{ ok: boolean }> => {
+  const wake = async (agent: ResolvedAgent): Promise<{ ok: boolean; cancelled?: boolean }> => {
     const queue = listUnread(project, agent.name);
     if (queue.length === 0) return { ok: true };
     // Oldest message per wake-up (the lead takes a run of replies at once); the rest stay unread for later wake-ups.
@@ -195,7 +197,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
       saveState();
-      result = await invoke({ ...base, userPrompt: attempt ? retryPrompt(base.userPrompt, attempt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
+      result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, attempt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
         ok: false,
         text: "",
         exitCode: null,
@@ -231,6 +233,15 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       if (result.ok) {
         attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
         break;
+      }
+      if (result.cancelled) {
+        // Stopped on purpose: not a failure to report. Its output is set aside and its input stays unread for the resume.
+        const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+        finishAttempt(runDir, att.id, "failed", { error: "cancelled", parked });
+        abandonClaim(runDir, claim.id);
+        claims.delete(agent.name);
+        say(`  ${agent.name} stopped (cancelled)`);
+        return { ok: false, cancelled: true };
       }
       // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
       const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
@@ -287,7 +298,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   };
 
   /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
-  const settle = (batch: ResolvedAgent[], results: { ok: boolean }[]): void => {
+  const settle = (batch: ResolvedAgent[], results: { ok: boolean; cancelled?: boolean }[]): void => {
     const violations = guard.check(batch);
     for (const v of violations) {
       say(`  protected file ${v.action}: ${v.file} (suspects: ${v.suspects.join(", ")})`);
@@ -375,7 +386,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       return;
     }
     const leadIdx = batch.findIndex((a) => a.name === project.lead);
-    if (leadIdx >= 0 && !results[leadIdx].ok) {
+    if (leadIdx >= 0 && !results[leadIdx].ok && !results[leadIdx].cancelled) {
       endReason = "lead_failed";
       return;
     }
@@ -410,6 +421,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   let leadWasLast = false;
   let nudged = false;
   while (!endReason) {
+    if (opts.signal?.aborted) {
+      endReason = "cancelled";
+      break;
+    }
     let pending = pendingAgents();
     if (pending.length === 0 && leadWasLast && !nudged) {
       nudged = true;
@@ -446,9 +461,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     leadWasLast = batch.some((a) => a.name === project.lead);
     if (batch.some((a) => a.name !== project.lead)) nudged = false;
     settle(batch, results);
+    if (!endReason && opts.signal?.aborted) endReason = "cancelled";
   }
 
-  const outcome: RunOutcome = endReason === "done" ? doneOutcome ?? "partial" : endReason === "lead_failed" ? "failed" : "partial";
+  const outcome: RunOutcome = endReason === "done" ? doneOutcome ?? "partial" : endReason === "lead_failed" ? "failed" : endReason === "cancelled" ? "cancelled" : "partial";
   const outcomeNote =
     endReason === "done"
       ? doneNote
@@ -456,7 +472,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         ? "All mailboxes were empty but the lead never sent a done message."
         : endReason === "max_rounds"
           ? "Stopped at the round limit before the lead sent done."
-          : "The lead's wake-up failed.";
+          : endReason === "cancelled"
+            ? "Cancelled before the lead finished. Unread mail was kept; continue with `agent-team resume`."
+            : "The lead's wake-up failed.";
   state.end_reason = endReason;
   state.outcome = outcome;
   state.outcome_note = outcomeNote;

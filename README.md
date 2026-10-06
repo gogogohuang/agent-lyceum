@@ -34,6 +34,8 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `clear <run-id> [-p name]` | Delete a task (run) by id; refuses if it is still running. List ids with `status --task-list`. |
 | `unlock [-p name] --force` | Remove the project's run lock left behind by a crashed run (only one run per project at a time). Without `--force` it only shows who holds the lock. |
 
+**Stopping a run:** Ctrl-C (or SIGTERM) cancels it cleanly: running agents get SIGTERM, then SIGKILL after 5 s (their whole process tree), unread mail is kept, the lock is released and the exit code is `130`; continue later with `agent-team resume`. A second Ctrl-C quits at once. A wake-up that exceeds `wake_timeout_sec` is stopped the same way and counts as a failed attempt. Each attempt's complete stdout/stderr is written to `runs/<run-id>/mail/attempts/<attempt>/log/`; only the last 64 KiB of each stream is kept in memory.
+
 **Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success.
 
 Without `--project`, the project is the registered one whose `dir` is the longest prefix of the current directory; if none matches the command lists the registered projects and stops.

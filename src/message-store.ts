@@ -136,6 +136,12 @@ export function claimMessages(runDir: string, agent: string, messages: { file: s
   return rec;
 }
 
+/** The wake-up was stopped before it finished: its input stays unread and will be handled again. */
+export function abandonClaim(runDir: string, claimId: string): void {
+  const c = loadClaim(runDir, claimId);
+  if (c.status === "claimed" || c.status === "output_ready") saveClaim(runDir, { ...c, status: "abandoned" });
+}
+
 /** The wake-up finished and left its output in the outbox; from here on the output is routed, not redone. */
 export function markOutputReady(runDir: string, claimId: string): void {
   const c = loadClaim(runDir, claimId);
@@ -180,6 +186,7 @@ export interface AttemptRecord {
 }
 
 const attemptFile = (runDir: string, id: string) => path.join(mailDir(runDir), "attempts", `${id}.json`);
+export const attemptLogDir = (runDir: string, id: string): string => path.join(mailDir(runDir), "attempts", id, "log");
 export const attemptOutboxDir = (runDir: string, id: string): string => path.join(mailDir(runDir), "attempts", id, "outbox");
 
 function saveAttempt(runDir: string, a: AttemptRecord): void {

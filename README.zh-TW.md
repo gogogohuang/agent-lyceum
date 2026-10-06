@@ -34,6 +34,8 @@ npx @gogogohuang/agent-team status
 | `clear <run-id> [-p name]` | 依 id 刪除一個任務（run）；仍在執行中會拒絕。id 可用 `status --task-list` 查。 |
 | `unlock [-p name] --force` | 移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。 |
 
+**中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-team resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
+
 **`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
 
 未指定 `--project` 時，會選用 `dir` 為目前目錄最長前綴的已註冊專案；若沒有符合的專案，指令會列出已註冊專案後停止。

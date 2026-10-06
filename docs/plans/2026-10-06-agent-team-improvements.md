@@ -180,12 +180,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** WakeInput 新增 `signal?: AbortSignal`；`runInvocation(inv: Invocation, opts: { timeoutSec: number; signal?: AbortSignal; logDir: string }): Promise<WakeResult>`；adapter 解析改為逐事件累積必要結果，完整 raw stdout/stderr 寫檔。
 
-- [ ] 寫測試：spawn ENOENT、SIGINT、SIGTERM、timeout、孫程序持有 pipe、100 MiB 輸出、壞 JSON 行；結果只 settle 一次，尾端緩衝不超過 64 KiB。
-- [ ] 執行 `npm test -- test/process-runner.test.ts`，確認先失敗。
-- [ ] POSIX 使用獨立 process group；取消時先 TERM，5 秒後 KILL，最多再等 1 秒即回傳並關閉自身 pipe；stdout/stderr 使用 stream backpressure 寫入 attempt log。
-- [ ] CLI signal 觸發 AbortController；dispatcher 停止派新工作，保存 cancelled 狀態，未提交輸入保留，釋放專案鎖。不支援 Windows（與全域限制一致），在 doctor 中標示。
-- [ ] 執行程序測試、adapter/dispatcher 測試及 typecheck，預期全部通過，並檢查 fixture 子孫程序皆已退出。
-- [ ] 提交：`fix: bound runtime output and clean up process trees`。
+- [x] 寫測試：spawn ENOENT、SIGINT、SIGTERM、timeout、孫程序持有 pipe、100 MiB 輸出、壞 JSON 行；結果只 settle 一次，尾端緩衝不超過 64 KiB。
+- [x] 執行 `npm test -- test/process-runner.test.ts`，確認先失敗。
+- [x] POSIX 使用獨立 process group；取消時先 TERM，5 秒後 KILL，最多再等 1 秒即回傳並關閉自身 pipe；stdout/stderr 使用 stream backpressure 寫入 attempt log。
+- [x] CLI signal 觸發 AbortController；dispatcher 停止派新工作，保存 cancelled 狀態，未提交輸入保留，釋放專案鎖。不支援 Windows（與全域限制一致），在 doctor 中標示。
+- [x] 執行程序測試、adapter/dispatcher 測試及 typecheck，預期全部通過，並檢查 fixture 子孫程序皆已退出。
+- [x] 提交：`fix: bound runtime output and clean up process trees`。
 
 ### Task 10：doctor 與 runtime 能力檢查
 
@@ -245,6 +245,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - Phase A（Task 1–6）已於分支 `feat/reliable-runs-phase-a` 實作並通過 `npm run typecheck`、`npm test`（117 項）、`npm run build`。
 - 與計畫的差異：專案鎖以暫存檔＋hard link 原子建立並記錄 `ps` 啟動時間（不另記 boot id）；新增 `unlock --force` 指令；`recoverRunMail` 另回傳 `ready`、`interrupted` 供 dispatcher 使用。
 - Task 7、8 已實作（commit `feat: isolate parallel agents in git worktrees`、`feat: integrate agent worktree changes safely`）。與計畫的差異：快照包含 lead 未提交的修改與「新增且未被 ignore」的檔案（而非只含已追蹤檔）；整合用 `git apply`（不加 `--3way`，因為已先逐檔確認自快照後未被改動，`--3way` 會連帶動到使用者的 index）；run 啟動時主 repo 有未提交修改就拒絕，因此沒有另存 `baseline_dirty_paths`；整合被擋時以 `blocked_integrations` 記在 run state，run 不能以 `completed` 結束。
+- Task 9 已實作。與計畫的差異：adapter 新增 `stream()`（逐行讀取 stdout，只保留所需結果），舊的 `parse()` 保留作為備援；每次嘗試的 log 放在 `mail/attempts/<attempt>/log/`；取消時的 outcome 為 `cancelled`（exit 130），未提交的輸入保留給 `resume`，第二次 Ctrl-C 立即結束。有一個用假 `claude` 執行檔、真實 SIGINT 的 CLI 端到端測試。
 - 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準

@@ -139,6 +139,26 @@ function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
   }
 }
 
+/**
+ * Ctrl-C (or SIGTERM) stops the run cleanly: the first signal cancels it (agents are killed, unread mail is kept,
+ * the lock is released, exit code 130); a second one quits at once.
+ */
+function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
+  const ac = new AbortController();
+  let seen = 0;
+  const handler = (name: string) => () => {
+    if (++seen === 1) {
+      console.error(`\n${name}: stopping the run (running agents are being stopped; unread mail is kept). Press Ctrl-C again to quit at once.`);
+      ac.abort();
+    } else process.exit(130);
+  };
+  const onInt = handler("Interrupted");
+  const onTerm = handler("Terminated");
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
+  return { signal: ac.signal, dispose: () => (process.off("SIGINT", onInt), process.off("SIGTERM", onTerm)) };
+}
+
 function reportRun(summary: RunSummary, runDir: string): never {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
@@ -166,12 +186,14 @@ program
       const runDir = path.join(pr.paths.runs, runId);
       const lease = takeLock(pr, runId);
       let summary: RunSummary;
+      const cancel = cancelOnSignals();
       try {
         const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
         console.log(`Project ${pr.name} — repo ${pr.dir}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-        summary = await runTeam({ project: pr, task: prepared, runDir });
+        summary = await runTeam({ project: pr, task: prepared, runDir, signal: cancel.signal });
       } finally {
+        cancel.dispose();
         lease.release();
       }
       reportRun(summary, runDir);
@@ -215,12 +237,14 @@ program
 
       const lease = takeLock(pr, state.run_id);
       let summary: RunSummary;
+      const cancel = cancelOnSignals();
       try {
         console.log(`Project ${pr.name} — repo ${pr.dir}`);
         console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
         // Read the state again under the lock: another process may have changed it while we were checking.
-        summary = await runTeam({ project: pr, resume: loadRunState(dir), runDir: dir });
+        summary = await runTeam({ project: pr, resume: loadRunState(dir), runDir: dir, signal: cancel.signal });
       } finally {
+        cancel.dispose();
         lease.release();
       }
       reportRun(summary, dir);
