@@ -18,6 +18,8 @@ export interface MessageMeta {
   type: MessageType;
   subject: string;
   created: string;
+  /** The run this mail belongs to. Stamped by the dispatcher; absent on mail of legacy runs. */
+  run_id?: string;
 }
 
 export interface Message {
@@ -83,6 +85,7 @@ export function deliver(
     type: input.type,
     subject: input.subject,
     created: new Date().toISOString(),
+    ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
   };
   const file = path.join(inboxDir(project, input.to), `${stamp()}-${input.from}-${id}.md`);
   atomicWrite(file, serialize(meta, input.body));
@@ -172,6 +175,10 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         continue;
       }
       const d = parsed.data;
+      if (project.run?.layout === "run" && d.run_id !== undefined && String(d.run_id) !== project.run.id) {
+        reject(`it is addressed to run "${String(d.run_id)}", but this is run "${project.run.id}"; mail never crosses runs.`);
+        continue;
+      }
       const type = (d.type ?? "reply") as MessageType;
       if (!MESSAGE_TYPES.includes(type) || type === "failure") {
         reject(`unknown or not allowed message type "${String(d.type)}" (use task, reply or done).`);

@@ -8,7 +8,7 @@ import { deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from 
 import { isInside } from "./paths.js";
 import { ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
-import { newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
+import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
 export { newRunId };
@@ -42,17 +42,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   const say = opts.log ?? ((s: string) => console.log(s));
   const cfg = opts.project.dispatcher;
   const runId = path.basename(runDir);
-  // Each run gets its own memory directory per agent, so one task's notes never leak into another's.
-  const project: ResolvedProject = {
-    ...opts.project,
-    agents: Object.fromEntries(
-      Object.entries(opts.project.agents).map(([n, a]) => [
-        n,
-        { ...a, memory: { ...a.memory, task: path.join(opts.project.paths.taskMemory, runId, n) } },
-      ]),
-    ),
-  };
-
+  const layout = resume ? resume.mail_layout : "run";
+  // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
+  const project = bindRunProject(opts.project, runDir, layout);
   ensureProjectDirs(project);
   fs.mkdirSync(runDir, { recursive: true });
   const logFile = path.join(runDir, "log.jsonl");
@@ -86,7 +78,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       max_rounds: cfg.max_rounds,
       pid: process.pid,
       task_summary: t.subject,
-      mail_layout: "legacy",
+      mail_layout: layout,
     });
     const seed = parseSteps(task!.content, false);
     if (seed.length) state.steps = seed;

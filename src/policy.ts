@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { globStaticPrefix } from "./paths.js";
@@ -50,6 +51,34 @@ export function memoryDirs(a: ResolvedAgent): string[] {
   return [a.memory.global, a.memory.project, a.memory.task].filter((x): x is string => !!x);
 }
 
+const RUN_ENTRIES = ["state.json", "log.jsonl", "result.md", "task.md", "snapshots", "agents", "mail"];
+const MAIL_ENTRIES = ["inbox", "claims", "attempts", "journal.jsonl"];
+
+function entries(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The run records agents must not write. A run's mailboxes sit inside its run dir, and a deny on a parent would
+ * beat the allow on an agent's own outbox, so the run dir is denied entry by entry instead of as a whole.
+ */
+function runDenyPaths(project: ResolvedProject): string[] {
+  const runs = project.paths.runs;
+  if (project.run?.layout !== "run") return [runs];
+  const runDir = project.run.dir;
+  const mail = path.join(runDir, "mail");
+  const unique = (xs: string[]) => [...new Set(xs)];
+  return unique([
+    ...entries(runs).filter((e) => e !== project.run!.id).map((e) => path.join(runs, e)),
+    ...[...RUN_ENTRIES, ...entries(runDir)].filter((e) => e !== "mail").map((e) => path.join(runDir, e)),
+    ...[...MAIL_ENTRIES, ...entries(mail)].filter((e) => e !== "outbox").map((e) => path.join(mail, e)),
+  ]);
+}
+
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const isLead = agent.name === project.lead;
   const allowDirs = [...memoryDirs(agent), outboxDir(project, agent.name)];
@@ -73,7 +102,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   }
   addDeny(commonFile(project));
   for (const f of repoInstructionFiles(project)) addDeny(f);
-  deny.push(project.paths.runs, project.paths.config, path.join(project.home, "team.yaml"));
+  deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
 
   return {
     allowDirs,

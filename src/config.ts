@@ -47,6 +47,8 @@ export interface ResolvedProject {
   dispatcher: DispatcherSettings;
   agents: Record<string, ResolvedAgent>;
   paths: ProjectPaths;
+  /** Set once the project is bound to one run (see `bindRunProject`): which run, and where its mail lives. */
+  run?: { id: string; dir: string; layout: "run" | "legacy" };
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {

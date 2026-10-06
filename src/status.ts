@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { RESULT_FILE } from "./dispatcher.js";
-import { loadRunState, type RunState, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, type RunState, type WakeTopic } from "./run-store.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
@@ -290,9 +290,11 @@ export function formatTaskList(project: ResolvedProject, color = false): string 
   return [head, "", ...table, "", c.dim("接續中斷的任務：agent-team resume <ID> -p " + project.name)].join("\n");
 }
 
-export function formatStatus(project: ResolvedProject, now = Date.now(), color = false): string {
+export function formatStatus(base: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
-  const run = latestRun(project);
+  const run = latestRun(base);
+  // Mail is per run: look at the mailboxes of the run being shown (the newest one).
+  const project = run ? bindRunProject(base, run.dir, run.state.mail_layout) : base;
   const rows = [["成員", "執行環境", "未讀", "上次喚醒"]];
   for (const a of Object.values(project.agents)) {
     const lw = run?.state.last_wake[a.name];

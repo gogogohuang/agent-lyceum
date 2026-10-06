@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { atomicWrite } from "./mailbox.js";
 import type { RunOutcome } from "./schema.js";
@@ -177,4 +178,20 @@ export function loadRunState(runDir: string): RunState {
 
 export function saveRunState(runDir: string, state: RunState): void {
   atomicWrite(path.join(runDir, STATE_FILE), JSON.stringify(state, null, 2));
+}
+
+/**
+ * The project as one run sees it. Per-task memory is always private to the run. With the "run" layout the
+ * mailboxes live inside the run dir; with "legacy" they stay the shared project mailboxes older versions used.
+ */
+export function bindRunProject(project: ResolvedProject, runDir: string, layout: MailLayout): ResolvedProject {
+  const runId = path.basename(runDir);
+  const agents = Object.fromEntries(
+    Object.entries(project.agents).map(([n, a]) => [n, { ...a, memory: { ...a.memory, task: path.join(project.paths.taskMemory, runId, n) } }]),
+  );
+  const paths =
+    layout === "run"
+      ? { ...project.paths, inboxRoot: path.join(runDir, "mail", "inbox"), outboxRoot: path.join(runDir, "mail", "outbox") }
+      : project.paths;
+  return { ...project, agents, paths, run: { id: runId, dir: runDir, layout } };
 }

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { ProtectedGuard } from "../src/guard.js";
+import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
@@ -346,7 +347,7 @@ describe("resume", () => {
     st.active = { lead: { round: st.rounds, since: new Date().toISOString(), handling: [] } };
     fs.writeFileSync(path.join(runDir, "state.json"), JSON.stringify(st));
     // A killed wake never marked its mail read; undo the failed wake's markRead.
-    const leadInbox = inboxDir(env.project(), "lead");
+    const leadInbox = inboxDir(bindRunProject(env.project(), runDir, "run"), "lead");
     for (const f of fs.readdirSync(path.join(leadInbox, "read"))) fs.renameSync(path.join(leadInbox, "read", f), path.join(leadInbox, f));
 
     const seenSessions: (string | undefined)[] = [];
