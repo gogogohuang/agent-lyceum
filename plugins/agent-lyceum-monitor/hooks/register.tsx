@@ -72,6 +72,8 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'team-monitor', description: 'Show the agent-lyceum run status in a pane' })
     pollAll($, targets)
     $.clock.every(every, () => pollAll($, targets))
+    // Resident: seat the pane beside the conversation at startup (from 144 columns; narrower, it waits).
+    if (options.autoOpen !== false) await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     return next(e)
   })
 

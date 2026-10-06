@@ -21,6 +21,12 @@
       "title": "agent-lyceum projects",
       "description": "Registered project name(s) (-p); separate several with commas to watch them all. Leave empty to infer from the session's directory.",
       "default": ""
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open the pane at startup",
+      "description": "Keep the monitor pane resident beside the conversation from session start. It seats from 144 terminal columns; /team-monitor opens it at any width.",
+      "default": true
     }
   }
 }
