@@ -74,7 +74,7 @@ export const register: Register = (on, options) => {
     $.ui.status('team 讀取中…')
     pollAll($, targets)
     $.clock.every(every, () => pollAll($, targets))
-    void $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
+    if (options.autoOpen === true) void $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     return next(e)
   })
 
