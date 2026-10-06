@@ -396,3 +396,58 @@ export function existingAgentWorkspace(project: ResolvedProject, runId: string, 
     return undefined;
   }
 }
+
+export interface WorkspaceWork {
+  agent: string;
+  root: string;
+  branch: string;
+  /** Uncommitted changes in the worktree (repo-relative paths). */
+  dirty: string[];
+  /** Files the agent committed that are not in the repo yet. */
+  unintegrated: string[];
+  /** Set when the state could not be determined; treat as work that must not be deleted. */
+  unknown?: string;
+}
+
+/** What is in an agent's worktree that exists nowhere else: uncommitted changes, and commits whose files are not in the main repo. */
+export function inspectWorkspace(project: ResolvedProject, runId: string, agent: string): WorkspaceWork | undefined {
+  const root = workspaceRoot(project, runId, agent);
+  if (!fs.existsSync(root)) return undefined;
+  const ws = existingAgentWorkspace(project, runId, agent);
+  const branch = ws?.branch ?? `agent-team/${runId}/${agent}`;
+  const work: WorkspaceWork = { agent, root, branch, dirty: [], unintegrated: [] };
+  if (!ws) return { ...work, unknown: "its metadata is missing, so what it holds cannot be compared with the repo" };
+  try {
+    work.dirty = dirtyPaths(root);
+    const top = toplevel(project.dir);
+    const head = git(root, ["rev-parse", "HEAD"]);
+    if (head !== ws.base && tryGit(top, ["merge-base", "--is-ancestor", head, "HEAD"]) === undefined) {
+      const raw = execFileSync("git", ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", ws.base, head], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+      const parts = raw.split("\0").filter(Boolean);
+      for (let i = 1; i < parts.length; i += 2) {
+        if (workingBlob(top, parts[i]) !== blobAt(top, head, parts[i])) work.unintegrated.push(parts[i]);
+      }
+    }
+  } catch (e) {
+    work.unknown = `its state could not be read (${(e as Error).message.split("\n")[0]})`;
+  }
+  return work;
+}
+
+/** Names of the agents that have a worktree for this run. */
+export function listWorkspaceAgents(project: ResolvedProject, runId: string): string[] {
+  const dir = path.join(project.paths.root, "worktrees", runId);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+}
+
+/** The snapshot refs (`refs/agent-team/<run>/...`) of a run. */
+export function listSnapshotRefs(project: ResolvedProject, runId: string): string[] {
+  if (!isGitRepo(project.dir)) return [];
+  const out = tryGit(project.dir, ["for-each-ref", "--format=%(refname)", `refs/agent-team/${runId}/`]) ?? "";
+  return out.split("\n").filter(Boolean);
+}
+
+export function deleteSnapshotRefs(project: ResolvedProject, runId: string): void {
+  for (const ref of listSnapshotRefs(project, runId)) git(project.dir, ["update-ref", "-d", ref]);
+}

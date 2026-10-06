@@ -220,12 +220,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `planRunCleanup(project: ResolvedProject, runId: string): CleanupPlan`；`executeRunCleanup(plan: CleanupPlan): CleanupReport`。CleanupPlan 列出 run、task memory、已整合且乾淨的 worktree/branch，及需要保留的成果。「已整合」以 `git merge-base --is-ancestor <member-head> HEAD` 或整合紀錄中的 patch 已套用為準；兩者皆無法證明時視為未整合，拒絕刪除。
 
-- [ ] 寫測試：clear 刪除 run 與 task-memory；不影響其他 run、global/project memory；執行中拒絕；中斷後可重試；符號連結不能讓刪除逃出專案 home。
-- [ ] 補測試：未整合 commit 或髒 worktree 時拒絕清除並列出成果；`--keep-worktrees` 保留 worktree 後仍可清除 run 與 task memory。
-- [ ] 執行 `npm test -- test/run-cleanup.test.ts`，確認先失敗。
-- [ ] 新增 `clear <run-id> --dry-run` 與 `--keep-worktrees`；使用 Task 2 鎖。以 Git worktree remove 移除可安全清理的 workspace，再刪 task memory，最後刪 run；清理進度存於專案層 journal，避免刪除自身進度。
-- [ ] 執行 cleanup、worktree、CLI 測試及 typecheck，預期全部通過；README 清楚列出刪除範圍。
-- [ ] 提交：`fix: clean run artifacts without losing agent work`。
+- [x] 寫測試：clear 刪除 run 與 task-memory；不影響其他 run、global/project memory；執行中拒絕；中斷後可重試；符號連結不能讓刪除逃出專案 home。
+- [x] 補測試：未整合 commit 或髒 worktree 時拒絕清除並列出成果；`--keep-worktrees` 保留 worktree 後仍可清除 run 與 task memory。
+- [x] 執行 `npm test -- test/run-cleanup.test.ts`，確認先失敗。
+- [x] 新增 `clear <run-id> --dry-run` 與 `--keep-worktrees`；使用 Task 2 鎖。以 Git worktree remove 移除可安全清理的 workspace，再刪 task memory，最後刪 run；清理進度存於專案層 journal，避免刪除自身進度。
+- [x] 執行 cleanup、worktree、CLI 測試及 typecheck，預期全部通過；README 清楚列出刪除範圍。
+- [x] 提交：`fix: clean run artifacts without losing agent work`。
 
 ### Task 13：整體驗收與升級文件
 
@@ -248,6 +248,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - Task 9 已實作。與計畫的差異：adapter 新增 `stream()`（逐行讀取 stdout，只保留所需結果），舊的 `parse()` 保留作為備援；每次嘗試的 log 放在 `mail/attempts/<attempt>/log/`；取消時的 outcome 為 `cancelled`（exit 130），未提交的輸入保留給 `resume`，第二次 Ctrl-C 立即結束。有一個用假 `claude` 執行檔、真實 SIGINT 的 CLI 端到端測試。
 - Task 10 已實作：`doctor`、啟動前的能力檢查（明確 `no` 拒絕、`unknown` 警告）、移除「Codex resume 未測試」的固定警告；CLI 回報沒有 session id 時，對 `resume: true` 的 agent 記一次提醒。`doctor` 已對本機真實安裝的 `claude` 跑過（能力判定為 json/resume/sandbox/effort 皆 yes）；Codex 只用 fixture 驗證。CI 既有的 `npm test` 已涵蓋假 CLI 整合測試，不另加步驟。
 - Task 11 已實作。`status` 改為先建立 `StatusReport`／`RunReport`，文字頁面與 `--json` 都由它產生；`config show --resolved` 與 `resolveProjectWithSources`；最小人數降為 2。JSON 報告刻意不含 session id。
+- Task 12 已實作（`src/run-cleanup.ts`）：「已整合」以「agent 提交的檔案內容已在主 repo 工作樹，或其 commit 已是 HEAD 的祖先」判定，無法判定就視為未整合並拒絕；刪除順序為 worktree → 快照 ref → 任務記憶 → run 目錄（最後），進度 journal 放在 `projects/<name>/cleanup/`；刪除前以 realpath 確認在專案 home 內，symlink 只移除連結本身。
 - 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準

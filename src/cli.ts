@@ -5,6 +5,7 @@ import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
@@ -266,23 +267,47 @@ program
 /** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
 program
   .command("clear <run-id>")
-  .description("Delete a task (run) by id: removes its run directory (state, log, result, snapshots). Refuses if it is still running.")
+  .description(
+    "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots. " +
+      "Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo.",
+  )
   .option("-p, --project <name>")
-  .action((runId: string, opts: { project?: string }) => {
+  .option("--dry-run", "only list what would be deleted and what would be kept")
+  .option("--keep-worktrees", "keep the agents' worktrees and branches (and their snapshots), and still clear the run and its task memory")
+  .action((runId: string, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean }) => {
     try {
       assertName("run", runId);
       const pr = loadProject(opts.project);
-      const dir = path.join(pr.paths.runs, runId);
-      if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-      const state = loadRunState(dir);
-      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
+      const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
+        console.log(`Run ${plan.summary}`);
+        for (const i of plan.items) console.log(`  ${opts.dryRun ? "would delete" : "delete      "}  ${i.label}`);
+        for (const k of plan.keep) console.log(`  kept          worktree of ${k.agent}: ${k.path} (branch ${k.branch})${k.files.length ? `, holding ${k.files.join(", ")}` : ""}`);
+      };
+      const refuse = (plan: ReturnType<typeof planRunCleanup>): never => {
+        for (const r of plan.refusals) console.error(`REFUSED  ${r}`);
+        return fail("Nothing was deleted.");
+      };
+      if (opts.dryRun) {
+        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        console.log("Dry run: nothing is deleted.");
+        showPlan(plan);
+        if (plan.refusals.length) refuse(plan);
+        return;
+      }
       const lease = takeLock(pr, runId);
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        if (plan.refusals.length) refuse(plan);
+        showPlan(plan);
+        const report = executeRunCleanup(plan);
+        if (report.failed.length) {
+          for (const f of report.failed) console.error(`FAILED  ${f.item.label}: ${f.error}`);
+          fail("Cleanup stopped at the first failure; fix it and repeat the same command to finish.");
+        }
+        console.log(`Deleted run ${runId}: ${plan.summary.slice(runId.length + 2)}`);
       } finally {
         lease.release();
       }
-      console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
     } catch (e) {
       fail((e as Error).message);
     }
