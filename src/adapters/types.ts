@@ -1,4 +1,5 @@
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
+import type { AgentWorkspace } from "../worktree.js";
 
 export interface WakeInput {
   project: ResolvedProject;
@@ -9,6 +10,8 @@ export interface WakeInput {
   userPrompt: string;
   sessionId?: string;
   timeoutSec: number;
+  /** The agent's own git worktree, when it does not work in the main repo. */
+  workspace?: AgentWorkspace;
 }
 
 export interface WakeResult {

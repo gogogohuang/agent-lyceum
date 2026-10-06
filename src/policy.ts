@@ -79,9 +79,15 @@ function runDenyPaths(project: ResolvedProject): string[] {
   ]);
 }
 
+/** The repo directory this agent works in: its own worktree, or the main repo. */
+export function repoDirFor(project: ResolvedProject, agent: string): string {
+  return project.workspaces?.[agent]?.dir ?? project.dir;
+}
+
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const isLead = agent.name === project.lead;
-  const allowDirs = [...memoryDirs(agent), outboxDir(project, agent.name)];
+  const ws = project.workspaces?.[agent.name];
+  const allowDirs = [...memoryDirs(agent), outboxDir(project, agent.name), ...(ws ? [ws.gitDir] : [])];
   const allowFiles: string[] = [];
   if (isLead) allowFiles.push(commonFile(project));
   if (agent.canEditAgentMd) {
@@ -103,6 +109,9 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   addDeny(commonFile(project));
   for (const f of repoInstructionFiles(project)) addDeny(f);
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
+  // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
+  for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
+  if (ws) for (const f of ["CLAUDE.md", "AGENTS.md"]) addDeny(path.join(ws.dir, f));
 
   return {
     allowDirs,

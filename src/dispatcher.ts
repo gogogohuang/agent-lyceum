@@ -11,6 +11,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
+import { assertWorktreeRunnable, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
@@ -59,6 +60,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   const layout = resume ? resume.mail_layout : "run";
   // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
   const project = bindRunProject(opts.project, runDir, layout);
+  // Parallel agents work in their own git worktrees; refuse early (before anything is written) when that cannot be done.
+  const wsMode = resolveWorkspaceMode(cfg);
+  if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume });
   ensureProjectDirs(project);
   fs.mkdirSync(runDir, { recursive: true });
   const logFile = path.join(runDir, "log.jsonl");
@@ -67,7 +71,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
   let state: RunState;
   if (resume) {
-    state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
+    state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
     // A wake that was running when the process died never finished; keep it in the history as interrupted.
     for (const [agent, a] of Object.entries(resume.active ?? {})) {
       state.wakes.push({
@@ -93,6 +97,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       pid: process.pid,
       task_summary: t.subject,
       mail_layout: layout,
+      workspace_mode: wsMode,
     });
     const seed = parseSteps(task!.content, false);
     if (seed.length) state.steps = seed;
@@ -120,6 +125,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
   const claims = new Map<string, ClaimRecord>();
   const journal = () => new RouteJournal(runDir);
+  /** Git worktrees of the non-lead agents in the batch being woken (empty in shared mode and for the lead). */
+  let batchSpaces: Record<string, AgentWorkspace> = {};
   /** The attempt that produced each batch member's output; committed together with its claim. */
   const attempts = new Map<string, AttemptRecord>();
   const note = (text: string) => {
@@ -164,11 +171,13 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     const claim = claimMessages(runDir, agent.name, unread);
     claims.set(agent.name, claim);
     const workDir = path.join(runDir, "agents", agent.name);
+    const aproject = Object.keys(batchSpaces).length ? { ...project, workspaces: batchSpaces } : project;
     const base = {
-      project,
+      project: aproject,
       agent,
       workDir,
-      systemPrompt: buildSystemPrompt(project, agent),
+      workspace: batchSpaces[agent.name],
+      systemPrompt: buildSystemPrompt(aproject, agent),
       userPrompt: buildUserPrompt(project, agent, queue, unread.length),
       timeoutSec: cfg.wake_timeout_sec,
     };
@@ -377,6 +386,15 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       break;
     }
     const batch = pickBatch(pending);
+    batchSpaces = {};
+    const members = batch.filter((a) => a.name !== project.lead);
+    if (wsMode === "worktree" && members.length) {
+      state.snapshots = (state.snapshots ?? 0) + 1;
+      saveState();
+      const ref = snapshotBase(project, runId, state.snapshots);
+      for (const a of members) batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
+      log("workspaces", { snapshot: ref, agents: Object.fromEntries(Object.entries(batchSpaces).map(([n, w]) => [n, w.dir])) });
+    }
     const results = await Promise.all(batch.map((a) => wake(a)));
     leadWasLast = batch.some((a) => a.name === project.lead);
     if (batch.some((a) => a.name !== project.lead)) nudged = false;

@@ -1,14 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { writePolicy } from "../policy.js";
+import { repoDirFor, writePolicy } from "../policy.js";
 import type { Invocation, WakeInput } from "./types.js";
 
 export function codexWritableRoots(input: WakeInput): string[] {
   const pol = writePolicy(input.project, input.agent);
-  const repo = input.project.dir;
-  const roots = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter(
-    (d) => !(d === repo || d.startsWith(repo + path.sep)),
-  );
+  const work = repoDirFor(input.project, input.agent.name);
+  const roots = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === work || d.startsWith(work + path.sep)));
   return [...new Set(roots)];
 }
 
@@ -43,6 +41,7 @@ export function codexOutputTokens(jsonl: string): number | undefined {
 
 export function buildCodexInvocation(input: WakeInput): Invocation {
   const { project, agent, workDir } = input;
+  const repo = repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });
   const lastFile = path.join(workDir, "codex-last-message.txt");
   const roots = codexWritableRoots(input);
@@ -60,14 +59,14 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
 
   const args = input.sessionId
     ? ["exec", "resume", input.sessionId, "-c", 'sandbox_mode="workspace-write"', ...common, "-"]
-    : ["exec", "-C", project.dir, "-s", "workspace-write", "--skip-git-repo-check", ...common, "-"];
+    : ["exec", "-C", repo, "-s", "workspace-write", "--skip-git-repo-check", ...common, "-"];
 
   return {
     cmd: "codex",
     args,
     // Codex has no flag for a custom instruction file, so the persona travels in the prompt.
     stdin: `${input.systemPrompt}\n\n=====\n\n${input.userPrompt}`,
-    cwd: project.dir,
+    cwd: repo,
     env: { ...process.env, AGENT_TEAM_AGENT: agent.name },
     parse({ stdout, stderr, code }) {
       let text = "";

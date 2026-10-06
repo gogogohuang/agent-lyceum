@@ -3,6 +3,7 @@ import type { ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, ownsDirs, type AgentEnforcement } from "./policy.js";
 import { isInside } from "./paths.js";
 import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
+import { isGitRepo, resolveWorkspaceMode } from "./worktree.js";
 
 export interface Issue {
   level: "error" | "warn";
@@ -80,6 +81,13 @@ export function validateProject(project: ResolvedProject): ValidationResult {
         }
       }
     }
+  }
+
+  // Parallel agents each need their own checkout, which needs git.
+  if (project.dispatcher.workspace_mode === "shared" && project.dispatcher.max_parallel > 1) {
+    err(`dispatcher.workspace_mode "shared" cannot be combined with max_parallel > 1: parallel agents need separate git worktrees (use "auto" or "worktree").`);
+  } else if (resolveWorkspaceMode(project.dispatcher) === "worktree" && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
+    err(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead (max_parallel: 1, workspace_mode: auto or shared).`);
   }
 
   // Context paths should live outside the repo (the tool never writes into it).

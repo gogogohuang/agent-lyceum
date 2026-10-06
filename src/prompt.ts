@@ -3,7 +3,7 @@ import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
-import { commonFile, memoryDirs, outboxDir } from "./policy.js";
+import { commonFile, memoryDirs, outboxDir, repoDirFor } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -36,7 +36,12 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   const lines: string[] = [];
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-team)", "");
   lines.push(
-    `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${project.dir}\`.`,
+    `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    ...(project.workspaces?.[agent.name]
+      ? [
+          `That directory is your own isolated git worktree (branch \`${project.workspaces[agent.name].branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
+        ]
+      : []),
     `The team lead is **${project.lead}**${isLead ? " (that is you)" : ""}. Teammates: ${mates.join(", ") || "(none)"}.`,
     "",
     "## Sending mail",

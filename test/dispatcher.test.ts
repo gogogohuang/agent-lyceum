@@ -7,7 +7,7 @@ import { ProtectedGuard } from "../src/guard.js";
 import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
-import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -238,6 +238,7 @@ describe("dispatcher", () => {
 
   it("runs disjoint-owns agents in parallel but never alongside the lead", async () => {
     env = makeEnv();
+    initGitRepo(env.repo);
     env.editProjectYaml((t) =>
       t
         .replace("max_parallel: 1", "max_parallel: 2")
@@ -267,6 +268,7 @@ describe("dispatcher", () => {
 
   it("hands the lead all waiting replies in one wake-up, but workers get one message at a time", async () => {
     env = makeEnv();
+    initGitRepo(env.repo);
     env.editProjectYaml((t) =>
       t
         .replace("max_parallel: 1", "max_parallel: 2")

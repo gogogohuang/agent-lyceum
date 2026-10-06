@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { validateProject } from "../src/validate.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { initGitRepo, makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -46,6 +46,7 @@ describe("validate", () => {
     expect(errors(env).join("\n")).toMatch(/"owns" overlap/);
 
     env.editProjectYaml((t) => t.replace('owns: ["src/web/**"]', 'owns: ["tests/**"]'));
+    initGitRepo(env.repo); // parallel agents work in git worktrees
     expect(errors(env)).toEqual([]);
   });
 

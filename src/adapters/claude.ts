@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { writePolicy } from "../policy.js";
+import { repoDirFor, writePolicy } from "../policy.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { Invocation, WakeInput } from "./types.js";
 
@@ -22,11 +22,13 @@ function denyRules(p: string): string[] {
 
 export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent): Record<string, unknown> {
   const pol = writePolicy(project, agent);
+  const ws = project.workspaces?.[agent.name];
+  const repo = repoDirFor(project, agent.name);
   const allow = ["Bash", "Read", "Glob", "Grep"];
   if (pol.restrictRepoToOwns) {
-    for (const g of pol.owns) allow.push(rule("Edit", path.join(project.dir, g)));
+    for (const g of pol.owns) allow.push(rule("Edit", path.join(repo, g)));
   } else {
-    allow.push(rule("Edit", `${project.dir}/**`));
+    allow.push(rule("Edit", `${repo}/**`));
   }
   for (const d of pol.allowDirs) allow.push(rule("Edit", `${d}/**`));
   for (const f of pol.allowFiles) allow.push(rule("Edit", f));
@@ -39,7 +41,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
       enabled: true,
       allowUnsandboxedCommands: false,
       filesystem: {
-        allowWrite: [project.dir, ...pol.allowDirs, ...pol.allowFiles],
+        allowWrite: [ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
         denyWrite: pol.deny,
       },
     },
@@ -55,9 +57,8 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
   fs.writeFileSync(systemFile, input.systemPrompt);
 
   const pol = writePolicy(project, agent);
-  const addDirs = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter(
-    (d) => !(d === project.dir || d.startsWith(project.dir + path.sep)),
-  );
+  const repo = repoDirFor(project, agent.name);
+  const addDirs = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
 
   const args = [
     "-p",
@@ -79,7 +80,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
     cmd: "claude",
     args,
     stdin: input.userPrompt, // prompt via stdin: --add-dir is variadic and would swallow a positional prompt
-    cwd: project.dir,
+    cwd: repo,
     env: { ...process.env, AGENT_TEAM_AGENT: agent.name },
     parse({ stdout, stderr, code }) {
       const j = extractClaudeResult(stdout);

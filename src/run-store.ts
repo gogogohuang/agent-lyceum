@@ -70,6 +70,10 @@ export interface RunState {
   done_rejections?: number;
   /** Recovery remarks (interrupted attempts whose side effects may have happened). */
   notes?: string[];
+  /** "worktree": non-lead agents work in their own git worktrees. */
+  workspace_mode?: "shared" | "worktree";
+  /** Snapshots of the repo taken so far (`refs/agent-team/<run>/base-<n>`). */
+  snapshots?: number;
   sessions: Record<string, string>;
   output_tokens: number;
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;

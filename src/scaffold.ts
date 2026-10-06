@@ -95,7 +95,8 @@ team:
   lead: lead
 dispatcher:
   max_rounds: 30        # stop after this many agent wake-ups
-  max_parallel: 1       # >1 needs non-overlapping "owns" for every non-lead agent
+  max_parallel: 1       # >1 needs non-overlapping "owns" for every non-lead agent, and a git repo
+  workspace_mode: auto  # auto = a git worktree per non-lead agent when max_parallel > 1; shared | worktree to force
   wake_timeout_sec: 600
   retry: 1
   strict: false         # true = refuse to start unless context protection is OS-enforced

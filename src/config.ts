@@ -8,6 +8,7 @@ import {
   projectPaths,
   type ProjectPaths,
 } from "./paths.js";
+import type { AgentWorkspace } from "./worktree.js";
 import {
   DISPATCHER_DEFAULTS,
   GlobalConfig,
@@ -49,6 +50,8 @@ export interface ResolvedProject {
   paths: ProjectPaths;
   /** Set once the project is bound to one run (see `bindRunProject`): which run, and where its mail lives. */
   run?: { id: string; dir: string; layout: "run" | "legacy" };
+  /** Agents working in their own git worktree instead of `dir` (set by the dispatcher for the wake-ups in progress). */
+  workspaces?: Record<string, AgentWorkspace>;
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {
