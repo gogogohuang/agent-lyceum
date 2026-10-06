@@ -207,12 +207,12 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 
 **Interfaces:** `resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, { file: string; key: string } | { default: true }> }`；`buildStatusReport(project: ResolvedProject, runId?: string): StatusReport`，StatusReport 含 `schema_version: 1`。
 
-- [ ] 寫測試：兩人團隊有效、一人無效、lead 缺失無效；runtime/model precedence、陣列替換及相對路徑來源顯示正確。
-- [ ] 補 CLI 測試：`status --json` stdout 只有 JSON 且不含 ANSI；`--task-id` 與 `--task-list` 同樣可輸出 JSON；錯誤走 stderr 並非零 exit。
-- [ ] 執行 `npm test -- test/cli.test.ts test/config.test.ts test/validate.test.ts`，確認新增案例先失敗。
-- [ ] 新增 `config show --resolved [-p name] [--json]`，列出實際生效值與來源；status 的文字和 JSON 都由同一報告生成。最小人數由 3 改為 2（`src/validate.ts:24`），保留預設三人成員範本；檢查 prompt 與協定文字沒有假設存在第三位成員，並新增兩人團隊從 run 到 done 的端到端案例。
-- [ ] 執行上述測試、status 測試及 typecheck，預期全部通過；更新中英文設定與小團隊範例。
-- [ ] 提交：`feat: expose resolved configuration and structured status`。
+- [x] 寫測試：兩人團隊有效、一人無效、lead 缺失無效；runtime/model precedence、陣列替換及相對路徑來源顯示正確。
+- [x] 補 CLI 測試：`status --json` stdout 只有 JSON 且不含 ANSI；`--task-id` 與 `--task-list` 同樣可輸出 JSON；錯誤走 stderr 並非零 exit。
+- [x] 執行 `npm test -- test/cli.test.ts test/config.test.ts test/validate.test.ts`，確認新增案例先失敗。
+- [x] 新增 `config show --resolved [-p name] [--json]`，列出實際生效值與來源；status 的文字和 JSON 都由同一報告生成。最小人數由 3 改為 2（`src/validate.ts:24`），保留預設三人成員範本；檢查 prompt 與協定文字沒有假設存在第三位成員，並新增兩人團隊從 run 到 done 的端到端案例。
+- [x] 執行上述測試、status 測試及 typecheck，預期全部通過；更新中英文設定與小團隊範例。
+- [x] 提交：`feat: expose resolved configuration and structured status`。
 
 ### Task 12：完整且可重試的任務清理
 
@@ -247,6 +247,7 @@ Task 13 完成跨功能驗收與文件。每一階段均能獨立驗收；不需
 - Task 7、8 已實作（commit `feat: isolate parallel agents in git worktrees`、`feat: integrate agent worktree changes safely`）。與計畫的差異：快照包含 lead 未提交的修改與「新增且未被 ignore」的檔案（而非只含已追蹤檔）；整合用 `git apply`（不加 `--3way`，因為已先逐檔確認自快照後未被改動，`--3way` 會連帶動到使用者的 index）；run 啟動時主 repo 有未提交修改就拒絕，因此沒有另存 `baseline_dirty_paths`；整合被擋時以 `blocked_integrations` 記在 run state，run 不能以 `completed` 結束。
 - Task 9 已實作。與計畫的差異：adapter 新增 `stream()`（逐行讀取 stdout，只保留所需結果），舊的 `parse()` 保留作為備援；每次嘗試的 log 放在 `mail/attempts/<attempt>/log/`；取消時的 outcome 為 `cancelled`（exit 130），未提交的輸入保留給 `resume`，第二次 Ctrl-C 立即結束。有一個用假 `claude` 執行檔、真實 SIGINT 的 CLI 端到端測試。
 - Task 10 已實作：`doctor`、啟動前的能力檢查（明確 `no` 拒絕、`unknown` 警告）、移除「Codex resume 未測試」的固定警告；CLI 回報沒有 session id 時，對 `resume: true` 的 agent 記一次提醒。`doctor` 已對本機真實安裝的 `claude` 跑過（能力判定為 json/resume/sandbox/effort 皆 yes）；Codex 只用 fixture 驗證。CI 既有的 `npm test` 已涵蓋假 CLI 整合測試，不另加步驟。
+- Task 11 已實作。`status` 改為先建立 `StatusReport`／`RunReport`，文字頁面與 `--json` 都由它產生；`config show --resolved` 與 `resolveProjectWithSources`；最小人數降為 2。JSON 報告刻意不含 session id。
 - 尚未做：真實 Claude/Codex CLI 的端到端試跑（只用模擬 invoker 與假的 `claude` 執行檔驗證）；worktree 模式下 agent 沙箱規則只以單元測試檢查，未用真實 CLI 驗證。
 
 ## 覆蓋與完成標準

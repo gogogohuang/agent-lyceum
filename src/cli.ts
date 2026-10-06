@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
-import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
+import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
@@ -11,7 +11,7 @@ import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
+import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 
@@ -288,6 +288,34 @@ program
     }
   });
 
+const configCmd = program.command("config").description("Inspect configuration");
+configCmd
+  .command("show")
+  .description("Show the effective configuration of a project and where each value comes from")
+  .requiredOption("--resolved", "merge global library, project file and defaults (currently the only view)")
+  .option("-p, --project <name>")
+  .option("--json", "print as JSON")
+  .action((opts: { project?: string; json?: boolean }) => {
+    try {
+      const h = home();
+      const pr = loadProject(opts.project);
+      const { project, sources } = resolveProjectWithSources(h, pr.name);
+      const values = flattenResolved(project);
+      if (opts.json) {
+        console.log(JSON.stringify({ schema_version: 1, project: project.name, values, sources }, null, 2));
+        return;
+      }
+      const rel = (f: string) => path.relative(h, f) || f;
+      const where = (s: SourceInfo): string => ("default" in s ? "default" : "inferred_from" in s ? `inferred from ${s.inferred_from.key} (${rel(s.inferred_from.file)})` : rel(s.file));
+      const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+      const keys = Object.keys(sources).filter((k) => values[k] !== undefined);
+      const w = Math.max(...keys.map((k) => `${k} = ${show(values[k])}`.length));
+      for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(sources[k])}`);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
 program
   .command("doctor")
   .description("Check the setup without running any agent: configuration, git, the project lock, and what each runtime CLI supports (from --version/--help).")
@@ -341,9 +369,17 @@ program
   .option("--task-id <id>", "show everything about one task (run): every wake and its result")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string }) => {
+  .option("--json", "print the report as JSON (no colour); works with --task-list and --task-id")
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean }) => {
     try {
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
+      if (opts.json) {
+        if (opts.monitor) fail("--json cannot be combined with --monitor.");
+        if (opts.taskId) assertName("run", opts.taskId);
+        const report = opts.taskList ? buildTaskListReport(pr) : buildStatusReport(pr, opts.taskId);
+        console.log(JSON.stringify(report, null, 2));
+        return;
+      }
       if (opts.taskList) {
         console.log(formatTaskList(pr, useColor()));
         return;

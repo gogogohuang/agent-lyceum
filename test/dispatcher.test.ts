@@ -389,3 +389,25 @@ describe("guard", () => {
     expect(fs.existsSync(f)).toBe(false);
   });
 });
+
+describe("a team of two", () => {
+  it("runs from task to done with just the lead and one member, and no prompt mentions anyone else", async () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace(/  qa-member:[\s\S]*$/, ""));
+    const prompts: string[] = [];
+    const seen: string[] = [];
+    const s = await run(async (i) => {
+      prompts.push(i.systemPrompt, i.userPrompt);
+      seen.push(i.agent.name);
+      if (i.agent.name === "lead" && seen.length === 1) mail(i, "fe-member", "do it", "task");
+      else if (i.agent.name === "fe-member") mail(i, "lead", "did it");
+      else mail(i, "lead", "bye", "done");
+      return OK;
+    });
+    expect(seen).toEqual(["lead", "fe-member", "lead"]);
+    expect(s.outcome).toBe("completed");
+    expect(Object.keys(env.project().agents)).toEqual(["lead", "fe-member"]);
+    for (const p of prompts) expect(p).not.toContain("qa-member");
+  });
+});
+

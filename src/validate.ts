@@ -22,7 +22,7 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   const warn = (message: string) => issues.push({ level: "warn", message });
   const names = Object.keys(project.agents);
 
-  if (names.length < 3) err(`A team needs at least 3 agents (found ${names.length}).`);
+  if (names.length < 2) err(`A team needs at least 2 agents: the lead and one member (found ${names.length}).`);
   if (!project.agents[project.lead]) err(`Lead "${project.lead}" is not listed under agents.`);
   if (!fs.existsSync(project.dir) || !fs.statSync(project.dir).isDirectory()) {
     err(`Project dir does not exist: ${project.dir}`);
