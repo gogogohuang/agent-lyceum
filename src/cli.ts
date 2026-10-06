@@ -4,7 +4,8 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, listProjects, resolveProject, type ResolvedProject } from "./config.js";
-import { newRunId, RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
+import { loadRunState, newRunId } from "./run-store.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
@@ -175,9 +176,8 @@ program
       if (runId) {
         assertName("run", runId);
         const dir = path.join(pr.paths.runs, runId);
-        const f = path.join(dir, "state.json");
-        if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
-        found = { dir, state: JSON.parse(fs.readFileSync(f, "utf8")) };
+        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
+        found = { dir, state: loadRunState(dir) };
       } else {
         found = latestUnfinishedRun(pr);
         if (!found) fail("No unfinished run to resume. Start one with: agent-team run \"<task>\"");
@@ -211,9 +211,8 @@ program
       assertName("run", runId);
       const pr = loadProject(opts.project);
       const dir = path.join(pr.paths.runs, runId);
-      const f = path.join(dir, "state.json");
-      if (!fs.existsSync(f)) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-      const state = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+      const state = loadRunState(dir);
       if (!state.end_reason && runIsAlive(state)) fail(`Run ${runId} is still running (pid ${state.pid}); not deleting it.`);
       fs.rmSync(dir, { recursive: true, force: true });
       console.log(`Deleted run ${runId}: ${state.task_summary ?? ""}`);
@@ -246,9 +245,8 @@ program
       if (opts.taskId) {
         assertName("run", opts.taskId);
         const dir = path.join(pr.paths.runs, opts.taskId);
-        const f = path.join(dir, "state.json");
-        if (!fs.existsSync(f)) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
-        console.log(formatRunDetail({ dir, state: JSON.parse(fs.readFileSync(f, "utf8")) }, Date.now(), useColor()));
+        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-team status --task-list`);
+        console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor()));
         return;
       }
       if (!opts.monitor) {

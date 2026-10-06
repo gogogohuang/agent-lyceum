@@ -2,75 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { briefOf, parseSteps, type Step } from "./format.js";
+import { briefOf, parseSteps } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { atomicWrite, deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from "./mailbox.js";
+import { deliver, ensureProjectDirs, listUnread, markRead, routeOutboxes } from "./mailbox.js";
 import { isInside } from "./paths.js";
 import { ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
+import { newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 
+export { newRunId };
+export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
+
 export const RESULT_FILE = "result.md";
-
-export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed";
-
-export interface RunState {
-  run_id: string;
-  project: string;
-  task_source: "text" | "file";
-  task_path?: string;
-  started_at: string;
-  ended_at?: string;
-  rounds: number;
-  max_rounds: number;
-  end_reason?: EndReason;
-  sessions: Record<string, string>;
-  output_tokens: number;
-  last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
-  /** Process running this dispatcher, so a monitor can tell "running" from "interrupted". */
-  pid: number;
-  /** One line describing the run's task. */
-  task_summary: string;
-  /** Agents being woken right now and what they were asked to handle. */
-  active: Record<string, ActiveWake>;
-  /** Finished wakes, oldest first. */
-  wakes: WakeRecord[];
-  /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps`. */
-  steps?: Step[];
-}
-
-export interface WakeTopic {
-  from: string;
-  type: string;
-  subject: string;
-  /** What the message is about, in one line. */
-  brief?: string;
-}
-
-export interface SentTopic {
-  to: string;
-  type: string;
-  subject: string;
-}
-
-export interface ActiveWake {
-  round: number;
-  since: string;
-  handling: WakeTopic[];
-}
-
-export interface WakeRecord {
-  round: number;
-  agent: string;
-  at: string;
-  duration_ms: number;
-  ok: boolean;
-  output_tokens?: number;
-  handling: WakeTopic[];
-  /** Mail this wake handed to others; `to` is "(done)" for the lead's final message. */
-  sent?: SentTopic[];
-  error?: string;
-}
 
 export interface RunSummary {
   runId: string;
@@ -89,10 +33,6 @@ export interface RunOptions {
   runDir: string;
   invoker?: Invoker;
   log?: (line: string) => void;
-}
-
-export function newRunId(d = new Date()): string {
-  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
 export async function runTeam(opts: RunOptions): Promise<RunSummary> {
@@ -136,7 +76,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
   } else {
     const t = taskMessageBody(task!);
-    state = {
+    state = newRunState({
       run_id: runId,
       project: project.name,
       task_source: task!.source,
@@ -144,18 +84,14 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       started_at: new Date().toISOString(),
       rounds: 0,
       max_rounds: cfg.max_rounds,
-      sessions: {},
-      output_tokens: 0,
-      last_wake: {},
       pid: process.pid,
       task_summary: t.subject,
-      active: {},
-      wakes: [],
-    };
+      mail_layout: "legacy",
+    });
     const seed = parseSteps(task!.content, false);
     if (seed.length) state.steps = seed;
   }
-  const saveState = () => atomicWrite(path.join(runDir, "state.json"), JSON.stringify(state, null, 2));
+  const saveState = () => saveRunState(runDir, state);
 
   const guard = new ProtectedGuard(project);
   if (resume) {

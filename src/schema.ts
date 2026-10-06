@@ -84,3 +84,20 @@ export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   retry: 1,
   strict: false,
 };
+
+/** How a run turned out, independent of why it stopped (`EndReason`). Only "completed" means success. */
+export const RUN_OUTCOMES = ["completed", "partial", "blocked", "failed", "cancelled"] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
+
+export function exitCodeForOutcome(outcome: RunOutcome): 0 | 1 | 2 | 130 {
+  switch (outcome) {
+    case "completed":
+      return 0;
+    case "failed":
+      return 1;
+    case "cancelled":
+      return 130;
+    default:
+      return 2;
+  }
+}

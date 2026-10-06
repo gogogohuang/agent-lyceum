@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { RESULT_FILE, type RunState, type WakeTopic } from "./dispatcher.js";
+import { RESULT_FILE } from "./dispatcher.js";
+import { loadRunState, type RunState, type WakeTopic } from "./run-store.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread, type Message } from "./mailbox.js";
@@ -15,10 +16,9 @@ export function latestRun(project: ResolvedProject): { dir: string; state: RunSt
     .sort()
     .reverse();
   for (const d of dirs) {
-    const f = path.join(root, d, "state.json");
-    if (!fs.existsSync(f)) continue;
+    if (!fs.existsSync(path.join(root, d, "state.json"))) continue;
     try {
-      return { dir: path.join(root, d), state: JSON.parse(fs.readFileSync(f, "utf8")) as RunState };
+      return { dir: path.join(root, d), state: loadRunState(path.join(root, d)) };
     } catch {
       /* skip unreadable */
     }
@@ -44,7 +44,7 @@ export function listRuns(project: ResolvedProject, limit: number): { dir: string
   for (const d of dirs) {
     if (out.length >= limit) break;
     try {
-      out.push({ dir: path.join(root, d), state: JSON.parse(fs.readFileSync(path.join(root, d, "state.json"), "utf8")) as RunState });
+      out.push({ dir: path.join(root, d), state: loadRunState(path.join(root, d)) });
     } catch {
       /* skip unreadable */
     }
