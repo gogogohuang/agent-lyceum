@@ -58,7 +58,7 @@ export const DispatcherPartial = z
 
 export const GlobalConfig = z
   .object({
-    agents: z.record(AgentPartial).default({}),
+    agents: z.record(z.string(), AgentPartial).default({}),
   })
   .strict();
 
@@ -67,7 +67,7 @@ export const ProjectConfig = z
     dir: z.string(),
     team: z.object({ lead: z.string() }).strict(),
     dispatcher: DispatcherPartial.default({}),
-    agents: z.record(AgentPartial).default({}),
+    agents: z.record(z.string(), AgentPartial).default({}),
   })
   .strict();
 
