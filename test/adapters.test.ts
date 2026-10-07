@@ -67,6 +67,13 @@ describe("Claude Code adapter", () => {
     expect(s.sandbox.filesystem.allowWrite).toContain(env.repo);
   });
 
+  it("turns off the user's and plugins' hooks: nobody is there to answer a hook that asks a question, and it blocks every write", () => {
+    env = makeEnv();
+    const p = env.project();
+    const s = buildClaudeSettings(p, p.agents["fe-member"]);
+    expect(s.disableAllHooks).toBe(true);
+  });
+
   it("restricts repo edits to owned globs when running in parallel", () => {
     env = makeEnv();
     env.editProjectYaml((t) =>
