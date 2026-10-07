@@ -13,7 +13,7 @@ export interface LockInfo {
   token: string;
   hostname: string;
   pid: number;
-  /** `ps` start time of `pid`, to tell the holder from a different process that reused the pid. */
+  /** Start time of `pid` (see `pidStartFrom`), to tell the holder from a different process that reused the pid. */
   pid_started?: string;
   run_id: string;
   acquired_at: string;
@@ -31,11 +31,53 @@ export interface LockOptions {
   heartbeatMs?: number;
 }
 
-function pidStart(pid: number): string | undefined {
-  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
-  const out = r.status === 0 ? r.stdout.trim() : "";
-  return out || undefined;
+/** Field 22 (starttime, in clock ticks) of a /proc/<pid>/stat line. The command name (field 2) may contain spaces and ")". */
+export function parseProcStat(text: string): string | undefined {
+  const end = text.lastIndexOf(")");
+  if (end < 0) return undefined;
+  const fields = text.slice(end + 2).split(" "); // fields[0] is field 3 (state), so field 22 is fields[19]
+  const v = fields[19];
+  return v && /^\d+$/.test(v) ? v : undefined;
 }
+
+export interface PidStartIo {
+  platform: NodeJS.Platform;
+  readFile(p: string): string | undefined;
+  ps(pid: number): string | undefined;
+}
+
+/** A start time that identifies one process: `proc:<ticks>` on Linux, the `ps` text elsewhere or when /proc cannot be read. */
+export function pidStartFrom(pid: number, io: PidStartIo): string | undefined {
+  if (io.platform === "linux") {
+    const text = io.readFile(`/proc/${pid}/stat`);
+    const ticks = text ? parseProcStat(text) : undefined;
+    if (ticks) return `proc:${ticks}`;
+  }
+  return io.ps(pid);
+}
+
+const realIo: PidStartIo = {
+  platform: process.platform,
+  readFile: (p) => {
+    try {
+      return fs.readFileSync(p, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
+  ps: (pid) => {
+    const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+    const out = r.status === 0 ? r.stdout.trim() : "";
+    return out || undefined;
+  },
+};
+
+function pidStart(pid: number): string | undefined {
+  return pidStartFrom(pid, realIo);
+}
+
+/** Two start times can only be compared when they were taken the same way. */
+const sameKind = (a: string, b: string) => a.startsWith("proc:") === b.startsWith("proc:");
 
 type Read = { kind: "none" } | { kind: "unreadable" } | { kind: "ok"; info: LockInfo };
 
@@ -73,7 +115,7 @@ export function lockHolderAlive(info: LockInfo): boolean {
   }
   if (info.pid_started) {
     const now = pidStart(info.pid);
-    if (now && now !== info.pid_started) return false;
+    if (now && sameKind(now, info.pid_started) && now !== info.pid_started) return false;
   }
   return true;
 }
