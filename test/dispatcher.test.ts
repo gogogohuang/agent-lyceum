@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
-import { ProtectedGuard } from "../src/guard.js";
+import { MAX_KEEP_BYTES, ProtectedGuard } from "../src/guard.js";
 import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
@@ -198,6 +199,9 @@ describe("dispatcher", () => {
     expect(fs.existsSync(path.join(env.repo, "src.txt"))).toBe(true);
     expect(leadPrompt).toContain("Protected file restored");
     expect(events(s.runDir).filter((e) => e.event === "violation")).toHaveLength(2);
+    expect(leadPrompt).toContain("kept at");
+    expect(fs.readdirSync(path.join(s.runDir, "violations"))).toHaveLength(2);
+    expect(events(s.runDir).filter((e) => e.event === "violation").every((e) => typeof e.saved === "string" && typeof e.sha256 === "string")).toBe(true);
   });
 
   it("allows the lead to edit COMMON.md and AGENT.md, and accepts that as the new baseline", async () => {
@@ -387,6 +391,80 @@ describe("guard", () => {
     const v = g.check([p.agents["fe-member"]]);
     expect(v).toEqual([{ file: f, action: "removed", suspects: ["fe-member"] }]);
     expect(fs.existsSync(f)).toBe(false);
+  });
+
+  const bound = () => {
+    const runDir = path.join(env.root, "run-1");
+    return { runDir, p: bindRunProject(env.project(), runDir, "run") };
+  };
+
+  it("keeps the rejected version of a protected file before restoring it", () => {
+    env = makeEnv();
+    const { runDir, p } = bound();
+    const g = new ProtectedGuard(p);
+    const md = p.agents["fe-member"].agentMd;
+    const original = fs.readFileSync(md, "utf8");
+    fs.writeFileSync(md, "rewritten persona");
+    const [v] = g.check([p.agents["fe-member"]]);
+    expect(v.action).toBe("restored");
+    expect(fs.readFileSync(md, "utf8")).toBe(original);
+    expect(path.dirname(v.saved!)).toBe(path.join(runDir, "violations"));
+    expect(path.basename(v.saved!)).toMatch(/^001-/);
+    expect(fs.readFileSync(v.saved!, "utf8")).toBe("rewritten persona");
+    expect(v.sha256).toBe(createHash("sha256").update("rewritten persona").digest("hex"));
+  });
+
+  it("keeps a protected file that an unauthorized agent created, then removes it", () => {
+    env = makeEnv();
+    const { p } = bound();
+    const g = new ProtectedGuard(p);
+    const f = path.join(env.repo, "AGENTS.md");
+    fs.writeFileSync(f, "new");
+    const [v] = g.check([p.agents["fe-member"]]);
+    expect(v.action).toBe("removed");
+    expect(fs.existsSync(f)).toBe(false);
+    expect(fs.readFileSync(v.saved!, "utf8")).toBe("new");
+  });
+
+  it("records no content when an agent deleted a protected file", () => {
+    env = makeEnv();
+    const { p } = bound();
+    const g = new ProtectedGuard(p);
+    const md = p.agents["fe-member"].agentMd;
+    fs.rmSync(md);
+    const [v] = g.check([p.agents["fe-member"]]);
+    expect(v.action).toBe("restored");
+    expect(fs.existsSync(md)).toBe(true);
+    expect(v.saved).toBeUndefined();
+    expect(v.sha256).toBeUndefined();
+  });
+
+  it("numbers kept versions across guards so a resumed run does not overwrite earlier ones", () => {
+    env = makeEnv();
+    const { p } = bound();
+    const md = p.agents["fe-member"].agentMd;
+    fs.writeFileSync(md, "first"); // baseline of guard a
+    const a = new ProtectedGuard(p);
+    fs.writeFileSync(md, "second");
+    const [v1] = a.check([p.agents["fe-member"]]);
+    fs.writeFileSync(md, "third"); // baseline of guard b (a resumed run builds a new guard)
+    const b = new ProtectedGuard(p);
+    fs.writeFileSync(md, "fourth");
+    const [v2] = b.check([p.agents["fe-member"]]);
+    expect(path.basename(v1.saved!)).toMatch(/^001-/);
+    expect(path.basename(v2.saved!)).toMatch(/^002-/);
+    expect(fs.readFileSync(v1.saved!, "utf8")).toBe("second");
+  });
+
+  it("keeps at most MAX_KEEP_BYTES of a huge rejected file and says so", () => {
+    env = makeEnv();
+    const { p } = bound();
+    const g = new ProtectedGuard(p);
+    const md = p.agents["fe-member"].agentMd;
+    fs.writeFileSync(md, Buffer.alloc(MAX_KEEP_BYTES + 10, "x"));
+    const [v] = g.check([p.agents["fe-member"]]);
+    expect(v.truncated).toBe(true);
+    expect(fs.statSync(v.saved!).size).toBe(MAX_KEEP_BYTES);
   });
 });
 

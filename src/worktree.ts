@@ -66,7 +66,7 @@ export function dirtyPaths(dir: string): string[] {
   const parts = out.split("\0").filter(Boolean);
   const paths: string[] = [];
   for (let i = 0; i < parts.length; i++) {
-    const entry = parts[i];
+    const entry = parts[i] ?? "";
     paths.push(entry.slice(3));
     if (entry[0] === "R" || entry[0] === "C") i++; // a rename lists its old name next
   }
@@ -213,7 +213,7 @@ export interface ChangeSet {
 export function globMatch(glob: string, file: string): boolean {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
+    const c = glob.charAt(i);
     if (c === "*" && glob[i + 1] === "*") {
       if (glob[i + 2] === "/") {
         re += "(?:.*/)?";
@@ -256,9 +256,9 @@ export function collectAgentChanges(workspace: AgentWorkspace, owns: string[]): 
   const parts = raw.split("\0").filter(Boolean);
   const files: ChangedFile[] = [];
   for (let i = 0; i + 1 < parts.length; i += 2) {
-    const m = /^:(\d+) (\d+) \w+ \w+ (\w)$/.exec(parts[i]);
+    const m = /^:(\d+) (\d+) \w+ \w+ (\w)$/.exec(parts[i] ?? "");
     if (!m) continue;
-    files.push({ path: parts[i + 1], status: m[3] as ChangedFile["status"], mode: m[2] });
+    files.push({ path: parts[i + 1] ?? "", status: m[3] as ChangedFile["status"], mode: m[2] ?? "" });
   }
 
   const rel = path.relative(workspace.root, workspace.dir).split(path.sep).join("/");
@@ -425,7 +425,8 @@ export function inspectWorkspace(project: ResolvedProject, runId: string, agent:
       const raw = execFileSync("git", ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", ws.base, head], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
       const parts = raw.split("\0").filter(Boolean);
       for (let i = 1; i < parts.length; i += 2) {
-        if (workingBlob(top, parts[i]) !== blobAt(top, head, parts[i])) work.unintegrated.push(parts[i]);
+        const file = parts[i] ?? "";
+        if (workingBlob(top, file) !== blobAt(top, head, file)) work.unintegrated.push(file);
       }
     }
   } catch (e) {

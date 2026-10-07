@@ -7,6 +7,7 @@ import { formatWarning, missingSections, parseSteps, type Step } from "./format.
 import { atomicWrite } from "./fs-util.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir } from "./policy.js";
+import { must } from "./assert.js";
 
 export { atomicWrite };
 
@@ -51,9 +52,9 @@ export function serialize(meta: MessageMeta, body: string): string {
 export function parseRaw(text: string): { data: Record<string, unknown>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) throw new Error("missing frontmatter (--- ... ---)");
-  const data = YAML.parse(m[1]);
+  const data = YAML.parse(m[1] ?? "");
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("frontmatter is not a mapping");
-  return { data: data as Record<string, unknown>, body: m[2].trim() };
+  return { data: data as Record<string, unknown>, body: (m[2] ?? "").trim() };
 }
 
 export function ensureProjectDirs(project: ResolvedProject): void {
@@ -61,7 +62,7 @@ export function ensureProjectDirs(project: ResolvedProject): void {
   for (const name of Object.keys(project.agents)) {
     fs.mkdirSync(path.join(inboxDir(project, name), "read"), { recursive: true });
     fs.mkdirSync(path.join(outboxDir(project, name), "rejected"), { recursive: true });
-    const a = project.agents[name];
+    const a = must(project.agents[name], `agent ${name}`);
     for (const m of [a.memory.global, a.memory.project, a.memory.task]) if (m) fs.mkdirSync(m, { recursive: true });
   }
 }
@@ -146,14 +147,19 @@ export function readMessage(file: string): Message {
   return { meta, body, file };
 }
 
-export function listUnread(project: ResolvedProject, agent: string): Message[] {
+/** Paths of the unread messages in an agent's inbox, oldest name first. Does not open them. */
+export function unreadFiles(project: ResolvedProject, agent: string): string[] {
   const dir = inboxDir(project, agent);
   if (!fs.existsSync(dir)) return [];
-  const files = fs
+  return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith(".md") && !e.name.startsWith("."))
     .map((e) => path.join(dir, e.name))
     .sort();
+}
+
+export function listUnread(project: ResolvedProject, agent: string): Message[] {
+  const files = unreadFiles(project, agent);
   const out: Message[] = [];
   for (const f of files) {
     try {

@@ -1,5 +1,6 @@
 import type { MessageType } from "./mailbox.js";
 import { type RunOutcome } from "./schema.js";
+import { must } from "./assert.js";
 
 /** Required `##` sections per message type. `done` and `failure` are exempt. */
 export const REQUIRED_SECTIONS: Partial<Record<MessageType, string[]>> = {
@@ -12,7 +13,7 @@ export function missingSections(type: MessageType, body: string): string[] {
   const required = REQUIRED_SECTIONS[type];
   if (!required) return [];
   const headings = new Set(
-    [...body.matchAll(/^#{1,6}[ \t]+(.+?)[ \t]*:?[ \t]*#*[ \t]*$/gm)].map((m) => m[1].trim().toLowerCase()),
+    [...body.matchAll(/^#{1,6}[ \t]+(.+?)[ \t]*:?[ \t]*#*[ \t]*$/gm)].map((m) => (m[1] ?? "").trim().toLowerCase()),
   );
   return required.filter((s) => !headings.has(s.toLowerCase()));
 }
@@ -37,7 +38,7 @@ export function parseSteps(body: string, section = true): Step[] {
     text = next ? rest.slice(0, next.index) : rest;
   }
   return [...text.matchAll(/^[ \t]*[-*][ \t]+\[([ xX])\][ \t]+(.+?)[ \t]*$/gm)].map((m) => ({
-    text: m[2],
+    text: m[2] ?? "",
     done: m[1] !== " ",
   }));
 }
@@ -68,9 +69,10 @@ const HEADING = /^#{1,6}[ \t]+(.+?)[ \t]*:?[ \t]*#*[ \t]*$/gm;
 /** Text under the `##` heading `name` (case-insensitive) up to the next heading, or undefined if there is no such heading. */
 export function sectionText(body: string, name: string): string | undefined {
   const heads = [...body.matchAll(HEADING)];
-  const i = heads.findIndex((m) => m[1].trim().toLowerCase() === name.toLowerCase());
+  const i = heads.findIndex((m) => (m[1] ?? "").trim().toLowerCase() === name.toLowerCase());
   if (i < 0) return undefined;
-  const start = heads[i].index! + heads[i][0].length;
+  const head = must(heads[i], "heading");
+  const start = head.index! + head[0].length;
   const end = heads[i + 1]?.index ?? body.length;
   return body.slice(start, end).trim();
 }
@@ -99,7 +101,7 @@ export function doneContract(meta: Record<string, unknown>, body: string, stateS
   if (!outcome) missing.push(`\`outcome: ${DECLARABLE_OUTCOMES.join("|")}\` in the frontmatter${declared ? ` (got "${declared}")` : ""}`);
 
   const need = outcome === "completed" || !outcome ? ["Result", "Files", "Verification", "Not done"] : ["Result", "Not done"];
-  const have = new Set([...body.matchAll(HEADING)].map((m) => m[1].trim().toLowerCase()));
+  const have = new Set([...body.matchAll(HEADING)].map((m) => (m[1] ?? "").trim().toLowerCase()));
   for (const h of need) if (!have.has(h.toLowerCase())) missing.push(`\`## ${h}\``);
 
   if (outcome === "completed") {

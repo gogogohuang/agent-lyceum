@@ -1,0 +1,12 @@
+{
+  "run_id": "20250101T000000000Z-legacy",
+  "project": "demo",
+  "started_at": "2025-01-01T00:00:00.000Z",
+  "ended_at": "2025-01-01T00:05:00.000Z",
+  "rounds": 3,
+  "max_rounds": 30,
+  "end_reason": "done",
+  "sessions": { "lead": "sess-1" },
+  "last_wake": { "lead": { "at": "2025-01-01T00:04:00.000Z", "ok": true } },
+  "wakes": [{ "round": 1, "agent": "lead", "at": "2025-01-01T00:01:00.000Z", "duration_ms": 1000, "ok": true }]
+}

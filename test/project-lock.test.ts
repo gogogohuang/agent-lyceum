@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, LOCK_FILE } from "../src/project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, LOCK_FILE, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -103,10 +103,11 @@ describe("project lock", () => {
   });
 
   it("treats a reused pid (different start time) as a dead holder", () => {
+    // the start time is in the format this platform writes: `proc:<ticks>` on Linux, `ps` text elsewhere
     const root = tmp();
     fs.writeFileSync(
       path.join(root, LOCK_FILE),
-      JSON.stringify({ token: "old", hostname: os.hostname(), pid: process.pid, pid_started: "Thu Jan  1 00:00:00 1970", run_id: "old", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
+      JSON.stringify({ token: "old", hostname: os.hostname(), pid: process.pid, pid_started: process.platform === "linux" ? "proc:1" : "Thu Jan  1 00:00:00 1970", run_id: "old", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
     );
     expect(lockHolderAlive(inspectProjectLock(root)!)).toBe(false);
     acquireProjectLock(root, "new").release();
@@ -128,5 +129,54 @@ describe("project lock", () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(inspectProjectLock(root)!.heartbeat_at > t0).toBe(true);
     l.release();
+  });
+});
+
+describe("pid start time", () => {
+  // comm is field 2 and may hold spaces and parentheses; starttime is field 22
+  const stat = (start: string) => `4242 (my (odd) proc) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 ${start} 1000 100 18446744073709551615`;
+
+  it("reads starttime from /proc stat even when the command name has spaces and parentheses", () => {
+    expect(parseProcStat(stat("987654"))).toBe("987654");
+  });
+
+  it("returns undefined for text that is not a stat line", () => {
+    expect(parseProcStat("garbage")).toBeUndefined();
+    expect(parseProcStat("1 (x) S 1")).toBeUndefined();
+  });
+
+  it("uses /proc on linux and falls back to ps when it cannot be read", () => {
+    const io = (readFile: PidStartIo["readFile"]): PidStartIo => ({ platform: "linux", readFile, ps: () => "Tue Oct  7 11:00:00 2026" });
+    expect(pidStartFrom(4242, io(() => stat("55")))).toBe("proc:55");
+    expect(pidStartFrom(4242, io(() => undefined))).toBe("Tue Oct  7 11:00:00 2026");
+  });
+
+  it("uses ps on other platforms", () => {
+    expect(pidStartFrom(1, { platform: "darwin", readFile: () => stat("55"), ps: () => "Tue Oct  7 11:00:00 2026" })).toBe("Tue Oct  7 11:00:00 2026");
+  });
+
+  it("does not call a live holder dead when the lock was written in the other start-time format", () => {
+    const other = process.platform === "linux" ? "Tue Oct  7 11:00:00 2026" : "proc:1";
+    const info: LockInfo = { token: "t", hostname: "h", pid: process.pid, pid_started: other, run_id: "r", acquired_at: "", heartbeat_at: "" };
+    expect(lockHolderAlive(info)).toBe(true);
+  });
+
+  it("calls a holder dead when the same-format start time differs (pid reused)", () => {
+    const read = (p: string) => {
+      try {
+        return fs.readFileSync(p, "utf8");
+      } catch {
+        return undefined;
+      }
+    };
+    const ps = (pid: number) => {
+      const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+      return r.status === 0 ? r.stdout.trim() || undefined : undefined;
+    };
+    const now = pidStartFrom(process.pid, { platform: process.platform, readFile: read, ps });
+    if (!now) return; // no way to read a start time on this machine
+    const wrong = now.startsWith("proc:") ? "proc:1" : "Mon Jan  1 00:00:00 2001";
+    const info: LockInfo = { token: "t", hostname: "h", pid: process.pid, pid_started: wrong, run_id: "r", acquired_at: "", heartbeat_at: "" };
+    expect(lockHolderAlive(info)).toBe(false);
   });
 });

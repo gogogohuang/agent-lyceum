@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { missingSections } from "../src/format.js";
-import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes } from "../src/mailbox.js";
-import { outboxDir } from "../src/policy.js";
+import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
+import { inboxDir, outboxDir } from "../src/policy.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -123,5 +123,30 @@ describe("message format check", () => {
     expect(routeOutboxes(p).warnings).toEqual([]);
     send(p, "lead", "d.md", "type: done\nsubject: shipped", "summary");
     expect(routeOutboxes(p).warnings).toEqual([]);
+  });
+});
+
+describe("unreadFiles", () => {
+  it("lists unread .md files sorted by name, skipping dotfiles, other files and folders", () => {
+    env = makeEnv();
+    const p = env.project();
+    const dir = inboxDir(p, "lead");
+    fs.mkdirSync(path.join(dir, "read"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "b.md"), "x");
+    fs.writeFileSync(path.join(dir, "a.md"), "x");
+    fs.writeFileSync(path.join(dir, ".hidden.md"), "x");
+    fs.writeFileSync(path.join(dir, "note.txt"), "x");
+    expect(unreadFiles(p, "lead").map((f) => path.basename(f))).toEqual(["a.md", "b.md"]);
+    expect(unreadFiles(p, "nobody")).toEqual([]);
+  });
+
+  it("still counts a malformed message as unread (so an agent with only that mail is still woken)", () => {
+    env = makeEnv();
+    const p = env.project();
+    const dir = inboxDir(p, "lead");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "bad.md"), "no frontmatter at all");
+    expect(unreadFiles(p, "lead")).toHaveLength(1);
+    expect(listUnread(p, "lead")).toHaveLength(1);
   });
 });

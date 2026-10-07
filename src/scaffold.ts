@@ -99,6 +99,7 @@ dispatcher:
   workspace_mode: auto  # auto = a git worktree per non-lead agent when max_parallel > 1; shared | worktree to force
   wake_timeout_sec: 600
   retry: 1
+  log_max_bytes: 8388608  # log.jsonl is renamed to log.1.jsonl past this size; 0 = never
   strict: false         # true = refuse to start unless context protection is OS-enforced
 agents:
   # Fields not set here are inherited from the global team.yaml.

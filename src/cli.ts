@@ -15,6 +15,7 @@ import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
+import { must } from "./assert.js";
 
 const program = new Command();
 program
@@ -335,7 +336,7 @@ configCmd
       const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
       const keys = Object.keys(sources).filter((k) => values[k] !== undefined);
       const w = Math.max(...keys.map((k) => `${k} = ${show(values[k])}`.length));
-      for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(sources[k])}`);
+      for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(must(sources[k], `source of ${k}`))}`);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
