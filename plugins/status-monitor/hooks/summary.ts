@@ -116,3 +116,12 @@ export function parseProjects(raw: unknown): string[] {
   const names = [...new Set(String(raw ?? '').split(',').map(s => s.trim()).filter(Boolean))]
   return names.length ? names : ['']
 }
+
+/** Newest first by an ISO start time; items without a usable time go last, ties keep their order. */
+export function newestFirst<T>(xs: T[], startedAt: (x: T) => string | undefined): T[] {
+  const t = (x: T) => {
+    const ms = Date.parse(startedAt(x) ?? '')
+    return Number.isFinite(ms) ? ms : -Infinity
+  }
+  return xs.map((x, i) => ({ x, i, t: t(x) })).sort((a, b) => (a.t === b.t ? a.i - b.i : a.t > b.t ? -1 : 1)).map(e => e.x)
+}

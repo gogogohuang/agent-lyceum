@@ -1,19 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { History, Report, Snapshots } from '../types'
-import { agentStats, runtimeTokens, clip, elapsed, line, overviewLine, parseProjects, progress, runLabel, tagToast, transition } from './summary'
+import type { Report, Snapshots } from '../types'
+import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, overviewLine, parseProjects, progress, runLabel, tagToast, transition } from './summary'
 
 const PANE = 'agent-lyceum'
 const snapshot = atom({ plugin: 'status-monitor', key: 'snapshot' } as const, {} as Snapshots)
 /** Id of the tab the pane shows ('' = the first). */
 const tab = atom({ plugin: 'status-monitor', key: 'tab' } as const, '')
 
-type Target = { key: string; status: string[]; tasks: string[] }
+type Target = { key: string; status: string[] }
 
 const last = new Map<string, Report>()
 const polling = new Set<string>()
-const ticks = new Map<string, number>()
 let several = false
 
 /** Latest report of every watched project, in configured order. */
@@ -35,11 +34,8 @@ async function poll($: EngineInterface, t: Target, targets: Target[]) {
     if (note) $.ui.toast(note)
     last.set(t.key, report)
     await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, error: null } }))
-    const n = ticks.get(t.key) ?? 0
-    ticks.set(t.key, n + 1)
-    if (n % 10 === 0) await pollHistory($, t)
   } catch (err) {
-    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, history: s[t.key]?.history, error: err instanceof Error ? err.message : String(err) } }))
+    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, error: err instanceof Error ? err.message : String(err) } }))
   } finally {
     polling.delete(t.key)
   }
@@ -50,22 +46,13 @@ function pollAll($: EngineInterface, targets: Target[]) {
   for (const t of targets) void poll($, t, targets)
 }
 
-async function pollHistory($: EngineInterface, t: Target) {
-  try {
-    const res = await $.process.run(t.tasks, { timeoutMs: 15000 })
-    if (res.exitCode !== 0) return
-    const runs = (JSON.parse(res.stdout) as { runs?: History[] }).runs ?? []
-    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, error: s[t.key]?.error ?? null, history: runs } }))
-  } catch {}
-}
-
 export const register: Register = (on, options) => {
   const base = String(options.command ?? 'agent-lyceum').trim().split(/\s+/)
   const names = parseProjects(options.project)
   several = names.length > 1
   const targets: Target[] = names.map(name => {
     const p = name ? ['-p', name] : []
-    return { key: name, status: [...base, 'status', '--json', ...p], tasks: [...base, 'status', '--task-list', '--json', ...p] }
+    return { key: name, status: [...base, 'status', '--json', ...p] }
   })
   const every = Math.max(1, Number(options.intervalSeconds ?? 1)) * 1000
 
@@ -188,33 +175,22 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const pastRun = (r: History) => (
-      <Box flexDirection="column">
-        <Text bold>
-          {r.run_id} [{runLabel(r as never)}]
-        </Text>
-        <Text>任務：{r.task_summary}</Text>
-        <Text>
-          第 {r.rounds}/{r.max_rounds} 輪 · {r.output_tokens.toLocaleString('en-US')} tokens
-        </Text>
-        {r.started_at && <Text dimColor>開始 {new Date(r.started_at).toLocaleString()}</Text>}
-      </Box>
+    // One tab per running task, newest first. Finished and interrupted runs are not listed.
+    const tabs = newestFirst(
+      targets.flatMap(t => {
+        const run = snap[t.key]?.report?.run
+        if (run?.state !== 'running') return []
+        const label = t.key || snap[t.key]?.report?.project.name || '目前'
+        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${label}：` : ''}${clip(run.task_summary, 12)}`, body: () => section(t) }]
+      }),
+      x => x.startedAt,
     )
-
-    // One tab per task: each project's current run, then its most recent past runs.
-    const tabs = targets.flatMap(t => {
-      const s = snap[t.key]
-      const current = s?.report?.run
-      const label = t.key || s?.report?.project.name || '目前'
-      const olds = (s?.history ?? []).filter(r => r.run_id !== current?.run_id).slice(-3).reverse()
-      return [
-        { id: `${t.key}|now`, label: current ? `${label}：${clip(current.task_summary, 12)}` : label, body: () => section(t) },
-        ...olds.map(r => ({ id: `${t.key}|${r.run_id}`, label: `${several ? `${label} ` : ''}${clip(r.task_summary, 12)}`, body: () => pastRun(r) })),
-      ]
-    })
     const wanted = await read($, tab)
     const active = tabs.find(x => x.id === wanted) ?? tabs[0]
-    if (!active) return <Text dimColor>沒有可顯示的專案</Text>
+    if (!active) {
+      const errors = targets.map(t => snap[t.key]?.error).filter((m): m is string => !!m)
+      return <Text dimColor>{errors.length && !targets.some(t => snap[t.key]?.report) ? `無法取得狀態：${errors[0]}` : '沒有執行中的任務'}</Text>
+    }
 
     return (
       <Box flexDirection="column">
