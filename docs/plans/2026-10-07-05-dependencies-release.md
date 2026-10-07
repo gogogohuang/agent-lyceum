@@ -94,8 +94,8 @@ git commit -m "chore(deps): add Dependabot, test on Node 24, pin @types/node to 
 
 - [ ] **Step 1: 升級**
 
-Run: `npm i -D vitest@^4`
-Expected: 安裝成功。若 npm 回報 peer 衝突（需要特定 `vite`），依訊息一併安裝它要求的 `vite` 範圍（只限 `engines` 含 Node 20 的版本，例如 `vite@^7`）。
+Run: `npm i -D vitest@^4 vite@^7 --legacy-peer-deps`
+Expected: 安裝成功，`vitest@4.1.x`、`vite@7.3.x`。實測不加 `--legacy-peer-deps` 時 npm 10.9 會在解析 vitest 4 的選用 peer（`@vitest/browser-playwright` 被解析到只相容 vitest 5 的版本）時以 `Cannot read properties of null (reading 'edgesOut')` 崩潰；安裝後的 lockfile 用一般 `npm ci` 即可還原。`vite` 必須明確列為 devDependency（vitest 4 的 peer）。
 
 - [ ] **Step 2: 驗證**
 
