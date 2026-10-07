@@ -62,7 +62,7 @@ describe("a run from start to clear", () => {
     // 2. the status of the interrupted run, as JSON
     const mid = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out);
     expect(mid.run).toMatchObject({ state: "ended", end_reason: "cancelled", outcome: "cancelled" });
-    expect(mid.run.queue.map((q: any) => q.agent)).toEqual(["fe-member"]); // its task is still waiting
+    expect(mid.run.queue.map((q) => q.agent)).toEqual(["fe-member"]); // its task is still waiting
 
     // 3. resume: the member redoes the task, its files are brought into the repo, the lead finishes
     const resumed = t.sync(["resume", "-p", "demo"]);

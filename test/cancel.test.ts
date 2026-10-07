@@ -12,13 +12,14 @@ import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { exitCodeForOutcome } from "../src/schema.js";
 import { prepareTask } from "../src/task.js";
 import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
+import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const CANCELLED: WakeResult = { ok: false, text: "", exitCode: null, timedOut: false, cancelled: true, error: "cancelled" };
-const done = (p: any) =>
+const done = (p: ResolvedProject) =>
   write(path.join(outboxDir(p, "lead"), `${Math.random()}.md`), `---\ntype: done\nsubject: bye\noutcome: completed\n---\n\n${FULL_DONE}\n`);
 
 describe("cancelling a run", () => {
@@ -55,7 +56,10 @@ describe("cancelling a run", () => {
     expect(att.map((a) => [a.status, a.error])).toEqual([["failed", "cancelled"]]);
     expect(fs.existsSync(path.join(mailDir(runDir), "attempts", att[0].id, "outbox", "half.md"))).toBe(true);
 
-    const r = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, invoker: async (i) => (done(i.project), OK), log: () => {} });
+    const r = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, invoker: async (i) => {
+      done(i.project);
+      return OK;
+    }, log: () => {} });
     expect(r.endReason).toBe("done");
     expect(r.outcome).toBe("completed");
   });
@@ -65,7 +69,10 @@ describe("cancelling a run", () => {
     const ac = new AbortController();
     ac.abort();
     let woken = 0;
-    const s = await runTeam({ project, task, runDir, invoker: async () => (woken++, OK), signal: ac.signal, log: () => {} });
+    const s = await runTeam({ project, task, runDir, invoker: async () => {
+      woken++;
+      return OK;
+    }, signal: ac.signal, log: () => {} });
     expect(s.endReason).toBe("cancelled");
     expect(woken).toBe(0);
   });

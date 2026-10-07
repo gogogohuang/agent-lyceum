@@ -4,7 +4,7 @@ import { buildClaudeInvocation, buildClaudeSettings } from "../src/adapters/clau
 import { buildCodexInvocation, codexWritableRoots } from "../src/adapters/codex.js";
 import { commonFile, repoInstructionFiles, writePolicy } from "../src/policy.js";
 import { buildSystemPrompt } from "../src/prompt.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -55,7 +55,7 @@ describe("Claude Code adapter", () => {
   it("builds settings with Edit rules only (Write rules are ignored by Claude Code) and a sandbox", () => {
     env = makeEnv();
     const p = env.project();
-    const s = buildClaudeSettings(p, p.agents["fe-member"]) as any;
+    const s = buildClaudeSettings(p, p.agents["fe-member"]) as unknown as ClaudeSettingsView;
     const all = [...s.permissions.allow, ...s.permissions.deny] as string[];
     expect(all.some((r) => r.startsWith("Write("))).toBe(false);
     expect(s.permissions.deny).toContain(`Edit(/${p.agents["fe-member"].agentMd})`);
@@ -76,7 +76,7 @@ describe("Claude Code adapter", () => {
         .replace('    # owns: ["tests/**"]', '    owns: ["tests/**"]'),
     );
     const p = env.project();
-    const s = buildClaudeSettings(p, p.agents["fe-member"]) as any;
+    const s = buildClaudeSettings(p, p.agents["fe-member"]) as unknown as ClaudeSettingsView;
     expect(s.permissions.allow).toContain(`Edit(/${env.repo}/src/web/**)`);
     expect(s.permissions.allow).not.toContain(`Edit(/${env.repo}/**)`);
   });

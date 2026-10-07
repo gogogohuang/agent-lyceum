@@ -8,6 +8,7 @@ import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
 import { git, initGitRepo, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
 afterEach(() => {
@@ -215,7 +216,7 @@ describe("integrateAgentChanges", () => {
 
 describe("dispatcher integration", () => {
   const OK = { ok: true, text: "", exitCode: 0, timedOut: false };
-  const mail = (p: any, from: string, to: string, subject: string, type = "reply", outcome = "completed") =>
+  const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply", outcome = "completed") =>
     write(
       path.join(outboxDir(p, from), `${Math.random()}.md`),
       `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Not done\nNone\n" : "body"}\n`,

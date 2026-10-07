@@ -16,14 +16,14 @@ describe("validate", () => {
 
   it("accepts a team of two (the lead and one member)", () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace(/  qa-member:[\s\S]*$/, ""));
+    env.editProjectYaml((t) => t.replace(/ {2}qa-member:[\s\S]*$/, ""));
     expect(Object.keys(env.project().agents)).toEqual(["lead", "fe-member"]);
     expect(errors(env)).toEqual([]);
   });
 
   it("rejects a team of one", () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace(/  fe-member:[\s\S]*$/, ""));
+    env.editProjectYaml((t) => t.replace(/ {2}fe-member:[\s\S]*$/, ""));
     expect(errors(env).join("\n")).toMatch(/at least 2 agents/);
   });
 
@@ -95,7 +95,7 @@ describe("validate", () => {
   it("errors when runtime cannot be determined", () => {
     env = makeEnv();
     const file = path.join(env.home, "team.yaml");
-    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/\n    runtime: claude-code\n    agent_md: agents\/fe-member/, "\n    agent_md: agents/fe-member"));
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/\n {4}runtime: claude-code\n {4}agent_md: agents\/fe-member/, "\n    agent_md: agents/fe-member"));
     env.editProjectYaml((t) => t.replace(feAgent, "  fe-member:\n    model: my-custom-model\n    can_message"));
     expect(errors(env).join("\n")).toMatch(/Agent "fe-member" has no runtime/);
   });

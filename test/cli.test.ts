@@ -16,7 +16,8 @@ function run(args: string[], extraEnv: Record<string, string> = {}) {
   const r = spawnSync(tsx, [cli, "--home", env.home, ...args], { encoding: "utf8", env: { ...process.env, ...extraEnv } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
-const ANSI = /\x1b\[/;
+const ESC = String.fromCharCode(27);
+const ANSI = new RegExp(`${ESC}\\[`);
 
 function seedRuns() {
   const runs = env.project().paths.runs;
@@ -42,7 +43,7 @@ describe("status --json", () => {
     const j = JSON.parse(r.out);
     expect(j.schema_version).toBe(1);
     expect(j.project).toMatchObject({ name: "demo", lead: "lead" });
-    expect(j.agents.map((a: any) => a.name)).toEqual(["lead", "fe-member", "qa-member"]);
+    expect(j.agents.map((a) => a.name)).toEqual(["lead", "fe-member", "qa-member"]);
     expect(j.run).toMatchObject({ run_id: "20260102-000000", state: "ended", end_reason: "done", outcome: "completed", outcome_verified: true, rounds: 3 });
     expect(r.out).not.toContain("sess-SECRET-123"); // session ids are not part of the report
   });
@@ -59,7 +60,7 @@ describe("status --json", () => {
     seedRuns();
     const list = JSON.parse(run(["status", "-p", "demo", "--task-list", "--json"], { FORCE_COLOR: "1" }).out);
     expect(list.schema_version).toBe(1);
-    expect(list.runs.map((x: any) => x.run_id)).toEqual(["20260102-000000", "20260101-000000"]);
+    expect(list.runs.map((x) => x.run_id)).toEqual(["20260102-000000", "20260101-000000"]);
     expect(list.runs[1]).toMatchObject({ outcome: "partial", outcome_verified: false, end_reason: "idle" }); // old run: not a checked result
 
     const one = run(["status", "-p", "demo", "--task-id", "20260101-000000", "--json"]);

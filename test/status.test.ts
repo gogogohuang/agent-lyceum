@@ -136,7 +136,7 @@ describe("status: color", () => {
     expect(formatStatus(env.project(), NOW)).not.toContain("\x1b[");
     const colored = formatStatus(env.project(), NOW, true);
     expect(colored).toContain("\x1b[32m執行中\x1b[0m");
-    expect(colored.replace(/\x1b\[\d+m/g, "")).toBe(formatStatus(env.project(), NOW));
+    expect(colored.replace(new RegExp(`${String.fromCharCode(27)}\\[\\d+m`, "g"), "")).toBe(formatStatus(env.project(), NOW));
   });
 });
 

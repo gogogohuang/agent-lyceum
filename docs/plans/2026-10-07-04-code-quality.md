@@ -254,6 +254,8 @@ git add biome.json package.json package-lock.json .github/workflows/ci.yml src t
 git commit -m "chore: add Biome lint (errors fail CI, the rest stay warnings)"
 ```
 
+> **後續（2026-10-07）：** 下列 warning 已全部清除，`biome.json` 移除了降級設定，這些規則現在都是 error。
+
 **Warning 待辦清單（本 plan 不處理，之後可逐步轉為 error）：**
 - `noAssignInExpressions`：`src/config.ts:163-165`（`else if ((runtime = inferRuntime(...)))` 鏈）、`src/process-runner.ts:141`（`while ((nl = text.indexOf("\n")) >= 0)`）、`src/dispatcher.ts:136,349`（`(state.notes ??= []).push`、`(w.sent ??= []).push`）
 - `useIterableCallbackReturn`：`src/status.ts:340,349`（`forEach` 的箭頭函式回傳了 `lines.push(...)` 的結果）

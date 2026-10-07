@@ -66,7 +66,10 @@ describe("completion contract", () => {
 
 describe("run outcome", () => {
   it("is completed, and exit-0 material, only for a full completed done", async () => {
-    const s = await run(async (i) => (sendDone(i, "outcome: completed\n", FULL), OK));
+    const s = await run(async (i) => {
+      sendDone(i, "outcome: completed\n", FULL);
+      return OK;
+    });
     expect(s.endReason).toBe("done");
     expect(s.outcome).toBe("completed");
     const st = loadRunState(s.runDir);
@@ -104,7 +107,10 @@ describe("run outcome", () => {
   });
 
   it("keeps a blocked report as blocked", async () => {
-    const s = await run(async (i) => (sendDone(i, "outcome: blocked\n", "## Result\nneed credentials\n\n## Not done\neverything\n"), OK));
+    const s = await run(async (i) => {
+      sendDone(i, "outcome: blocked\n", "## Result\nneed credentials\n\n## Not done\neverything\n");
+      return OK;
+    });
     expect(s.endReason).toBe("done");
     expect(s.outcome).toBe("blocked");
     expect(exitCodeForOutcome(s.outcome)).toBe(2);

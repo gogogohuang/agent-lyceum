@@ -65,3 +65,9 @@ export function makeParallel(env: TestEnv): void {
       .replace('    # owns: ["tests/**"]', '    owns: ["tests/**"]'),
   );
 }
+
+/** The parts of `buildClaudeSettings` output the tests read. */
+export interface ClaudeSettingsView {
+  permissions: { allow: string[]; deny: string[] };
+  sandbox: { enabled: boolean; allowUnsandboxedCommands: boolean; filesystem: { allowWrite: string[]; denyWrite: string[] } };
+}
