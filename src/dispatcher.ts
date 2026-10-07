@@ -14,6 +14,7 @@ import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, existingAgentWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
+import { must } from "./assert.js";
 
 export { newRunId };
 export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
@@ -142,14 +143,14 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     const rows = Object.values(project.agents)
       .map((a) => ({ a, unread: listUnread(project, a.name) }))
       .filter((r) => r.unread.length > 0)
-      .map((r) => ({ a: r.a, first: path.basename(r.unread[0].file) }));
+      .map((r) => ({ a: r.a, first: path.basename(must(r.unread[0], "first unread message").file) }));
     rows.sort((x, y) => x.first.localeCompare(y.first));
     return rows.map((r) => r.a);
   };
 
   const pickBatch = (pending: ResolvedAgent[]): ResolvedAgent[] => {
     const lead = pending.find((a) => a.name === project.lead);
-    if (lead || cfg.max_parallel <= 1) return [lead ?? pending[0]];
+    if (lead || cfg.max_parallel <= 1) return [must(lead ?? pending[0], "an agent to wake")];
     const batch: ResolvedAgent[] = [];
     const taken: string[] = [];
     for (const a of pending) {
@@ -393,7 +394,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       return;
     }
     const leadIdx = batch.findIndex((a) => a.name === project.lead);
-    if (leadIdx >= 0 && !results[leadIdx].ok && !results[leadIdx].cancelled) {
+    const leadResult = leadIdx >= 0 ? results[leadIdx] : undefined;
+    if (leadResult && !leadResult.ok && !leadResult.cancelled) {
       endReason = "lead_failed";
       return;
     }

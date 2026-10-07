@@ -7,6 +7,7 @@ import { formatWarning, missingSections, parseSteps, type Step } from "./format.
 import { atomicWrite } from "./fs-util.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir } from "./policy.js";
+import { must } from "./assert.js";
 
 export { atomicWrite };
 
@@ -51,9 +52,9 @@ export function serialize(meta: MessageMeta, body: string): string {
 export function parseRaw(text: string): { data: Record<string, unknown>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) throw new Error("missing frontmatter (--- ... ---)");
-  const data = YAML.parse(m[1]);
+  const data = YAML.parse(m[1] ?? "");
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("frontmatter is not a mapping");
-  return { data: data as Record<string, unknown>, body: m[2].trim() };
+  return { data: data as Record<string, unknown>, body: (m[2] ?? "").trim() };
 }
 
 export function ensureProjectDirs(project: ResolvedProject): void {
@@ -61,7 +62,7 @@ export function ensureProjectDirs(project: ResolvedProject): void {
   for (const name of Object.keys(project.agents)) {
     fs.mkdirSync(path.join(inboxDir(project, name), "read"), { recursive: true });
     fs.mkdirSync(path.join(outboxDir(project, name), "rejected"), { recursive: true });
-    const a = project.agents[name];
+    const a = must(project.agents[name], `agent ${name}`);
     for (const m of [a.memory.global, a.memory.project, a.memory.task]) if (m) fs.mkdirSync(m, { recursive: true });
   }
 }

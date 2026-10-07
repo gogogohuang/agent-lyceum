@@ -39,7 +39,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
     ...(project.workspaces?.[agent.name]
       ? [
-          `That directory is your own isolated git worktree (branch \`${project.workspaces[agent.name].branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
+          `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
         ]
       : []),
     `The team lead is **${project.lead}**${isLead ? " (that is you)" : ""}. Teammates: ${mates.join(", ") || "(none)"}.`,
