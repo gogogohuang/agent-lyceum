@@ -45,7 +45,8 @@
     "release": "bash scripts/release.sh",
     "typecheck:plugin": "tsc -p plugins/status-monitor/tsconfig.ci.json",
     "check:pack": "node scripts/check-pack.mjs",
-    "lint": "biome lint"
+    "lint": "biome lint",
+    "check:docs": "node scripts/check-docs.mjs"
   },
   "dependencies": {
     "commander": "^14.0.3",
