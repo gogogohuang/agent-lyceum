@@ -68,6 +68,8 @@
 
 移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。
 
+**從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `unlock --force`。
+
 ## 中止 run
 
 **中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-lyceum resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
