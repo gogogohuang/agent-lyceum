@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
@@ -7,6 +8,17 @@ export interface Violation {
   file: string;
   action: "restored" | "removed";
   suspects: string[];
+  /** Where the rejected version was kept (only for a project bound to a run, and when the file still existed). */
+  saved?: string;
+  sha256?: string;
+  /** The kept copy is cut to MAX_KEEP_BYTES. */
+  truncated?: boolean;
+}
+
+export const MAX_KEEP_BYTES = 1024 * 1024;
+
+function safeName(file: string): string {
+  return file.replace(/[\\/:]/g, "_").replace(/^_+/, "");
 }
 
 /**
@@ -33,9 +45,23 @@ export class ProtectedGuard {
     fs.mkdirSync(dir, { recursive: true });
     for (const [file, buf] of this.baseline) {
       if (!buf) continue;
-      const safe = file.replace(/[\\/:]/g, "_").replace(/^_+/, "");
+      const safe = safeName(file);
       fs.writeFileSync(path.join(dir, safe), buf);
     }
+  }
+
+  /** Keep what an agent wrote into a protected file before it is reverted. Nothing is written without a bound run. */
+  private keep(file: string, content: Buffer | null): Pick<Violation, "saved" | "sha256" | "truncated"> {
+    const run = this.project.run;
+    if (!content || !run) return {};
+    const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    const dir = path.join(run.dir, "violations");
+    fs.mkdirSync(dir, { recursive: true });
+    const n = String(fs.readdirSync(dir).length + 1).padStart(3, "0");
+    const saved = path.join(dir, `${n}-${safeName(file)}`);
+    const truncated = content.length > MAX_KEEP_BYTES;
+    fs.writeFileSync(saved, truncated ? content.subarray(0, MAX_KEEP_BYTES) : content);
+    return { saved, sha256, ...(truncated ? { truncated } : {}) };
   }
 
   /** Compare against the baseline after `running` agents finished; revert unauthorized changes. */
@@ -50,12 +76,14 @@ export class ProtectedGuard {
         continue;
       }
       if (before === null) {
+        const kept = this.keep(file, now);
         fs.rmSync(file, { force: true });
-        violations.push({ file, action: "removed", suspects: running.map((a) => a.name) });
+        violations.push({ file, action: "removed", suspects: running.map((a) => a.name), ...kept });
       } else {
+        const kept = this.keep(file, now);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, before);
-        violations.push({ file, action: "restored", suspects: running.map((a) => a.name) });
+        violations.push({ file, action: "restored", suspects: running.map((a) => a.name), ...kept });
       }
     }
     return violations;

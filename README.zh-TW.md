@@ -31,7 +31,7 @@ npx agent-lyceum status
 | `run ["task"] [--task-file f] [-p name]` | 把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。 |
 | `resume [run-id] [-p name]` | 接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。 |
 | `status [-p name] [--monitor]` | 顯示 agent、未讀信件、目前正在執行的 agent（耗時、處理中的信件）、上次執行（任務來源、輪數、結束原因、output token 數）。不帶 `--monitor` 時會一併印出最新 run 的完整 wake 紀錄；`--monitor` 會常駐並持續更新，每個 run 只顯示最新三筆 wake。`--task-id <id>` 印出單一任務的完整內容（每次 wake、結果、log 目錄）。`--task-list [project]` 列出專案所有任務（run）的 id、狀態、輪數與任務內容，id 可直接給 `resume` 使用。加上 `--json` 會把同一份報告以 JSON 輸出（`schema_version: 1`、無顏色，stdout 只有 JSON；錯誤走 stderr 並以非零 exit code 結束），可搭配 `--task-list`、`--task-id`。文字與 JSON 由同一份報告產生。 |
-| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | 依 id 刪除一個任務（run）：它的 run 目錄（狀態、log、結果、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。`--keep-worktrees` 會保留 worktree 與 branch，其餘照樣清除。`--dry-run` 只列出會刪除與會保留的項目。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。 |
+| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | 依 id 刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。`--keep-worktrees` 會保留 worktree 與 branch，其餘照樣清除。`--dry-run` 只列出會刪除與會保留的項目。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。 |
 | `config show --resolved [-p name] [--json]` | 印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。 |
 | `doctor [-p name] [--json]` | 在不執行任何 agent 的前提下檢查環境：設定、git（平行 run 需要）、專案鎖，以及各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。只要團隊需要的功能被明確判定不支援就 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。 |
 | `unlock [-p name] --force` | 移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。 |
@@ -127,7 +127,7 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 
 - **Claude Code**：每次執行帶入 `--settings`，內含 `Edit(...)` 規則，**加上** OS 沙箱（`allowWrite`/`denyWrite`、`allowUnsandboxedCommands: false`）。沒有沙箱時，`python -c` 之類的做法能繞過 Edit 規則，因此 `os` 等級必須啟用沙箱。
 - **Codex**：`-s workspace-write` 搭配 `-c sandbox_workspace_write.writable_roots=[...]`（由 OS 強制）。Codex 無法禁止 repo 內的單一檔案，所以 repo 的 `CLAUDE.md`/`AGENTS.md` 只能靠**事後偵測**保護。
-- **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead。
+- **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead；被寫入的內容會先留存在 `runs/<run-id>/violations/`。
 
 `validate` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md` 與其他 agent 的 context 都由 OS 強制保護，否則拒絕執行。
 

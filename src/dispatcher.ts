@@ -313,7 +313,9 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
         to: project.lead,
         type: "failure",
         subject: `Protected file ${v.action}`,
-        body: `\`${v.file}\` was changed without permission and has been ${v.action}. Agents active at the time: ${v.suspects.join(", ")}.`,
+        body:
+          `\`${v.file}\` was changed without permission and has been ${v.action}. Agents active at the time: ${v.suspects.join(", ")}.` +
+          (v.saved ? `\n\nWhat was written is kept at \`${v.saved}\` (sha256 ${v.sha256}${v.truncated ? ", truncated to 1 MiB" : ""}). If it is worth keeping, have an agent that may edit this file redo it.` : ""),
       });
     }
 

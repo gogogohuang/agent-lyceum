@@ -87,7 +87,7 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   }
   const mem = path.join(project.paths.taskMemory, runId);
   if (lexists(mem)) plan.items.push({ kind: "task-memory", path: mem, label: `task memory ${mem}` });
-  if (hasRun || lexists(runDir)) plan.items.push({ kind: "run", path: runDir, label: `run directory ${runDir} (state, log, result, snapshots, mailboxes)` });
+  if (hasRun || lexists(runDir)) plan.items.push({ kind: "run", path: runDir, label: `run directory ${runDir} (state, log, result, snapshots, kept violations, mailboxes)` });
   return plan;
 }
 

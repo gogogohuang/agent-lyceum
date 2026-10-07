@@ -51,7 +51,7 @@ export function memoryDirs(a: ResolvedAgent): string[] {
   return [a.memory.global, a.memory.project, a.memory.task].filter((x): x is string => !!x);
 }
 
-const RUN_ENTRIES = ["state.json", "log.jsonl", "result.md", "task.md", "snapshots", "agents", "mail"];
+const RUN_ENTRIES = ["state.json", "log.jsonl", "result.md", "task.md", "snapshots", "violations", "agents", "mail"];
 const MAIL_ENTRIES = ["inbox", "claims", "attempts", "journal.jsonl"];
 
 function entries(dir: string): string[] {
