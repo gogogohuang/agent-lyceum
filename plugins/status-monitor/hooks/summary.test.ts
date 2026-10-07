@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { agentStats, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
+import { agentStats, newestFirst, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
 import type { Report, Run } from '../types'
 
 const run = (o: Partial<Run> = {}): Run => ({
@@ -63,4 +63,9 @@ test('tagToast prefixes the project only when several are watched', () => {
   expect(tagToast('x', 'a', true)).toBe('[a] x')
   expect(tagToast('x', 'a', false)).toBe('x')
   expect(tagToast(undefined, 'a', true)).toBe(undefined)
+})
+
+test('newestFirst orders by start time, undated last, ties stable', () => {
+  const xs = [{ n: 'old', t: '2026-01-01T00:00:00Z' }, { n: 'none' }, { n: 'new', t: '2026-01-02T00:00:00Z' }, { n: 'none2', t: 'bad' }] as { n: string; t?: string }[]
+  expect(newestFirst(xs, x => x.t).map(x => x.n)).toEqual(['new', 'old', 'none', 'none2'])
 })
