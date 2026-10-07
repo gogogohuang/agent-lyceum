@@ -111,7 +111,7 @@ describe("resolved configuration with sources", () => {
 
   it("falls back to defaults for dispatcher fields the project does not set", () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace(/^  workspace_mode:.*\n/m, ""));
+    env.editProjectYaml((t) => t.replace(/^ {2}workspace_mode:.*\n/m, ""));
     expect(where(env, "dispatcher.workspace_mode")).toEqual({ default: true });
   });
 
@@ -124,7 +124,7 @@ describe("resolved configuration with sources", () => {
     env.editProjectYaml((t) => t.replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]'));
     const r = resolveProjectWithSources(env.home, "demo");
     expect(r.project.agents["fe-member"].owns).toEqual(["src/web/**"]);
-    expect((r.sources["agents.fe-member.owns"] as any).file).toContain("project.yaml");
+    expect((r.sources["agents.fe-member.owns"] as { file: string }).file).toContain("project.yaml");
   });
 
   it("resolves relative paths against the file they were written in and reports that file", () => {
@@ -135,7 +135,7 @@ describe("resolved configuration with sources", () => {
     env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    memory: { project: mem/fe }\n    can_message: [lead]"));
     const r2 = resolveProjectWithSources(env.home, "demo");
     expect(r2.project.agents["fe-member"].memory.project).toBe(path.join(env.home, "projects/demo/mem/fe")); // project.yaml is relative to the project folder
-    expect((r2.sources["agents.fe-member.memory.project"] as any).file).toBe(path.join(env.home, "projects/demo/project.yaml"));
+    expect((r2.sources["agents.fe-member.memory.project"] as { file: string }).file).toBe(path.join(env.home, "projects/demo/project.yaml"));
   });
 
   it("flattens the resolved values under the same keys as the sources", () => {

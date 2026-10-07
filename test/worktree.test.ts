@@ -8,7 +8,8 @@ import { outboxDir, writePolicy } from "../src/policy.js";
 import { prepareTask } from "../src/task.js";
 import { validateProject } from "../src/validate.js";
 import { dirtyPaths, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase } from "../src/worktree.js";
-import { git, initGitRepo, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeEnv, makeParallel, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
+import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -163,7 +164,7 @@ describe("adapters in a worktree", () => {
     const base = env.project();
     const ws = prepareAgentWorkspace(base, "run-1", "fe-member", snapshotBase(base, "run-1", 1));
     const p = { ...base, workspaces: { "fe-member": ws } };
-    const s = buildClaudeSettings(p, p.agents["fe-member"]) as any;
+    const s = buildClaudeSettings(p, p.agents["fe-member"]) as unknown as ClaudeSettingsView;
     expect(s.permissions.allow).toContain(`Edit(/${ws.dir}/**)`);
     expect(s.permissions.allow).not.toContain(`Edit(/${env.repo}/**)`);
     expect(s.sandbox.filesystem.allowWrite).toContain(ws.root);
@@ -185,7 +186,7 @@ describe("adapters in a worktree", () => {
 
 describe("dispatcher with worktrees", () => {
   const OK = { ok: true, text: "", exitCode: 0, timedOut: false };
-  const mail = (p: any, from: string, to: string, subject: string, type = "reply") =>
+  const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply") =>
     write(path.join(outboxDir(p, from), `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : "body"}\n`);
 
   async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {

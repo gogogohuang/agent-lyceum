@@ -166,7 +166,11 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
   const onTerm = handler("Terminated");
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
-  return { signal: ac.signal, dispose: () => (process.off("SIGINT", onInt), process.off("SIGTERM", onTerm)) };
+  return { signal: ac.signal, dispose: () => {
+      process.off("SIGINT", onInt);
+      process.off("SIGTERM", onTerm);
+    },
+  };
 }
 
 function reportRun(summary: RunSummary, runDir: string): never {

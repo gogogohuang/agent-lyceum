@@ -177,7 +177,8 @@ export class RunSession {
 
   private note(text: string): void {
     const { say, log, state } = this;
-    (state.notes ??= []).push(text);
+    state.notes ??= [];
+    state.notes.push(text);
     log("note", { text });
     say(`  ${text}`);
   }
@@ -401,7 +402,10 @@ export class RunSession {
     for (const d of route.delivered) log("route", d);
     const handedOff = (from: string, t: SentTopic) => {
       const w = [...state.wakes].reverse().find((x) => x.agent === from);
-      if (w) (w.sent ??= []).push(t);
+      if (w) {
+        w.sent ??= [];
+        w.sent.push(t);
+      }
     };
     for (const d of route.delivered) handedOff(d.from, { to: d.to, type: d.type, subject: d.subject });
     if (route.done) handedOff(route.done.from, { to: "(done)", type: "done", subject: route.done.subject });

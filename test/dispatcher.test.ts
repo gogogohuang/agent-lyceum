@@ -471,7 +471,7 @@ describe("guard", () => {
 describe("a team of two", () => {
   it("runs from task to done with just the lead and one member, and no prompt mentions anyone else", async () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace(/  qa-member:[\s\S]*$/, ""));
+    env.editProjectYaml((t) => t.replace(/ {2}qa-member:[\s\S]*$/, ""));
     const prompts: string[] = [];
     const seen: string[] = [];
     const s = await run(async (i) => {

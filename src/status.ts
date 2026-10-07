@@ -337,16 +337,16 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
 
   const active = Object.entries(s.active ?? {});
   if (active.length) {
-    active.forEach(([agent, a], i) =>
+    for (const [i, [agent, a]] of active.entries()) {
       lines.push(
         `${i === 0 ? L("現在：") : "          "}${c.cyan(agent)} ${live ? c.green(`工作中 ${since(a.since, now)}`) : c.yellow("曾在工作（已中斷）")}，處理 ${handlingText(a.handling)}`,
-      ),
-    );
+      );
+    }
   } else lines.push(`${L("現在：")}${c.dim(`閒置${s.end_reason ? `（執行已結束：${s.end_reason}）` : live ? "" : "（執行未在運作）"}`)}`);
 
   const queue = s.queue;
   if (queue.length) {
-    queue.slice(0, 3).forEach((q, i) => lines.push(`${i === 0 ? L("下一個：") : "          "}${c.cyan(q.agent)} ← ${mailText(q)}`));
+    for (const [i, q] of queue.slice(0, 3).entries()) lines.push(`${i === 0 ? L("下一個：") : "          "}${c.cyan(q.agent)} ← ${mailText(q)}`);
     if (queue.length > 3) lines.push(c.dim(`          … 還有 ${queue.length - 3} 筆`));
   } else if (active.length && live) lines.push(`${L("下一個：")}${c.dim("等工作中的 agent 完成後，再轉送其信件")}`);
   else lines.push(`${L("下一個：")}${c.dim(s.end_reason === "done" ? "無 — lead 已完成任務" : "無待處理")}`);
