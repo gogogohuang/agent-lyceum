@@ -23,7 +23,7 @@ export const RESULT_FILE = "result.md";
 export const MAX_DONE_REJECTIONS = 2;
 
 /** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
-function retryPrompt(prompt: string, attempt: number, error?: string): string {
+function retryPrompt(prompt: string, error?: string): string {
   return `${prompt}\n\n# Retry notice\nYour previous attempt at this wake-up failed${error ? ` (${error})` : ""} after possibly changing files already. Its mail was discarded. Check the current state of the repository before redoing the work, and send the mail again.`;
 }
 
@@ -198,7 +198,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
       saveState();
-      result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, attempt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
+      result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
         ok: false,
         text: "",
         exitCode: null,
