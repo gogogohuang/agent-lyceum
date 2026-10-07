@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js 20+、TypeScript ESM、Commander、YAML、Zod、Vitest、Git worktree；macOS 與 Linux。
 
-**Spec:** 本文件的「需求與決策」為實作規格，來源為本次專案評估與使用者要求全部納入 plan。此階段僅建立文件，尚未實作或驗證下列功能。
+**Spec:** 本文件的「需求與決策」為實作規格，來源為本次專案評估與使用者要求全部納入 plan。狀態：已實作並發佈（0.4.x）；本文件保留為設計紀錄，升級說明見 [docs/upgrading-run-v2.md](../upgrading-run-v2.md)。
 
 ## 全域限制
 
