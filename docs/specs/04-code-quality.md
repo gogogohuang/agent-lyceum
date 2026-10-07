@@ -1,6 +1,6 @@
 # 04 程式品質與維護性
 
-狀態：已實作並提交於分支 `chore/04a-ts-lint、chore/04b-run-session`（尚未開 PR）。
+狀態：已實作並提交於分支 `chore/04a-ts-lint、chore/04b-run-session`（PR #40）。
 
 分兩階段，先低風險的設定收緊，再做重構。
 

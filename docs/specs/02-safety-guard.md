@@ -1,6 +1,6 @@
 # 02 安全與保護機制
 
-狀態：已實作並提交於分支 `chore/02-safety-guard`（尚未開 PR）。
+狀態：已實作並提交於分支 `chore/02-safety-guard`（PR #40）。
 
 ## 問題
 

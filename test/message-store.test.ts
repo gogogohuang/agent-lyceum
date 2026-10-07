@@ -111,7 +111,8 @@ describe("route journal: every crash point", () => {
     routeOutboxes(p);
     const [file] = copies(p, "fe-member", "stable");
     const first = fs.readFileSync(file, "utf8");
-    expect(first).toMatch(/id: [0-9a-f]{8}/);
+    // YAML quotes an id that reads like a number (e.g. "9e207750"), so the quotes are optional
+    expect(first).toMatch(/id: "?[0-9a-f]{8}"?/);
     // a second full pass over the same journal changes nothing
     routeOutboxes(p);
     expect(copies(p, "fe-member", "stable")).toEqual([file]);

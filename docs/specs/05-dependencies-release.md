@@ -1,6 +1,6 @@
 # 05 依賴與發佈
 
-狀態：已實作並提交於分支 `chore/05-dependencies … chore/05e-typescript-7`（尚未開 PR）。
+狀態：已實作並提交於分支 `chore/05-dependencies … chore/05e-typescript-7`（PR #40）。
 
 ## 現況
 
