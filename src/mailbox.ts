@@ -147,14 +147,19 @@ export function readMessage(file: string): Message {
   return { meta, body, file };
 }
 
-export function listUnread(project: ResolvedProject, agent: string): Message[] {
+/** Paths of the unread messages in an agent's inbox, oldest name first. Does not open them. */
+export function unreadFiles(project: ResolvedProject, agent: string): string[] {
   const dir = inboxDir(project, agent);
   if (!fs.existsSync(dir)) return [];
-  const files = fs
+  return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith(".md") && !e.name.startsWith("."))
     .map((e) => path.join(dir, e.name))
     .sort();
+}
+
+export function listUnread(project: ResolvedProject, agent: string): Message[] {
+  const files = unreadFiles(project, agent);
   const out: Message[] = [];
   for (const f of files) {
     try {

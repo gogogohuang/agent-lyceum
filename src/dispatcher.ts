@@ -4,7 +4,7 @@ import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js"
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { briefOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes } from "./mailbox.js";
+import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles } from "./mailbox.js";
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { createRunLog } from "./run-log.js";
@@ -140,9 +140,8 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
 
   const pendingAgents = (): ResolvedAgent[] => {
     const rows = Object.values(project.agents)
-      .map((a) => ({ a, unread: listUnread(project, a.name) }))
-      .filter((r) => r.unread.length > 0)
-      .map((r) => ({ a: r.a, first: path.basename(must(r.unread[0], "first unread message").file) }));
+      .map((a) => ({ a, files: unreadFiles(project, a.name) }))
+      .flatMap((r) => (r.files[0] ? [{ a: r.a, first: path.basename(r.files[0]) }] : []));
     rows.sort((x, y) => x.first.localeCompare(y.first));
     return rows.map((r) => r.a);
   };
