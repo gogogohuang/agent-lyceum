@@ -1,6 +1,6 @@
 # 01 測試與 CI
 
-狀態：已實作並提交於分支 `chore/01-testing-ci`（尚未開 PR）。
+狀態：已實作並提交於分支 `chore/01-testing-ci`（PR #40）。
 
 ## 問題
 

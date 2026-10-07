@@ -1,6 +1,6 @@
 # 06 文件
 
-狀態：已實作並提交於分支 `chore/06-documentation`（尚未開 PR）。
+狀態：已實作並提交於分支 `chore/06-documentation`（PR #40）。
 
 ## 問題
 
