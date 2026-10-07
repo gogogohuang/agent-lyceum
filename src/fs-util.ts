@@ -8,3 +8,18 @@ export function atomicWrite(file: string, content: string): void {
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, file);
 }
+
+/** Is `cmd` an executable file in one of the PATH directories? (No `which`: it may be missing in slim containers.) */
+export function findOnPath(cmd: string, pathVar: string = process.env.PATH ?? ""): boolean {
+  return pathVar
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((d) => {
+      try {
+        fs.accessSync(path.join(d, cmd), fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+}

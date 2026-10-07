@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
+import { findOnPath } from "./fs-util.js";
 import { globStaticPrefix } from "./paths.js";
 
 export type Level = "os" | "tool-rules" | "post-hoc" | "prompt-only" | "n/a";
@@ -126,7 +126,7 @@ let sandboxProbe: boolean | undefined;
 function osSandboxAvailable(): boolean {
   if (sandboxProbe !== undefined) return sandboxProbe;
   if (process.platform === "darwin") sandboxProbe = true;
-  else if (process.platform === "linux") sandboxProbe = spawnSync("which", ["bwrap"]).status === 0;
+  else if (process.platform === "linux") sandboxProbe = findOnPath("bwrap");
   else sandboxProbe = false;
   return sandboxProbe;
 }
