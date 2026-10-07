@@ -8,6 +8,7 @@ import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, reject
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { createRunLog } from "./run-log.js";
+import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
 import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
@@ -373,15 +374,10 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     }
     if (route.done) {
       doneMessage = { subject: route.done.subject, body: route.done.body };
-      const ok = !contract || contract.missing.length === 0;
-      doneOutcome = ok ? contract!.outcome! : "partial";
-      doneVerification = contract?.verification;
-      doneNote = ok ? undefined : `Completion contract not met after ${state.done_rejections ?? 0} reminder(s): missing ${contract!.missing.join("; ")}. Reported as partial; the lead's report is kept as written.`;
-      const unintegrated = state.blocked_integrations ?? [];
-      if (doneOutcome === "completed" && unintegrated.length) {
-        doneOutcome = "blocked";
-        doneNote = `Not completed: work of ${unintegrated.map((b) => `${b.agent} (branch ${b.branch})`).join(", ")} was never brought into the repo; see ${unintegrated.map((b) => b.report).join(", ")}.`;
-      }
+      const resolved = resolveDoneOutcome(must(contract, "completion contract of the done report"), state.done_rejections ?? 0, state.blocked_integrations ?? []);
+      doneOutcome = resolved.outcome;
+      doneNote = resolved.note;
+      doneVerification = resolved.verification;
       atomicWrite(
         path.join(runDir, RESULT_FILE),
         `# ${route.done.subject}\n\n**Outcome:** ${doneOutcome}${doneNote ? ` (${doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`,
@@ -471,17 +467,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
     if (!endReason && opts.signal?.aborted) endReason = "cancelled";
   }
 
-  const outcome: RunOutcome = endReason === "done" ? doneOutcome ?? "partial" : endReason === "lead_failed" ? "failed" : endReason === "cancelled" ? "cancelled" : "partial";
-  const outcomeNote =
-    endReason === "done"
-      ? doneNote
-      : endReason === "idle"
-        ? "All mailboxes were empty but the lead never sent a done message."
-        : endReason === "max_rounds"
-          ? "Stopped at the round limit before the lead sent done."
-          : endReason === "cancelled"
-            ? "Cancelled before the lead finished. Unread mail was kept; continue with `agent-lyceum resume`."
-            : "The lead's wake-up failed.";
+  const { outcome, note: outcomeNote } = endOutcome(must(endReason, "end reason"), endReason === "done" ? { outcome: doneOutcome ?? "partial", note: doneNote } : undefined);
   state.end_reason = endReason;
   state.outcome = outcome;
   state.outcome_note = outcomeNote;
