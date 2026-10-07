@@ -57,7 +57,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 **Use it.**
 - **Status line:** always on once loaded (`team 讀取中…` until the first poll, `team 無法取得狀態：…` when the CLI cannot run); shows the run state, round `n/max`, output tokens, the current step and unread mail. With several projects it shows one overview line (`team 1/3 running · a ... | b ...`).
 - **Toasts:** a message pops up when a run finishes, is interrupted, or an agent's wake fails (prefixed `[project]` when several are watched). Nothing to do.
-- **`/status-monitor`:** the pane opens automatically at session start (it seats from 144 terminal columns; the status line works at any width); type the command to open it at any width. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes. Each task (a project's current run and its last 3 past runs) is a tab; click a tab to switch. It refreshes with the polling interval while open. Click **關閉** (Close) to dismiss it (Esc does not close it).
+- **`/status-monitor`:** type it to open (or, if already open, close) the pane. It is off at session start unless `autoOpen` is set. In the **fullscreen layout** (`"tui": "fullscreen"` in `~/.claude/settings.json`, restart the session to apply; `/tui fullscreen` does the same) from 110 terminal columns it docks on the right at half the terminal width, and tabs and **關閉** (Close) can be clicked. Otherwise it shows above the prompt; the layout is fixed when the session starts, so a session started on the main screen stays that way. Keyboard (works in both): `x` closes, `1`-`9` or Tab/Enter switch task, Esc returns to the prompt, running the command again also closes. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes. Each task (a project's current run and its last 3 past runs) is a tab. It refreshes with the polling interval while open.
 
 **Configure it.** In `~/.claude/settings.json` under `pluginConfigs."status-monitor@inline"` (`options`):
 
@@ -66,6 +66,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `command` | CLI to run, split on spaces, e.g. `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | Registered project name(s) (`-p`); comma-separate to watch several; empty infers from the session's directory | empty |
 | `intervalSeconds` | How often status is polled | `1` |
+| `autoOpen` | Open the pane when a session starts (it seats only from 144 columns when opened unasked) | `false` |
 
 Changes take effect on the next session start. If the pane shows `無法取得狀態：...`, the `command` could not run (usually `dist/cli.js` was not built) or the project name is not registered.
 
