@@ -4,6 +4,7 @@ import { enforcementFor, memoryDirs, ownsDirs, type AgentEnforcement } from "./p
 import { isInside } from "./paths.js";
 import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
 import { isGitRepo, resolveWorkspaceMode } from "./worktree.js";
+import { must } from "./assert.js";
 
 export interface Issue {
   level: "error" | "warn";
@@ -52,8 +53,8 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   for (const a of Object.values(project.agents)) for (const d of memoryDirs(a)) mem.push({ agent: a.name, dir: d });
   for (let i = 0; i < mem.length; i++) {
     for (let j = i + 1; j < mem.length; j++) {
-      const x = mem[i];
-      const y = mem[j];
+      const x = must(mem[i], "memory dir");
+      const y = must(mem[j], "memory dir");
       if (x.agent === y.agent && x.dir !== y.dir) continue;
       if (isInside(x.dir, y.dir) || isInside(y.dir, x.dir)) {
         err(`Memory dirs overlap: "${x.agent}" ${x.dir} vs "${y.agent}" ${y.dir}`);
@@ -69,10 +70,12 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     }
     for (let i = 0; i < withOwns.length; i++) {
       for (let j = i + 1; j < withOwns.length; j++) {
-        for (const x of ownsDirs(project, withOwns[i])) {
-          for (const y of ownsDirs(project, withOwns[j])) {
+        const ai = must(withOwns[i], "agent");
+        const aj = must(withOwns[j], "agent");
+        for (const x of ownsDirs(project, ai)) {
+          for (const y of ownsDirs(project, aj)) {
             if (isInside(x, y) || isInside(y, x)) {
-              err(`"owns" overlap: ${withOwns[i].name} (${x}) vs ${withOwns[j].name} (${y})`);
+              err(`"owns" overlap: ${ai.name} (${x}) vs ${aj.name} (${y})`);
             }
           }
         }
@@ -107,10 +110,11 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 }
 
 export function formatEnforcement(list: AgentEnforcement[]): string {
-  const rows = [["agent", "runtime", "memory", "AGENT.md", "others' ctx", "repo CLAUDE/AGENTS", "owns"]];
+  const header = ["agent", "runtime", "memory", "AGENT.md", "others' ctx", "repo CLAUDE/AGENTS", "owns"];
+  const rows = [header];
   for (const e of list) rows.push([e.agent, e.runtime, e.memory, e.agentMd, e.otherContext, e.repoInstructions, e.owns]);
-  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
-  const lines = rows.map((r) => r.map((c, i) => c.padEnd(w[i])).join("  ").trimEnd());
+  const w = header.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
+  const lines = rows.map((r) => r.map((c, i) => c.padEnd(w[i] ?? 0)).join("  ").trimEnd());
   lines.splice(1, 0, w.map((n) => "-".repeat(n)).join("  "));
   const extra: string[] = [];
   for (const e of list) {

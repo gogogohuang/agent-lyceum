@@ -219,7 +219,7 @@ export interface TaskListReport {
 function queueOf(project: ResolvedProject): QueueItem[] {
   const rows = Object.values(project.agents)
     .map((a) => ({ agent: a.name, msg: listUnread(project, a.name)[0] }))
-    .filter((r) => !!r.msg);
+    .flatMap((r) => (r.msg ? [{ agent: r.agent, msg: r.msg }] : []));
   rows.sort((x, y) => {
     if ((x.agent === project.lead) !== (y.agent === project.lead)) return x.agent === project.lead ? -1 : 1;
     return path.basename(x.msg.file).localeCompare(path.basename(y.msg.file));
@@ -429,7 +429,8 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
   const runs = report.runs;
   const head = `${c.bold("專案：")}${report.project.name}  ${c.dim(`（共 ${runs.length} 個任務）`)}`;
   if (!runs.length) return `${head}\n\n無執行紀錄。`;
-  const rows = [["ID", "狀態", "輪次", "目前步驟", "任務"]];
+  const header = ["ID", "狀態", "輪次", "目前步驟", "任務"];
+  const rows = [header];
   for (const s of runs) {
     rows.push([
       s.run_id,
@@ -439,12 +440,12 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
       clip(taskText(s), 60),
     ]);
   }
-  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => cols(r[i]))));
+  const w = header.map((_, i) => Math.max(...rows.map((r) => cols(r[i] ?? ""))));
   const line = (r: string[], ri: number) =>
     r
       .map((t, i) => {
-        const p = i === r.length - 1 ? t : padCols(t, w[i]);
-        return ri === 0 ? c.bold(p) : i === 1 ? stateColor(c, t) + " ".repeat(Math.max(0, w[i] - cols(t))) : p;
+        const p = i === r.length - 1 ? t : padCols(t, w[i] ?? 0);
+        return ri === 0 ? c.bold(p) : i === 1 ? stateColor(c, t) + " ".repeat(Math.max(0, (w[i] ?? 0) - cols(t))) : p;
       })
       .join("  ")
       .trimEnd();
@@ -460,19 +461,21 @@ export function formatStatus(base: ResolvedProject, now = Date.now(), color = fa
 export function formatStatusReport(report: StatusReport, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = report.run;
-  const rows = [["成員", "執行環境", "未讀", "上次喚醒"]];
+  const header = ["成員", "執行環境", "未讀", "上次喚醒"];
+  const rows = [header];
   for (const a of report.agents) {
     const lw = a.last_wake;
     rows.push([a.name + (a.lead ? " (lead)" : ""), a.runtime ?? "?", String(a.unread), lw ? `${lw.ok ? "成功" : "失敗"} ${lw.at}` : "-"]);
   }
-  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => cols(r[i]))));
+  const w = header.map((_, i) => Math.max(...rows.map((r) => cols(r[i] ?? ""))));
   // Pad on the plain text first so ANSI codes never skew the column widths.
   const cell = (r: string[], ri: number, i: number): string => {
-    const t = i === r.length - 1 ? r[i] : padCols(r[i], w[i]); // no trailing padding, as in plain output
+    const text = r[i] ?? "";
+    const t = i === r.length - 1 ? text : padCols(text, w[i] ?? 0); // no trailing padding, as in plain output
     if (ri === 0) return c.bold(t);
-    if (i === 0) return r[0].endsWith("(lead)") ? c.cyan(t) : t;
-    if (i === 2) return r[2] === "0" ? c.dim(t) : c.yellow(t);
-    if (i === 3) return r[3].startsWith("失敗") ? c.red(t) : r[3].startsWith("成功") ? c.green(t) : c.dim(t);
+    if (i === 0) return text.endsWith("(lead)") ? c.cyan(t) : t;
+    if (i === 2) return text === "0" ? c.dim(t) : c.yellow(t);
+    if (i === 3) return text.startsWith("失敗") ? c.red(t) : text.startsWith("成功") ? c.green(t) : c.dim(t);
     return t;
   };
   const table = rows.map((r, ri) => r.map((_, i) => cell(r, ri, i)).join("  ").trimEnd());

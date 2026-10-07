@@ -6,6 +6,7 @@ import { assertName } from "./paths.js";
 import { loadRunState } from "./run-store.js";
 import { runIsAlive } from "./status.js";
 import { deleteSnapshotRefs, inspectWorkspace, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace } from "./worktree.js";
+import { must } from "./assert.js";
 
 export interface CleanupItem {
   kind: "workspace" | "refs" | "task-memory" | "run";
@@ -126,7 +127,7 @@ export function executeRunCleanup(plan: CleanupPlan, hooks: ExecuteHooks = {}): 
   record(journal);
 
   for (let n = 0; n < plan.items.length; n++) {
-    const item = plan.items[n];
+    const item = must(plan.items[n], "cleanup item");
     try {
       if (item.kind === "workspace") {
         removeAgentWorkspace(project, runId, item.agent!);
@@ -139,7 +140,7 @@ export function executeRunCleanup(plan: CleanupPlan, hooks: ExecuteHooks = {}): 
       return report; // keep the journal and the run directory: the next `clear` picks up here
     }
     report.done.push(item);
-    journal.items[n].done = true;
+    must(journal.items[n], "journal item").done = true;
     record(journal);
     hooks.afterItem?.(item);
   }
