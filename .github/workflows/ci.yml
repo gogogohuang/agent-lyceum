@@ -20,6 +20,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci # prepare 會一併 build
+      - run: npm run lint
       - run: npm run typecheck # includes the mod's pure logic
       - run: npm test # includes the mod's pure-logic tests
       - run: npm run check:pack # `npm ci` already ran `prepare`, which builds

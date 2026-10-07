@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeInvocation, buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation, codexWritableRoots } from "../src/adapters/codex.js";
 import { commonFile, repoInstructionFiles, writePolicy } from "../src/policy.js";
-import { buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
+import { buildSystemPrompt } from "../src/prompt.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;

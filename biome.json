@@ -1,0 +1,23 @@
+{
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": { "noNonNullAssertion": "off", "useTemplate": "off", "useImportType": "off" },
+      "correctness": { "noUnusedImports": "error" },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noControlCharactersInRegex": "warn",
+        "noAssignInExpressions": "warn",
+        "useIterableCallbackReturn": "warn"
+      },
+      "complexity": {
+        "noCommaOperator": "warn",
+        "noAdjacentSpacesInRegex": "warn"
+      }
+    }
+  },
+  "files": { "includes": ["src/**", "test/**"] }
+}

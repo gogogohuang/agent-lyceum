@@ -44,7 +44,8 @@
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "release": "bash scripts/release.sh",
     "typecheck:plugin": "tsc -p plugins/status-monitor/tsconfig.ci.json",
-    "check:pack": "node scripts/check-pack.mjs"
+    "check:pack": "node scripts/check-pack.mjs",
+    "lint": "biome lint"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -52,6 +53,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
