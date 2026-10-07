@@ -160,9 +160,19 @@ export function resolveProject(home: string, name: string): ResolvedProject {
     // A project-level model must win over an inherited global runtime, or `model: gpt-5` would run on claude.
     let runtime = pl.runtime;
     if (runtime !== undefined) sources.runtime = "project";
-    else if ((runtime = inferRuntime(pl.model))) sources.runtime = "model";
-    else if ((runtime = gl.runtime)) sources.runtime = "global";
-    else if ((runtime = inferRuntime(gl.model))) sources.runtime = "model";
+    else {
+      const candidates = [
+        [inferRuntime(pl.model), "model"],
+        [gl.runtime, "global"],
+        [inferRuntime(gl.model), "model"],
+      ] as const;
+      for (const [r, from] of candidates) {
+        if (!r) continue;
+        runtime = r;
+        sources.runtime = from;
+        break;
+      }
+    }
 
     const isLead = agentName === lead;
     const resume = pick("resume");

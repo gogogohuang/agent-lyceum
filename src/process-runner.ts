@@ -137,8 +137,7 @@ export function runInvocation(inv: Invocation, opts: RunnerOptions): Promise<Wak
       if (!parser) return;
       let text = partial + chunk.toString("utf8");
       partial = "";
-      let nl: number;
-      while ((nl = text.indexOf("\n")) >= 0) {
+      for (let nl = text.indexOf("\n"); nl >= 0; nl = text.indexOf("\n")) {
         const line = text.slice(0, nl).replace(/\r$/, "");
         text = text.slice(nl + 1);
         if (skipping) skipping = false;
