@@ -90,7 +90,7 @@ export const register: Register = (on, options) => {
     pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
-    const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns)`
+    const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
     return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
   })
 

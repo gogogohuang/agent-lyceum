@@ -57,7 +57,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 **操作。**
 - **狀態列：** 載入後常駐（第一次輪詢前顯示 `team 讀取中…`，CLI 跑不起來時顯示 `team 無法取得狀態：…`），顯示執行狀態、輪數 `n/max`、output tokens、目前步驟與未讀信件。監看多個專案時顯示一行總覽（`team 1/3 執行中 · a ... | b ...`）。
 - **通知：** 執行完成、被中斷或某個 agent 喚醒失敗時會跳出訊息（監看多個專案時前面加 `[專案名]`），不需要任何操作。
-- **`/status-monitor`：** session 啟動時面板會自動開啟（終端寬度需 144 欄以上才會顯示，狀態列不受影響）；也可輸入此指令在任何寬度開啟。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒。每個任務（專案目前的執行與最近 3 次過往執行）是一個分頁，點分頁即可切換。面板開著時會依輪詢間隔自動更新，只能點 **關閉** 收起（Esc 不會關閉）。
+- **`/status-monitor`：** 輸入即開啟面板（已開著則關閉）。session 啟動時預設不開，除非設定 `autoOpen`。在 **fullscreen 版面**（`~/.claude/settings.json` 設 `"tui": "fullscreen"` 後重開 session；`/tui fullscreen` 效果相同）且終端寬度 110 欄以上時，面板會靠右 dock 在終端寬度的一半，分頁與 **關閉** 都可以用滑鼠點。否則顯示在輸入框上方；版面在 session 啟動時就固定，從主畫面啟動的 session 不會變。鍵盤操作兩種版面都能用：`x` 關閉，`1`-`9` 或 Tab/Enter 切換任務，Esc 回到輸入框，再執行一次指令也會關閉。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒。每個任務（專案目前的執行與最近 3 次過往執行）是一個分頁。面板開著時會依輪詢間隔自動更新。
 
 **設定。** 在 `~/.claude/settings.json` 的 `pluginConfigs."status-monitor@inline"`（`options`）：
 
@@ -66,6 +66,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | 已註冊的專案名稱（`-p`）；用逗號分隔可同時監看多個；留空則依 session 所在目錄推斷 | 空 |
 | `intervalSeconds` | 輪詢狀態的間隔（秒） | `1` |
+| `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
 
 設定變更要等下次啟動 session 才生效。面板若顯示 `無法取得狀態：...`，通常是 `command` 跑不起來（多半是還沒 build `dist/cli.js`），或專案名稱沒有註冊。
 
