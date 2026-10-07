@@ -85,7 +85,8 @@ export const register: Register = (on, options) => {
       await $.ui.close({ id: PANE })
       return { text: 'agent-lyceum pane closed.' }
     }
-    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16, focus: true })
+    // Dock at half the terminal's width (a request: a width the person dragged the dock to wins).
+    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: Math.max(40, Math.floor(columns / 2)), rows: 16, focus: true })
     pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
