@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertName } from "../src/paths.js";
 import { loadRunState, newRunId, newRunState, saveRunState } from "../src/run-store.js";
@@ -67,5 +68,24 @@ describe("loadRunState", () => {
     fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", rounds: "many" }));
     expect(() => loadRunState(d)).toThrow(/rounds/);
     expect(() => loadRunState(path.join(d, "missing"))).toThrow(/state\.json/);
+  });
+});
+
+describe("legacy state", () => {
+  it("still reads a state.json written before schema_version existed", () => {
+    const dir = tmp();
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    fs.copyFileSync(path.join(here, "fixtures", "legacy", "state-v1.json"), path.join(dir, "state.json"));
+    const s = loadRunState(dir);
+    expect(s.mail_layout).toBe("legacy");
+    expect(s.rounds).toBe(3);
+    expect(s.sessions).toEqual({ lead: "sess-1" });
+    expect(s.wakes).toHaveLength(1);
+  });
+
+  it("names the field when state.json is invalid", () => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ run_id: "r", rounds: "three" }));
+    expect(() => loadRunState(dir)).toThrow(/Run state is invalid .*rounds/);
   });
 });
