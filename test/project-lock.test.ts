@@ -103,10 +103,11 @@ describe("project lock", () => {
   });
 
   it("treats a reused pid (different start time) as a dead holder", () => {
+    // the start time is in the format this platform writes: `proc:<ticks>` on Linux, `ps` text elsewhere
     const root = tmp();
     fs.writeFileSync(
       path.join(root, LOCK_FILE),
-      JSON.stringify({ token: "old", hostname: os.hostname(), pid: process.pid, pid_started: "Thu Jan  1 00:00:00 1970", run_id: "old", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
+      JSON.stringify({ token: "old", hostname: os.hostname(), pid: process.pid, pid_started: process.platform === "linux" ? "proc:1" : "Thu Jan  1 00:00:00 1970", run_id: "old", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
     );
     expect(lockHolderAlive(inspectProjectLock(root)!)).toBe(false);
     acquireProjectLock(root, "new").release();
