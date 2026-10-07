@@ -90,7 +90,7 @@ Changes take effect on the next session start. If the pane shows `無法取得�
 # project.yaml
 dir: ~/code/web-app
 team: { lead: lead }
-dispatcher: { max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto }
+dispatcher: { max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto, log_max_bytes: 8388608 }
 agents:
   lead:      { resume: true, can_message: all, can_edit_agent_md: true }
   fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }

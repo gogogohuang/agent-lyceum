@@ -7,6 +7,7 @@ import { ProtectedGuard } from "./guard.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes } from "./mailbox.js";
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
+import { createRunLog } from "./run-log.js";
 import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
@@ -68,9 +69,7 @@ export async function runTeam(opts: RunOptions): Promise<RunSummary> {
   if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume });
   ensureProjectDirs(project);
   fs.mkdirSync(runDir, { recursive: true });
-  const logFile = path.join(runDir, "log.jsonl");
-  const log = (event: string, data: Record<string, unknown> = {}) =>
-    fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), event, ...data }) + "\n");
+  const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
 
   let state: RunState;
   if (resume) {

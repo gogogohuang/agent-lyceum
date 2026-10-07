@@ -52,6 +52,7 @@ export const DispatcherPartial = z
     retry: z.number().int().min(0).optional(),
     strict: z.boolean().optional(),
     workspace_mode: z.enum(["auto", "shared", "worktree"]).optional(),
+    log_max_bytes: z.number().int().min(0).optional(),
   })
   .strict();
 
@@ -78,6 +79,8 @@ export interface DispatcherSettings {
   strict: boolean;
   /** "auto": a git worktree per non-lead agent when agents can run in parallel, otherwise one shared checkout. */
   workspace_mode: "auto" | "shared" | "worktree";
+  /** log.jsonl is rotated to log.1.jsonl past this size; 0 = never. */
+  log_max_bytes: number;
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {
@@ -87,6 +90,7 @@ export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   retry: 1,
   strict: false,
   workspace_mode: "auto",
+  log_max_bytes: 8 * 1024 * 1024,
 };
 
 /** How a run turned out, independent of why it stopped (`EndReason`). Only "completed" means success. */

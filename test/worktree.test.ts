@@ -14,7 +14,7 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const settings = (over: Partial<{ max_parallel: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
-  max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, ...over,
+  max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
 });
 
 describe("workspace mode", () => {
