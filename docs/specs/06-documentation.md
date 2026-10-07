@@ -1,5 +1,7 @@
 # 06 文件
 
+狀態：已實作並提交於分支 `chore/06-documentation`（尚未開 PR）。
+
 ## 問題
 
 1. `docs/plans/2026-10-06-agent-lyceum-improvements.md` 開頭寫「此階段僅建立文件，尚未實作或驗證下列功能」，但功能已實作並發佈（0.4.x），讀者會誤判專案狀態。

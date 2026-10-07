@@ -1,5 +1,7 @@
 # 01 測試與 CI
 
+狀態：已實作並提交於分支 `chore/01-testing-ci`（尚未開 PR）。
+
 ## 問題
 
 - `vitest.config.ts` 排除 `plugins/**`，因為 plugin 測試 import 只存在於 Claude Code 內的 `claude-code/testing`。結果 `plugins/status-monitor/hooks/summary.test.ts` 與 `register.tsx`（234 行）完全不在 CI 內，status 解析邏輯壞了也不會被發現。

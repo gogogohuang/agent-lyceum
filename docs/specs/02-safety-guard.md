@@ -1,5 +1,7 @@
 # 02 安全與保護機制
 
+狀態：已實作並提交於分支 `chore/02-safety-guard`（尚未開 PR）。
+
 ## 問題
 
 `src/guard.ts` 的 `ProtectedGuard.check()` 發現未授權修改時，直接用基準內容覆寫（`restored`）或刪除（`removed`）。被丟掉的內容沒有留存：

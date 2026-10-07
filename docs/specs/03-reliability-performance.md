@@ -1,5 +1,7 @@
 # 03 可靠性與效能
 
+狀態：已實作並提交於分支 `chore/03-reliability-performance`（尚未開 PR）。
+
 ## 3.1 `ps` / `which` 的外部程序依賴
 
 **問題**

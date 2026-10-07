@@ -1,5 +1,7 @@
 # 05 依賴與發佈
 
+狀態：已實作並提交於分支 `chore/05-dependencies … chore/05e-typescript-7`（尚未開 PR）。
+
 ## 現況
 
 - 已具備：Trusted Publishing（OIDC）、`npm publish --provenance`、`prepublishOnly` 跑 typecheck / test / build、`scripts/release.sh`。**不需要再補 provenance。**
