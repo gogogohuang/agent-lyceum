@@ -5,6 +5,7 @@ import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
+import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
@@ -468,6 +469,84 @@ program
       if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
       forceUnlock(pr.paths.root);
       console.log("Lock removed. Resume the run with: agent-lyceum resume");
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
+
+
+const memoryCmd = program.command("memory").description("Look after the agents' long-term memory");
+
+function layerOpt(v: string | undefined): Layer {
+  if (v === undefined || v === "project") return "project";
+  if (v === "global") return "global";
+  return fail(`--layer must be "project" or "global" (task memory is not tidied: \`clear\` deletes it).`);
+}
+
+memoryCmd
+  .command("tidy")
+  .description("Have agents tidy their own memory: merge duplicates, fix stale entries, archive what is obsolete (never deletes). Manual only; nothing triggers it automatically.")
+  .option("-p, --project <name>")
+  .option("--agent <name>", "tidy only this agent (default: every agent)")
+  .option("--layer <layer>", "project (default) or global; global memory is shared by every project, so it is never tidied unless you ask")
+  .option("--dry-run", "only show the memory sizes and what changed in the project; wake nobody, change nothing")
+  .action(async (opts: { project?: string; agent?: string; layer?: string; dryRun?: boolean }) => {
+    try {
+      const layer = layerOpt(opts.layer);
+      const pr = loadProject(opts.project);
+      if (opts.dryRun) {
+        const dry = await tidyMemory({ project: pr, layer, agent: opts.agent, dryRun: true });
+        if (dry.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or use --layer global)." : "Set `memory.global` for an agent."}`);
+        return;
+      }
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
+      await preflight(pr);
+      const lease = takeLock(pr, `tidy-${tidyStamp()}`);
+      const cancel = cancelOnSignals();
+      let results: Awaited<ReturnType<typeof tidyMemory>>;
+      try {
+        results = await tidyMemory({ project: pr, layer, agent: opts.agent, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      if (results.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or tidy global memory with --layer global)." : "Set `memory.global` for an agent."}`);
+      for (const r of results) {
+        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")} — undo with: agent-lyceum memory restore ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
+        else if (r.status === "skipped") console.log(`  ${r.agent} (${r.layer}): skipped — ${r.problems.join("; ")}`);
+        else if (r.status === "failed") {
+          console.error(`  ${r.agent} (${r.layer}): FAILED, memory restored to how it was`);
+          for (const p of r.problems) console.error(`    - ${p}`);
+        }
+      }
+      process.exit(results.some((r) => r.status === "failed") ? 1 : 0);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+memoryCmd
+  .command("restore <stamp>")
+  .description("Move the files of one tidy's archive back (nothing that exists now is overwritten) and re-add them to MEMORY.md")
+  .option("-p, --project <name>")
+  .requiredOption("--agent <name>")
+  .option("--layer <layer>", "project (default) or global")
+  .action((stamp: string, opts: { project?: string; agent: string; layer?: string }) => {
+    try {
+      const layer = layerOpt(opts.layer);
+      const pr = loadProject(opts.project);
+      const lease = takeLock(pr, `restore-${tidyStamp()}`);
+      try {
+        const r = restoreMemory({ project: pr, agent: opts.agent, layer, stamp });
+        for (const f of r.restored) console.log(`  restored  ${f}`);
+        for (const s of r.skipped) console.log(`  skipped   ${s.rel}: ${s.reason}`);
+        if (!r.restored.length && !r.skipped.length) console.log(`Archive ${stamp} holds no files to restore.`);
+      } finally {
+        lease.release();
+      }
     } catch (e) {
       fail((e as Error).message);
     }

@@ -3,6 +3,7 @@
 // FAKE_MODE=completed | sleep            simple one-shot behaviours (the lead sends a full `done`, or hangs)
 // FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, mail? } ... ] }
 //                                        call N of the whole run (counted in <file>.count) does what entry N says.
+// moveAbs: [{ from, to }]   rename files by absolute path; "{ARCHIVE}" in any path/content is the "Archive directory:" line of a memory-tidy prompt
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -17,7 +18,7 @@ if (args[0] === "--help") {
   console.log("  --output-format <f>\n  --resume [id]\n  --settings <file>\n  --effort <level>");
   process.exit(0);
 }
-fs.readFileSync(0);
+const prompt = fs.readFileSync(0, "utf8");
 
 const me = process.env.AGENT_LYCEUM_AGENT ?? "";
 const dirs = args.flatMap((x, i) => (x === "--add-dir" ? [args[i + 1]] : []));
@@ -50,11 +51,20 @@ if (process.env.FAKE_SCRIPT) {
     console.error(`fake claude: call #${n} is scripted for ${step.agent}, but ${me} was woken`);
     process.exit(1);
   }
+  const archive = /^Archive directory: (.+)$/m.exec(prompt)?.[1] ?? "";
+  const sub = (x) => x.replaceAll("{ARCHIVE}", archive);
+  for (const m of step.moveAbs ?? []) {
+    fs.mkdirSync(path.dirname(sub(m.to)), { recursive: true });
+    fs.renameSync(sub(m.from), sub(m.to));
+  }
   for (const [rel, content] of Object.entries(step.writes ?? {})) {
     fs.mkdirSync(path.dirname(path.join(process.cwd(), rel)), { recursive: true });
     fs.writeFileSync(path.join(process.cwd(), rel), content);
   }
-  for (const [abs, content] of Object.entries(step.writeAbs ?? {})) fs.writeFileSync(abs, content);
+  for (const [abs, content] of Object.entries(step.writeAbs ?? {})) {
+    fs.mkdirSync(path.dirname(sub(abs)), { recursive: true });
+    fs.writeFileSync(sub(abs), sub(content));
+  }
   if (step.sleep) sleepForever();
   else {
     for (const m of step.mail ?? []) sendMail(m);
