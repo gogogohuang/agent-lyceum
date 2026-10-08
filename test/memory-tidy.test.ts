@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { fingerprint, listMemoryFiles, memoryStats, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation } from "../src/memory-tidy.js";
-import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
+import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, writeTidyState } from "../src/memory-tidy.js";
+import { git, initGitRepo, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -133,5 +133,73 @@ describe("verifyConservation", () => {
     const problems = verifyConservation(before, d, stamp).join("\n");
     expect(problems).toMatch(/old\.md/);
     expect(problems).toMatch(/MEMORY\.md/);
+  });
+});
+
+describe("tidy state", () => {
+  it("round-trips and tolerates a missing or broken file", () => {
+    env = makeMemoryEnv();
+    const d = mem(env);
+    expect(readTidyState(d)).toBeUndefined();
+    writeTidyState(d, { head: "abc", at: "2026-10-08T00:00:00Z", archive: "20261008T000000Z" });
+    expect(readTidyState(d)).toEqual({ head: "abc", at: "2026-10-08T00:00:00Z", archive: "20261008T000000Z" });
+    write(path.join(d, ".tidy-state.json"), "not json");
+    expect(readTidyState(d)).toBeUndefined();
+  });
+});
+
+describe("projectChanges", () => {
+  it("says so when the project is not a git repository", () => {
+    env = makeMemoryEnv();
+    expect(projectChanges(env.repo, undefined)).toMatchObject({ log: [], stat: [], note: expect.stringMatching(/not a git repository/) });
+  });
+
+  it("first tidy: only the head, no log", () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const c = projectChanges(env.repo, undefined);
+    expect(c.head).toBe(git(env.repo, "rev-parse", "HEAD"));
+    expect(c.log).toEqual([]);
+    expect(c.note).toMatch(/first tidy/);
+  });
+
+  it("with a baseline: commits and a diff stat since then", () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const since = git(env.repo, "rev-parse", "HEAD");
+    write(path.join(env.repo, "src/new.ts"), "x\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "add new");
+    const c = projectChanges(env.repo, since);
+    expect(c.since).toBe(since);
+    expect(c.log.join("\n")).toMatch(/add new/);
+    expect(c.stat.join("\n")).toMatch(/src\/new\.ts/);
+  });
+
+  it("no commits since the baseline, and a baseline that no longer exists", () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const head = git(env.repo, "rev-parse", "HEAD");
+    expect(projectChanges(env.repo, head).note).toMatch(/no commits/);
+    expect(projectChanges(env.repo, "0".repeat(40)).note).toMatch(/no longer|unknown/);
+  });
+});
+
+describe("findMissingPaths", () => {
+  it("flags backticked paths that no longer exist and ignores the ones that do, URLs and bare words", () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const d = mem(env);
+    write(path.join(d, "a.md"), "Entry is `src/web/a.txt` and the old `src/web/gone.ts`; see `https://x.dev/a/b`, `npm test`, `--flag/x`, `*.ts/x`.\nAbsolute: `/definitely/not/here.md`.\n");
+    write(path.join(d, ".archive/x/old.md"), "`src/archived-gone.ts`");
+    const missing = findMissingPaths(d, env.repo).map((m) => `${m.file}:${m.path}`).sort();
+    expect(missing).toEqual(["a.md:/definitely/not/here.md", "a.md:src/web/gone.ts"]);
+  });
+
+  it("without a repo (global layer) checks absolute paths only", () => {
+    env = makeMemoryEnv();
+    const d = mem(env);
+    write(path.join(d, "a.md"), "`src/relative.ts` and `/nope/abs.ts`");
+    expect(findMissingPaths(d, undefined).map((m) => m.path)).toEqual(["/nope/abs.ts"]);
   });
 });

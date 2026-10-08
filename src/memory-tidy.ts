@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { ResolvedProject } from "./config.js";
+import { atomicWrite } from "./fs-util.js";
+import { git, isGitRepo } from "./worktree.js";
 
 export type Layer = "project" | "global";
 export const ARCHIVE_DIR = ".archive";
@@ -125,4 +128,103 @@ export function verifyConservation(before: string[], dir: string, stamp: string)
     if (!inArchive) problems.push(rel === "MEMORY.md" ? `MEMORY.md is missing (the index must stay in place)` : `${rel} is gone: it is neither in place nor under ${ARCHIVE_DIR}/${stamp}/`);
   }
   return problems;
+}
+
+// ---- baseline: where the project stood at the last tidy ----
+
+export interface TidyState {
+  /** HEAD of the project repo when the last tidy finished. */
+  head?: string;
+  at: string;
+  /** The archive folder of that tidy. */
+  archive?: string;
+}
+
+export function readTidyState(dir: string): TidyState | undefined {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, TIDY_STATE_FILE), "utf8")) as TidyState;
+    return j && typeof j === "object" && typeof j.at === "string" ? j : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeTidyState(dir: string, st: TidyState): void {
+  atomicWrite(path.join(dir, TIDY_STATE_FILE), JSON.stringify(st, null, 2));
+}
+
+// ---- what changed in the project since then ----
+
+export interface ProjectChanges {
+  head?: string;
+  since?: string;
+  log: string[];
+  stat: string[];
+  note?: string;
+}
+
+const LOG_LINES = 50;
+const STAT_LINES = 40;
+
+function tryGit(cwd: string, args: string[]): string | undefined {
+  try {
+    return git(cwd, args);
+  } catch {
+    return undefined;
+  }
+}
+
+const lines = (s: string | undefined): string[] => (s ? s.split("\n").filter(Boolean) : []);
+
+export function projectChanges(repoDir: string, since?: string): ProjectChanges {
+  if (!fs.existsSync(repoDir) || !isGitRepo(repoDir)) return { log: [], stat: [], note: "the project directory is not a git repository" };
+  const head = tryGit(repoDir, ["rev-parse", "HEAD"]);
+  if (!head) return { log: [], stat: [], note: "the repository has no commits yet" };
+  if (!since) return { head, log: [], stat: [], note: "first tidy: there is no earlier baseline, only the path check applies" };
+  if (since === head) return { head, since, log: [], stat: [], note: "no commits since the last tidy" };
+  if (tryGit(repoDir, ["cat-file", "-t", `${since}^{commit}`]) !== "commit") return { head, since, log: [], stat: [], note: "the baseline commit of the last tidy no longer exists in this repository (history was rewritten?)" };
+  const log = lines(tryGit(repoDir, ["log", "--oneline", "--no-decorate", `${since}..${head}`]));
+  const stat = lines(tryGit(repoDir, ["diff", "--stat", since, head]));
+  return {
+    head,
+    since,
+    log: log.length > LOG_LINES ? [...log.slice(0, LOG_LINES), `… and ${log.length - LOG_LINES} more commits`] : log,
+    stat: stat.length > STAT_LINES ? [...stat.slice(0, STAT_LINES - 1), stat.at(-1) ?? ""] : stat,
+  };
+}
+
+// ---- paths the memory mentions that are gone ----
+
+export interface MissingPath {
+  file: string;
+  path: string;
+}
+
+const PATH_TOKEN = /`([^`\n]+)`/g;
+
+function looksLikePath(t: string): boolean {
+  if (!t.includes("/") || /\s/.test(t) || t.includes("://")) return false;
+  if (/^-|[*?{}<>$|;&=]/.test(t)) return false;
+  return true;
+}
+
+/** Backticked paths in the live Markdown files of `dir` that do not exist. Relative ones are looked up in `repoDir` (skipped without it). */
+export function findMissingPaths(dir: string, repoDir: string | undefined): MissingPath[] {
+  const seen = new Set<string>();
+  const out: MissingPath[] = [];
+  for (const f of listMemoryFiles(dir)) {
+    if (f.rel.startsWith(`${ARCHIVE_DIR}/`) || !f.rel.endsWith(".md")) continue;
+    const text = fs.readFileSync(path.join(dir, f.rel), "utf8");
+    for (const m of text.matchAll(PATH_TOKEN)) {
+      const tok = (m[1] ?? "").trim();
+      if (!looksLikePath(tok)) continue;
+      const abs = tok.startsWith("~/") ? path.join(os.homedir(), tok.slice(2)) : path.isAbsolute(tok) ? tok : repoDir ? path.join(repoDir, tok) : undefined;
+      if (!abs || fs.existsSync(abs)) continue;
+      const key = `${f.rel}\0${tok}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ file: f.rel, path: tok });
+    }
+  }
+  return out;
 }
