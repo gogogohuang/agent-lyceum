@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
-import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
+import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
@@ -18,6 +18,7 @@ import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail,
 import { prepareTask, readTaskFile } from "./task.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
+import { soloProject } from "./solo.js";
 
 const program = new Command();
 program
@@ -246,17 +247,26 @@ async function driveRun(pr: ResolvedProject, runDir: string, first: RunSummary, 
 
 program
   .command("run [task]")
-  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>.')
+  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>. With --agent, give it to that one member alone.')
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the task from a file")
+  .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; assumeDefaults?: boolean }) => {
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
-      await preflight(pr);
+      let checked = pr;
+      if (opts.agent) {
+        assertName("agent", opts.agent);
+        if (opts.assumeDefaults) console.error("warn   --assume-defaults is ignored with --agent: a solo agent cannot ask questions.");
+        // Fails with the member list (and a hint for a global-only agent) before anything is written.
+        const sp = soloProject(pr, opts.agent, { globalAgents: Object.keys(loadGlobal(home()).agents) });
+        checked = { ...sp, agents: { [opts.agent]: must(sp.agents[opts.agent], "the solo agent") } };
+      }
+      await preflight(checked);
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
@@ -265,9 +275,9 @@ program
       const cancel = cancelOnSignals();
       try {
         const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
-        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-        summary = await runTeam({ project: pr, task: prepared, runDir, signal: cancel.signal });
+        summary = await runTeam({ project: pr, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();

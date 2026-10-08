@@ -1,7 +1,7 @@
 // A stand-in for the `claude` CLI.
 //
 // FAKE_MODE=completed | sleep            simple one-shot behaviours (the lead sends a full `done`, or hangs)
-// FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, mail? } ... ] }
+// FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, mail?, result? } ... ] }
 //                                        call N of the whole run (counted in <file>.count) does what entry N says.
 // moveAbs: [{ from, to }]   rename files by absolute path; "{ARCHIVE}" in any path/content is the "Archive directory:" line of a memory-tidy prompt
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
@@ -35,7 +35,7 @@ const sendMail = (m) => {
   const body = m.body ?? (m.type === "done" ? FULL : "## Changes\n- done\n\n## Verification\nok\n\n## Open items\nNone\n\n## Risks\nNone\n");
   fs.writeFileSync(path.join(outbox, `m${Date.now()}-${Math.random().toString(16).slice(2)}.md`), `---\n${fm}\n---\n\n${body}\n`);
 };
-const finish = () => process.stdout.write(JSON.stringify({ result: "ok", session_id: "s", usage: { output_tokens: 1 } }));
+const finish = (text = "ok") => process.stdout.write(JSON.stringify({ result: text, session_id: "s", usage: { output_tokens: 1 } }));
 
 if (process.env.FAKE_SCRIPT) {
   const file = process.env.FAKE_SCRIPT;
@@ -68,7 +68,7 @@ if (process.env.FAKE_SCRIPT) {
   if (step.sleep) sleepForever();
   else {
     for (const m of step.mail ?? []) sendMail(m);
-    finish();
+    finish(step.result);
   }
 } else if (process.env.FAKE_MODE === "sleep") sleepForever();
 else {
