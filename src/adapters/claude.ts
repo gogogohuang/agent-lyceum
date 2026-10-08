@@ -36,6 +36,8 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
   const deny = pol.deny.flatMap(denyRules);
 
   return {
+    // The user's own and plugin hooks (e.g. a hook that asks the user a question) would block every tool call of a headless wake-up.
+    disableAllHooks: true,
     permissions: { allow, deny },
     sandbox: {
       enabled: true,
