@@ -1,6 +1,6 @@
 # 09 人工問答（human-in-the-loop）
 
-狀態：設計已與使用者逐題確認（brainstorming），尚未實作。
+狀態：已實作（plan：`docs/plans/2026-10-08-09-human-in-the-loop.md`）。
 
 ## 9.1 問題
 
@@ -45,6 +45,7 @@
 - 驗證是機械式的：每題有唯一 `id`、`<answer>` 非空、選項題的答案必須是選項之一或以 `other:` 開頭。全部通過後 `status` 改為 `answered`。
 - 回答來源以 `<answer by="user">`／`<answer by="default">` 標記。
 - 送給提問者的 `reply` 信內容是同格式的 `<answers>` 區塊。
+- 實作時的兩處補充：每題多一個 `asker="<agent>"` 屬性（批次可能來自不同提問者，答案要送回各自的提問者；根標籤的 `asked_by` 仍記最近一批的提問者）；答案送出後該題標上 `delivered="true"`，第二批提問時已送出的題目不會重送，也不再要求回答。
 
 ## 9.4 影響的檔案
 

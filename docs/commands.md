@@ -28,15 +28,37 @@ Validate the merged config and print each agent's enforcement level. Exit 1 on e
 
 ## run
 
-**Usage:** `run ["task"] [--task-file f] [-p name]`
+**Usage:** `run ["task"] [--task-file f] [--assume-defaults] [-p name]`
 
-Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`.
+Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`. If an agent asks you something the run pauses; see [answer](#answer). `--assume-defaults` answers every question that has a suggested value with it instead of pausing (questions without a suggestion still pause).
 
 ## resume
 
-**Usage:** `resume [run-id] [-p name]`
+**Usage:** `resume [run-id] [--assume-defaults] [-p name]`
 
-Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`).
+Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`). A run that is waiting for answers only continues once every open question has a valid answer; otherwise `resume` lists the missing ones and exits `3`.
+
+## answer
+
+**Usage:** `answer <run-id> [--no-edit] [--assume-defaults] [-p name]`
+
+Answer the questions a waiting run asked. An agent asks with a `type: ask` mail (the lead always may; a member needs `can_ask_user: true`). The dispatcher stores all questions in one file, `runs/<run-id>/mail/ask-reply.md`, ends the run as `waiting` (exit `3`, lock released, no round used) and prints the file's path; `status` shows it too, with the number of open questions.
+
+```xml
+<ask-reply status="pending" asked_by="lead" round="7">
+  <question id="q1" asker="lead">
+    <text>Session or JWT for login?</text>
+    <options>
+      <option>session</option>
+      <option>jwt</option>
+    </options>
+    <suggested reason="existing code already uses cookies">session</suggested>
+    <answer></answer>
+  </question>
+</ask-reply>
+```
+
+You only fill in the `<answer>` tags. For a question with `<options>` write one of them, or start with `other:` and write your own text; a question without options takes any non-empty text. `answer` opens the file in `$VISUAL`/`$EDITOR` (default `vi`), checks the answers, and, once they are all valid, sends them to the agent that asked (as a `reply` mail with an `<answers>` block) and continues the run. `--no-edit` skips the editor and only checks a file you already edited; editing the file by hand and running `resume` does the same. If something is missing or invalid, the problems are listed and the exit code is `3`. In a terminal, `run` and `resume` open the editor by themselves when a run starts waiting. `--assume-defaults` fills every unanswered question that has a `<suggested>` value (marked `by="default"` in the file); the others keep waiting. Questions you already answered stay in the file and are not asked again when the agent asks a second batch.
 
 ## status
 
@@ -76,7 +98,7 @@ Remove the project's run lock left behind by a crashed run (only one run per pro
 
 ## Exit codes
 
-**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success.
+**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `3` when the run is waiting for your answers (see [answer](#answer)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success.
 
 ## Choosing the project
 

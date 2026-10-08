@@ -10,6 +10,7 @@
 | [04](04-code-quality.md) | 程式品質與維護性 | 高（tsconfig）／中（重構） | 低／高 | [plan](../plans/2026-10-07-04-code-quality.md) |
 | [05](05-dependencies-release.md) | 依賴與發佈 | 低 | 中 | [plan](../plans/2026-10-07-05-dependencies-release.md) |
 | [06](06-documentation.md) | 文件 | 低 | 無 | [plan](../plans/2026-10-07-06-documentation.md) |
+| [09](09-human-in-the-loop.md) | 人工問答 | 中 | 中 | [plan](../plans/2026-10-08-09-human-in-the-loop.md) |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
