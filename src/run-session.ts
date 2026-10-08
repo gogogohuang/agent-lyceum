@@ -5,7 +5,8 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles } from "./mailbox.js";
+import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, writeAskReply } from "./ask-reply.js";
+import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
 import { createRunLog } from "./run-log.js";
@@ -25,6 +26,8 @@ export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic 
 export const RESULT_FILE = "result.md";
 /** How many times a non-conforming `done` goes back to the lead before it is accepted as `partial`. */
 export const MAX_DONE_REJECTIONS = 2;
+/** How many times a malformed `ask` goes back to its sender before the lead is told instead. */
+export const MAX_ASK_REJECTIONS = 2;
 
 /** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
 function retryPrompt(prompt: string, error?: string): string {
@@ -41,6 +44,8 @@ export interface RunSummary {
   outcomeNote?: string;
   verification?: string;
   doneMessage?: { subject: string; body: string };
+  /** Set when the run waits for the user: the file with the questions. */
+  askReplyPath?: string;
 }
 
 export interface RunOptions {
@@ -89,6 +94,7 @@ export class RunSession {
   constructor(opts: RunOptions) {
 
     const { task, resume, runDir } = opts;
+    if (resume?.end_reason === "waiting") RunSession.assertAnswered(runDir, resume.run_id);
     if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
     const invoke = opts.invoker ?? realInvoker;
     const say = opts.log ?? ((s: string) => console.log(s));
@@ -162,6 +168,17 @@ export class RunSession {
     this.log = log;
     this.guard = guard;
     this.state = state;
+  }
+
+
+  /** A waiting run only continues once every unanswered question has a valid answer. */
+  private static assertAnswered(runDir: string, runId: string): void {
+    const reply = readAskReply(runDir);
+    if (!reply) return;
+    const check = checkAnswers(reply);
+    if (!isComplete(check)) {
+      throw new Error(`Run ${runId} is still waiting for answers in ${askReplyPath(runDir)}:\n${describeCheck(check).map((l) => `  ${l}`).join("\n")}`);
+    }
   }
 
 
@@ -399,6 +416,7 @@ export class RunSession {
         contract = undefined;
       }
     }
+    const askAccepted = this.handleAsks(route);
     for (const d of route.delivered) log("route", d);
     const handedOff = (from: string, t: SentTopic) => {
       const w = [...state.wakes].reverse().find((x) => x.agent === from);
@@ -444,6 +462,10 @@ export class RunSession {
       this.endReason = "done";
       return;
     }
+    if (askAccepted) {
+      this.endReason = "waiting";
+      return;
+    }
     const leadIdx = batch.findIndex((a) => a.name === project.lead);
     const leadResult = leadIdx >= 0 ? results[leadIdx] : undefined;
     if (leadResult && !leadResult.ok && !leadResult.cancelled) {
@@ -453,9 +475,83 @@ export class RunSession {
   }
 
 
+  /** The user answered: send each asker its answers as a `reply`, then mark them delivered. Safe to repeat after a crash. */
+  private deliverAnswers(): void {
+    const { runDir, project, log } = this;
+    const reply = readAskReply(runDir);
+    if (!reply) return;
+    const ids = reply.questions.filter((q) => !q.delivered).map((q) => q.id).join(",");
+    for (const asker of askersWithAnswers(reply)) {
+      deliverOnce(project, this.journal(), `ask-answer:${ids}:${asker}`, {
+        from: "user",
+        to: asker,
+        type: "reply",
+        subject: "Answers to your questions",
+        body: renderAnswers(reply, asker),
+      });
+    }
+    writeAskReply(runDir, markDelivered(reply));
+    log("ask-answered", { questions: ids });
+  }
+
+
+  /** Store the questions of this pass's valid `ask` mails; malformed ones go back to their sender. Returns true when the run should now wait. */
+  private handleAsks(route: RouteResult): boolean {
+    const { say, runDir, project, log, state } = this;
+    if (route.asks.length === 0) return false;
+    let reply = readAskReply(runDir);
+    const accepted: string[] = [];
+    for (const a of route.asks) {
+      const parsed = parseAskBody(a.body);
+      const added = parsed.ok ? addBatch(reply, a.from, state.rounds, parsed.questions) : parsed;
+      if (!added.ok) {
+        const n = (state.ask_rejections?.[a.from] ?? 0) + 1;
+        state.ask_rejections = { ...state.ask_rejections, [a.from]: n };
+        rejectDone(a.file);
+        const reason = added.error;
+        say(`  ask from ${a.from} rejected: ${reason}`);
+        log("ask-rejected", { from: a.from, reason, count: n });
+        if (n <= MAX_ASK_REJECTIONS) {
+          deliverOnce(project, this.journal(), `ask-reject:${a.source}`, {
+            from: "dispatcher",
+            to: a.from,
+            type: "failure",
+            subject: "Your ask was not accepted",
+            body: `Your \`ask\` was not accepted: ${reason}.\n\nSend it again with this shape (at most 10 questions; \`options\` and \`suggested\` are optional):\n\n<ask>\n  <question id="q1">\n    <text>Question?</text>\n    <options><option>a</option><option>b</option></options>\n    <suggested reason="why">a</suggested>\n  </question>\n</ask>\n\n(Reminder ${n} of ${MAX_ASK_REJECTIONS}.)`,
+          });
+        } else {
+          deliverOnce(project, this.journal(), `ask-reject:${a.source}`, {
+            from: "dispatcher",
+            to: project.lead,
+            type: "failure",
+            subject: `${a.from}'s ask was rejected ${n} times`,
+            body: `${a.from} sent a malformed \`ask\` rejected ${n} times (last problem: ${reason}). It was dropped. Decide without asking the user, or send the question yourself in the correct format.`,
+          });
+        }
+        continue;
+      }
+      reply = added.reply;
+      accepted.push(a.file);
+    }
+    if (!accepted.length || !reply) return false;
+    if (route.done) {
+      for (const f of accepted) finishDone(f);
+      this.note("An ask was ignored because the lead also sent done in the same round.");
+      return false;
+    }
+    // Questions are stored first, the outbox file moves second: a crash in between re-routes the same ask, and addBatch skips it.
+    writeAskReply(runDir, reply);
+    for (const f of accepted) finishDone(f);
+    log("ask", { questions: reply.questions.filter((q) => !q.delivered).map((q) => q.id) });
+    say(`  waiting for your answers: ${askReplyPath(runDir)}`);
+    return true;
+  }
+
+
   /** On resume: sort out what the interrupted process left behind before anything is woken. */
   private recover(): void {
     const { say, runId, runDir, project, wsMode, log } = this;
+    if (this.resume?.end_reason === "waiting") this.deliverAnswers();
     const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent) });
     for (const i of rec.interrupted) {
       this.note(
@@ -542,6 +638,6 @@ export class RunSession {
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage };
+    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined };
   }
 }

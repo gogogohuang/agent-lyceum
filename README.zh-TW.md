@@ -30,13 +30,14 @@ npx agent-lyceum status
 | `validate [-p name] [--task-file f]` | 驗證設定並顯示每個 agent 的防護等級。 [詳細](docs/commands.zh-TW.md#validate) |
 | `run ["task"] [--task-file f] [-p name]` | 把任務交給 lead 並執行到結束。 [詳細](docs/commands.zh-TW.md#run) |
 | `resume [run-id] [-p name]` | 接續被中斷或失敗的 run。 [詳細](docs/commands.zh-TW.md#resume) |
+| `answer <run-id> [--no-edit] [-p name]` | 回答等待中的 run 提出的問題，並接續執行。 [詳細](docs/commands.zh-TW.md#answer) |
 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | 刪除 run 與其任務記憶、worktree。 [詳細](docs/commands.zh-TW.md#clear) |
 | `config show --resolved [-p name] [--json]` | 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#config-show) |
 | `doctor [-p name] [--json]` | 不執行 agent，檢查設定、git、鎖與 runtime CLI。 [詳細](docs/commands.zh-TW.md#doctor) |
 | `unlock [-p name] --force` | 移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#unlock) |
 
-Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
+Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
 
 ## 監控 mod（Claude Code）
 
@@ -94,7 +95,7 @@ agents:
   qa-member: { can_message: [lead], owns: ["tests/**"] }
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`owns`（repo glob）。
+Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`owns`（repo glob）。
 
 `validate` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository。
 

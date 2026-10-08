@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
 import { bindRunProject, loadRunState, outcomeOf, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
@@ -76,9 +77,10 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
-const OUTCOME_ZH = { completed: "完成", partial: "部分完成", blocked: "受阻", failed: "失敗", cancelled: "已取消" } as const;
+const OUTCOME_ZH = { completed: "完成", partial: "部分完成", blocked: "受阻", failed: "失敗", waiting: "等待回答", cancelled: "已取消" } as const;
 
 export function runStateLabel(s: Pick<RunState, "outcome" | "end_reason"> & { pid?: number }, live = alive(s.pid)): string {
+  if (s.end_reason === "waiting") return "等待回答";
   if (s.end_reason) {
     const o = outcomeOf(s)!;
     // Runs from before outcomes existed: keep what they recorded, but never present it as a checked success.
@@ -162,7 +164,7 @@ export interface RunReport {
   run_id: string;
   dir: string;
   /** running: its dispatcher is alive; interrupted: it died mid-run; ended: it stopped (see end_reason). */
-  state: "running" | "interrupted" | "ended";
+  state: "running" | "interrupted" | "ended" | "waiting";
   live: boolean;
   end_reason?: EndReason;
   outcome?: RunOutcome;
@@ -192,6 +194,8 @@ export interface RunReport {
   mail_layout: "run" | "legacy";
   workspace_mode?: "shared" | "worktree";
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
+  /** Present while the run waits for the user: the file to fill in and how many questions are still open. */
+  ask?: { path: string; total: number; unanswered: number };
 }
 
 export interface AgentReport {
@@ -237,10 +241,22 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   const result = path.join(run.dir, RESULT_FILE);
   const hasResult = detail && s.end_reason === "done" && fs.existsSync(result);
   const cur = s.steps?.find((x) => !x.done);
+  let ask: RunReport["ask"];
+  if (s.end_reason === "waiting") {
+    try {
+      const r = readAskReply(run.dir);
+      if (r) {
+        const open = r.questions.filter((q) => !q.delivered);
+        ask = { path: askReplyPath(run.dir), total: open.length, unanswered: open.filter((q) => !q.answer?.value.trim()).length };
+      }
+    } catch {
+      ask = { path: askReplyPath(run.dir), total: 0, unanswered: 0 };
+    }
+  }
   return {
     run_id: s.run_id,
     dir: run.dir,
-    state: s.end_reason ? "ended" : live ? "running" : "interrupted",
+    state: s.end_reason === "waiting" ? "waiting" : s.end_reason ? "ended" : live ? "running" : "interrupted",
     live,
     end_reason: s.end_reason,
     outcome: o?.outcome,
@@ -268,6 +284,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     mail_layout: s.mail_layout,
     workspace_mode: s.workspace_mode,
     last_wake: s.last_wake,
+    ...(ask ? { ask } : {}),
   };
 }
 
@@ -356,6 +373,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   }
   const lastWake = (s.wakes ?? []).at(-1);
   if (lastWake) lines.push(`${L("上一次：")}#${lastWake.round} ${c.cyan(lastWake.agent)} ${okText(c, lastWake.ok)} → ${sentText(lastWake.sent)}`);
+  if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum answer ${s.run_id}（或 resume）`));
   lines.push(`${L("流程：")}${flowLine(s, c)}`);
   return lines;
 }

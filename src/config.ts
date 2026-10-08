@@ -34,6 +34,8 @@ export interface ResolvedAgent {
   resume: boolean;
   canMessage: "all" | string[];
   canEditAgentMd: boolean;
+  /** May send `type: ask` mail to the user (the run then waits for the answer). */
+  canAskUser: boolean;
   owns: string[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
@@ -178,11 +180,13 @@ export function resolveProject(home: string, name: string): ResolvedProject {
     const resume = pick("resume");
     const canMessage = pick("can_message");
     const canEdit = pick("can_edit_agent_md");
+    const canAsk = pick("can_ask_user");
     const owns = pick("owns");
     for (const [k, v] of [
       ["resume", resume],
       ["can_message", canMessage],
       ["can_edit_agent_md", canEdit],
+      ["can_ask_user", canAsk],
       ["owns", owns],
     ] as const) {
       if (v === undefined) sources[k] = "default";
@@ -198,6 +202,7 @@ export function resolveProject(home: string, name: string): ResolvedProject {
       resume: resume ?? isLead,
       canMessage: canMessage ?? (isLead ? "all" : [lead]),
       canEditAgentMd: canEdit ?? isLead,
+      canAskUser: canAsk ?? isLead,
       owns: owns ?? [],
       sources,
     };
@@ -255,7 +260,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "owns"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "owns"] as const;
 
 /** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
 export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
@@ -307,6 +312,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.resume`] = a.resume;
     v[`${p}.can_message`] = a.canMessage;
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
+    v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.owns`] = a.owns;
   }
   return v;

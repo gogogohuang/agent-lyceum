@@ -151,7 +151,7 @@ describe("prompts", () => {
     expect(s).toContain(path.join(p.paths.outboxRoot, "fe-member"));
     expect(s).toContain("You may send to: lead.");
     expect(s).not.toContain("| done");
-    expect(buildSystemPrompt(p, p.agents.lead)).toContain("type: reply        # task | reply | done");
+    expect(buildSystemPrompt(p, p.agents.lead)).toContain("type: reply        # task | reply | ask | done");
     expect(buildSystemPrompt(p, p.agents.lead)).toContain("## Result");
     expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("## Not done");
   });
@@ -182,5 +182,27 @@ describe("codexOutputTokens", () => {
     const out = ['{"type":"turn.completed","usage":{"output_tokens":5}}', "noise", '{"type":"turn.completed","usage":{"output_tokens":7}}'].join("\n");
     expect(codexOutputTokens(out)).toBe(12);
     expect(codexOutputTokens("nothing")).toBeUndefined();
+  });
+});
+
+describe("ask protocol in the system prompt", () => {
+  it("explains ask to the lead and to members with can_ask_user, and to nobody else", () => {
+    const env = makeEnv();
+    try {
+      env.editProjectYaml((t) => t.replace("  qa-member:\n    can_message: [lead]", "  qa-member:\n    can_message: [lead]\n    can_ask_user: true"));
+      const p = env.project();
+      const lead = buildSystemPrompt(p, p.agents.lead!);
+      const fe = buildSystemPrompt(p, p.agents["fe-member"]!);
+      const qa = buildSystemPrompt(p, p.agents["qa-member"]!);
+      expect(lead).toContain("## Asking the user");
+      expect(lead).toContain("<ask>");
+      expect(lead).toMatch(/task \| reply \| ask \| done/);
+      expect(qa).toContain("## Asking the user");
+      expect(qa).toMatch(/task \| reply \| ask/);
+      expect(fe).not.toContain("Asking the user");
+      expect(fe).not.toContain("<ask>");
+    } finally {
+      env.cleanup();
+    }
   });
 });

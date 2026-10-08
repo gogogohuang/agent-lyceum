@@ -10,7 +10,7 @@ import type { RunOutcome } from "./schema.js";
 export const STATE_FILE = "state.json";
 export const STATE_SCHEMA_VERSION = 2;
 
-export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "cancelled";
+export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "cancelled" | "waiting";
 export type MailLayout = "run" | "legacy";
 
 export interface WakeTopic {
@@ -68,6 +68,8 @@ export interface RunState {
   verification?: string;
   /** How many `done` mails were sent back because they broke the completion contract. */
   done_rejections?: number;
+  /** How many malformed `ask` mails each agent had sent back (the limit is MAX_ASK_REJECTIONS). */
+  ask_rejections?: Record<string, number>;
   /** Recovery remarks (interrupted attempts whose side effects may have happened). */
   notes?: string[];
   /** "worktree": non-lead agents work in their own git worktrees. */
@@ -110,12 +112,13 @@ const WireState = z
     ended_at: z.string().optional(),
     rounds: nonNeg.optional(),
     max_rounds: nonNeg.optional(),
-    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed", "cancelled"]).optional(),
-    outcome: z.enum(["completed", "partial", "blocked", "failed", "cancelled"]).optional(),
+    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed", "cancelled", "waiting"]).optional(),
+    outcome: z.enum(["completed", "partial", "blocked", "failed", "waiting", "cancelled"]).optional(),
     outcome_note: z.string().optional(),
     verification: z.string().optional(),
     done_rejections: nonNeg.optional(),
     notes: z.array(z.string()).optional(),
+    ask_rejections: z.record(z.string(), nonNeg).optional(),
     sessions: z.record(z.string(), z.string()).optional(),
     output_tokens: nonNeg.optional(),
     last_wake: z.record(z.string(), z.any()).optional(),
@@ -209,5 +212,5 @@ export function bindRunProject(project: ResolvedProject, runDir: string, layout:
 export function outcomeOf(s: Pick<RunState, "outcome" | "end_reason">): { outcome: RunOutcome; verified: boolean } | undefined {
   if (s.outcome) return { outcome: s.outcome, verified: true };
   if (!s.end_reason) return undefined;
-  return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : "partial", verified: false };
+  return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : s.end_reason === "waiting" ? "waiting" : "partial", verified: false };
 }

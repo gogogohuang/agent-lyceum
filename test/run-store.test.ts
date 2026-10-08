@@ -89,3 +89,15 @@ describe("legacy state", () => {
     expect(() => loadRunState(dir)).toThrow(/Run state is invalid .*rounds/);
   });
 });
+
+describe("waiting runs", () => {
+  it("round-trips end_reason waiting and the ask rejection counts", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "al-rs-"));
+    const s = { ...newRunState({ run_id: "r1" }), end_reason: "waiting" as const, outcome: "waiting" as const, ask_rejections: { lead: 1 } };
+    saveRunState(d, s);
+    const back = loadRunState(d);
+    expect(back.end_reason).toBe("waiting");
+    expect(back.outcome).toBe("waiting");
+    expect(back.ask_rejections).toEqual({ lead: 1 });
+  });
+});

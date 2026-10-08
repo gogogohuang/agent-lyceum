@@ -150,3 +150,52 @@ describe("unreadFiles", () => {
     expect(listUnread(p, "lead")).toHaveLength(1);
   });
 });
+
+describe("ask mail", () => {
+  const ASK_BODY = `<ask><question id="q1"><text>JWT?</text></question></ask>`;
+  const put = (project: ReturnType<TestEnv["project"]>, from: string, fm: string) =>
+    write(path.join(outboxDir(project, from), `${Math.random()}.md`), `---\n${fm}\n---\n\n${ASK_BODY}\n`);
+
+  it("hands an ask from the lead to the caller instead of delivering it", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    put(p, "lead", "to: lead\ntype: ask\nsubject: need input");
+    const res = routeOutboxes(p);
+    expect(res.asks).toHaveLength(1);
+    expect(res.asks[0]).toMatchObject({ from: "lead", subject: "need input" });
+    expect(res.asks[0]?.body).toContain("<ask>");
+    expect(res.delivered).toEqual([]);
+    expect(res.rejected).toEqual([]);
+    expect(fs.existsSync(res.asks[0]!.file)).toBe(true); // stays in the outbox until the session has stored the questions
+  });
+
+  it("rejects an ask from a member without can_ask_user and points it to the lead", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    put(p, "fe-member", "to: lead\ntype: ask\nsubject: need input");
+    const res = routeOutboxes(p);
+    expect(res.asks).toEqual([]);
+    expect(res.rejected).toHaveLength(1);
+    expect(res.rejected[0]?.reason).toMatch(/can_ask_user/);
+    expect(listUnread(p, "fe-member").some((m) => m.meta.subject.includes("rejected"))).toBe(true);
+  });
+
+  it("accepts an ask from a member once can_ask_user is on", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    can_message: [lead]\n    can_ask_user: true"));
+    const p = env.project();
+    ensureProjectDirs(p);
+    put(p, "fe-member", "to: lead\ntype: ask\nsubject: need input");
+    expect(routeOutboxes(p).asks.map((a) => a.from)).toEqual(["fe-member"]);
+  });
+
+  it("does not need a `to` for an ask", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    put(p, "lead", "type: ask\nsubject: s");
+    expect(routeOutboxes(p).asks).toHaveLength(1);
+  });
+});

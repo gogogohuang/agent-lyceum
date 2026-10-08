@@ -30,13 +30,14 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `validate [-p name] [--task-file f]` | Validate the merged config and show each agent's enforcement level. [details](docs/commands.md#validate) |
 | `run ["task"] [--task-file f] [-p name]` | Give the task to the lead and run until done. [details](docs/commands.md#run) |
 | `resume [run-id] [-p name]` | Continue an interrupted or failed run. [details](docs/commands.md#resume) |
+| `answer <run-id> [--no-edit] [-p name]` | Answer the questions a waiting run asked, then continue it. [details](docs/commands.md#answer) |
 | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | Delete a run with its task memory and worktrees. [details](docs/commands.md#clear) |
 | `config show --resolved [-p name] [--json]` | Print every effective setting and where it came from. [details](docs/commands.md#config-show) |
 | `doctor [-p name] [--json]` | Check config, git, the lock and runtime CLIs without running agents. [details](docs/commands.md#doctor) |
 | `unlock [-p name] --force` | Remove the project lock a crashed run left behind. [details](docs/commands.md#unlock) |
 
-Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
+Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
 
 ## Monitor mod (Claude Code)
 
@@ -93,7 +94,7 @@ agents:
   qa-member: { can_message: [lead], owns: ["tests/**"] }
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `owns` (repo globs).
+Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `owns` (repo globs).
 
 Rules checked by `validate`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository.
 

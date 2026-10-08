@@ -39,6 +39,7 @@ export const AgentPartial = z
     resume: z.boolean().optional(),
     can_message: z.union([z.literal("all"), z.array(z.string())]).optional(),
     can_edit_agent_md: z.boolean().optional(),
+    can_ask_user: z.boolean().optional(),
     owns: z.array(z.string()).optional(),
   })
   .strict();
@@ -94,15 +95,17 @@ export const DISPATCHER_DEFAULTS: DispatcherSettings = {
 };
 
 /** How a run turned out, independent of why it stopped (`EndReason`). Only "completed" means success. */
-export const RUN_OUTCOMES = ["completed", "partial", "blocked", "failed", "cancelled"] as const;
+export const RUN_OUTCOMES = ["completed", "partial", "blocked", "failed", "waiting", "cancelled"] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
-export function exitCodeForOutcome(outcome: RunOutcome): 0 | 1 | 2 | 130 {
+export function exitCodeForOutcome(outcome: RunOutcome): 0 | 1 | 2 | 3 | 130 {
   switch (outcome) {
     case "completed":
       return 0;
     case "failed":
       return 1;
+    case "waiting":
+      return 3;
     case "cancelled":
       return 130;
     default:

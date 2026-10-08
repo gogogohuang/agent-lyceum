@@ -28,15 +28,37 @@
 
 ## run
 
-**用法:** `run ["task"] [--task-file f] [-p name]`
+**用法:** `run ["task"] [--task-file f] [--assume-defaults] [-p name]`
 
-把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。
+把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。agent 向你提問時 run 會暫停，見 [answer](#answer)。`--assume-defaults` 讓有建議值的題目直接採用建議值而不暫停（沒有建議值的題目仍然暫停）。
 
 ## resume
 
-**用法:** `resume [run-id] [-p name]`
+**用法:** `resume [run-id] [--assume-defaults] [-p name]`
 
-接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。
+接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。等待回答中的 run 要等所有未答題目都有有效答案才會繼續，否則 `resume` 會列出缺哪些題並以 `3` 結束。
+
+## answer
+
+**用法:** `answer <run-id> [--no-edit] [--assume-defaults] [-p name]`
+
+回答等待中的 run 提出的問題。agent 以 `type: ask` 信件提問（lead 一律可以；成員需設 `can_ask_user: true`）。dispatcher 把所有問題集中在一個檔案 `runs/<run-id>/mail/ask-reply.md`，讓 run 以 `waiting` 結束（exit `3`、釋放鎖、不消耗輪數）並印出檔案路徑；`status` 也會顯示路徑與未答題數。
+
+```xml
+<ask-reply status="pending" asked_by="lead" round="7">
+  <question id="q1" asker="lead">
+    <text>登入要用 session 還是 JWT？</text>
+    <options>
+      <option>session</option>
+      <option>jwt</option>
+    </options>
+    <suggested reason="既有程式已用 cookie">session</suggested>
+    <answer></answer>
+  </question>
+</ask-reply>
+```
+
+你只需要填 `<answer>` 標籤。有 `<options>` 的題目填其中一個選項，或以 `other:` 開頭寫自訂文字；沒有選項的題目填任何非空文字。`answer` 會用 `$VISUAL`／`$EDITOR`（預設 `vi`）開啟檔案、檢查答案，全部有效後把答案以含 `<answers>` 區塊的 `reply` 信送給提問的 agent，並繼續 run。`--no-edit` 不開編輯器，只檢查你已經編輯好的檔案；自己直接編輯檔案再執行 `resume` 效果相同。有缺漏或無效時會列出問題並以 `3` 結束。在終端機裡，run 進入等待時 `run` 與 `resume` 會自己開編輯器。`--assume-defaults` 讓每個沒答、但有 `<suggested>` 的題目採用建議值（檔案中標記 `by="default"`），其餘仍然等待。已經回答過的題目會留在檔案裡，agent 追加第二批問題時不會再問。
 
 ## status
 
@@ -76,7 +98,7 @@
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [answer](#answer)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
 
 ## 選擇專案
 

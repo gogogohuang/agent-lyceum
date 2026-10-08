@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { askReplyPath, writeAskReply } from "../src/ask-reply.js";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { loadRunState } from "../src/run-store.js";
-import { formatRunDetail, formatStatus, formatTaskList } from "../src/status.js";
+import { buildStatusReport, formatRunDetail, formatStatus, formatStatusReport, formatTaskList } from "../src/status.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -196,5 +197,36 @@ describe("status: recovery notes", () => {
     expect(out).toContain("20260101-000000");
     const detail = formatRunDetail({ dir: "/x", state: loadRunState(path.join(env.project().paths.runs, "20260101-000000")) }, NOW);
     expect(detail).toContain("⚠ fe-member attempt 1 was interrupted");
+  });
+});
+
+describe("status: a waiting run", () => {
+  it("is reported as waiting with the ask-reply path and the number of open questions", () => {
+    env = makeEnv();
+    writeRun(env, { end_reason: "waiting", outcome: "waiting" });
+    const dir = path.join(env.project().paths.runs, "20260101-000000");
+    writeAskReply(dir, {
+      status: "pending",
+      askedBy: "lead",
+      round: 1,
+      questions: [
+        { id: "q1", text: "a?", asker: "lead", answer: { value: "x", by: "user" } },
+        { id: "q2", text: "b?", asker: "lead" },
+      ],
+    });
+    const report = buildStatusReport(env.project(), "20260101-000000");
+    expect(report.run?.state).toBe("waiting");
+    expect(report.run?.ask).toEqual({ path: askReplyPath(dir), total: 2, unanswered: 1 });
+    const text = formatStatusReport(report, NOW, false);
+    expect(text).toContain(askReplyPath(dir));
+    expect(text).toContain("等待回答");
+  });
+
+  it("leaves ordinary runs without an ask field", () => {
+    env = makeEnv();
+    writeRun(env, { end_reason: "done", outcome: "completed" });
+    const report = buildStatusReport(env.project(), "20260101-000000");
+    expect(report.run?.state).toBe("ended");
+    expect(report.run?.ask).toBeUndefined();
   });
 });

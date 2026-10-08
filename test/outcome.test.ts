@@ -5,6 +5,7 @@ import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { doneContract } from "../src/format.js";
 import { outboxDir } from "../src/policy.js";
+import { endOutcome } from "../src/run-outcome.js";
 import { loadRunState, outcomeOf } from "../src/run-store.js";
 import { exitCodeForOutcome, RUN_OUTCOMES } from "../src/schema.js";
 import { formatTaskList } from "../src/status.js";
@@ -37,8 +38,17 @@ describe("exit codes", () => {
       ["partial", 2],
       ["blocked", 2],
       ["failed", 1],
+      ["waiting", 3],
       ["cancelled", 130],
     ]);
+  });
+});
+
+describe("waiting", () => {
+  it("is an outcome of its own, not a failure", () => {
+    const o = endOutcome("waiting");
+    expect(o.outcome).toBe("waiting");
+    expect(o.note).toMatch(/answer/);
   });
 });
 
