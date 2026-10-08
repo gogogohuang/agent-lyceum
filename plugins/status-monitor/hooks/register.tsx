@@ -20,7 +20,7 @@ async function publish($: EngineInterface, targets: Target[]) {
   const snap = await read($, snapshot)
   const reports = targets.map(t => snap[t.key]?.report).filter((r): r is Report => !!r)
   const errors = targets.map(t => snap[t.key]?.error).filter((m): m is string => !!m)
-  $.ui.status(reports.length === 0 && errors.length ? `team 無法取得狀態：${errors[0]}` : overviewLine(reports) ?? 'team 閒置（無執行紀錄）')
+  $.ui.status(reports.length === 0 && errors.length ? `team 無法取得狀態：${errors[0]}` : overviewLine(reports) ?? 'team 閒置（無執行中）')
 }
 
 async function poll($: EngineInterface, t: Target, targets: Target[]) {

@@ -97,10 +97,11 @@ export function line(x: unknown): string {
 
 /** Status line for several projects at once; a single report keeps the one-project format. */
 export function overviewLine(reports: Report[]): string | undefined {
-  const withRun = reports.filter(r => r.run)
   if (reports.length <= 1) return statusLine(reports[0] ?? null)
+  // Only running projects are listed; finished or interrupted runs stay out of the line.
+  const withRun = reports.filter(r => r.run?.state === 'running')
   if (!withRun.length) return undefined
-  const running = withRun.filter(r => r.run?.state === 'running').length
+  const running = withRun.length
   const unread = withRun.reduce((n, r) => n + r.agents.reduce((m, a) => m + a.unread, 0), 0)
   const parts = withRun.map(r => `${r.project.name} ${runLabel(r.run as Run)} ${progress(r.run as Run)}`)
   return `team ${running}/${reports.length} 執行中 · ${parts.join(' | ')}${unread ? ` · ${unread} 未讀` : ''}`
