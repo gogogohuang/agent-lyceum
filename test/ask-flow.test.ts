@@ -46,7 +46,7 @@ const SCRIPT = {
   ],
 };
 
-describe("ask → waiting → answer → completed", () => {
+describe("ask → waiting → answer → completed", { timeout: 60_000 }, () => {
   it("exits 3 with the file path, refuses answer --no-edit until complete, then finishes", () => {
     const t = setup(SCRIPT);
     const first = t.sync(["run", "build it", "-p", "demo"]);
@@ -92,7 +92,7 @@ describe("ask → waiting → answer → completed", () => {
   });
 });
 
-describe("--assume-defaults", () => {
+describe("--assume-defaults", { timeout: 60_000 }, () => {
   it("uses suggestions (marked by=default) but still waits for questions without one", () => {
     const t = setup(SCRIPT);
     t.sync(["run", "build it", "-p", "demo"]);

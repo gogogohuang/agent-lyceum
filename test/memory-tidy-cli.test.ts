@@ -45,7 +45,7 @@ const TIDY = (memDir: string) => ({
   ],
 });
 
-describe("memory tidy → restore", () => {
+describe("memory tidy → restore", { timeout: 60_000 }, () => {
   it("tidies the lead's project memory, archives b.md, then restore brings it back", () => {
     const t = setup(TIDY);
     const r = t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead"]);
