@@ -49,6 +49,9 @@ export function codexOutputTokens(jsonl: string): number | undefined {
   return total;
 }
 
+/** Codex has one `web_search` setting: `cached` answers from an index, `live` browses. */
+const CODEX_WEB_SEARCH = { none: "disabled", search: "cached", fetch: "live" } as const;
+
 export function buildCodexInvocation(input: WakeInput): Invocation {
   const { project, agent, workDir } = input;
   const repo = repoDirFor(project, agent.name);
@@ -66,6 +69,7 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
   ];
   if (agent.model) common.push("-m", agent.model);
   if (agent.effort) common.push("-c", `model_reasoning_effort="${agent.effort}"`);
+  if (agent.allowWeb) common.push("-c", `web_search="${CODEX_WEB_SEARCH[agent.allowWeb]}"`);
 
   const args = input.sessionId
     ? ["exec", "resume", input.sessionId, "-c", 'sandbox_mode="workspace-write"', ...common, "-"]

@@ -22,6 +22,10 @@ export function inferRuntime(model: string | undefined): Runtime | undefined {
   return undefined;
 }
 
+/** How much of the web an agent may use: nothing, search only, or search plus fetching pages. Unset leaves each runtime's own default alone. */
+export const WEB_LEVELS = ["none", "search", "fetch"] as const;
+export type WebLevel = (typeof WEB_LEVELS)[number];
+
 const Memory = z
   .object({
     global: z.string().optional(),
@@ -40,6 +44,7 @@ export const AgentPartial = z
     can_message: z.union([z.literal("all"), z.array(z.string())]).optional(),
     can_edit_agent_md: z.boolean().optional(),
     can_ask_user: z.boolean().optional(),
+    allow_web: z.enum(WEB_LEVELS).optional(),
     owns: z.array(z.string()).optional(),
   })
   .strict();
