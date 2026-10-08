@@ -28,9 +28,19 @@ Validate the merged config and print each agent's enforcement level. Exit 1 on e
 
 ## run
 
-**Usage:** `run ["task"] [--task-file f] [--assume-defaults] [-p name]`
+**Usage:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
 
 Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`. If an agent asks you something the run pauses; see [answer](#answer). `--assume-defaults` answers every question that has a suggested value with it instead of pausing (questions without a suggestion still pause).
+
+With `--agent <name>` the task goes to that one member of the project and nobody else is woken: it cannot mail teammates, cannot ask you and cannot edit any `AGENT.md`, and its own `done` mail ends the run (so it must send one). It is an ordinary run otherwise: it has a run id and the project lock, shows in `status`, and can be resumed (the run remembers that it is solo) and cleared. `--assume-defaults` has no effect with it. A name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
+
+## call
+
+**Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
+
+Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent works in `--dir` (default: the current directory), with its global `AGENT.md` and its global memory. It may change files in that directory and its own global memory; it cannot mail anyone, ask you, or edit any `AGENT.md`, `COMMON.md` or configuration (a change to a protected file is put back and reported). Give the task as text *or* `--task-file`.
+
+The agent's final reply is printed on stdout; everything else (progress, the call id) goes to stderr, so the answer can be piped. Each call keeps `task.md`, `log/` and `result.md` in `<home>/calls/<call-id>/` (nothing deletes them). Exit codes: `0` success, `1` failure or timeout (`dispatcher.wake_timeout_sec` default), `130` Ctrl-C. Only one call per agent can run at a time: a second one is refused while the first runs. A call cannot be resumed; call again.
 
 ## resume
 

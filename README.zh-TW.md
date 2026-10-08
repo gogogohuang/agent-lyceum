@@ -28,7 +28,8 @@ npx agent-lyceum status
 | `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
 | `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
 | `validate [-p name] [--task-file f]` | 驗證設定並顯示每個 agent 的防護等級。 [詳細](docs/commands.zh-TW.md#validate) |
-| `run ["task"] [--task-file f] [-p name]` | 把任務交給 lead 並執行到結束。 [詳細](docs/commands.zh-TW.md#run) |
+| `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
+| `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
 | `resume [run-id] [-p name]` | 接續被中斷或失敗的 run。 [詳細](docs/commands.zh-TW.md#resume) |
 | `answer <run-id> [--no-edit] [-p name]` | 回答等待中的 run 提出的問題，並接續執行。 [詳細](docs/commands.zh-TW.md#answer) |
 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |

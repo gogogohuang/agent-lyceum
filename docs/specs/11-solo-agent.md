@@ -1,6 +1,6 @@
 # 11 單獨呼叫某個 agent（solo）
 
-狀態：設計已確認，尚未實作（plan 待寫）。
+狀態：已實作（plan：docs/plans/2026-10-08-11-solo-agent.md）。
 
 ## 11.1 問題
 
@@ -25,6 +25,8 @@
 | 12 | `call` 不接 `resume`：失敗就重新呼叫。 |
 | 13 | 工作目錄不是 git repo 也可以呼叫，不要求 worktree。 |
 
+實作時 soloProject 保留專案所有成員（只改指定 agent 的權限），讓其他成員的 AGENT.md、記憶與信箱仍受 deny 規則與 ProtectedGuard 保護；他們沒有信就不會被喚醒。
+
 ### 實作時的補充
 
 - `run --agent` 的 run 狀態要記下 `solo_agent`，`resume` 時套用同一組限制；沒有這個欄位的舊 run 照舊行為。
@@ -36,7 +38,10 @@
 
 ## 11.3 影響的檔案
 
-- 新增 `src/solo.ts`：解析單一 agent（專案內衍生設定／global 暫時專案）、solo 專用 prompt、`call` 的紀錄目錄與輕量鎖。
+- 新增 `src/solo.ts`：`soloProject`。
+- 新增 `src/call.ts`：`call` 的解析、暫時專案、輕量鎖與流程。
+- `src/config.ts`：`resolveProjectFrom`、`ResolvedProject.solo`。
+- `src/policy.ts`：solo 的寫入範圍。
 - `src/prompt.ts`：`buildSystemPrompt` 的 solo 變體。
 - `src/run-store.ts`：`RunState.solo_agent`（選填，舊 run 可讀）。
 - `src/run-session.ts`／`src/dispatcher.ts`：resume 時套用 `solo_agent`；其餘不改。

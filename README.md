@@ -28,7 +28,8 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
 | `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
 | `validate [-p name] [--task-file f]` | Validate the merged config and show each agent's enforcement level. [details](docs/commands.md#validate) |
-| `run ["task"] [--task-file f] [-p name]` | Give the task to the lead and run until done. [details](docs/commands.md#run) |
+| `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
+| `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
 | `resume [run-id] [-p name]` | Continue an interrupted or failed run. [details](docs/commands.md#resume) |
 | `answer <run-id> [--no-edit] [-p name]` | Answer the questions a waiting run asked, then continue it. [details](docs/commands.md#answer) |
 | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
