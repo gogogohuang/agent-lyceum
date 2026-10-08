@@ -343,3 +343,63 @@ export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   }
   return results;
 }
+
+export interface RestoreResult {
+  restored: string[];
+  skipped: { rel: string; reason: string }[];
+}
+
+function titleOf(file: string, rel: string): string {
+  const text = fs.readFileSync(file, "utf8");
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const name = fm ? /^name:\s*(.+)$/m.exec(fm[1] ?? "")?.[1]?.trim() : undefined;
+  if (name) return name;
+  const h = /^#\s+(.+)$/m.exec(text)?.[1]?.trim();
+  return h || path.basename(rel, path.extname(rel));
+}
+
+function pruneEmpty(dir: string, stop: string): void {
+  for (let d = dir; d !== stop && d.startsWith(stop + path.sep); d = path.dirname(d)) {
+    if (fs.readdirSync(d).length) break;
+    fs.rmdirSync(d);
+  }
+}
+
+/** Move the files of one tidy's archive back to where they were. Nothing that exists now is overwritten. */
+export function restoreMemory(o: { project: ResolvedProject; agent: string; layer: Layer; stamp: string }): RestoreResult {
+  if (!STAMP_RE.test(o.stamp)) throw new Error(`"${o.stamp}" is not an archive stamp (expected something like 20261008T031500Z).`);
+  const [t] = targetsFor(o.project, { layer: o.layer, agent: o.agent });
+  const archive = path.join(t!.dir, ARCHIVE_DIR, o.stamp);
+  if (!fs.existsSync(archive)) throw new Error(`No archive ${o.stamp} for ${o.agent} (${o.layer}). Archives: ${listArchives(t!.dir).join(", ") || "(none)"}.`);
+
+  const restored: string[] = [];
+  const skipped: RestoreResult["skipped"] = [];
+  const inArchive = listMemoryFiles(archive).filter((f) => f.rel !== TIDY_REPORT_FILE);
+  for (const f of inArchive) {
+    const from = path.join(archive, f.rel);
+    const to = path.join(t!.dir, f.rel);
+    if (fs.existsSync(to)) {
+      skipped.push({ rel: f.rel, reason: "a file with this name exists now; it was not overwritten" });
+      continue;
+    }
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    pruneEmpty(path.dirname(from), archive);
+    restored.push(f.rel);
+  }
+
+  const indexFile = path.join(t!.dir, "MEMORY.md");
+  const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, "utf8") : "";
+  const add = restored.filter((rel) => rel.endsWith(".md") && !index.includes(rel)).map((rel) => `- [${titleOf(path.join(t!.dir, rel), rel)}](${rel}) — restored from tidy ${o.stamp}`);
+  if (add.length) atomicWrite(indexFile, `${index.replace(/\n*$/, index ? "\n" : "")}${add.join("\n")}\n`);
+  return { restored, skipped };
+}
+
+/** The stamps of the archives in a memory directory, oldest first. */
+export function listArchives(dir: string): string[] {
+  try {
+    return fs.readdirSync(path.join(dir, ARCHIVE_DIR)).filter((n) => STAMP_RE.test(n)).sort();
+  } catch {
+    return [];
+  }
+}

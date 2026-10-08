@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyMemory, writeTidyState } from "../src/memory-tidy.js";
+import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyMemory, restoreMemory, writeTidyState } from "../src/memory-tidy.js";
 import { writePolicy } from "../src/policy.js";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { buildTidyPrompts, type TidyContext } from "../src/prompt.js";
@@ -423,5 +423,69 @@ describe("the write policy covers the tidy files", () => {
     expect(pol.allowDirs).toContain(lead.memory.project);
     for (const d of pol.deny) expect(path.join(lead.memory.project!, ".archive").startsWith(d + path.sep) || path.join(lead.memory.project!, ".archive") === d).toBe(false);
     expect(pol.deny).toContain(p.agents["fe-member"]!.memory.project);
+  });
+});
+
+describe("restoreMemory", () => {
+  const archived = (e: TestEnv) => {
+    const d = mem(e);
+    write(path.join(d, "MEMORY.md"), "- [a](a.md)\n");
+    write(path.join(d, "a.md"), "alpha");
+    const stamp = "20261008T031500Z";
+    write(path.join(d, ".archive", stamp, "b.md"), "---\nname: Beta notes\n---\nbeta");
+    write(path.join(d, ".archive", stamp, "sub/c.md"), "# Gamma heading\ngamma");
+    write(path.join(d, ".archive", stamp, "tidy-report.md"), "## Archived\nb, c");
+    return { d, stamp };
+  };
+
+  it("moves the files back to their paths and adds index lines for the ones the index does not mention", () => {
+    env = makeMemoryEnv();
+    const { d, stamp } = archived(env);
+    const r = restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp });
+    expect(r.restored.sort()).toEqual(["b.md", "sub/c.md"]);
+    expect(r.skipped).toEqual([]);
+    expect(fs.readFileSync(path.join(d, "b.md"), "utf8")).toContain("beta");
+    expect(fs.existsSync(path.join(d, "sub/c.md"))).toBe(true);
+    const idx = fs.readFileSync(path.join(d, "MEMORY.md"), "utf8");
+    expect(idx).toContain("- [a](a.md)");
+    expect(idx).toContain("[Beta notes](b.md)");
+    expect(idx).toContain("[Gamma heading](sub/c.md)");
+    expect(fs.existsSync(path.join(d, ".archive", stamp, "tidy-report.md"))).toBe(true);
+    expect(fs.existsSync(path.join(d, ".archive", stamp, "b.md"))).toBe(false);
+  });
+
+  it("never overwrites a file that exists now", () => {
+    env = makeMemoryEnv();
+    const { d, stamp } = archived(env);
+    write(path.join(d, "b.md"), "newer content");
+    const r = restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp });
+    expect(r.restored).toEqual(["sub/c.md"]);
+    expect(r.skipped.map((s) => s.rel)).toEqual(["b.md"]);
+    expect(fs.readFileSync(path.join(d, "b.md"), "utf8")).toBe("newer content");
+    expect(fs.existsSync(path.join(d, ".archive", stamp, "b.md"))).toBe(true); // still safe in the archive
+  });
+
+  it("rejects a malformed stamp and an unknown archive", () => {
+    env = makeMemoryEnv();
+    archived(env);
+    expect(() => restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: "../x" })).toThrow(/stamp/i);
+    expect(() => restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: "20200101T000000Z" })).toThrow(/no archive/i);
+  });
+
+  it("recovers what a tidy archived (tidy then restore)", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const before = fs.readFileSync(path.join(d, "b.md"), "utf8");
+    const { invoker } = agent((archive) => {
+      fs.mkdirSync(archive, { recursive: true });
+      fs.renameSync(path.join(d, "b.md"), path.join(archive, "b.md"));
+      write(path.join(d, "MEMORY.md"), "- [a](a.md)\n");
+      report(archive);
+    });
+    const [res] = await tidyMemory({ ...only(env), invoker });
+    expect(fs.existsSync(path.join(d, "b.md"))).toBe(false);
+    restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: res!.archive! });
+    expect(fs.readFileSync(path.join(d, "b.md"), "utf8")).toBe(before);
+    expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf8")).toMatch(/b\.md/);
   });
 });
