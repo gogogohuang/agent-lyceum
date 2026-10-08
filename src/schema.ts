@@ -39,6 +39,7 @@ export const AgentPartial = z
     resume: z.boolean().optional(),
     can_message: z.union([z.literal("all"), z.array(z.string())]).optional(),
     can_edit_agent_md: z.boolean().optional(),
+    can_ask_user: z.boolean().optional(),
     owns: z.array(z.string()).optional(),
   })
   .strict();

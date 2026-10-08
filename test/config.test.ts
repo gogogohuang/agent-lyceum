@@ -148,3 +148,20 @@ describe("resolved configuration with sources", () => {
     for (const key of Object.keys(r.sources)) expect(key in values).toBe(true);
   });
 });
+
+describe("can_ask_user", () => {
+  it("defaults to true for the lead and false for everyone else", () => {
+    env = makeEnv();
+    const p = env.project();
+    expect(p.agents.lead?.canAskUser).toBe(true);
+    expect(p.agents["fe-member"]?.canAskUser).toBe(false);
+  });
+
+  it("can be switched on for a member in project.yaml and shows in config --resolved", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    can_message: [lead]\n    can_ask_user: true"));
+    const p = env.project();
+    expect(p.agents["fe-member"]?.canAskUser).toBe(true);
+    expect(flattenResolved(p)["agents.fe-member.can_ask_user"]).toBe(true);
+  });
+});
