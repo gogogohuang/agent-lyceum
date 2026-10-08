@@ -51,7 +51,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     "```",
     "---",
     "to: <agent-name>",
-    "type: reply        # task | reply" + (isLead ? " | done" : ""),
+    `type: reply        # task | reply${agent.canAskUser ? " | ask" : ""}${isLead ? " | done" : ""}`,
     "subject: <short subject>",
     "reply_to: <message id>   # optional",
     "---",
@@ -76,6 +76,25 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     isLead
       ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run."
       : "- `done` has no required headings.",
+    ...(agent.canAskUser
+      ? [
+          "",
+          "## Asking the user",
+          "You may ask the human user with `type: ask` (no `to` needed). The run then pauses until they answer, so ask only when the answer changes what you do next and you cannot work it out from the code, the memory or the task. Ask everything you need in ONE batch (at most 10 questions); prefer questions with `<options>` and a `<suggested>` value (with a `reason`) so the user can answer quickly. The body is exactly this:",
+          "",
+          "```",
+          "<ask>",
+          '  <question id="q1">',
+          "    <text>Session or JWT for login?</text>",
+          "    <options><option>session</option><option>jwt</option></options>",
+          '    <suggested reason="existing code already uses cookies">session</suggested>',
+          "  </question>",
+          "</ask>",
+          "```",
+          "",
+          "The answers come back to you as a `reply` mail containing an `<answers>` block. A user answer that starts with `other:` is free text. Do not ask what you could decide yourself, and do not ask again for something already answered.",
+        ]
+      : []),
     ...(isLead
       ? [
           "",
