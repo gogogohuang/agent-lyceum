@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
+import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
@@ -173,7 +174,7 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
   };
 }
 
-function reportRun(summary: RunSummary, runDir: string): never {
+function printRun(summary: RunSummary, runDir: string): void {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
@@ -181,7 +182,65 @@ function reportRun(summary: RunSummary, runDir: string): never {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
   }
+}
+
+function reportRun(summary: RunSummary, runDir: string): never {
+  printRun(summary, runDir);
   process.exit(exitCodeForOutcome(summary.outcome));
+}
+
+/** Take the lock and continue a run; the lock is released when it stops (also when it stops because it waits for answers). */
+async function continueRun(pr: ResolvedProject, dir: string, runId: string): Promise<RunSummary> {
+  const lease = takeLock(pr, runId);
+  const cancel = cancelOnSignals();
+  try {
+    console.log(`Project ${pr.name} — repo ${pr.dir}`);
+    const state = loadRunState(dir);
+    console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
+    // Read the state again under the lock: another process may have changed it while we were checking.
+    return await runTeam({ project: pr, resume: state, runDir: dir, signal: cancel.signal });
+  } finally {
+    cancel.dispose();
+    lease.release();
+  }
+}
+
+const interactive = (): boolean => !!process.stdin.isTTY && !!process.stdout.isTTY;
+
+function printWaiting(pr: ResolvedProject, runId: string, file: string, problems: string[]): void {
+  console.log(`\nRun ${runId} is waiting for your answers.\n  File: ${file}`);
+  for (const p of problems) console.log(`  - ${p}`);
+  console.log(`Answer with: agent-lyceum answer ${runId} -p ${pr.name}   (or edit the file, then: agent-lyceum resume ${runId} -p ${pr.name})`);
+}
+
+/**
+ * Keep going while the run stops to ask and the questions can be settled right now: by --assume-defaults, or (in a terminal)
+ * by opening the editor. Otherwise print where to answer and exit 3.
+ */
+async function driveRun(pr: ResolvedProject, runDir: string, first: RunSummary, assumeDefaults: boolean): Promise<never> {
+  let summary = first;
+  while (summary.outcome === "waiting") {
+    let prep = prepareAnswers(runDir, { assumeDefaults });
+    while (!prep.complete && interactive()) {
+      console.log(`\nRun ${summary.runId} needs your answers (${prep.path}).`);
+      openInEditor(prep.path);
+      prep = prepareAnswers(runDir, {});
+      if (prep.complete) break;
+      console.log("Some answers are missing or invalid:");
+      for (const p of prep.problems) console.log(`  - ${p}`);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const again = (await rl.question("Edit again? [Y/n] ")).trim().toLowerCase();
+      rl.close();
+      if (again === "n" || again === "no") break;
+    }
+    if (!prep.complete) {
+      printRun(summary, runDir);
+      printWaiting(pr, summary.runId, prep.path, prep.problems);
+      process.exit(3);
+    }
+    summary = await continueRun(pr, runDir, summary.runId);
+  }
+  return reportRun(summary, runDir);
 }
 
 program
@@ -189,7 +248,8 @@ program
   .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>.')
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the task from a file")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string }) => {
+  .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
@@ -211,7 +271,7 @@ program
         cancel.dispose();
         lease.release();
       }
-      reportRun(summary, runDir);
+      await driveRun(pr, runDir, summary, !!opts.assumeDefaults);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -221,7 +281,8 @@ program
   .command("resume [run-id]")
   .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent. Without an id, picks the newest run that is not done or running; with an id, continues that run.")
   .option("-p, --project <name>")
-  .action(async (runId: string | undefined, opts: { project?: string }) => {
+  .option("--assume-defaults", "if the run waits for answers, use the suggested answer for every unanswered question that has one")
+  .action(async (runId: string | undefined, opts: { project?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
@@ -251,19 +312,46 @@ program
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 
-      const lease = takeLock(pr, state.run_id);
-      let summary: RunSummary;
-      const cancel = cancelOnSignals();
-      try {
-        console.log(`Project ${pr.name} — repo ${pr.dir}`);
-        console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${pr.dispatcher.max_rounds}: ${state.task_summary}`);
-        // Read the state again under the lock: another process may have changed it while we were checking.
-        summary = await runTeam({ project: pr, resume: loadRunState(dir), runDir: dir, signal: cancel.signal });
-      } finally {
-        cancel.dispose();
-        lease.release();
+      if (state.end_reason === "waiting") {
+        const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
+        if (!prep.complete) {
+          printWaiting(pr, state.run_id, prep.path, prep.problems);
+          process.exit(3);
+        }
       }
-      reportRun(summary, dir);
+      const summary = await continueRun(pr, dir, state.run_id);
+      await driveRun(pr, dir, summary, !!opts.assumeDefaults);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+program
+  .command("answer <run-id>")
+  .description("Answer the questions a waiting run asked: opens ask-reply.md in $EDITOR, checks the answers, then continues the run. With --no-edit it only checks a file you already edited.")
+  .option("-p, --project <name>")
+  .option("--no-edit", "do not open the editor; check the file as it is")
+  .option("--assume-defaults", "use the suggested answer for every unanswered question that has one")
+  .action(async (runId: string, opts: { project?: string; edit: boolean; assumeDefaults?: boolean }) => {
+    try {
+      assertName("run", runId);
+      const pr = loadProject(opts.project);
+      const dir = path.join(pr.paths.runs, runId);
+      if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
+      const state = loadRunState(dir);
+      if (state.end_reason !== "waiting") fail(`Run ${runId} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
+      if (opts.edit) openInEditor(prepareAnswers(dir, {}).path);
+      const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
+      if (!prep.complete) {
+        printWaiting(pr, runId, prep.path, prep.problems);
+        process.exit(3);
+      }
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
+      await preflight(pr);
+      const summary = await continueRun(pr, dir, runId);
+      await driveRun(pr, dir, summary, !!opts.assumeDefaults);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
