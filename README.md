@@ -107,6 +107,7 @@ agents:
   lead:      { resume: true, can_message: all, can_edit_agent_md: true }
   fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
   qa-member: { can_message: [lead], owns: ["tests/**"] }
+  pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
 Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`: what the agent may use of the web; unset means Claude Code gets no web tools and Codex keeps its own default; `search` = `WebSearch` / Codex `web_search="cached"`, `fetch` = `WebSearch` + `WebFetch` / Codex `web_search="live"`, `none` = no web tools / Codex `disabled`; `fetch` pulls whole pages into the agent's context, so give it only to agents that do little editing, such as a requirements or research role), `owns` (repo globs).

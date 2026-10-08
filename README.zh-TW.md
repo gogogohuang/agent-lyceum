@@ -108,6 +108,7 @@ agents:
   lead:      { resume: true, can_message: all, can_edit_agent_md: true }
   fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
   qa-member: { can_message: [lead], owns: ["tests/**"] }
+  pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
 Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路；不設時 Claude Code 沒有網路工具、Codex 維持它自己的預設；`search` = `WebSearch`／Codex `web_search="cached"`，`fetch` = `WebSearch` 加 `WebFetch`／Codex `web_search="live"`，`none` = 不給網路工具／Codex `disabled`；`fetch` 會把整個網頁放進 agent 的上下文，只建議給很少改檔的角色，例如需求或研究角色）、`owns`（repo glob）。
