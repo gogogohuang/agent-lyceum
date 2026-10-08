@@ -1,6 +1,6 @@
 # 10 記憶整理與淘汰（memory tidy）
 
-狀態：設計已與使用者逐題確認（brainstorming），尚未實作。
+狀態：已實作（plan：`docs/plans/2026-10-08-10-memory-tidy.md`）。
 
 ## 10.1 問題
 
@@ -22,6 +22,17 @@
 | 9 | 還原：`agent-lyceum memory restore <時間戳> -p <project> --agent a` 把該次封存的檔案移回，並補回索引條目。 |
 | 10 | 失敗（超時或驗證失敗）：以整理前的快照還原記憶目錄，不更新基準，印出原因。 |
 | 11 | `--dry-run`：只印出各 agent 的記憶統計與會附上的 project 變化摘要，不喚醒 agent、不改任何檔。 |
+
+### 實作時的補充
+
+- 時間戳格式 `YYYYMMDDTHHMMSSZ`（UTC）；`restore` 只接受這個格式。
+- 檔案守恆：整理前（含先前的 `.archive` 內容）每個檔案，整理後必須仍在原路徑，或在本次 `.archive/<時間戳>/` 的**相同相對路徑**；`MEMORY.md` 不得被封存；`tidy-report.md` 必須非空。
+- agent 不得改動它的其他記憶層（整理 project 時不得動 global）：dispatcher 比對其他層整理前後的內容雜湊。
+- 「已不存在的路徑」只看 Markdown 檔裡以反引號包起來、含 `/` 的詞：絕對路徑與 `~/` 直接檢查，相對路徑以專案 repo 為基準（global 層不檢查相對路徑）。
+- 整理的暫存（快照與 log）在 `<專案根>/tidy-work/<時間戳>/<agent>/`，成功後只刪快照。
+- `restore` 不覆蓋現有同名檔，並為 `MEMORY.md` 沒提到的 `.md` 補索引。
+- 專案範本只替 agent 設 global 記憶；預設的 project 層要先設 `memory.project` 才有目標。沒有目標時指令說明並以 `0` 結束。
+- `status`／`doctor` 的提示條件：`MEMORY.md` 超過注入 prompt 的上限（4096 bytes），或自上次整理已 50 個以上 commit；只提示。
 
 ## 10.3 影響的檔案
 

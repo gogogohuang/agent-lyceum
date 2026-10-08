@@ -84,6 +84,24 @@
 
 在不執行任何 agent 的前提下檢查環境：設定、git（平行 run 需要）、專案鎖，以及各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。只要團隊需要的功能被明確判定不支援就 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。
 
+## memory tidy
+
+**用法:** `memory tidy [-p name] [--agent a] [--layer project|global] [--dry-run]`
+
+讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。
+
+預設整理所有 agent 的 **project** 記憶。**global** 記憶由所有專案共用，所以只有加 `--layer global` 才會整理；task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 agent 設定 global 記憶，要使用 project 記憶需在 `project.yaml` 為 agent 設定 `memory.project`；沒有任何 agent 設定時，指令會說明並以 `0` 結束。
+
+每個 agent 會被喚醒一次來做這件事，不屬於任何 run（不消耗輪數），而且只能改動自己的記憶。淘汰＝封存，不是刪除：檔案會以相同的相對路徑搬到 `memory/.archive/<時間戳>/`，並附上 `tidy-report.md`（合併了什麼、封存了什麼與理由、仍存疑的項目）。agent 會看到每個記憶檔的大小與修改時間、`MEMORY.md` 索引、自上次整理以來 repo 的變化（`git log` 與 `git diff --stat`），以及記憶中提到但已不存在的路徑。`memory/.tidy-state.json` 記錄上次整理時 repo 的 `HEAD`；第一次整理沒有基準，只做路徑檢查。
+
+agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要專案鎖，所以有 run 在執行時會拒絕。`--dry-run` 只印出記憶大小、專案變化與已不存在的路徑：不喚醒任何 agent、不改任何檔案、也不取鎖。
+
+## memory restore
+
+**用法:** `memory restore <時間戳> -p name --agent a [--layer project|global]`
+
+還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。若現在已有同名檔案，不會覆蓋，只會回報並留在封存裡。`tidy` 結束時會印出時間戳。
+
 ## unlock
 
 **用法:** `unlock [-p name] --force`

@@ -35,6 +35,8 @@ npx agent-lyceum status
 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | 刪除 run 與其任務記憶、worktree。 [詳細](docs/commands.zh-TW.md#clear) |
 | `config show --resolved [-p name] [--json]` | 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#config-show) |
 | `doctor [-p name] [--json]` | 不執行 agent，檢查設定、git、鎖與 runtime CLI。 [詳細](docs/commands.zh-TW.md#doctor) |
+| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
+| `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
 | `unlock [-p name] --force` | 移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#unlock) |
 
 Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
