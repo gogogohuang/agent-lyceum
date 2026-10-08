@@ -12,6 +12,7 @@
 | [06](06-documentation.md) | 文件 | 低 | 無 | [plan](../plans/2026-10-07-06-documentation.md) |
 | [09](09-human-in-the-loop.md) | 人工問答 | 中 | 中 | [plan](../plans/2026-10-08-09-human-in-the-loop.md) |
 | [10](10-memory-tidy.md) | 記憶整理 | 中 | 中 | [plan](../plans/2026-10-08-10-memory-tidy.md) |
+| [11](11-solo-agent.md) | 單獨呼叫 agent | 中 | 中 | 待寫 |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
