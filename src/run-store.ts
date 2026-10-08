@@ -74,6 +74,8 @@ export interface RunState {
   notes?: string[];
   /** "worktree": non-lead agents work in their own git worktrees. */
   workspace_mode?: "shared" | "worktree";
+  /** Set when the run was started with `run --agent <name>`: that member works alone (a resumed run keeps it). */
+  solo_agent?: string;
   /** Agents whose finished work could not be brought into the repo yet; their work is kept on their branch. */
   blocked_integrations?: { agent: string; branch: string; reason: string; report: string }[];
   /** Snapshots of the repo taken so far (`refs/agent-lyceum/<run>/base-<n>`). */
@@ -126,6 +128,7 @@ const WireState = z
     task_summary: z.string().optional(),
     active: z.record(z.string(), z.any()).optional(),
     wakes: z.array(z.any()).optional(),
+    solo_agent: z.string().optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
   })
   .passthrough();

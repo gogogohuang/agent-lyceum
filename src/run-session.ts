@@ -17,6 +17,7 @@ import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, existingAgentWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
+import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
 
@@ -50,6 +51,8 @@ export interface RunSummary {
 
 export interface RunOptions {
   project: ResolvedProject;
+  /** Run only this member of the project, alone (`run --agent`). A resumed run uses the one recorded in its state. */
+  soloAgent?: string;
   /** The task for a new run; omit when resuming. */
   task?: PreparedTask;
   /** Continue this earlier run (same run dir, sessions and counters) instead of starting a new one. */
@@ -98,11 +101,13 @@ export class RunSession {
     if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
     const invoke = opts.invoker ?? realInvoker;
     const say = opts.log ?? ((s: string) => console.log(s));
-    const cfg = opts.project.dispatcher;
+    const soloName = resume ? resume.solo_agent : opts.soloAgent;
+    const base = soloName ? soloProject(opts.project, soloName) : opts.project;
+    const cfg = base.dispatcher;
     const runId = path.basename(runDir);
     const layout = resume ? resume.mail_layout : "run";
     // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
-    const project = bindRunProject(opts.project, runDir, layout);
+    const project = bindRunProject(base, runDir, layout);
     // Parallel agents work in their own git worktrees; refuse early (before anything is written) when that cannot be done.
     const wsMode = resolveWorkspaceMode(cfg);
     if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume });
@@ -139,6 +144,7 @@ export class RunSession {
         task_summary: t.subject,
         mail_layout: layout,
         workspace_mode: wsMode,
+        solo_agent: soloName,
       });
       const seed = parseSteps(task!.content, false);
       if (seed.length) state.steps = seed;
