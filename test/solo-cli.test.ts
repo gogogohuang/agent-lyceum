@@ -65,3 +65,42 @@ describe("run --agent", { timeout: 60_000 }, () => {
     expect(r.err).toMatch(/--assume-defaults.*ignored/);
   });
 });
+
+describe("call", { timeout: 60_000 }, () => {
+  it("prints only the answer on stdout, keeps a record, and takes no project lock", () => {
+    const t = setup({ calls: [{ agent: "pm", result: "ask the owner first" }] });
+    addGlobalAgent("pm");
+    const r = t.sync(["call", "pm", "is this ready to build?", "--dir", env.repo]);
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe("ask the owner first");
+    expect(r.err).toMatch(/Calling pm/);
+    const calls = path.join(env.home, "calls");
+    const [id] = fs.readdirSync(calls).filter((n) => !n.startsWith("."));
+    expect(fs.readFileSync(path.join(calls, id!, "result.md"), "utf8")).toMatch(/ask the owner first/);
+    expect(fs.readFileSync(path.join(calls, id!, "task.md"), "utf8")).toBe("is this ready to build?");
+    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(fs.existsSync(path.join(calls, ".lock-pm"))).toBe(false);
+  });
+
+  it("works without any registered project, in the current directory, with --task-file", () => {
+    const t = setup({ calls: [{ agent: "pm", result: "fine" }] });
+    addGlobalAgent("pm");
+    const elsewhere = path.join(env.root, "elsewhere");
+    fs.mkdirSync(elsewhere);
+    write(path.join(elsewhere, "ask.md"), "review the plan\n");
+    const r = t.sync(["call", "pm", "--task-file", "ask.md"], elsewhere);
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe("fine");
+  });
+
+  it("exits 1 for a failed call, an unknown agent, no task and both task forms", () => {
+    const t = setup({ calls: [] }); // the fake claude fails: no scripted call
+    addGlobalAgent("pm");
+    expect(t.sync(["call", "pm", "x", "--dir", env.repo]).code).toBe(1);
+    const unknown = t.sync(["call", "nobody", "x"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.err).toMatch(/Global agents: .*pm/);
+    expect(t.sync(["call", "pm"]).code).toBe(1);
+    expect(t.sync(["call", "pm", "x", "--task-file", "y.md"]).err).toMatch(/either/);
+  });
+});

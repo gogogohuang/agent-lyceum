@@ -16,6 +16,7 @@ import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
+import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { soloProject } from "./solo.js";
@@ -485,6 +486,37 @@ program
   });
 
 
+
+program
+  .command("call <agent> [task]")
+  .description("Call one agent of the global library on its own, outside any project: it works in --dir (default: the current directory) and its final answer is printed. It cannot mail anyone or ask you.")
+  .option("--task-file <path>", "read the task from a file")
+  .option("--dir <path>", "the directory the agent works in (default: the current directory)")
+  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string }) => {
+    try {
+      if (task !== undefined && opts.taskFile) fail("Give the task either as text or with --task-file, not both.");
+      const text = opts.taskFile ? readTaskFile(absPath(opts.taskFile, process.cwd())) : task;
+      if (!text?.trim()) fail("Give the task as text or with --task-file.");
+      const h = home();
+      const dir = absPath(opts.dir ?? ".", process.cwd());
+      const agent = resolveCallAgent(h, agentName);
+      await preflight(callProject(h, agent, dir, path.join(callsDir(h), "preflight")));
+
+      const cancel = cancelOnSignals();
+      let r: Awaited<ReturnType<typeof callAgent>>;
+      try {
+        r = await callAgent({ home: h, agent: agentName, task: text, dir, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+      }
+      console.error(`Call ${r.callId}: ${r.callDir}`);
+      if (r.cancelled) fail("Cancelled.", 130);
+      if (!r.ok) fail(`Call failed: ${r.error}\nLog: ${path.join(r.callDir, "log")}`);
+      console.log(r.text.trimEnd());
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
 
 const memoryCmd = program.command("memory").description("Look after the agents' long-term memory");
 
