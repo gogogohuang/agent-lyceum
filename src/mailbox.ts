@@ -11,7 +11,7 @@ import { must } from "./assert.js";
 
 export { atomicWrite };
 
-export const MESSAGE_TYPES = ["task", "reply", "failure", "done"] as const;
+export const MESSAGE_TYPES = ["task", "reply", "failure", "done", "ask"] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export interface MessageMeta {
@@ -192,6 +192,8 @@ export interface RouteResult {
   warnings: { from: string; id: string; subject: string; missing: string[] }[];
   /** The lead's `done`. Its file stays in the outbox until the caller has stored the result and calls `finishDone`. */
   done?: { from: string; subject: string; body: string; file: string; meta: Record<string, unknown> };
+  /** Questions for the user. Like `done`, the file stays in the outbox until the caller has stored the questions. */
+  asks: { from: string; subject: string; body: string; file: string; source: string }[];
   /** Latest `## Steps` checklist the lead sent, if any. */
   steps?: Step[];
 }
@@ -214,7 +216,7 @@ export function rejectDone(file: string): void {
 
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. Safe to run again after a crash. */
 export function routeOutboxes(project: ResolvedProject): RouteResult {
-  const res: RouteResult = { delivered: [], rejected: [], warnings: [] };
+  const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [] };
   const journal = project.run ? new RouteJournal(project.run.dir) : undefined;
   for (const sender of Object.values(project.agents)) {
     const dir = outboxDir(project, sender.name);
@@ -256,10 +258,19 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
       }
       const type = (d.type ?? "reply") as MessageType;
       if (!MESSAGE_TYPES.includes(type) || type === "failure") {
-        reject(`unknown or not allowed message type "${String(d.type)}" (use task, reply or done).`);
+        reject(`unknown or not allowed message type "${String(d.type)}" (use task, reply, ask or done).`);
         continue;
       }
       const subject = String(d.subject ?? "(no subject)");
+
+      if (type === "ask") {
+        if (!sender.canAskUser) {
+          reject(`you may not ask the user directly (can_ask_user is off for "${sender.name}"). Put the question in a reply to the lead ("${project.lead}"), who can ask.`);
+          continue;
+        }
+        res.asks.push({ from: sender.name, subject, body: parsed.body, file, source });
+        continue;
+      }
 
       if (type === "done") {
         if (sender.name !== project.lead) {
