@@ -27,8 +27,72 @@ export function readPersona(agent: ResolvedAgent): string {
   return fs.readFileSync(agent.agentMd, "utf8").trim();
 }
 
+/** The protocol of an agent working alone: no teammates, no ask. `run --agent` still ends with a `done` mail; `call` just answers. */
+export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
+  const isCall = project.solo === "call";
+  const lines: string[] = [readPersona(agent), "", "---", "", "# Solo protocol (injected by agent-lyceum)", ""];
+  lines.push(
+    `You are **${agent.name}**, working alone: there is no team, no lead and nobody to mail, and you cannot ask the user questions. You work in \`${repoDirFor(project, agent.name)}\`.`,
+    isCall
+      ? "Do the task you are given. Your final reply text is printed to the user as your answer, so end with the answer or a short report of what you did; nothing else is delivered."
+      : "",
+  );
+  if (!isCall) {
+    lines.push(
+      "## Finishing",
+      `When the job is finished, create a Markdown file (any name ending in \`.md\`) directly inside \`${outboxDir(project, agent.name)}\` with this exact shape:`,
+      "",
+      "```",
+      "---",
+      "type: done",
+      "subject: <short subject>",
+      "outcome: completed|partial|blocked|failed",
+      "---",
+      "",
+      "## Result",
+      "## Files",
+      "## Verification",
+      "## Not done",
+      "```",
+      "",
+      "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all four headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report.",
+    );
+  }
+  lines.push("", "## Memory");
+  const mems = memoryDirs(agent);
+  if (mems.length === 0) lines.push("You have no long-term memory directory.");
+  for (const m of mems) lines.push(`- ${memoryLabel(agent, m)}: \`${m}\``);
+  if (mems.length) {
+    lines.push(
+      "Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt on every wake-up; you can write only inside these directories.",
+      "Use memory only for durable lessons that stay true across tasks; never record task-specific details there.",
+    );
+  }
+  lines.push(
+    "",
+    "## Rules",
+    "- Never edit any `AGENT.md`, `COMMON.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`.",
+    "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum.",
+  );
+  return lines.join("\n");
+}
+
+/** The prompt of a `call`: the memory indexes the agent is used to, then the task. */
+export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string {
+  const parts: string[] = [];
+  for (const dir of memoryDirs(agent)) {
+    const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
+    parts.push(`# Your ${memoryLabel(agent, dir).split(" ")[0]} memory index (${dir}/MEMORY.md)`);
+    if (!idx) parts.push("(no MEMORY.md yet — create one when you have something worth keeping)", "");
+    else parts.push(idx.text.trim(), ...(idx.truncated ? [`[index truncated at ${MEMORY_INDEX_LIMIT} bytes — trim it]`] : []), "");
+  }
+  parts.push("# Task", task.trim());
+  return parts.join("\n");
+}
+
 /** Everything that goes to the runtime's system prompt: the persona plus the team protocol. */
 export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
+  if (project.solo) return buildSoloSystemPrompt(project, agent);
   const outbox = outboxDir(project, agent.name);
   const mates = Object.keys(project.agents).filter((n) => n !== agent.name);
   const recipients =

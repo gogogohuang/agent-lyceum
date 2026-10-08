@@ -85,9 +85,10 @@ export function repoDirFor(project: ResolvedProject, agent: string): string {
 }
 
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
-  const isLead = agent.name === project.lead;
+  const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
-  const allowDirs = [...memoryDirs(agent), outboxDir(project, agent.name), ...(ws ? [ws.gitDir] : [])];
+  // A `call` has no mailboxes at all; a solo member of a run keeps its outbox to send `done`.
+  const allowDirs = [...memoryDirs(agent), ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]), ...(ws ? [ws.gitDir] : [])];
   const allowFiles: string[] = [];
   if (isLead) allowFiles.push(commonFile(project));
   if (agent.canEditAgentMd) {
