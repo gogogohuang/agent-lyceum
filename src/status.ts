@@ -7,6 +7,7 @@ import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import type { Step } from "./format.js";
 import { listUnread } from "./mailbox.js";
+import { tidyAdvice } from "./memory-tidy.js";
 import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
 
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
@@ -211,6 +212,8 @@ export interface StatusReport {
   project: { name: string; dir: string; lead: string };
   agents: AgentReport[];
   run?: RunReport;
+  /** Hints that a `memory tidy` might help. Only a suggestion; nothing runs it. */
+  memory_advice?: string[];
 }
 
 export interface TaskListReport {
@@ -301,6 +304,12 @@ export function buildStatusReport(base: ResolvedProject, runId?: string): Status
   // Mail is per run: count the unread mail of the run being shown.
   const project = run ? bindRunProject(base, run.dir, run.state.mail_layout) : base;
   const report = run ? buildRunReport(run, base) : undefined;
+  let advice: string[] = [];
+  try {
+    advice = tidyAdvice(base).map((a) => `${a.agent}: ${a.reason}`);
+  } catch {
+    /* a hint only: never let it break status */
+  }
   return {
     schema_version: 1,
     project: projectInfo(base),
@@ -312,6 +321,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string): Status
       last_wake: run?.state.last_wake[a.name],
     })),
     run: report,
+    ...(advice.length ? { memory_advice: advice } : {}),
   };
 }
 
@@ -501,5 +511,6 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
 
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}`);
+  if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum memory tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
 }

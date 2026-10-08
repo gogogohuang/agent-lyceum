@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
+import { tidyAdvice } from "./memory-tidy.js";
 import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
@@ -169,6 +170,8 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       message: alive ? `A run is active: ${lock.run_id} (pid ${lock.pid}).` : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum unlock --force\` clears it.`,
     });
   }
+
+  for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum memory tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
 
   const runtimes = await probeProjectRuntimes(project, opts);
   checks.push(...judgeRuntimes(project, runtimes));

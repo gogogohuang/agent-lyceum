@@ -84,6 +84,24 @@ Print every effective setting (global library, project file and defaults merged)
 
 Check the setup without running any agent: configuration, git (for parallel runs), the project lock, and what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`). Exit 1 when something the team needs is explicitly unsupported. It does not read credentials: login status is reported as unknown. `run` and `resume` do the same capability check first: they refuse to start on an explicit `no` and warn on `unknown`. A real end-to-end check against the live CLIs (a tiny task) spends tokens and is deliberately manual.
 
+## memory tidy
+
+**Usage:** `memory tidy [-p name] [--agent a] [--layer project|global] [--dry-run]`
+
+Have agents tidy their own long-term memory: merge entries that say the same thing, rewrite stale ones, and retire what is obsolete. **It only ever runs when you run it**: a run ending, a large memory or changes in the repo never start a tidy; `status` and `doctor` at most suggest one.
+
+By default it tidies the **project** memory of every agent. **Global** memory is shared by every project, so it is only tidied with `--layer global`; task memory is never tidied (`clear` deletes it). Note that the project template gives agents global memory only: to use project memory, set `memory.project` for an agent in `project.yaml`. With no such agent the command says so and exits `0`.
+
+Each agent is woken once for this, outside any run (no round is used), and may only change its own memory. Retiring is archiving, never deleting: files go to `memory/.archive/<timestamp>/` under the same relative path, together with a `tidy-report.md` (what was merged, what was archived and why, what is still doubtful). The agent is shown the size and age of every memory file, the `MEMORY.md` index, what changed in the project repo (`git log` and `git diff --stat`) since the last tidy, and the paths its memory mentions that no longer exist. `memory/.tidy-state.json` remembers the repo `HEAD` of the last tidy; the first tidy has no baseline and only does the path check.
+
+agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project lock, so it refuses while a run is active. `--dry-run` only prints the memory sizes, the project changes and the missing paths: it wakes nobody, changes nothing and takes no lock.
+
+## memory restore
+
+**Usage:** `memory restore <timestamp> -p name --agent a [--layer project|global]`
+
+Undo a tidy: move the files of `memory/.archive/<timestamp>/` back to where they were and add them to `MEMORY.md` if the index does not mention them. A file whose name exists now is not overwritten; it is reported and stays in the archive. `tidy` prints the timestamp when it finishes.
+
 ## unlock
 
 **Usage:** `unlock [-p name] --force`

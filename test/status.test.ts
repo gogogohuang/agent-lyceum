@@ -7,7 +7,7 @@ import { deliver } from "../src/mailbox.js";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { loadRunState } from "../src/run-store.js";
 import { buildStatusReport, formatRunDetail, formatStatus, formatStatusReport, formatTaskList } from "../src/status.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -228,5 +228,22 @@ describe("status: a waiting run", () => {
     const report = buildStatusReport(env.project(), "20260101-000000");
     expect(report.run?.state).toBe("ended");
     expect(report.run?.ask).toBeUndefined();
+  });
+});
+
+describe("status: memory tidy hint", () => {
+  it("status hints at a memory tidy but never starts one", () => {
+    env = makeMemoryEnv();
+    const d = env.project().agents.lead!.memory.project!;
+    write(path.join(d, "MEMORY.md"), "- entry\n".repeat(800));
+    const report = buildStatusReport(env.project());
+    expect(report.memory_advice?.join("\n")).toMatch(/lead/);
+    expect(formatStatusReport(report, Date.now(), false)).toMatch(/memory tidy/);
+    expect(fs.existsSync(path.join(d, ".archive"))).toBe(false);
+  });
+
+  it("has no memory_advice when memory is small", () => {
+    env = makeMemoryEnv();
+    expect(buildStatusReport(env.project()).memory_advice).toBeUndefined();
   });
 });

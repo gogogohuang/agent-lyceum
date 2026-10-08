@@ -3,6 +3,7 @@ import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
+import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { commonFile, memoryDirs, outboxDir, repoDirFor } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
@@ -193,4 +194,72 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     for (const m of queued) parts.push(`- from ${m.meta.from} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
   }
   return parts.join("\n");
+}
+
+export interface TidyContext {
+  layer: Layer;
+  /** The memory directory being tidied. */
+  dir: string;
+  /** Absolute path of this tidy's archive folder (the agent creates it). */
+  archiveDir: string;
+  /** Live files only (the archive is not listed). */
+  files: MemoryFile[];
+  /** MEMORY.md text ("" when there is none). */
+  index: string;
+  /** What changed in the project since the last tidy (project layer only). */
+  changes?: ProjectChanges;
+  missing: MissingPath[];
+}
+
+/** The prompts of a memory-tidy wake-up: a maintenance job, not a task, so it has none of the mail protocol. */
+export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { systemPrompt: string; userPrompt: string } {
+  const systemPrompt = [
+    readPersona(agent),
+    "",
+    "---",
+    "",
+    "# Memory tidy (injected by agent-lyceum)",
+    "",
+    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy your own ${ctx.layer} memory so it stays small, accurate and useful.`,
+    "",
+    "## What you may touch",
+    `Only files inside \`${ctx.dir}\`. Everything else is read-only. Do not touch your other memory directories, \`${ctx.dir}/.tidy-state.json\` or the archive folders of earlier tidies.`,
+    "",
+    "## What to do",
+    "- Merge entries that say the same thing; keep one file with the combined, current content.",
+    "- Rewrite entries that are stale (see the project changes and the missing paths below); correct them if you can tell what is true now, otherwise keep them and say so in the report.",
+    "- Keep `MEMORY.md` as the index: one line per entry, each pointing at an existing file, and nothing for files that were archived.",
+    "- **When unsure, keep it.** Prefer leaving an entry alone over losing information.",
+    "",
+    "## Never delete",
+    `To retire a file, move it into the archive folder, keeping its relative path (\`${ctx.dir}/x/y.md\` goes to \`${ctx.archiveDir}/x/y.md\`). Never delete a file. \`MEMORY.md\` itself is never archived. A file whose content you merged into another one is archived too.`,
+    "",
+    "## Before you finish",
+    `Write \`${ctx.archiveDir}/tidy-report.md\` — even when you changed nothing — with these headings: \`## Merged\` (what was combined into what), \`## Archived\` (each archived file and why), \`## Unsure\` (things you kept but doubt). Write \`None\` under a heading with nothing to say. The tidy is rolled back if the report is missing or any file went missing.`,
+  ].join("\n");
+
+  const parts: string[] = [
+    `Archive directory: ${ctx.archiveDir}`,
+    `Layer: ${ctx.layer}${ctx.layer === "global" ? " (shared by every project; do not judge entries by one project's code)" : ""}`,
+    `Memory directory: ${ctx.dir}`,
+    "",
+    "# Files",
+    ...(ctx.files.length ? ctx.files.map((f) => `${f.rel}  ${f.bytes} B  modified ${f.mtime.slice(0, 10)}`) : ["(none)"]),
+    "",
+    `# MEMORY.md (${ctx.dir}/MEMORY.md)`,
+    ctx.index.trim() ? ctx.index.trim() : "(no MEMORY.md)",
+  ];
+  if (ctx.layer === "project") {
+    const c = ctx.changes;
+    parts.push("", "# Changes in the project since the last tidy");
+    if (!c) parts.push("(not available)");
+    else {
+      if (c.note) parts.push(c.note);
+      if (c.log.length) parts.push("", "Commits:", ...c.log);
+      if (c.stat.length) parts.push("", "Files changed:", ...c.stat);
+    }
+  }
+  parts.push("", "# Paths named in the memory that no longer exist");
+  parts.push(...(ctx.missing.length ? ctx.missing.map((m) => `- \`${m.path}\` (mentioned in ${m.file})`) : ["(none found)"]));
+  return { systemPrompt, userPrompt: parts.join("\n") };
 }

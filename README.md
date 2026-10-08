@@ -35,6 +35,8 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | Delete a run with its task memory and worktrees. [details](docs/commands.md#clear) |
 | `config show --resolved [-p name] [--json]` | Print every effective setting and where it came from. [details](docs/commands.md#config-show) |
 | `doctor [-p name] [--json]` | Check config, git, the lock and runtime CLIs without running agents. [details](docs/commands.md#doctor) |
+| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
+| `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
 | `unlock [-p name] --force` | Remove the project lock a crashed run left behind. [details](docs/commands.md#unlock) |
 
 Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
