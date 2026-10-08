@@ -2,8 +2,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realInvoker, type Invoker } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
+import { ensureProjectDirs } from "./mailbox.js";
+import { memoryDirs } from "./policy.js";
+import { buildTidyPrompts } from "./prompt.js";
 import { git, isGitRepo } from "./worktree.js";
 
 export type Layer = "project" | "global";
@@ -227,4 +231,115 @@ export function findMissingPaths(dir: string, repoDir: string | undefined): Miss
     }
   }
   return out;
+}
+
+export interface TidyOptions {
+  project: ResolvedProject;
+  layer: Layer;
+  agent?: string;
+  dryRun?: boolean;
+  invoker?: Invoker;
+  signal?: AbortSignal;
+  say?: (line: string) => void;
+  now?: () => Date;
+}
+
+export interface TidyResult {
+  agent: string;
+  layer: Layer;
+  dir: string;
+  status: "tidied" | "skipped" | "failed" | "dry-run";
+  /** The archive stamp of a finished tidy. */
+  archive?: string;
+  problems: string[];
+}
+
+/** Scratch space of one tidy (snapshot and the invocation's logs); outside every memory dir and every run. */
+export const tidyWorkDir = (project: ResolvedProject, stamp: string, agent: string): string => path.join(project.paths.root, "tidy-work", stamp, agent);
+
+const kb = (n: number): string => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KiB`);
+
+function describeTarget(t: MemoryTarget, project: ResolvedProject, say: (l: string) => void): void {
+  const s = memoryStats(t.dir);
+  say(`${t.agent} (${t.layer}): ${s.files} file(s), ${kb(s.bytes)}, MEMORY.md ${kb(s.indexBytes)}${s.oldest ? `, modified ${s.oldest.slice(0, 10)} … ${s.newest?.slice(0, 10)}` : ""}`);
+  if (t.layer === "project") {
+    const c = projectChanges(project.dir, readTidyState(t.dir)?.head);
+    say(`  project changes: ${c.note ?? `${c.log.length} commit(s) since ${c.since?.slice(0, 8)}`}`);
+  }
+  for (const m of findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined)) say(`  missing path: ${m.path} (in ${m.file})`);
+}
+
+async function tidyOne(o: TidyOptions, t: MemoryTarget, stamp: string): Promise<TidyResult> {
+  const { project } = o;
+  const say = o.say ?? ((s: string) => console.log(s));
+  const base = { agent: t.agent, layer: t.layer, dir: t.dir };
+  const agent = project.agents[t.agent]!;
+  const live = listMemoryFiles(t.dir).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`));
+  if (live.length === 0) return { ...base, status: "skipped", problems: ["no memory files: nothing to tidy"] };
+
+  const dirs = memoryDirs(agent);
+  const others = dirs.filter((d) => d !== t.dir);
+  const before = listMemoryFiles(t.dir).map((f) => f.rel);
+  const othersBefore = others.map((d) => fingerprint(d));
+  const archiveDir = path.join(t.dir, ARCHIVE_DIR, stamp);
+  const workDir = tidyWorkDir(project, stamp, t.agent);
+  const snapshot = path.join(workDir, "snapshot");
+  const state = readTidyState(t.dir);
+  const changes = t.layer === "project" ? projectChanges(project.dir, state?.head) : undefined;
+  const missing = findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined);
+  const index = fs.existsSync(path.join(t.dir, "MEMORY.md")) ? fs.readFileSync(path.join(t.dir, "MEMORY.md"), "utf8") : "";
+  const prompts = buildTidyPrompts(agent, { layer: t.layer, dir: t.dir, archiveDir, files: live, index, changes, missing });
+
+  ensureProjectDirs(project);
+  snapshotDirs(dirs, snapshot);
+  const fail = (problems: string[]): TidyResult => {
+    restoreDirs(dirs, snapshot);
+    fs.rmSync(snapshot, { recursive: true, force: true });
+    return { ...base, status: "failed", problems };
+  };
+
+  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)) …`);
+  const invoke = o.invoker ?? realInvoker;
+  const result = await invoke({
+    project,
+    agent,
+    workDir,
+    systemPrompt: prompts.systemPrompt,
+    userPrompt: prompts.userPrompt,
+    timeoutSec: project.dispatcher.wake_timeout_sec,
+    signal: o.signal,
+    logDir: path.join(workDir, "log"),
+  }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+  if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
+
+  const problems: string[] = [];
+  others.forEach((d, i) => {
+    if (JSON.stringify(fingerprint(d)) !== JSON.stringify(othersBefore[i])) problems.push(`the agent changed ${d}, which is not the ${t.layer} memory being tidied`);
+  });
+  problems.push(...verifyConservation(before, t.dir, stamp));
+  const reportFile = path.join(archiveDir, TIDY_REPORT_FILE);
+  if (!fs.existsSync(reportFile) || fs.readFileSync(reportFile, "utf8").trim() === "") problems.push(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+  if (problems.length) return fail(problems);
+
+  fs.rmSync(snapshot, { recursive: true, force: true });
+  writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
+  return { ...base, status: "tidied", archive: stamp, problems: [] };
+}
+
+/** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum memory tidy`). */
+export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
+  const say = o.say ?? ((s: string) => console.log(s));
+  const targets = targetsFor(o.project, { layer: o.layer, agent: o.agent });
+  const results: TidyResult[] = [];
+  for (const t of targets) {
+    if (o.dryRun) {
+      describeTarget(t, o.project, say);
+      results.push({ agent: t.agent, layer: t.layer, dir: t.dir, status: "dry-run", problems: [] });
+      continue;
+    }
+    const r = await tidyOne(o, t, tidyStamp(o.now?.()));
+    results.push(r);
+    if (o.signal?.aborted) break;
+  }
+  return results;
 }

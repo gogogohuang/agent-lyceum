@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, writeTidyState } from "../src/memory-tidy.js";
+import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyMemory, writeTidyState } from "../src/memory-tidy.js";
+import { writePolicy } from "../src/policy.js";
+import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { buildTidyPrompts, type TidyContext } from "../src/prompt.js";
 import { git, initGitRepo, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
@@ -240,5 +242,186 @@ describe("buildTidyPrompts", () => {
     const global = buildTidyPrompts(lead, ctx({ layer: "global", changes: undefined, missing: [] })).userPrompt;
     expect(global).toMatch(/global/i);
     expect(global).not.toContain("Changes in the project");
+  });
+});
+
+const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
+const archiveOf = (prompt: string) => /^Archive directory: (.+)$/m.exec(prompt)![1]!;
+
+/** An invoker whose "agent" does what `act` says, given the archive folder it was told to use. */
+const agent = (act: (archive: string, memoryDir: string) => WakeResult | undefined): { invoker: Invoker; calls: string[] } => {
+  const calls: string[] = [];
+  const invoker: Invoker = async (input) => {
+    const archive = archiveOf(input.userPrompt);
+    calls.push(input.agent.name);
+    const memoryDir = /^Memory directory: (.+)$/m.exec(input.userPrompt)![1]!;
+    return act(archive, memoryDir) ?? OK;
+  };
+  return { invoker, calls };
+};
+const report = (archive: string) => write(path.join(archive, "tidy-report.md"), "## Merged\nNone\n\n## Archived\nNone\n\n## Unsure\nNone\n");
+
+function seed(e: TestEnv) {
+  const d = mem(e);
+  write(path.join(d, "MEMORY.md"), "- [a](a.md)\n- [b](b.md)\n");
+  write(path.join(d, "a.md"), "alpha `src/web/a.txt`");
+  write(path.join(d, "b.md"), "beta");
+  return d;
+}
+const only = (e: TestEnv, name = "lead") => ({ project: e.project(), layer: "project" as const, agent: name, say: () => {} });
+
+describe("tidyMemory", () => {
+  it("archives a file, writes the report and the baseline, and checks conservation", async () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const d = seed(env);
+    const { invoker, calls } = agent((archive) => {
+      fs.mkdirSync(archive, { recursive: true });
+      fs.renameSync(path.join(d, "b.md"), path.join(archive, "b.md"));
+      write(path.join(d, "MEMORY.md"), "- [a](a.md)\n");
+      report(archive);
+    });
+    const res = await tidyMemory({ ...only(env), invoker });
+    expect(calls).toEqual(["lead"]);
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ agent: "lead", layer: "project", status: "tidied", problems: [] });
+    expect(fs.existsSync(path.join(d, ".archive", res[0]!.archive!, "b.md"))).toBe(true);
+    expect(readTidyState(d)).toMatchObject({ head: git(env.repo, "rev-parse", "HEAD"), archive: res[0]!.archive });
+  });
+
+  it("rolls everything back and keeps the old baseline when a file vanished", async () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const d = seed(env);
+    writeTidyState(d, { head: "oldhead", at: "2026-01-01T00:00:00Z" });
+    const before = fingerprint(d);
+    const { invoker } = agent((archive) => {
+      fs.rmSync(path.join(d, "b.md"));
+      write(path.join(d, "junk.md"), "new");
+      report(archive);
+    });
+    const res = await tidyMemory({ ...only(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/b\.md/);
+    expect(fingerprint(d)).toEqual(before);
+    expect(readTidyState(d)?.head).toBe("oldhead");
+  });
+
+  it("fails and rolls back without a tidy-report.md", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const before = fingerprint(d);
+    const { invoker } = agent((archive) => {
+      fs.mkdirSync(archive, { recursive: true });
+      fs.renameSync(path.join(d, "b.md"), path.join(archive, "b.md"));
+    });
+    const res = await tidyMemory({ ...only(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/tidy-report/);
+    expect(fingerprint(d)).toEqual(before);
+  });
+
+  it("fails and rolls back when the agent changes another memory layer", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const globalDir = path.join(env.root, "global-mem");
+    env.editProjectYaml((t) => t.replace("memory: { project: agents/lead/memory }", `memory: { project: agents/lead/memory, global: ${globalDir} }`));
+    write(path.join(globalDir, "MEMORY.md"), "g");
+    const before = { g: fingerprint(globalDir), p: fingerprint(d) };
+    const { invoker } = agent((archive) => {
+      write(path.join(globalDir, "sneaky.md"), "x");
+      report(archive);
+    });
+    const res = await tidyMemory({ ...only(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/global/);
+    expect({ g: fingerprint(globalDir), p: fingerprint(d) }).toEqual(before);
+  });
+
+  it("rolls back when the wake-up fails or times out", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const before = fingerprint(d);
+    const { invoker } = agent((archive) => {
+      write(path.join(d, "a.md"), "half done");
+      report(archive);
+      return { ok: false, text: "", exitCode: null, timedOut: true, error: "timed out" };
+    });
+    const res = await tidyMemory({ ...only(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/timed out/);
+    expect(fingerprint(d)).toEqual(before);
+  });
+
+  it("--dry-run wakes nobody and changes nothing", async () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const d = seed(env);
+    const before = fingerprint(d);
+    const lines: string[] = [];
+    const { invoker, calls } = agent(() => {
+      throw new Error("must not be woken");
+    });
+    const res = await tidyMemory({ ...only(env), invoker, dryRun: true, say: (l) => lines.push(l) });
+    expect(calls).toEqual([]);
+    expect(res[0]?.status).toBe("dry-run");
+    expect(fingerprint(d)).toEqual(before);
+    expect(fs.existsSync(path.join(d, ".tidy-state.json"))).toBe(false);
+    expect(lines.join("\n")).toMatch(/lead/);
+    expect(lines.join("\n")).toMatch(/3 file/);
+  });
+
+  it("skips an agent with no memory without waking it", async () => {
+    env = makeMemoryEnv();
+    const { invoker, calls } = agent(() => {});
+    const res = await tidyMemory({ project: env.project(), layer: "project", invoker, say: () => {} });
+    expect(calls).toEqual([]);
+    expect(res.every((r) => r.status === "skipped")).toBe(true);
+  });
+
+  it("tidies project memory by default and global only when asked", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const globalDir = path.join(env.root, "global-mem");
+    env.editProjectYaml((t) => t.replace("memory: { project: agents/lead/memory }", `memory: { project: agents/lead/memory, global: ${globalDir} }`));
+    write(path.join(globalDir, "MEMORY.md"), "g");
+    const seen: string[] = [];
+    const { invoker } = agent((archive, memoryDir) => {
+      seen.push(memoryDir);
+      report(archive);
+    });
+    await tidyMemory({ project: env.project(), layer: "project", agent: "lead", invoker, say: () => {} });
+    expect(seen).toEqual([d]);
+    await tidyMemory({ project: env.project(), layer: "global", agent: "lead", invoker, say: () => {} });
+    expect(seen).toEqual([d, globalDir]);
+    expect(readTidyState(globalDir)?.head).toBeUndefined();
+  });
+
+  it("is never started by a run: a normal run wakes only for tasks", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    write(path.join(d, "big.md"), "x".repeat(50_000));
+    const woken: string[] = [];
+    const invoker: Invoker = async (input) => {
+      woken.push(input.userPrompt.includes("Archive directory:") ? "tidy" : "task");
+      return OK;
+    };
+    const { runTeam } = await import("../src/dispatcher.js");
+    const { prepareTask } = await import("../src/task.js");
+    const runDir = path.join(env.project().paths.runs, "run-x");
+    await runTeam({ project: env.project(), task: prepareTask({ text: "t", cwd: env.root, runDir }), runDir, invoker, log: () => {} });
+    expect(woken).not.toContain("tidy");
+  });
+});
+
+describe("the write policy covers the tidy files", () => {
+  it("lets an agent write .archive and .tidy-state.json inside its memory dir and nowhere else new", () => {
+    env = makeMemoryEnv();
+    const p = env.project();
+    const lead = p.agents.lead!;
+    const pol = writePolicy(p, lead);
+    expect(pol.allowDirs).toContain(lead.memory.project);
+    for (const d of pol.deny) expect(path.join(lead.memory.project!, ".archive").startsWith(d + path.sep) || path.join(lead.memory.project!, ".archive") === d).toBe(false);
+    expect(pol.deny).toContain(p.agents["fe-member"]!.memory.project);
   });
 });
