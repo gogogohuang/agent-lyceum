@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyMemory, restoreMemory, writeTidyState } from "../src/memory-tidy.js";
+import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyAdvice, tidyMemory, restoreMemory, writeTidyState } from "../src/memory-tidy.js";
 import { writePolicy } from "../src/policy.js";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { buildTidyPrompts, type TidyContext } from "../src/prompt.js";
@@ -487,5 +487,37 @@ describe("restoreMemory", () => {
     restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: res!.archive! });
     expect(fs.readFileSync(path.join(d, "b.md"), "utf8")).toBe(before);
     expect(fs.readFileSync(path.join(d, "MEMORY.md"), "utf8")).toMatch(/b\.md/);
+  });
+});
+
+describe("tidyAdvice", () => {
+  it("is silent for small memory", () => {
+    env = makeMemoryEnv();
+    seed(env);
+    expect(tidyAdvice(env.project())).toEqual([]);
+  });
+
+  it("suggests a tidy when MEMORY.md is bigger than what the agent is shown", () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    write(path.join(d, "MEMORY.md"), "- entry\n".repeat(800));
+    const a = tidyAdvice(env.project());
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ agent: "lead" });
+    expect(a[0]?.reason).toMatch(/MEMORY\.md/);
+  });
+
+  it("suggests a tidy when the project moved far past the last baseline", () => {
+    env = makeMemoryEnv();
+    initGitRepo(env.repo);
+    const d = seed(env);
+    writeTidyState(d, { head: git(env.repo, "rev-parse", "HEAD"), at: "2026-01-01T00:00:00Z" });
+    for (let i = 0; i < 51; i++) {
+      write(path.join(env.repo, `f${i}.txt`), String(i));
+      git(env.repo, "add", "-A");
+      git(env.repo, "commit", "-q", "-m", `c${i}`);
+    }
+    expect(tidyAdvice(env.project()).map((x) => x.agent)).toEqual(["lead"]);
+    expect(tidyAdvice(env.project())[0]?.reason).toMatch(/51 commits/);
   });
 });

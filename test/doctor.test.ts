@@ -5,7 +5,7 @@ import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { diagnoseProject, preflightRuntimes, probeRuntime } from "../src/doctor.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -103,6 +103,18 @@ describe("diagnoseProject", () => {
     await diagnoseProject(env.project(), { env: envWith(bin, "full") });
     expect(calls().length).toBeGreaterThan(0);
     for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
+  });
+
+  it("only suggests a memory tidy: it never runs one and never makes the report fail", async () => {
+    env = makeMemoryEnv();
+    const { bin } = fakeBin(env.root);
+    const d = env.project().agents.lead!.memory.project!;
+    write(path.join(d, "MEMORY.md"), "- entry\n".repeat(800));
+    const r = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+    expect(r.checks.some((c) => c.level === "info" && c.subject === "memory" && /memory tidy/.test(c.message))).toBe(true);
+    expect(r.ok).toBe(true);
+    expect(fs.existsSync(path.join(d, ".archive"))).toBe(false);
+    expect(fs.existsSync(path.join(env.project().paths.root, "tidy-work"))).toBe(false);
   });
 
   it("is clean for a healthy setup and says login is not checked", async () => {

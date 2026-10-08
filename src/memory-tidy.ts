@@ -7,7 +7,7 @@ import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
 import { memoryDirs } from "./policy.js";
-import { buildTidyPrompts } from "./prompt.js";
+import { buildTidyPrompts, MEMORY_INDEX_LIMIT } from "./prompt.js";
 import { git, isGitRepo } from "./worktree.js";
 
 export type Layer = "project" | "global";
@@ -402,4 +402,29 @@ export function listArchives(dir: string): string[] {
   } catch {
     return [];
   }
+}
+
+export const ADVICE_COMMITS = 50;
+
+export interface TidyAdvice {
+  agent: string;
+  reason: string;
+}
+
+/** Hints only: project memory whose index is larger than what an agent is shown, or whose baseline is far behind. Never acts. */
+export function tidyAdvice(project: ResolvedProject): TidyAdvice[] {
+  const out: TidyAdvice[] = [];
+  for (const t of targetsFor(project, { layer: "project" })) {
+    if (!fs.existsSync(t.dir)) continue;
+    const s = memoryStats(t.dir);
+    if (s.indexBytes > MEMORY_INDEX_LIMIT) {
+      out.push({ agent: t.agent, reason: `MEMORY.md is ${s.indexBytes} bytes, more than the ${MEMORY_INDEX_LIMIT} an agent is shown` });
+      continue;
+    }
+    const since = readTidyState(t.dir)?.head;
+    if (!since || !fs.existsSync(project.dir) || !isGitRepo(project.dir)) continue;
+    const n = Number(tryGit(project.dir, ["rev-list", "--count", `${since}..HEAD`]));
+    if (Number.isFinite(n) && n >= ADVICE_COMMITS) out.push({ agent: t.agent, reason: `${n} commits since the last tidy` });
+  }
+  return out;
 }
