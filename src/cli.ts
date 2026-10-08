@@ -19,7 +19,7 @@ import { prepareTask, readTaskFile } from "./task.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
-import { soloProject } from "./solo.js";
+import { onlyAgent, soloProject } from "./solo.js";
 
 const program = new Command();
 program
@@ -265,7 +265,7 @@ program
         if (opts.assumeDefaults) console.error("warn   --assume-defaults is ignored with --agent: a solo agent cannot ask questions.");
         // Fails with the member list (and a hint for a global-only agent) before anything is written.
         const sp = soloProject(pr, opts.agent, { globalAgents: Object.keys(loadGlobal(home()).agents) });
-        checked = { ...sp, agents: { [opts.agent]: must(sp.agents[opts.agent], "the solo agent") } };
+        checked = onlyAgent(sp, opts.agent);
       }
       await preflight(checked);
 
@@ -300,7 +300,6 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
-      await preflight(pr);
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
@@ -313,6 +312,8 @@ program
         if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
       }
       const { dir, state } = found!;
+      // A solo run needs only its own agent's runtime, as when it started.
+      await preflight(state.solo_agent ? onlyAgent(soloProject(pr, state.solo_agent), state.solo_agent) : pr);
       if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
       if (state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);

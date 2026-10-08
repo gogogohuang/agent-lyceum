@@ -34,6 +34,7 @@
 - `call <name>` 不在 `team.yaml`：列出可用的 global agent 後以 `1` 結束。
 - solo 時 system prompt 要去掉隊友、信箱與 `ask` 的說明（沒有可寄的對象）；`run --agent` 保留 `done` 契約，`call` 完全不提 `done`／信箱，改成「直接用文字回答」。
 - `call` 沒有專案，因此需要一個由 cwd／`--dir` 與 agent 組出的暫時 `ResolvedProject`（`name` 取 `(call)`，`paths` 指向 `<home>/calls/<call-id>/`）。實作前要先確認 `buildSystemPrompt`、`writePolicy`、`ProtectedGuard` 與 `realInvoker` 對這個暫時專案沒有隱含假設（例如要求 outbox 存在）；若有，抽出共用的最小介面而不是塞假目錄。
+- `call` 拒絕與 agent-lyceum home 重疊（互相包含）的工作目錄，因為暫時專案只列出被呼叫的 agent，無法保護 home 裡其他檔案。
 - `validate` 增加 `--agent` 的檢查是可選的，第一版不做；`doctor` 不變。
 
 ## 11.3 影響的檔案

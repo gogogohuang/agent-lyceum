@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "../src/call.js";
 import { ConfigError } from "../src/config.js";
+import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { writePolicy } from "../src/policy.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
@@ -66,6 +67,14 @@ describe("what a call may write", () => {
     expect(pol.deny).toContain(agent.agentMd);
     expect(pol.deny).toContain(path.join(env.home, "team.yaml"));
   });
+
+  it("lets the sandbox write only the working directory and the agent's own memory, never the home or another agent's files", () => {
+    env = makeEnv();
+    const agent = resolveCallAgent(env.home, "fe-member");
+    const project = callProject(env.home, agent, env.repo, path.join(callsDir(env.home), "c1"));
+    const sandbox = buildClaudeSettings(project, agent).sandbox as { filesystem: { allowWrite: string[] } };
+    expect(sandbox.filesystem.allowWrite).toEqual([env.repo, path.join(env.home, "agents/fe-member/memory")]);
+  });
 });
 
 describe("callAgent", () => {
@@ -120,6 +129,21 @@ describe("callAgent", () => {
     }));
     expect(fs.readFileSync(md, "utf8")).toBe(before);
     expect(r.reverted).toEqual([md]);
+  });
+
+  it("refuses a working directory that is the home, inside it or above it, before writing anything", async () => {
+    env = makeEnv();
+    let called = false;
+    const inv: Invoker = async () => {
+      called = true;
+      return reply("x");
+    };
+    for (const dir of [env.home, path.join(env.home, "projects"), env.root]) {
+      await expect(callAgent(opts(inv, { dir }))).rejects.toThrow(/neither inside nor above/);
+    }
+    await expect(callAgent(opts(inv, { dir: env.home }))).rejects.toThrow(env.home);
+    expect(called).toBe(false);
+    expect(fs.existsSync(callsDir(env.home))).toBe(false);
   });
 
   it("refuses a missing directory, an empty task and an unknown agent before writing anything", async () => {

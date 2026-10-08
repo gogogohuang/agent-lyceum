@@ -5,7 +5,7 @@ import { must } from "./assert.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ProtectedGuard } from "./guard.js";
-import { assertName, homePaths, type ProjectPaths } from "./paths.js";
+import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
 import { memoryDirs } from "./policy.js";
 import { lockHolderAlive, type LockInfo } from "./project-lock.js";
 import { buildCallUserPrompt, buildSoloSystemPrompt } from "./prompt.js";
@@ -135,6 +135,19 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
   const agent = resolveCallAgent(o.home, o.agent);
   const dir = path.resolve(o.dir);
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error(`Working directory not found: ${dir}`);
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const realDir = real(dir);
+  const realHome = real(o.home);
+  // The called agent is the only one listed, so only its files are protected: nothing may run where the rest of the home is writable.
+  if (isInside(realHome, realDir) || isInside(realDir, realHome)) {
+    throw new Error(`Working directory ${dir} overlaps the agent-lyceum home ${o.home}: a call could change other agents' files there. Pass a --dir that is neither inside nor above the agent-lyceum home.`);
+  }
   if (!o.task.trim()) throw new Error("No task given: pass it as text or with --task-file.");
 
   const callId = newRunId();

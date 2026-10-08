@@ -38,7 +38,7 @@ With `--agent <name>` the task goes to that one member of the project and nobody
 
 **Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
 
-Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent works in `--dir` (default: the current directory), with its global `AGENT.md` and its global memory. It may change files in that directory and its own global memory; it cannot mail anyone, ask you, or edit any `AGENT.md`, `COMMON.md` or configuration (a change to a protected file is put back and reported). Give the task as text *or* `--task-file`.
+Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent works in `--dir` (default: the current directory), with its global `AGENT.md` and its global memory. It may change files in that directory and its own global memory; it cannot mail anyone or ask you. Only the called agent's own `AGENT.md`, `COMMON.md` and the working directory's `CLAUDE.md`/`AGENTS.md` are checked: a change to one of them is put back and reported. A `--dir` that is inside or above the agent-lyceum home is refused, because a call lists only the called agent and could otherwise change other agents' files there. Give the task as text *or* `--task-file`.
 
 The agent's final reply is printed on stdout; everything else (progress, the call id) goes to stderr, so the answer can be piped. Each call keeps `task.md`, `log/` and `result.md` in `<home>/calls/<call-id>/` (nothing deletes them). Exit codes: `0` success, `1` failure or timeout (`dispatcher.wake_timeout_sec` default), `130` Ctrl-C. Only one call per agent can run at a time: a second one is refused while the first runs. A call cannot be resumed; call again.
 
@@ -126,7 +126,7 @@ Remove the project's run lock left behind by a crashed run (only one run per pro
 
 ## Exit codes
 
-**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `3` when the run is waiting for your answers (see [answer](#answer)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success.
+**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `3` when the run is waiting for your answers (see [answer](#answer)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call).
 
 ## Choosing the project
 
