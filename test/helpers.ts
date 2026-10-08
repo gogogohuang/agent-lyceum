@@ -66,6 +66,18 @@ export function makeParallel(env: TestEnv): void {
   );
 }
 
+/** The template gives agents global memory only; this also gives each of them a project memory directory (`agents/<name>/memory`). */
+export function makeMemoryEnv(name = "demo"): TestEnv {
+  const e = makeEnv(name);
+  e.editProjectYaml((t) =>
+    t
+      .replace("  lead:\n    resume: true", "  lead:\n    memory: { project: agents/lead/memory }\n    resume: true")
+      .replace("    # memory: { project: agents/fe-member/memory }", "    memory: { project: agents/fe-member/memory }")
+      .replace("  qa-member:\n    can_message: [lead]", "  qa-member:\n    can_message: [lead]\n    memory: { project: agents/qa-member/memory }"),
+  );
+  return e;
+}
+
 /** The parts of `buildClaudeSettings` output the tests read. */
 export interface ClaudeSettingsView {
   permissions: { allow: string[]; deny: string[] };
