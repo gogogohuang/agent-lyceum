@@ -28,7 +28,8 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
 | `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
 | `validate [-p name] [--task-file f]` | Validate the merged config and show each agent's enforcement level. [details](docs/commands.md#validate) |
-| `run ["task"] [--task-file f] [-p name]` | Give the task to the lead and run until done. [details](docs/commands.md#run) |
+| `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
+| `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
 | `resume [run-id] [-p name]` | Continue an interrupted or failed run. [details](docs/commands.md#resume) |
 | `answer <run-id> [--no-edit] [-p name]` | Answer the questions a waiting run asked, then continue it. [details](docs/commands.md#answer) |
 | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
@@ -40,6 +41,17 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | `unlock [-p name] --force` | Remove the project lock a crashed run left behind. [details](docs/commands.md#unlock) |
 
 Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
+
+## Running one agent on its own
+
+Two ways to give a task to a single agent instead of the whole team. The agent works alone: it cannot mail teammates, ask you questions or edit any `AGENT.md`.
+
+```bash
+npx agent-lyceum run "tidy the form" --agent fe-member -p web   # a member of the project, as an ordinary run
+npx agent-lyceum call pm "is this ready to build?" --dir ~/code/web-app   # a global agent, outside any project
+```
+
+`run --agent` has a run id and the project lock, shows in `status`, and can be resumed; the agent ends the run with its own `done` mail. `call` needs no project at all: the agent comes from `team.yaml`, works in `--dir` (default: the current directory, which must not be inside or above the agent-lyceum home), prints only its final answer on stdout, and keeps `task.md`, `log/` and `result.md` in `<home>/calls/<call-id>/`. Details: [run](docs/commands.md#run) and [call](docs/commands.md#call).
 
 ## Monitor mod (Claude Code)
 
@@ -75,6 +87,7 @@ Changes take effect on the next session start. If the pane shows `無法取得�
 ~/agent-lyceum-config/
 ├── team.yaml                         # global agent library
 ├── agents/<agent>/{AGENT.md, memory/}  # global persona + cross-project memory
+├── calls/<call-id>/{task.md, log/, result.md}   # one folder per `call` (outside any project), plus .lock-<agent>
 └── projects/<project>/
     ├── project.yaml                  # team, repo dir, overrides
     ├── agents/<agent>/{AGENT.md?, memory/}   # project-level persona (optional) + project memory

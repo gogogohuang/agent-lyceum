@@ -54,6 +54,8 @@ export interface ResolvedProject {
   run?: { id: string; dir: string; layout: "run" | "legacy" };
   /** Agents working in their own git worktree instead of `dir` (set by the dispatcher for the wake-ups in progress). */
   workspaces?: Record<string, AgentWorkspace>;
+  /** Set for a single agent working alone: "run" = inside a run of this project (`run --agent`), "call" = outside any project (`call`). */
+  solo?: "run" | "call";
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {
@@ -100,8 +102,11 @@ function resolveLayer(p: AgentPartialT | undefined, base: string): AgentPartialT
 }
 
 export function resolveProject(home: string, name: string): ResolvedProject {
-  const g = loadGlobal(home);
-  const p = loadProjectRaw(home, name);
+  return resolveProjectFrom(home, name, loadGlobal(home), loadProjectRaw(home, name));
+}
+
+/** The merge `resolveProject` does, from configs already read: `call` uses it with a made-up project that lists one global agent. */
+export function resolveProjectFrom(home: string, name: string, g: ReturnType<typeof loadGlobal>, p: ReturnType<typeof loadProjectRaw>): ResolvedProject {
   const paths = projectPaths(home, name);
   const hp = homePaths(home);
   const lead = p.team.lead;

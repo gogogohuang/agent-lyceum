@@ -28,9 +28,19 @@
 
 ## run
 
-**用法:** `run ["task"] [--task-file f] [--assume-defaults] [-p name]`
+**用法:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
 
 把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。agent 向你提問時 run 會暫停，見 [answer](#answer)。`--assume-defaults` 讓有建議值的題目直接採用建議值而不暫停（沒有建議值的題目仍然暫停）。
+
+加上 `--agent <name>` 時，任務只交給專案裡的這一個成員，其他人都不會被喚醒：它不能寄信給隊友、不能向你提問、不能修改任何 `AGENT.md`，而且要靠它自己寄出的 `done` 來結束 run（所以它必須寄一封）。其餘行為與一般 run 相同：有 run id 與專案鎖、會出現在 `status`、可以 `resume`（run 會記得它是 solo）與 `clear`。`--assume-defaults` 在這個模式下沒有作用。名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
+
+## call
+
+**用法:** `call <agent> ["task"] [--task-file f] [--dir d]`
+
+**不經過任何專案**，單獨呼叫 global 資料庫（`team.yaml`）裡的一個 agent：不讀 `project.yaml`、不取專案鎖、不會出現在 `status`。agent 在 `--dir`（預設是目前目錄）工作，使用它的 global `AGENT.md` 與 global 記憶。它可以改該目錄的檔案與自己的 global 記憶；不能寄信、不能向你提問。只有被呼叫 agent 自己的 `AGENT.md`、`COMMON.md`，以及工作目錄的 `CLAUDE.md`／`AGENTS.md` 會被檢查：動到這些檔案會被還原並回報。位於 agent-lyceum home 之內或其上層的 `--dir` 會被拒絕，因為 call 只列出被呼叫的 agent，否則它可能改到 home 裡其他 agent 的檔案。任務以文字或 `--task-file` 擇一提供。
+
+agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stderr，所以可以直接接管線。每次呼叫會在 `<home>/calls/<call-id>/` 留下 `task.md`、`log/` 與 `result.md`（不會自動刪除）。exit code：`0` 成功、`1` 失敗或逾時（預設 `dispatcher.wake_timeout_sec`）、`130` Ctrl-C。同一個 agent 同時只能有一個 call，第二個會被拒絕。call 不能 resume，要再做就重新呼叫。
 
 ## resume
 
@@ -116,7 +126,7 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [answer](#answer)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [answer](#answer)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
 
 ## 選擇專案
 

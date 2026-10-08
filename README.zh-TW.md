@@ -28,7 +28,8 @@ npx agent-lyceum status
 | `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
 | `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
 | `validate [-p name] [--task-file f]` | 驗證設定並顯示每個 agent 的防護等級。 [詳細](docs/commands.zh-TW.md#validate) |
-| `run ["task"] [--task-file f] [-p name]` | 把任務交給 lead 並執行到結束。 [詳細](docs/commands.zh-TW.md#run) |
+| `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
+| `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
 | `resume [run-id] [-p name]` | 接續被中斷或失敗的 run。 [詳細](docs/commands.zh-TW.md#resume) |
 | `answer <run-id> [--no-edit] [-p name]` | 回答等待中的 run 提出的問題，並接續執行。 [詳細](docs/commands.zh-TW.md#answer) |
 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
@@ -40,6 +41,17 @@ npx agent-lyceum status
 | `unlock [-p name] --force` | 移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#unlock) |
 
 Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
+
+## 單獨呼叫一個 agent
+
+有兩種方式把任務只交給單一 agent，而不是整個團隊。該 agent 獨自工作：不能寄信給隊友、不能向你提問、不能修改任何 `AGENT.md`。
+
+```bash
+npx agent-lyceum run "整理表單" --agent fe-member -p web   # 專案裡的一個成員，當作一般 run
+npx agent-lyceum call pm "這個需求可以開工了嗎？" --dir ~/code/web-app   # global agent，不屬於任何專案
+```
+
+`run --agent` 有 run id 與專案鎖、會出現在 `status`、可以 `resume`；agent 用自己寄出的 `done` 結束 run。`call` 完全不需要專案：agent 取自 `team.yaml`，在 `--dir`（預設是目前目錄，且不可位於 agent-lyceum home 之內或之上）工作，stdout 只印它的最終回答，並在 `<home>/calls/<call-id>/` 留下 `task.md`、`log/` 與 `result.md`。細節見 [run](docs/commands.zh-TW.md#run) 與 [call](docs/commands.zh-TW.md#call)。
 
 ## 監控 mod（Claude Code）
 
@@ -75,6 +87,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 ~/agent-lyceum-config/
 ├── team.yaml                         # 全域 agent 庫
 ├── agents/<agent>/{AGENT.md, memory/}  # 全域人設 + 跨專案記憶
+├── calls/<call-id>/{task.md, log/, result.md}   # 每次 `call`（不屬於任何專案）一個資料夾，另有 .lock-<agent>
 └── projects/<project>/
     ├── project.yaml                  # 團隊、repo 路徑、覆寫設定
     ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶

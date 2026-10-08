@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { Command } from "commander";
-import { ConfigError, findProjectForCwd, flattenResolved, listProjects, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
+import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
@@ -16,8 +16,10 @@ import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile } from "./task.js";
+import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
+import { onlyAgent, soloProject } from "./solo.js";
 
 const program = new Command();
 program
@@ -246,17 +248,26 @@ async function driveRun(pr: ResolvedProject, runDir: string, first: RunSummary, 
 
 program
   .command("run [task]")
-  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>.')
+  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>. With --agent, give it to that one member alone.')
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the task from a file")
+  .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; assumeDefaults?: boolean }) => {
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
-      await preflight(pr);
+      let checked = pr;
+      if (opts.agent) {
+        assertName("agent", opts.agent);
+        if (opts.assumeDefaults) console.error("warn   --assume-defaults is ignored with --agent: a solo agent cannot ask questions.");
+        // Fails with the member list (and a hint for a global-only agent) before anything is written.
+        const sp = soloProject(pr, opts.agent, { globalAgents: Object.keys(loadGlobal(home()).agents) });
+        checked = onlyAgent(sp, opts.agent);
+      }
+      await preflight(checked);
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
@@ -265,9 +276,9 @@ program
       const cancel = cancelOnSignals();
       try {
         const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
-        console.log(`Project ${pr.name} — repo ${pr.dir}`);
+        console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-        summary = await runTeam({ project: pr, task: prepared, runDir, signal: cancel.signal });
+        summary = await runTeam({ project: pr, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();
@@ -289,7 +300,6 @@ program
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
-      await preflight(pr);
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
@@ -302,6 +312,8 @@ program
         if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
       }
       const { dir, state } = found!;
+      // A solo run needs only its own agent's runtime, as when it started.
+      await preflight(state.solo_agent ? onlyAgent(soloProject(pr, state.solo_agent), state.solo_agent) : pr);
       if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
       if (state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);
@@ -475,6 +487,37 @@ program
   });
 
 
+
+program
+  .command("call <agent> [task]")
+  .description("Call one agent of the global library on its own, outside any project: it works in --dir (default: the current directory) and its final answer is printed. It cannot mail anyone or ask you.")
+  .option("--task-file <path>", "read the task from a file")
+  .option("--dir <path>", "the directory the agent works in (default: the current directory)")
+  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string }) => {
+    try {
+      if (task !== undefined && opts.taskFile) fail("Give the task either as text or with --task-file, not both.");
+      const text = opts.taskFile ? readTaskFile(absPath(opts.taskFile, process.cwd())) : task;
+      if (!text?.trim()) fail("Give the task as text or with --task-file.");
+      const h = home();
+      const dir = absPath(opts.dir ?? ".", process.cwd());
+      const agent = resolveCallAgent(h, agentName);
+      await preflight(callProject(h, agent, dir, path.join(callsDir(h), "preflight")));
+
+      const cancel = cancelOnSignals();
+      let r: Awaited<ReturnType<typeof callAgent>>;
+      try {
+        r = await callAgent({ home: h, agent: agentName, task: text, dir, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+      }
+      console.error(`Call ${r.callId}: ${r.callDir}`);
+      if (r.cancelled) fail("Cancelled.", 130);
+      if (!r.ok) fail(`Call failed: ${r.error}\nLog: ${path.join(r.callDir, "log")}`);
+      console.log(r.text.trimEnd());
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
 
 const memoryCmd = program.command("memory").description("Look after the agents' long-term memory");
 
