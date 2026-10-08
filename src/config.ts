@@ -18,6 +18,7 @@ import {
   type Effort,
   inferRuntime,
   type Runtime,
+  type WebLevel,
 } from "./schema.js";
 
 export class ConfigError extends Error {}
@@ -36,6 +37,8 @@ export interface ResolvedAgent {
   canEditAgentMd: boolean;
   /** May send `type: ask` mail to the user (the run then waits for the answer). */
   canAskUser: boolean;
+  /** Web access for this agent; undefined = not configured, so the runtime keeps its own default. */
+  allowWeb?: WebLevel;
   owns: string[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
@@ -186,6 +189,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     const canMessage = pick("can_message");
     const canEdit = pick("can_edit_agent_md");
     const canAsk = pick("can_ask_user");
+    const allowWeb = pick("allow_web");
     const owns = pick("owns");
     for (const [k, v] of [
       ["resume", resume],
@@ -208,6 +212,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canMessage: canMessage ?? (isLead ? "all" : [lead]),
       canEditAgentMd: canEdit ?? isLead,
       canAskUser: canAsk ?? isLead,
+      allowWeb,
       owns: owns ?? [],
       sources,
     };
@@ -265,7 +270,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "owns"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "owns"] as const;
 
 /** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
 export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
@@ -318,6 +323,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_message`] = a.canMessage;
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
+    v[`${p}.allow_web`] = a.allowWeb;
     v[`${p}.owns`] = a.owns;
   }
   return v;
