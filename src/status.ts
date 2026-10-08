@@ -76,7 +76,7 @@ function alive(pid: number | undefined): boolean {
   }
 }
 
-const OUTCOME_ZH = { completed: "完成", partial: "部分完成", blocked: "受阻", failed: "失敗", cancelled: "已取消" } as const;
+const OUTCOME_ZH = { completed: "完成", partial: "部分完成", blocked: "受阻", failed: "失敗", waiting: "等待回答", cancelled: "已取消" } as const;
 
 export function runStateLabel(s: Pick<RunState, "outcome" | "end_reason"> & { pid?: number }, live = alive(s.pid)): string {
   if (s.end_reason) {
