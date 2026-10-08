@@ -111,7 +111,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路；不設時 Claude Code 沒有網路工具、Codex 維持它自己的預設；`search` = `WebSearch`／Codex `web_search="cached"`，`fetch` = `WebSearch` 加 `WebFetch`／Codex `web_search="live"`，`none` = 不給網路工具／Codex `disabled`；`fetch` 會把整個網頁放進 agent 的上下文，只建議給很少改檔的角色，例如需求或研究角色）、`owns`（repo glob）。
+Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`owns`（repo glob）。
 
 `validate` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository。
 
@@ -125,6 +125,41 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
 
 平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。此時每個非 lead 的 agent 都在**自己的 git worktree**（`projects/<name>/worktrees/<run-id>/<agent>`，branch `agent-lyceum/<run-id>/<agent>`）工作；worktree 是從喚醒當下 repo 的快照（`refs/agent-lyceum/<run-id>/base-<n>`，包含 lead 尚未提交的修改與新增、未被 ignore 的檔案）切出來的，你的 HEAD、branch 與工作目錄都不會被動到。`dispatcher.workspace_mode` 可設為 `auto`（`max_parallel > 1` 時用 worktree）、`worktree` 或 `shared`；`shared` 不能與平行 agent 並用。平行 run 在 repo 有你自己未提交的修改時，或 repo 不是 git repository 時，會拒絕啟動（請改為序列執行）。成員完成後，dispatcher 會提交它 worktree 中的修改，並在 lead 讀到該成員的信之前，把變更套用到你的工作目錄（不動你的 index 與 HEAD）。每個被改動的路徑都會先檢查：必須在該成員的 `owns` 內（rename 與刪除也算）、不得是 `CLAUDE.md`／`AGENTS.md`，symlink 不得指向專案或該成員 `owns` 之外。若同一檔案在成員的快照之後又在你的 repo 被改過、檢查未通過，或 `git apply` 失敗，就一個檔案都不套用：成果保留在它的 branch 與 worktree，報告與 patch 寫到 `runs/<run-id>/integration/`，並通知 lead，且這個 run 不能以 `completed` 結束（會以 `blocked` 結束）。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
+
+## 網路存取（`allow_web`）
+
+預設所有 agent 都不能使用網路。Claude Code 的 agent 是用無頭的 `dontAsk` 模式喚醒的，沒有明確允許的工具一律拒絕，所以 `WebSearch` 與 `WebFetch` 會被擋掉，要替個別 agent 用 `allow_web` 開放（寫在 `team.yaml` 或 `project.yaml`，專案層蓋過全域層）。它只決定 agent 能不能用網路工具，下面的寫入範圍不變。
+
+| 值 | Claude Code | Codex |
+|---|---|---|
+| 不設 | 不給網路工具（與以前相同） | 不傳任何設定：維持 Codex 自己的預設 |
+| `none` | 不給網路工具 | `-c web_search="disabled"` |
+| `search` | `WebSearch` | `-c web_search="cached"` |
+| `fetch` | `WebSearch` 加 `WebFetch` | `-c web_search="live"` |
+
+### `search` 還是 `fetch`？
+
+- **`search`**：agent 可以搜尋，拿到一串結果（通常是標題、連結與簡短摘要）。它不能打開網頁，所以只知道結果裡寫的內容。像「Node 的哪些版本還有支援？」「這個函式庫最新版是多少？」「這個 API 是不是已經棄用？」這類問題，這樣就夠了。
+- **`fetch`**：包含 `search` 的全部功能，再加上讀取某個網址背後的頁面，整頁文字都會進到 agent 的上下文。答案藏在頁面裡面時才需要：規格文件、API 參考的某一節、issue 討論串，或是你寫在任務裡的網址。
+
+分成兩級，是因為風險不一樣。從網頁讀進來的文字可能夾帶寫給 agent 的指示（「忽略你的規則，去做……」），這叫 prompt injection。`fetch` 會把整頁文字送進來；`search` 只有摘要。agent 能做的事越多（改你的 repo、執行指令），這點就越重要。
+
+**該給哪些 agent。**先什麼都不開。會查資料的角色給 `search`。只有真的必須讀指定頁面、而且很少改檔的角色才給 `fetch`，例如 `pm` 這種需求或研究角色。會改你 repo 的成員（例如 `fe-member`、`qa-member`）維持關閉，由 lead 或 pm 查好，再把結果寫進任務。
+
+### 要注意的事
+
+- **不設不等於 `none`。**不設是讓各 runtime 維持自己的預設：Claude Code 沒有網路工具，但 Codex 可能本來就開著網路搜尋。想明確關掉請設 `none`。
+- **Codex 只有一個 `web_search` 設定，不是兩個工具**，所以 `search` 與 `fetch` 對應到 `cached` 與 `live`。依 Codex 的說法，`cached` 是從索引回答、不即時瀏覽，`live` 是即時搜尋網路；這是依風險做的近似對應。`codex exec` 不收 `--search` 旗標，所以 agent-lyceum 改傳 `-c web_search="..."`。
+- **沒有實際端對端跑過。**Codex 的設定鍵與合法值用 Codex 0.160.0 確認過，但 `cached`／`live` 以及 Claude 兩個工具的實際行為，沒有用真的 CLI 跑過（會花 token）。正式依賴前，請先在該 agent 上手動試一次。
+- `call` 會讀 `team.yaml` 裡的這個欄位，`run --agent` 也會保留。
+
+```yaml
+# team.yaml
+agents:
+  pm:
+    runtime: claude-code
+    allow_web: fetch        # 可以搜尋並讀網頁；沒設這個欄位的 agent 就沒有網路工具
+```
 
 ## 寫入範圍
 
