@@ -110,7 +110,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`: what the agent may use of the web; unset means Claude Code gets no web tools and Codex keeps its own default; `search` = `WebSearch` / Codex `web_search="cached"`, `fetch` = `WebSearch` + `WebFetch` / Codex `web_search="live"`, `none` = no web tools / Codex `disabled`; `fetch` pulls whole pages into the agent's context, so give it only to agents that do little editing, such as a requirements or research role), `owns` (repo globs).
+Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `owns` (repo globs).
 
 Rules checked by `validate`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository.
 
@@ -124,6 +124,41 @@ Rules checked by `validate`: ≥ 2 agents (the lead and one member; the template
 5. The run ends when the lead sends `type: done`, when all mailboxes are empty, or after `max_rounds` wake-ups. A `done` must declare `outcome: completed|partial|blocked|failed` in its frontmatter and carry `## Result`, `## Files`, `## Verification`, `## Not done`; `completed` also needs every `## Steps` item ticked. A `done` that breaks this is sent back to the lead (twice at most, then it is kept as `partial`). Agent-lyceum does not verify what the lead reports. A failed wake-up is retried once, then reported to the lead as a failure message (if the lead itself fails, the run aborts).
 
 Parallelism (`max_parallel > 1`) only runs agents with disjoint `owns`, and never alongside the lead. Each non-lead agent then works in its **own git worktree** (`projects/<name>/worktrees/<run-id>/<agent>`, branch `agent-lyceum/<run-id>/<agent>`) cut from a snapshot of the repo as it is when the agent is woken (`refs/agent-lyceum/<run-id>/base-<n>`; it includes the lead's uncommitted and new, non-ignored files; your HEAD, branches and working tree are not touched). `dispatcher.workspace_mode` is `auto` (worktrees when `max_parallel > 1`), `worktree` or `shared`; `shared` cannot be combined with parallel agents. A parallel run refuses to start while the repo has uncommitted changes of yours, and when the repo is not a git repository (run sequentially instead). When a member finishes, the dispatcher commits its worktree and brings the changes into your working tree (not your index or HEAD) before the lead reads the member's mail. Every changed path is checked first: it must be inside the member's `owns` (renames and deletions included), must not be `CLAUDE.md`/`AGENTS.md`, and symlinks may not point out of the project or the member's `owns`. If a file also changed in your repo since the member's snapshot, if a check fails, or if `git apply` fails, nothing is applied: the work stays on its branch and worktree, a report and patch are written to `runs/<run-id>/integration/`, the lead is told, and the run cannot end as `completed` (it ends `blocked`). A worktree isolates files only: it cannot isolate side effects on external services, databases or the network.
+
+## Web access (`allow_web`)
+
+By default no agent can use the web. Claude Code agents are woken in headless `dontAsk` mode, where anything not explicitly allowed is refused, so `WebSearch` and `WebFetch` are denied unless you opt in per agent with `allow_web` (in `team.yaml` or `project.yaml`; the project value wins). It only decides whether the agent may use the web tools; the write scope below is unchanged.
+
+| Value | Claude Code | Codex |
+|---|---|---|
+| unset | no web tools (as before) | nothing is passed: Codex keeps its own default |
+| `none` | no web tools | `-c web_search="disabled"` |
+| `search` | `WebSearch` | `-c web_search="cached"` |
+| `fetch` | `WebSearch` and `WebFetch` | `-c web_search="live"` |
+
+### `search` or `fetch`?
+
+- **`search`**: the agent can run a search and gets a list of results (typically titles, links and short snippets). It cannot open a page, so it only knows what the results say. That is enough for "which Node versions are still supported?", "what is the latest release of this library?" or "is this API deprecated?".
+- **`fetch`**: everything `search` does, plus reading the page behind a URL, so the page's text goes into the agent's context. You need it when the answer is inside a page: a specification, one section of an API reference, an issue thread, or a URL you put in the task.
+
+The two are separate levels because the risk is different. Text read from a page can carry instructions written for the agent ("ignore your rules and ..."), known as prompt injection. With `fetch` that text arrives in full; with `search` only snippets do. The more an agent can do (edit your repository, run commands), the more this matters.
+
+**Which agents to give it to.** Start with nothing. Give `search` to roles that look things up. Give `fetch` only to roles that really must read specific pages and do little editing, such as a requirements or research role like `pm`. Keep the members that edit your repo (for example `fe-member`, `qa-member`) off, and have the lead or the pm look things up and put the result in the task.
+
+### Things to know
+
+- **Unset is not `none`.** Unset leaves each runtime's own default alone: Claude Code has no web tools, but Codex may already have web search on. Set `none` to turn it off explicitly.
+- **Codex has one `web_search` setting, not two tools**, so `search` and `fetch` map to `cached` and `live`. As Codex describes them, `cached` answers from an index instead of browsing, and `live` searches the web in real time; this is an approximation by risk. `codex exec` takes no `--search` flag, so agent-lyceum passes `-c web_search="..."`.
+- **Not run end to end.** The Codex setting and its allowed values were checked against Codex 0.160.0, but the behaviour of `cached` / `live` and of Claude's two tools was not exercised against the real CLIs (that costs tokens). Try it once on the agent before relying on it.
+- `call` reads the field from `team.yaml`, and `run --agent` keeps it.
+
+```yaml
+# team.yaml
+agents:
+  pm:
+    runtime: claude-code
+    allow_web: fetch        # may search and read pages; agents without the field have no web tools
+```
 
 ## Write scope
 
