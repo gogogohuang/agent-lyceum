@@ -5,8 +5,8 @@ import { defineConfig } from 'vitest/config'
 // Tests that need the real mod runtime must be named *.mod.test.ts so they stay out of this run.
 export default defineConfig({
   // plugins/status-monitor/tsconfig.json extends a file Claude Code generates (and git ignores), so it is missing in CI:
-  // do not let vite look up a tsconfig for the files it transforms.
-  esbuild: { tsconfigRaw: '{}' },
+  // do not let vite (oxc) look up a tsconfig for the files it transforms.
+  oxc: { tsconfig: false },
   resolve: {
     alias: { 'claude-code/testing': fileURLToPath(new URL('./test/shims/claude-code-testing.ts', import.meta.url)) },
   },
