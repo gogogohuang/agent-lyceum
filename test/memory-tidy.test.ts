@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, writeTidyState } from "../src/memory-tidy.js";
+import { buildTidyPrompts, type TidyContext } from "../src/prompt.js";
 import { git, initGitRepo, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -201,5 +202,43 @@ describe("findMissingPaths", () => {
     const d = mem(env);
     write(path.join(d, "a.md"), "`src/relative.ts` and `/nope/abs.ts`");
     expect(findMissingPaths(d, undefined).map((m) => m.path)).toEqual(["/nope/abs.ts"]);
+  });
+});
+
+describe("buildTidyPrompts", () => {
+  const ctx = (over: Partial<TidyContext> = {}): TidyContext => ({
+    layer: "project",
+    dir: "/m/lead",
+    archiveDir: "/m/lead/.archive/20261008T031500Z",
+    files: [{ rel: "MEMORY.md", bytes: 20, mtime: "2026-09-01T00:00:00.000Z" }, { rel: "a.md", bytes: 5, mtime: "2026-08-01T00:00:00.000Z" }],
+    index: "- [a](a.md)\n",
+    changes: { head: "h2", since: "h1", log: ["abc123 add feature"], stat: [" src/x.ts | 2 +-"] },
+    missing: [{ file: "a.md", path: "src/gone.ts" }],
+    ...over,
+  });
+
+  it("is a maintenance prompt: no mail protocol, the rules, the archive line, and the facts", () => {
+    env = makeMemoryEnv();
+    const lead = env.project().agents.lead!;
+    const { systemPrompt, userPrompt } = buildTidyPrompts(lead, ctx());
+    expect(systemPrompt).toContain("Memory tidy");
+    expect(systemPrompt).toContain("tidy-report.md");
+    expect(systemPrompt).toMatch(/never delete/i);
+    expect(systemPrompt).not.toContain("Sending mail");
+    expect(userPrompt).toContain("Archive directory: /m/lead/.archive/20261008T031500Z");
+    expect(userPrompt).toContain("- [a](a.md)");
+    expect(userPrompt).toContain("abc123 add feature");
+    expect(userPrompt).toContain("src/gone.ts");
+    expect(userPrompt).toMatch(/a\.md\s+5 B/);
+  });
+
+  it("says when there is no baseline or no repo, and omits project changes for the global layer", () => {
+    env = makeMemoryEnv();
+    const lead = env.project().agents.lead!;
+    const first = buildTidyPrompts(lead, ctx({ changes: { head: "h", log: [], stat: [], note: "first tidy: no baseline" } })).userPrompt;
+    expect(first).toContain("first tidy: no baseline");
+    const global = buildTidyPrompts(lead, ctx({ layer: "global", changes: undefined, missing: [] })).userPrompt;
+    expect(global).toMatch(/global/i);
+    expect(global).not.toContain("Changes in the project");
   });
 });
