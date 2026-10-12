@@ -22,19 +22,19 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `init [-y]` | Create the home and the global agent library. [details](docs/commands.md#init) |
-| `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
-| `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
-| `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
-| `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
-| `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
-| `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
-| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
-| `doctor [-p name] [--task-file f] [--resolved] [--json]` | Check config (with enforcement levels), git, the lock and runtime CLIs without running agents; `--resolved` prints every effective setting and its source. [details](docs/commands.md#doctor) |
-| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
-| `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
+| Layer | Command | What it does |
+|---|---|---|
+| Project | `init [-y]` | Create the home and the global agent library. [details](docs/commands.md#init) |
+| Project | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
+| Project | `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
+| Diagnose | `doctor [-p name] [--task-file f] [--resolved] [--json]` | Check config (with enforcement levels), git, the lock and runtime CLIs without running agents; `--resolved` prints every effective setting and its source. [details](docs/commands.md#doctor) |
+| Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
+| Run | `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
+| Run | `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
+| Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
+| Run | `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
+| Run | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
+| Run | `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
 
 Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
 

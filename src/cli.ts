@@ -605,5 +605,13 @@ program
     }
   });
 
+// `--help` lists the commands in three layers.
+const HELP_LAYERS: Record<string, string[]> = {
+  "Project:": ["init", "project"],
+  "Diagnose:": ["doctor", "status"],
+  "Run:": ["run", "resume", "clear", "call", "memory"],
+};
+for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);
+
 program.parseAsync().catch((e) => fail((e as Error).message));
 

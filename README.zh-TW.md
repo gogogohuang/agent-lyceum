@@ -22,19 +22,19 @@ npx agent-lyceum status
 
 ## 指令
 
-| 指令 | 功能 |
-|---|---|
-| `init [-y]` | 建立 home 與全域 agent 庫。 [詳細](docs/commands.zh-TW.md#init) |
-| `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
-| `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
-| `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
-| `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
-| `resume [run-id] [--answer] [-p name]` | 接續被中斷或失敗的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
-| `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
-| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
-| `doctor [-p name] [--task-file f] [--resolved] [--json]` | 不執行 agent，檢查設定（含防護等級）、git、鎖與 runtime CLI；`--resolved` 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#doctor) |
-| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
-| `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
+| 層 | 指令 | 功能 |
+|---|---|---|
+| 專案 | `init [-y]` | 建立 home 與全域 agent 庫。 [詳細](docs/commands.zh-TW.md#init) |
+| 專案 | `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
+| 專案 | `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
+| 診斷 | `doctor [-p name] [--task-file f] [--resolved] [--json]` | 不執行 agent，檢查設定（含防護等級）、git、鎖與 runtime CLI；`--resolved` 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#doctor) |
+| 診斷 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
+| 執行 | `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
+| 執行 | `resume [run-id] [--answer] [-p name]` | 接續被中斷或失敗的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
+| 執行 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
+| 執行 | `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
+| 執行 | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
+| 執行 | `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
 
 Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
 
