@@ -14,11 +14,12 @@
 
 註冊專案：建立 `projects/<name>/project.yaml`、共用資料夾與 `COMMON.md`。
 
-## project list and remove
+## project and project remove
 
-**用法:** `project list` / `project remove <name> [--purge]`
+**用法:** `project` / `project remove <name> [--purge]`
 
-列出專案／取消註冊（除非加 `--purge`，否則保留 context）。
+- `project`（不帶子指令）：列出已註冊的專案。
+- `project remove <name>`：取消註冊專案。除非加 `--purge`，否則保留它的 context。
 
 ## run
 
@@ -165,9 +166,9 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 **`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
-## memory tidy
+## tidy
 
-**用法:** `memory tidy [-p name] [--agent a] [--layer project|global] [--dry-run]`
+**用法:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <時間戳> -p name --agent a [--layer project|global]`
 
 讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。
 
@@ -178,6 +179,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - `--layer project`：預設；整理 agent 的 **project** 記憶。
 - `--layer global`：整理 **global** 記憶。它由所有專案共用，所以只有你明確要求才會整理。
 - `--dry-run`：只印出記憶大小、專案的變化與已不存在的路徑。不喚醒任何人、不改任何東西、不取鎖。
+- `--undo 時間戳`：不整理，改為還原那一次整理。見下方。
 
 task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 agent 設定 global 記憶，要使用 project 記憶需在 `project.yaml` 為 agent 設定 `memory.project`；沒有任何 agent 設定時，指令會說明並以 `0` 結束。
 
@@ -185,18 +187,12 @@ task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 
 
 agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要專案鎖，所以有 run 在執行時會拒絕。
 
-## memory restore
+**`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 
-**用法:** `memory restore <時間戳> -p name --agent a [--layer project|global]`
-
-還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。若現在已有同名檔案，不會覆蓋，只會回報並留在封存裡。`tidy` 結束時會印出時間戳。
-
-選項：
-
-- `時間戳`：要還原哪一次整理。
-- `-p name`：專案。
-- `--agent a`：還原誰的記憶（必填）。
+- `--agent a`：還原誰的記憶。必填。
 - `--layer project|global`：哪一層記憶（預設 `project`）。
+- `--dry-run` 不能與 `--undo` 並用。
+- 若現在已有同名檔案，不會覆蓋，只會回報並留在封存裡。
 
 ## 中止 run
 

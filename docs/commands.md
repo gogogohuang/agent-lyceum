@@ -14,11 +14,12 @@ Create the home and a global agent library (`lead`, `fe-member`, `qa-member`). A
 
 Register a project: creates `projects/<name>/project.yaml`, shared folders and `COMMON.md`.
 
-## project list and remove
+## project and project remove
 
-**Usage:** `project list` / `project remove <name> [--purge]`
+**Usage:** `project` / `project remove <name> [--purge]`
 
-List projects / unregister (keeps context unless `--purge`).
+- `project` (no subcommand): list the registered projects.
+- `project remove <name>`: unregister a project. Its context is kept unless you add `--purge`.
 
 ## run
 
@@ -165,9 +166,9 @@ Exit 1 on configuration errors or when something the team needs is explicitly un
 
 **`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`, `owns`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
-## memory tidy
+## tidy
 
-**Usage:** `memory tidy [-p name] [--agent a] [--layer project|global] [--dry-run]`
+**Usage:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <timestamp> -p name --agent a [--layer project|global]`
 
 Have agents tidy their own long-term memory: merge entries that say the same thing, rewrite stale ones, and retire what is obsolete. **It only ever runs when you run it**: a run ending, a large memory or changes in the repo never start a tidy; `status` and `doctor` at most suggest one.
 
@@ -178,6 +179,7 @@ Options:
 - `--layer project`: the default; tidy the **project** memory of the agent(s).
 - `--layer global`: tidy **global** memory. It is shared by every project, so it is only tidied when you ask.
 - `--dry-run`: only print the memory sizes, the project changes and the missing paths. It wakes nobody, changes nothing and takes no lock.
+- `--undo timestamp`: tidy nothing; undo the tidy with that timestamp instead. See below.
 
 Task memory is never tidied (`clear` deletes it). Note that the project template gives agents global memory only: to use project memory, set `memory.project` for an agent in `project.yaml`. With no such agent the command says so and exits `0`.
 
@@ -185,18 +187,12 @@ Each agent is woken once for this, outside any run (no round is used), and may o
 
 agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project lock, so it refuses while a run is active.
 
-## memory restore
+**`tidy --undo <timestamp>`** undoes one tidy: it moves the files of `memory/.archive/<timestamp>/` back to where they were and adds them to `MEMORY.md` if the index does not mention them. `tidy` prints the timestamp, and the exact undo command, when it finishes.
 
-**Usage:** `memory restore <timestamp> -p name --agent a [--layer project|global]`
-
-Undo a tidy: move the files of `memory/.archive/<timestamp>/` back to where they were and add them to `MEMORY.md` if the index does not mention them. A file whose name exists now is not overwritten; it is reported and stays in the archive. `tidy` prints the timestamp when it finishes.
-
-Options:
-
-- `timestamp`: which tidy to undo.
-- `-p name`: the project.
-- `--agent a`: whose memory to restore (required).
+- `--agent a`: whose memory to restore. Required.
 - `--layer project|global`: which memory layer (default `project`).
+- `--dry-run` cannot be combined with `--undo`.
+- A file whose name exists now is not overwritten; it is reported and stays in the archive.
 
 ## Stopping a run
 

@@ -1,6 +1,6 @@
 # 12 收掉巢狀子指令
 
-狀態：設計已同意，尚未實作。
+狀態：已實作（plan：docs/plans/2026-10-12-12-flatten-subcommands.md）。
 
 ## 12.1 問題
 

@@ -26,15 +26,15 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 |---|---|---|
 | Project | `init [-y]` | Create the home and the global agent library. [details](docs/commands.md#init) |
 | Project | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
-| Project | `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
+| Project | `project` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-and-project-remove) |
 | Diagnose | `doctor [-p name] [--task-file f] [--resolved] [--json]` | Check config (with enforcement levels), git, the lock and runtime CLIs without running agents; `--resolved` prints every effective setting and its source. [details](docs/commands.md#doctor) |
 | Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
 | Run | `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
 | Run | `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
 | Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
 | Run | `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
-| Run | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
-| Run | `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
+| Run | `tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#tidy) |
+| Run | `tidy --undo <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#tidy) |
 
 `agent-lyceum --help` lists each command with a one-line summary; `agent-lyceum <command> --help` prints its full description and options.
 
