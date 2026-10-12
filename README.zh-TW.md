@@ -36,6 +36,8 @@ npx agent-lyceum status
 | 執行 | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
 | 執行 | `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
 
+`agent-lyceum --help` 只列出每個指令的一行簡述；`agent-lyceum <指令> --help` 會印出該指令的完整說明與選項。
+
 Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
 
 ## 單獨呼叫一個 agent

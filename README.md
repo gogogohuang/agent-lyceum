@@ -36,6 +36,8 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | Run | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
 | Run | `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
 
+`agent-lyceum --help` lists each command with a one-line summary; `agent-lyceum <command> --help` prints its full description and options.
+
 Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
 
 ## Running one agent on its own
