@@ -184,6 +184,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       "Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt",
       "on every wake-up; read other memory files on demand; you can write only inside these directories.",
       "Put anything specific to the current task (decisions, progress, findings, branch names) in the **task** memory: it is private to this task and starts empty for every new task.",
+      "Also record approaches you considered but rejected, with the reason, so they can be revisited or reversed later.",
       "Use the global/project memory only for durable lessons that stay true across tasks; never record task-specific details there.",
     );
   }
