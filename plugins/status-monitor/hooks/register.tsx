@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
-import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, overviewLine, parseProjects, progress, runLabel, tagToast, transition } from './summary'
+import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, parseProjects, progress, runLabel, tagToast, transition } from './summary'
 
 const PANE = 'agent-lyceum'
 const snapshot = atom({ plugin: 'status-monitor', key: 'snapshot' } as const, {} as Snapshots)
@@ -15,15 +15,7 @@ const last = new Map<string, Report>()
 const polling = new Set<string>()
 let several = false
 
-/** Latest report of every watched project, in configured order. */
-async function publish($: EngineInterface, targets: Target[]) {
-  const snap = await read($, snapshot)
-  const reports = targets.map(t => snap[t.key]?.report).filter((r): r is Report => !!r)
-  const errors = targets.map(t => snap[t.key]?.error).filter((m): m is string => !!m)
-  $.ui.status(reports.length === 0 && errors.length ? `team 無法取得狀態：${errors[0]}` : overviewLine(reports) ?? 'team 閒置（無執行中）')
-}
-
-async function poll($: EngineInterface, t: Target, targets: Target[]) {
+async function poll($: EngineInterface, t: Target) {
   if (polling.has(t.key)) return
   polling.add(t.key)
   try {
@@ -39,11 +31,10 @@ async function poll($: EngineInterface, t: Target, targets: Target[]) {
   } finally {
     polling.delete(t.key)
   }
-  await publish($, targets)
 }
 
 function pollAll($: EngineInterface, targets: Target[]) {
-  for (const t of targets) void poll($, t, targets)
+  for (const t of targets) void poll($, t)
 }
 
 export const register: Register = (on, options) => {
@@ -58,7 +49,6 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane' })
-    $.ui.status('team 讀取中…')
     pollAll($, targets)
     $.clock.every(every, () => pollAll($, targets))
     if (options.autoOpen === true) void $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })

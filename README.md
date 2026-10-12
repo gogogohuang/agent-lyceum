@@ -55,7 +55,7 @@ npx agent-lyceum call pm "is this ready to build?" --dir ~/code/web-app   # a gl
 
 ## Monitor mod (Claude Code)
 
-`plugins/status-monitor` is a Claude Code **mod**, not an ordinary plugin: it is written against Claude Code's mod hooks API (`import type { Register } from 'claude-code'`) and runs inside the Claude Code session, where it adds a status line entry, toasts and a `/status-monitor` pane that poll `agent-lyceum status --json`. It needs a Claude Code build that supports mods; it does not change how agent-lyceum itself runs. It shows live run status for one or several projects.
+`plugins/status-monitor` is a Claude Code **mod**, not an ordinary plugin: it is written against Claude Code's mod hooks API (`import type { Register } from 'claude-code'`) and runs inside the Claude Code session, where it adds toasts and a `/status-monitor` pane that poll `agent-lyceum status --json`. It needs a Claude Code build that supports mods; it does not change how agent-lyceum itself runs. It shows live run status for one or several projects.
 
 **Load it.** Build first (`npm run build`; the mod runs `dist/cli.js`), then start a session with:
 
@@ -66,7 +66,6 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 `--plugin-dir` only applies when a session starts; an already-open session must be restarted (`claude --resume --plugin-dir ...` keeps the conversation). To load it every time, add `alias claude='claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor'` to your shell rc, or, for hosts where you cannot pass a flag (desktop app, SDK), set `CLAUDE_CODE_PLUGIN_DIRS` to the mod folder. While a session is running, saving a file in the mod folder hot-reloads it.
 
 **Use it.**
-- **Status line:** always on once loaded (`team 讀取中…` until the first poll, `team 無法取得狀態：…` when the CLI cannot run); shows the run state, round `n/max`, output tokens, the current step and unread mail. With several projects it shows one overview line (`team 1/3 running · a ... | b ...`).
 - **Toasts:** a message pops up when a run finishes, is interrupted, or an agent's wake fails (prefixed `[project]` when several are watched). Nothing to do.
 - **`/status-monitor`:** type it to open (or, if already open, close) the pane. It is off at session start unless `autoOpen` is set. In the **fullscreen layout** (`"tui": "fullscreen"` in `~/.claude/settings.json`, restart the session to apply; `/tui fullscreen` does the same) from 110 terminal columns it docks on the right at half the terminal width, and tabs and **關閉** (Close) can be clicked. Otherwise it shows above the prompt; the layout is fixed when the session starts, so a session started on the main screen stays that way. Keyboard (works in both): `x` closes, `1`-`9` or Tab/Enter switch task, Esc returns to the prompt, running the command again also closes. It shows, per project: the run id and state, task, progress and checklist, the agents working now and the queued mail, blocked integrations, notes and result summary, output tokens per runtime, per-agent wake statistics, the last 8 wakes. Each running task is a tab, newest first; finished and interrupted runs are not listed. It refreshes with the polling interval while open.
 
