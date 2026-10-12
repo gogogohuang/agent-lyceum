@@ -490,7 +490,7 @@ program
     "Have agents tidy their own memory: merge duplicates, fix stale entries, archive what is obsolete (never deletes).\n\n" +
       "Manual only; nothing triggers it automatically.\n\n" +
       "With --undo <stamp> it tidies nothing and instead:\n" +
-      "  - moves the files of that tidy's archive back (nothing that exists now is overwritten)\n" +
+      "  - moves that tidy's archived files back (never overwrites)\n" +
       "  - re-adds them to MEMORY.md\n" +
       "  - needs --agent, and cannot be combined with --dry-run",
   )
