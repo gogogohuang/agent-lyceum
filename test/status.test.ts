@@ -238,7 +238,7 @@ describe("status: memory tidy hint", () => {
     write(path.join(d, "MEMORY.md"), "- entry\n".repeat(800));
     const report = buildStatusReport(env.project());
     expect(report.memory_advice?.join("\n")).toMatch(/lead/);
-    expect(formatStatusReport(report, Date.now(), false)).toMatch(/memory tidy/);
+    expect(formatStatusReport(report, Date.now(), false)).toMatch(/agent-lyceum tidy -p /);
     expect(fs.existsSync(path.join(d, ".archive"))).toBe(false);
   });
 

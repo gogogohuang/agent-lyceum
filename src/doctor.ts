@@ -171,7 +171,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     });
   }
 
-  for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum memory tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
+  for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
 
   const runtimes = await probeProjectRuntimes(project, opts);
   checks.push(...judgeRuntimes(project, runtimes));
