@@ -193,6 +193,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       (isLead || agent.canEditAgentMd ? " unless you need to as lead (changes are logged)." : "."),
     "- Never touch another agent's memory, inbox or outbox, or the team's config files.",
     `- The shared team context is in \`${commonFile(project)}\`${isLead ? " (you maintain it; keep it short)" : " (read-only)"}.`,
+    "- If you open a pull request, end its description with a line saying it was opened by agent-lyceum (e.g. `🤖 Opened by agent-lyceum`), naming your agent.",
   );
   if (project.dispatcher.max_parallel > 1 && agent.owns.length > 0 && !isLead) {
     lines.push(`- You own these repo paths and must only change files there: ${agent.owns.join(", ")}.`);
