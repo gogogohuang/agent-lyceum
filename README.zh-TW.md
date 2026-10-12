@@ -11,7 +11,7 @@
 ```bash
 npx agent-lyceum init                     # 建立 home 與全域 agent 庫
 npx agent-lyceum project add web --dir ~/code/web-app
-npx agent-lyceum validate --project web   # 檢查設定並顯示各項防護等級
+npx agent-lyceum doctor --project web   # 檢查設定並顯示各項防護等級
 npx agent-lyceum run --task-file spec.md  # 在 repo 內執行時會自動偵測專案
 npx agent-lyceum status
 ```
@@ -22,23 +22,19 @@ npx agent-lyceum status
 
 ## 指令
 
-| 指令 | 功能 |
-|---|---|
-| `init [-y]` | 建立 home 與全域 agent 庫。 [詳細](docs/commands.zh-TW.md#init) |
-| `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
-| `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
-| `validate [-p name] [--task-file f]` | 驗證設定並顯示每個 agent 的防護等級。 [詳細](docs/commands.zh-TW.md#validate) |
-| `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
-| `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
-| `resume [run-id] [-p name]` | 接續被中斷或失敗的 run。 [詳細](docs/commands.zh-TW.md#resume) |
-| `answer <run-id> [--no-edit] [-p name]` | 回答等待中的 run 提出的問題，並接續執行。 [詳細](docs/commands.zh-TW.md#answer) |
-| `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
-| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | 刪除 run 與其任務記憶、worktree。 [詳細](docs/commands.zh-TW.md#clear) |
-| `config show --resolved [-p name] [--json]` | 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#config-show) |
-| `doctor [-p name] [--json]` | 不執行 agent，檢查設定、git、鎖與 runtime CLI。 [詳細](docs/commands.zh-TW.md#doctor) |
-| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
-| `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
-| `unlock [-p name] --force` | 移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#unlock) |
+| 層 | 指令 | 功能 |
+|---|---|---|
+| 專案 | `init [-y]` | 建立 home 與全域 agent 庫。 [詳細](docs/commands.zh-TW.md#init) |
+| 專案 | `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
+| 專案 | `project list` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-list-and-remove) |
+| 診斷 | `doctor [-p name] [--task-file f] [--resolved] [--json]` | 不執行 agent，檢查設定（含防護等級）、git、鎖與 runtime CLI；`--resolved` 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#doctor) |
+| 診斷 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
+| 執行 | `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
+| 執行 | `resume [run-id] [--answer] [-p name]` | 接續被中斷或失敗的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
+| 執行 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
+| 執行 | `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
+| 執行 | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#memory-tidy) |
+| 執行 | `memory restore <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#memory-restore) |
 
 Ctrl-C 會乾淨地取消 run，之後可用 `resume` 接續（[中止 run](docs/commands.zh-TW.md#中止-run)）。`run`／`resume` 只有在 lead 回報 `completed` 時才 exit `0`；`partial`／`blocked` 為 `2`，`failed` 為 `1`，等待你回答時為 `3`，取消為 `130`（[退出碼](docs/commands.zh-TW.md#退出碼)）。未指定 `-p` 時，專案由目前目錄推斷（[選擇專案](docs/commands.zh-TW.md#選擇專案)）。
 
@@ -112,7 +108,7 @@ agents:
 
 Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`owns`（repo glob）。
 
-`validate` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository。
+`doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository。
 
 ## 一次執行如何運作
 
@@ -176,6 +172,6 @@ agents:
 - **Codex**：`-s workspace-write` 搭配 `-c sandbox_workspace_write.writable_roots=[...]`（由 OS 強制）。Codex 無法禁止 repo 內的單一檔案，所以 repo 的 `CLAUDE.md`/`AGENTS.md` 只能靠**事後偵測**保護。
 - **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead；被寫入的內容會先留存在 `runs/<run-id>/violations/`。
 
-`validate` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md` 與其他 agent 的 context 都由 OS 強制保護，否則拒絕執行。
+`doctor` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md` 與其他 agent 的 context 都由 OS 強制保護，否則拒絕執行。
 
 已知缺口：Claude Code 內建的 Edit/Write 工具不在沙箱內（由 `Edit` 規則涵蓋）；Codex 的 MCP 工具與 hooks 在其沙箱之外執行；`--dangerously-bypass-approvals-and-sandbox` / `danger-full-access` 會停用所有防護。啟用 `can_edit_agent_md` 時，Codex lead 的可寫根目錄會擴大到整個 agent 目錄。

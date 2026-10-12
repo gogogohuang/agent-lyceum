@@ -94,10 +94,10 @@ describe("status --json", () => {
   });
 });
 
-describe("config show --resolved", () => {
+describe("doctor --resolved", () => {
   it("lists every effective value with where it came from", () => {
     env = makeEnv();
-    const r = run(["config", "show", "--resolved", "-p", "demo"]);
+    const r = run(["doctor", "--resolved", "-p", "demo"]);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/agents\.lead\.runtime\s*=\s*claude-code\s+team\.yaml/);
     expect(r.out).toMatch(/dispatcher\.max_parallel\s*=\s*1\s+projects\/demo\/project\.yaml/);
@@ -105,7 +105,7 @@ describe("config show --resolved", () => {
 
   it("--json is machine readable", () => {
     env = makeEnv();
-    const r = run(["config", "show", "--resolved", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
+    const r = run(["doctor", "--resolved", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
     const j = JSON.parse(r.out);
     expect(r.out).not.toMatch(ANSI);
     expect(j.schema_version).toBe(1);
@@ -115,7 +115,7 @@ describe("config show --resolved", () => {
 
   it("fails on stderr for an unknown project", () => {
     env = makeEnv();
-    const r = run(["config", "show", "--resolved", "-p", "ghost", "--json"]);
+    const r = run(["doctor", "--resolved", "-p", "ghost", "--json"]);
     expect(r.code).not.toBe(0);
     expect(r.out).toBe("");
   });

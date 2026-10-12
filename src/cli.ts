@@ -82,7 +82,7 @@ project
   .action((name: string, opts: { dir: string }) => {
     try {
       const r = addProject(home(), name, opts.dir);
-      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-lyceum validate --project ${name}`);
+      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-lyceum doctor --project ${name}`);
     } catch (e) {
       fail((e as Error).message);
     }
@@ -105,35 +105,6 @@ project
       console.log(removeProject(home(), name, !!opts.purge));
     } catch (e) {
       fail((e as Error).message);
-    }
-  });
-
-program
-  .command("validate")
-  .description("Validate the merged configuration and report enforcement levels")
-  .option("-p, --project <name>")
-  .option("--task-file <path>", "also check a task file")
-  .action((opts: { project?: string; taskFile?: string }) => {
-    try {
-      const pr = loadProject(opts.project);
-      const res = validateProject(pr);
-      console.log(`Project: ${pr.name}  (repo: ${pr.dir})\n`);
-      console.log(formatEnforcement(res.enforcement));
-      console.log("");
-      for (const i of res.issues) console.log(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (opts.taskFile) {
-        try {
-          const t = readTaskFile(absPath(opts.taskFile, process.cwd()));
-          console.log(`task file OK (${Buffer.byteLength(t)} bytes)`);
-        } catch (e) {
-          console.log(`ERROR  ${(e as Error).message}`);
-          res.ok = false;
-        }
-      }
-      console.log(res.ok ? "\nValid." : "\nInvalid.");
-      process.exit(res.ok ? 0 : 1);
-    } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).stack ?? String(e));
     }
   });
 
@@ -213,7 +184,7 @@ const interactive = (): boolean => !!process.stdin.isTTY && !!process.stdout.isT
 function printWaiting(pr: ResolvedProject, runId: string, file: string, problems: string[]): void {
   console.log(`\nRun ${runId} is waiting for your answers.\n  File: ${file}`);
   for (const p of problems) console.log(`  - ${p}`);
-  console.log(`Answer with: agent-lyceum answer ${runId} -p ${pr.name}   (or edit the file, then: agent-lyceum resume ${runId} -p ${pr.name})`);
+  console.log(`Answer with: agent-lyceum resume ${runId} --answer -p ${pr.name}   (or edit the file, then: agent-lyceum resume ${runId} -p ${pr.name})`);
 }
 
 /**
@@ -258,7 +229,7 @@ program
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
       let checked = pr;
       if (opts.agent) {
         assertName("agent", opts.agent);
@@ -293,13 +264,15 @@ program
   .command("resume [run-id]")
   .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent. Without an id, picks the newest run that is not done or running; with an id, continues that run.")
   .option("-p, --project <name>")
+  .option("--answer", "the run is waiting for answers: open ask-reply.md in $EDITOR, check the answers, then continue")
+  .option("--no-edit", "with --answer: do not open the editor; check the file as it is")
   .option("--assume-defaults", "if the run waits for answers, use the suggested answer for every unanswered question that has one")
-  .action(async (runId: string | undefined, opts: { project?: string; assumeDefaults?: boolean }) => {
+  .action(async (runId: string | undefined, opts: { project?: string; answer?: boolean; edit: boolean; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
@@ -325,7 +298,9 @@ program
       if (state.rounds >= pr.dispatcher.max_rounds)
         fail(`Run ${state.run_id} used ${state.rounds}/${pr.dispatcher.max_rounds} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 
+      if (opts.answer && state.end_reason !== "waiting") fail(`Run ${state.run_id} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
       if (state.end_reason === "waiting") {
+        if (opts.answer && opts.edit) openInEditor(prepareAnswers(dir, {}).path);
         const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
         if (!prep.complete) {
           printWaiting(pr, state.run_id, prep.path, prep.problems);
@@ -339,49 +314,42 @@ program
     }
   });
 
-program
-  .command("answer <run-id>")
-  .description("Answer the questions a waiting run asked: opens ask-reply.md in $EDITOR, checks the answers, then continues the run. With --no-edit it only checks a file you already edited.")
-  .option("-p, --project <name>")
-  .option("--no-edit", "do not open the editor; check the file as it is")
-  .option("--assume-defaults", "use the suggested answer for every unanswered question that has one")
-  .action(async (runId: string, opts: { project?: string; edit: boolean; assumeDefaults?: boolean }) => {
-    try {
-      assertName("run", runId);
-      const pr = loadProject(opts.project);
-      const dir = path.join(pr.paths.runs, runId);
-      if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
-      const state = loadRunState(dir);
-      if (state.end_reason !== "waiting") fail(`Run ${runId} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
-      if (opts.edit) openInEditor(prepareAnswers(dir, {}).path);
-      const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
-      if (!prep.complete) {
-        printWaiting(pr, runId, prep.path, prep.problems);
-        process.exit(3);
-      }
-      const res = validateProject(pr);
-      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
-      await preflight(pr);
-      const summary = await continueRun(pr, dir, runId);
-      await driveRun(pr, dir, summary, !!opts.assumeDefaults);
-    } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).message);
-    }
-  });
-
 /** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
+/** `clear --lock`: show who holds the project lock; remove it only with --force. */
+function unlockProject(pr: ResolvedProject, force: boolean): void {
+  const info = inspectProjectLock(pr.paths.root);
+  if (!info && !fs.existsSync(path.join(pr.paths.root, "lock.json"))) {
+    console.log(`Project ${pr.name} has no run lock.`);
+    return;
+  }
+  if (info) {
+    console.log(`Lock held for run ${info.run_id} by pid ${info.pid} on ${info.hostname}, last heartbeat ${info.heartbeat_at}${lockHolderAlive(info) ? " (that process is still alive)" : " (that process is gone)"}.`);
+  } else console.log("The lock file exists but cannot be read.");
+  if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+  forceUnlock(pr.paths.root);
+  console.log("Lock removed. Resume the run with: agent-lyceum resume");
+}
+
 program
-  .command("clear <run-id>")
+  .command("clear [run-id]")
   .description(
     "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots. " +
-      "Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo.",
+      "Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo. " +
+      "With --lock (and no run id) it instead removes the run lock a crashed run left behind; that needs --force.",
   )
   .option("-p, --project <name>")
   .option("--dry-run", "only list what would be deleted and what would be kept")
+  .option("--lock", "remove the project's run lock left behind by a crashed run (takes no run id; needs --force)")
+  .option("--force", "with --lock: remove the lock even though its owner cannot be confirmed dead")
   .option("--keep-worktrees", "keep the agents' worktrees and branches (and their snapshots), and still clear the run and its task memory")
-  .action((runId: string, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean }) => {
+  .action((runId: string | undefined, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean; lock?: boolean; force?: boolean }) => {
     try {
+      if (opts.lock) {
+        if (runId) fail("--lock takes no run id.");
+        return unlockProject(loadProject(opts.project), !!opts.force);
+      }
+      if (opts.force) fail("--force only goes with --lock.");
+      if (!runId) fail("Give the run id to clear (see `agent-lyceum status --task-list`), or use --lock.");
       assertName("run", runId);
       const pr = loadProject(opts.project);
       const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
@@ -419,74 +387,56 @@ program
     }
   });
 
-const configCmd = program.command("config").description("Inspect configuration");
-configCmd
-  .command("show")
-  .description("Show the effective configuration of a project and where each value comes from")
-  .requiredOption("--resolved", "merge global library, project file and defaults (currently the only view)")
-  .option("-p, --project <name>")
-  .option("--json", "print as JSON")
-  .action((opts: { project?: string; json?: boolean }) => {
-    try {
-      const h = home();
-      const pr = loadProject(opts.project);
-      const { project, sources } = resolveProjectWithSources(h, pr.name);
-      const values = flattenResolved(project);
-      if (opts.json) {
-        console.log(JSON.stringify({ schema_version: 1, project: project.name, values, sources }, null, 2));
-        return;
-      }
-      const rel = (f: string) => path.relative(h, f) || f;
-      const where = (s: SourceInfo): string => ("default" in s ? "default" : "inferred_from" in s ? `inferred from ${s.inferred_from.key} (${rel(s.inferred_from.file)})` : rel(s.file));
-      const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
-      const keys = Object.keys(sources).filter((k) => values[k] !== undefined);
-      const w = Math.max(...keys.map((k) => `${k} = ${show(values[k])}`.length));
-      for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(must(sources[k], `source of ${k}`))}`);
-    } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).message);
-    }
-  });
-
 program
   .command("doctor")
-  .description("Check the setup without running any agent: configuration, git, the project lock, and what each runtime CLI supports (from --version/--help).")
+  .description("Check the setup without running any agent: configuration and enforcement levels, git, the project lock, and what each runtime CLI supports (from --version/--help). With --resolved, print every effective setting and where it came from instead.")
   .option("-p, --project <name>")
+  .option("--task-file <path>", "also check a task file")
+  .option("--resolved", "print the merged settings (global library, project file, defaults) and their sources; runs no other check")
   .option("--json", "print the report as JSON")
-  .action(async (opts: { project?: string; json?: boolean }) => {
+  .action(async (opts: { project?: string; taskFile?: string; resolved?: boolean; json?: boolean }) => {
     try {
-      const report = await diagnoseProject(loadProject(opts.project));
-      console.log(opts.json ? JSON.stringify({ schema_version: 1, ...report }, null, 2) : formatDoctor(report));
+      if (opts.resolved) {
+        printResolved(opts.project, !!opts.json);
+        return;
+      }
+      const pr = loadProject(opts.project);
+      const report = await diagnoseProject(pr);
+      let taskError: string | undefined;
+      if (opts.taskFile) {
+        try {
+          readTaskFile(absPath(opts.taskFile, process.cwd()));
+        } catch (e) {
+          taskError = (e as Error).message;
+          report.checks.push({ level: "error", subject: "task", message: taskError });
+          report.ok = false;
+        }
+      }
+      if (opts.json) console.log(JSON.stringify({ schema_version: 1, ...report }, null, 2));
+      else console.log(`${formatEnforcement(validateProject(pr).enforcement)}\n\n${formatDoctor(report)}`);
       process.exit(report.ok ? 0 : 1);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
   });
 
-program
-  .command("unlock")
-  .description("Remove a project's run lock left behind by a crashed run. Shows the lock first; needs --force to remove it.")
-  .option("-p, --project <name>")
-  .option("--force", "remove the lock even though its owner cannot be confirmed dead")
-  .action((opts: { project?: string; force?: boolean }) => {
-    try {
-      const pr = loadProject(opts.project);
-      const info = inspectProjectLock(pr.paths.root);
-      if (!info && !fs.existsSync(path.join(pr.paths.root, "lock.json"))) {
-        console.log(`Project ${pr.name} has no run lock.`);
-        return;
-      }
-      if (info) {
-        console.log(`Lock held for run ${info.run_id} by pid ${info.pid} on ${info.hostname}, last heartbeat ${info.heartbeat_at}${lockHolderAlive(info) ? " (that process is still alive)" : " (that process is gone)"}.`);
-      } else console.log("The lock file exists but cannot be read.");
-      if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
-      forceUnlock(pr.paths.root);
-      console.log("Lock removed. Resume the run with: agent-lyceum resume");
-    } catch (e) {
-      fail((e as Error).message);
-    }
-  });
-
-
+/** `doctor --resolved`: every effective setting with the file and key it came from. */
+function printResolved(projectName: string | undefined, json: boolean): void {
+  const h = home();
+  const pr = loadProject(projectName);
+  const { project, sources } = resolveProjectWithSources(h, pr.name);
+  const values = flattenResolved(project);
+  if (json) {
+    console.log(JSON.stringify({ schema_version: 1, project: project.name, values, sources }, null, 2));
+    return;
+  }
+  const rel = (f: string) => path.relative(h, f) || f;
+  const where = (s: SourceInfo): string => ("default" in s ? "default" : "inferred_from" in s ? `inferred from ${s.inferred_from.key} (${rel(s.inferred_from.file)})` : rel(s.file));
+  const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  const keys = Object.keys(sources).filter((k) => values[k] !== undefined);
+  const w = Math.max(...keys.map((k) => `${k} = ${show(values[k])}`.length));
+  for (const k of keys) console.log(`${`${k} = ${show(values[k])}`.padEnd(w)}   ${where(must(sources[k], `source of ${k}`))}`);
+}
 
 program
   .command("call <agent> [task]")
@@ -545,7 +495,7 @@ memoryCmd
       }
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum validate`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
       await preflight(pr);
       const lease = takeLock(pr, `tidy-${tidyStamp()}`);
       const cancel = cancelOnSignals();
@@ -654,6 +604,14 @@ program
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
   });
+
+// `--help` lists the commands in three layers.
+const HELP_LAYERS: Record<string, string[]> = {
+  "Project:": ["init", "project"],
+  "Diagnose:": ["doctor", "status"],
+  "Run:": ["run", "resume", "clear", "call", "memory"],
+};
+for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);
 
 program.parseAsync().catch((e) => fail((e as Error).message));
 

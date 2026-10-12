@@ -383,7 +383,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   }
   const lastWake = (s.wakes ?? []).at(-1);
   if (lastWake) lines.push(`${L("上一次：")}#${lastWake.round} ${c.cyan(lastWake.agent)} ${okText(c, lastWake.ok)} → ${sentText(lastWake.sent)}`);
-  if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum answer ${s.run_id}（或 resume）`));
+  if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum resume ${s.run_id} --answer`));
   lines.push(`${L("流程：")}${flowLine(s, c)}`);
   return lines;
 }

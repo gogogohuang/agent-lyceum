@@ -11,7 +11,7 @@ The tool keeps **its own data out of your repo**: configuration, mailboxes, logs
 ```bash
 npx agent-lyceum init                     # create the home + global agent library
 npx agent-lyceum project add web --dir ~/code/web-app
-npx agent-lyceum validate --project web   # check config + show enforcement levels
+npx agent-lyceum doctor --project web   # check config + show enforcement levels
 npx agent-lyceum run --task-file spec.md  # inside the repo, the project is auto-detected
 npx agent-lyceum status
 ```
@@ -22,23 +22,19 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `init [-y]` | Create the home and the global agent library. [details](docs/commands.md#init) |
-| `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
-| `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
-| `validate [-p name] [--task-file f]` | Validate the merged config and show each agent's enforcement level. [details](docs/commands.md#validate) |
-| `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
-| `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
-| `resume [run-id] [-p name]` | Continue an interrupted or failed run. [details](docs/commands.md#resume) |
-| `answer <run-id> [--no-edit] [-p name]` | Answer the questions a waiting run asked, then continue it. [details](docs/commands.md#answer) |
-| `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
-| `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` | Delete a run with its task memory and worktrees. [details](docs/commands.md#clear) |
-| `config show --resolved [-p name] [--json]` | Print every effective setting and where it came from. [details](docs/commands.md#config-show) |
-| `doctor [-p name] [--json]` | Check config, git, the lock and runtime CLIs without running agents. [details](docs/commands.md#doctor) |
-| `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
-| `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
-| `unlock [-p name] --force` | Remove the project lock a crashed run left behind. [details](docs/commands.md#unlock) |
+| Layer | Command | What it does |
+|---|---|---|
+| Project | `init [-y]` | Create the home and the global agent library. [details](docs/commands.md#init) |
+| Project | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
+| Project | `project list` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-list-and-remove) |
+| Diagnose | `doctor [-p name] [--task-file f] [--resolved] [--json]` | Check config (with enforcement levels), git, the lock and runtime CLIs without running agents; `--resolved` prints every effective setting and its source. [details](docs/commands.md#doctor) |
+| Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
+| Run | `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
+| Run | `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
+| Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
+| Run | `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
+| Run | `memory tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#memory-tidy) |
+| Run | `memory restore <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#memory-restore) |
 
 Ctrl-C cancels a run cleanly and it can be continued with `resume` ([Stopping a run](docs/commands.md#stopping-a-run)). `run` and `resume` exit `0` only when the lead reported `completed`, `2` for partial or blocked, `1` for failed, `3` while waiting for your answers, `130` for cancelled ([Exit codes](docs/commands.md#exit-codes)). Without `-p`, the project is inferred from the current directory ([Choosing the project](docs/commands.md#choosing-the-project)).
 
@@ -111,7 +107,7 @@ agents:
 
 Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `owns` (repo globs).
 
-Rules checked by `validate`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository.
+Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository.
 
 ## How a run works
 
@@ -175,6 +171,6 @@ Enforcement is layered because no single mechanism is complete:
 - **Codex**: `-s workspace-write` with `-c sandbox_workspace_write.writable_roots=[...]` (OS-enforced). Codex cannot forbid a single file inside the repo, so repo `CLAUDE.md`/`AGENTS.md` are protected by **post-hoc detection** only.
 - **All runtimes**: protected files are hashed before the run; after each wake-up unauthorized changes are reverted, logged, and reported to the lead; what was written is kept in `runs/<run-id>/violations/` first.
 
-`validate` and `run` print every agent's level per category (`os`, `tool-rules`, `post-hoc`, `prompt-only`) and the paths it can write outside the repo. With `dispatcher.strict: true`, a run is refused unless memory, `AGENT.md` and other agents' context are OS-enforced.
+`doctor` and `run` print every agent's level per category (`os`, `tool-rules`, `post-hoc`, `prompt-only`) and the paths it can write outside the repo. With `dispatcher.strict: true`, a run is refused unless memory, `AGENT.md` and other agents' context are OS-enforced.
 
 Known gaps: Claude Code's built-in Edit/Write tools are not sandboxed (covered by the `Edit` rules); Codex MCP tools and hooks run outside its sandbox; `--dangerously-bypass-approvals-and-sandbox` / `danger-full-access` disable everything. With `can_edit_agent_md`, a Codex lead's writable roots widen to whole agent directories.

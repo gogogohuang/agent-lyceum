@@ -116,7 +116,7 @@ describe("project lock", () => {
   it("asks for a manual unlock when the lock file cannot be understood, and force-unlock clears it", () => {
     const root = tmp();
     fs.writeFileSync(path.join(root, LOCK_FILE), "garbage");
-    expect(() => acquireProjectLock(root, "r")).toThrow(/unlock/);
+    expect(() => acquireProjectLock(root, "r")).toThrow(/clear --lock/);
     expect(forceUnlock(root)?.token).toBeUndefined();
     expect(fs.existsSync(path.join(root, LOCK_FILE))).toBe(false);
     acquireProjectLock(root, "r").release();

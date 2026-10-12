@@ -20,17 +20,11 @@
 
 列出專案／取消註冊（除非加 `--purge`，否則保留 context）。
 
-## validate
-
-**用法:** `validate [-p name] [--task-file f]`
-
-驗證合併後的設定，並印出每個 agent 的防護等級。有錯誤時 exit 1。
-
 ## run
 
 **用法:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
 
-把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。agent 向你提問時 run 會暫停，見 [answer](#answer)。`--assume-defaults` 讓有建議值的題目直接採用建議值而不暫停（沒有建議值的題目仍然暫停）。
+把任務交給 lead，並執行 dispatcher 直到完成。任務文字與 `--task-file` 擇一提供。agent 向你提問時 run 會暫停，見 [回答問題](#回答問題)。`--assume-defaults` 讓有建議值的題目直接採用建議值而不暫停（沒有建議值的題目仍然暫停）。
 
 加上 `--agent <name>` 時，任務只交給專案裡的這一個成員，其他人都不會被喚醒：它不能寄信給隊友、不能向你提問、不能修改任何 `AGENT.md`，而且要靠它自己寄出的 `done` 來結束 run（所以它必須寄一封）。其餘行為與一般 run 相同：有 run id 與專案鎖、會出現在 `status`、可以 `resume`（run 會記得它是 solo）與 `clear`。`--assume-defaults` 在這個模式下沒有作用。名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
 
@@ -44,13 +38,13 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 ## resume
 
-**用法:** `resume [run-id] [--assume-defaults] [-p name]`
+**用法:** `resume [run-id] [--answer [--no-edit]] [--assume-defaults] [-p name]`
 
 接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。等待回答中的 run 要等所有未答題目都有有效答案才會繼續，否則 `resume` 會列出缺哪些題並以 `3` 結束。
 
-## answer
+## 回答問題
 
-**用法:** `answer <run-id> [--no-edit] [--assume-defaults] [-p name]`
+**用法:** `resume <run-id> --answer [--no-edit] [--assume-defaults] [-p name]`
 
 回答等待中的 run 提出的問題。agent 以 `type: ask` 信件提問（lead 一律可以；成員需設 `can_ask_user: true`）。dispatcher 把所有問題集中在一個檔案 `runs/<run-id>/mail/ask-reply.md`，讓 run 以 `waiting` 結束（exit `3`、釋放鎖、不消耗輪數）並印出檔案路徑；`status` 也會顯示路徑與未答題數。
 
@@ -68,7 +62,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 </ask-reply>
 ```
 
-你只需要填 `<answer>` 標籤。有 `<options>` 的題目填其中一個選項，或以 `other:` 開頭寫自訂文字；沒有選項的題目填任何非空文字。`answer` 會用 `$VISUAL`／`$EDITOR`（預設 `vi`）開啟檔案、檢查答案，全部有效後把答案以含 `<answers>` 區塊的 `reply` 信送給提問的 agent，並繼續 run。`--no-edit` 不開編輯器，只檢查你已經編輯好的檔案；自己直接編輯檔案再執行 `resume` 效果相同。有缺漏或無效時會列出問題並以 `3` 結束。在終端機裡，run 進入等待時 `run` 與 `resume` 會自己開編輯器。`--assume-defaults` 讓每個沒答、但有 `<suggested>` 的題目採用建議值（檔案中標記 `by="default"`），其餘仍然等待。已經回答過的題目會留在檔案裡，agent 追加第二批問題時不會再問。
+你只需要填 `<answer>` 標籤。有 `<options>` 的題目填其中一個選項，或以 `other:` 開頭寫自訂文字；沒有選項的題目填任何非空文字。`resume --answer` 會用 `$VISUAL`／`$EDITOR`（預設 `vi`）開啟檔案、檢查答案，全部有效後把答案以含 `<answers>` 區塊的 `reply` 信送給提問的 agent，並繼續 run。`--no-edit` 不開編輯器，只檢查你已經編輯好的檔案；自己直接編輯檔案再執行 `resume` 效果相同。有缺漏或無效時會列出問題並以 `3` 結束。在終端機裡，run 進入等待時 `run` 與 `resume` 會自己開編輯器。`--assume-defaults` 讓每個沒答、但有 `<suggested>` 的題目採用建議值（檔案中標記 `by="default"`），其餘仍然等待。已經回答過的題目會留在檔案裡，agent 追加第二批問題時不會再問。
 
 ## status
 
@@ -78,21 +72,21 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 ## clear
 
-**用法:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]`
+**用法:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [-p name] --force`
 
 依 id 刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。`--keep-worktrees` 會保留 worktree 與 branch，其餘照樣清除。`--dry-run` 只列出會刪除與會保留的項目。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
 
-## config show
+**`clear --lock`**（不帶 run id）移除當機 run 留下的專案鎖（每個專案同時只能有一個 run）。沒有 `--force` 時只顯示鎖的持有者。
 
-**用法:** `config show --resolved [-p name] [--json]`
-
-印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
+**從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `clear --lock --force`。
 
 ## doctor
 
-**用法:** `doctor [-p name] [--json]`
+**用法:** `doctor [-p name] [--task-file f] [--json]` · `doctor --resolved [-p name] [--json]`
 
-在不執行任何 agent 的前提下檢查環境：設定、git（平行 run 需要）、專案鎖，以及各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。只要團隊需要的功能被明確判定不支援就 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。
+在不執行任何 agent 的前提下檢查環境：設定（會印出每個 agent 的防護等級；`--task-file` 另外檢查任務檔）、git（平行 run 需要）、專案鎖，以及各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。設定有錯誤，或團隊需要的功能被明確判定不支援時 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。
+
+**`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
 ## memory tidy
 
@@ -112,21 +106,13 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。若現在已有同名檔案，不會覆蓋，只會回報並留在封存裡。`tidy` 結束時會印出時間戳。
 
-## unlock
-
-**用法:** `unlock [-p name] --force`
-
-移除當機的 run 留下的專案鎖（同一專案同時只能有一個 run）。不加 `--force` 只會顯示鎖的持有者。
-
-**從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `unlock --force`。
-
 ## 中止 run
 
 **中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-lyceum resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [answer](#answer)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
 
 ## 選擇專案
 
