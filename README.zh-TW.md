@@ -55,7 +55,7 @@ npx agent-lyceum call pm "這個需求可以開工了嗎？" --dir ~/code/web-ap
 
 ## 監控 mod（Claude Code）
 
-`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供狀態列、通知與 `/status-monitor` 面板，並輪詢 `agent-lyceum status --json`。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
+`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供通知與 `/status-monitor` 面板，並輪詢 `agent-lyceum status --json`。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
 
 **載入。** 先 build（`npm run build`；mod 會執行 `dist/cli.js`），再用下面的指令啟動 session：
 
@@ -66,7 +66,6 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 `--plugin-dir` 只在 session 啟動時生效，已開著的 session 要重開（`claude --resume --plugin-dir ...` 可保留對話）。想每次都載入，就在 shell rc 加 `alias claude='claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor'`；無法帶參數的環境（桌面 app、SDK）則把 `CLAUDE_CODE_PLUGIN_DIRS` 設成 mod 資料夾。session 執行中儲存 mod 資料夾內的檔案會自動 hot reload。
 
 **操作。**
-- **狀態列：** 載入後常駐（第一次輪詢前顯示 `team 讀取中…`，CLI 跑不起來時顯示 `team 無法取得狀態：…`），顯示執行狀態、輪數 `n/max`、output tokens、目前步驟與未讀信件。監看多個專案時顯示一行總覽（`team 1/3 執行中 · a ... | b ...`）。
 - **通知：** 執行完成、被中斷或某個 agent 喚醒失敗時會跳出訊息（監看多個專案時前面加 `[專案名]`），不需要任何操作。
 - **`/status-monitor`：** 輸入即開啟面板（已開著則關閉）。session 啟動時預設不開，除非設定 `autoOpen`。在 **fullscreen 版面**（`~/.claude/settings.json` 設 `"tui": "fullscreen"` 後重開 session；`/tui fullscreen` 效果相同）且終端寬度 110 欄以上時，面板會靠右 dock 在終端寬度的一半，分頁與 **關閉** 都可以用滑鼠點。否則顯示在輸入框上方；版面在 session 啟動時就固定，從主畫面啟動的 session 不會變。鍵盤操作兩種版面都能用：`x` 關閉，`1`-`9` 或 Tab/Enter 切換任務，Esc 回到輸入框，再執行一次指令也會關閉。每個專案顯示：執行 id 與狀態、任務、進度與清單、正在工作的 agent 與排隊中的信件、受阻的整合、備註與結果摘要、各 runtime 的 output tokens、各 agent 的喚醒統計、最近 8 次喚醒。每個執行中的任務是一個分頁，最新的排最前面；已結束或已中斷的不列出。面板開著時會依輪詢間隔自動更新。
 
