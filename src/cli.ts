@@ -219,7 +219,8 @@ async function driveRun(pr: ResolvedProject, runDir: string, first: RunSummary, 
 
 program
   .command("run [task]")
-  .description('Start the dispatcher: give the task to the lead. Use "<task>" or --task-file <path>. With --agent, give it to that one member alone.')
+  .summary("Start the dispatcher with a task for the lead")
+  .description('Start the dispatcher: give the task to the lead.\n\nGive the task either way:\n  - "<task>": as text\n  - --task-file <path>: from a file\n\nWho gets it:\n  - by default, the lead\n  - --agent <name>: that one member alone')
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the task from a file")
   .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
@@ -262,7 +263,8 @@ program
 
 program
   .command("resume [run-id]")
-  .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent. Without an id, picks the newest run that is not done or running; with an id, continues that run.")
+  .summary("Continue an interrupted (or failed) run")
+  .description("Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent.\n\nWhich run:\n  - without an id: the newest run that is not done or running\n  - with an id: that run")
   .option("-p, --project <name>")
   .option("--answer", "the run is waiting for answers: open ask-reply.md in $EDITOR, check the answers, then continue")
   .option("--no-edit", "with --answer: do not open the editor; check the file as it is")
@@ -332,10 +334,14 @@ function unlockProject(pr: ResolvedProject, force: boolean): void {
 
 program
   .command("clear [run-id]")
+  .summary("Delete a run by id, or remove a stale run lock")
   .description(
-    "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots. " +
-      "Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo. " +
-      "With --lock (and no run id) it instead removes the run lock a crashed run left behind; that needs --force.",
+    "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots.\n\n" +
+      "Long-term (global and project) memory is never touched.\n" +
+      "Refuses while the run is running, or while a worktree holds work that is not in the repo.\n\n" +
+      "With --lock (no run id) it does something else:\n" +
+      "  - removes the run lock a crashed run left behind\n" +
+      "  - needs --force to actually remove it",
   )
   .option("-p, --project <name>")
   .option("--dry-run", "only list what would be deleted and what would be kept")
@@ -389,7 +395,8 @@ program
 
 program
   .command("doctor")
-  .description("Check the setup without running any agent: configuration and enforcement levels, git, the project lock, and what each runtime CLI supports (from --version/--help). With --resolved, print every effective setting and where it came from instead.")
+  .summary("Check the setup without running any agent")
+  .description("Check the setup without running any agent. It checks:\n  - configuration and enforcement levels\n  - git\n  - the project lock\n  - what each runtime CLI supports (read from its --version and --help)\n\nWith --resolved it checks nothing and instead prints:\n  - every effective setting\n  - where each one came from")
   .option("-p, --project <name>")
   .option("--task-file <path>", "also check a task file")
   .option("--resolved", "print the merged settings (global library, project file, defaults) and their sources; runs no other check")
@@ -440,7 +447,8 @@ function printResolved(projectName: string | undefined, json: boolean): void {
 
 program
   .command("call <agent> [task]")
-  .description("Call one agent of the global library on its own, outside any project: it works in --dir (default: the current directory) and its final answer is printed. It cannot mail anyone or ask you.")
+  .summary("Call one global-library agent on its own, outside any project")
+  .description("Call one agent of the global library on its own, outside any project.\n\n  - it works in --dir (default: the current directory)\n  - its final answer is printed\n  - it cannot mail anyone or ask you")
   .option("--task-file <path>", "read the task from a file")
   .option("--dir <path>", "the directory the agent works in (default: the current directory)")
   .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string }) => {
@@ -479,7 +487,8 @@ function layerOpt(v: string | undefined): Layer {
 
 memoryCmd
   .command("tidy")
-  .description("Have agents tidy their own memory: merge duplicates, fix stale entries, archive what is obsolete (never deletes). Manual only; nothing triggers it automatically.")
+  .summary("Have agents tidy their own memory")
+  .description("Have agents tidy their own memory: merge duplicates, fix stale entries, archive what is obsolete (never deletes).\n\nManual only; nothing triggers it automatically.")
   .option("-p, --project <name>")
   .option("--agent <name>", "tidy only this agent (default: every agent)")
   .option("--layer <layer>", "project (default) or global; global memory is shared by every project, so it is never tidied unless you ask")

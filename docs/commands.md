@@ -1,6 +1,6 @@
 # Commands
 
-Full reference for every command. The [README](../README.md) has the short version.
+Full reference for every command. The [README](../README.md) has the short version. `agent-lyceum --help` shows a one-line summary per command; `agent-lyceum <command> --help` shows its full description and options.
 
 ## init
 
@@ -24,15 +24,37 @@ List projects / unregister (keeps context unless `--purge`).
 
 **Usage:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
 
-Give the task to the lead and run the dispatcher until done. Give *either* text or `--task-file`. If an agent asks you something the run pauses; see [Answering questions](#answering-questions). `--assume-defaults` answers every question that has a suggested value with it instead of pausing (questions without a suggestion still pause).
+Give the task to the lead and run the dispatcher until done. If an agent asks you something the run pauses; see [Answering questions](#answering-questions).
 
-With `--agent <name>` the task goes to that one member of the project and nobody else is woken: it cannot mail teammates, cannot ask you and cannot edit any `AGENT.md`, and its own `done` mail ends the run (so it must send one). It is an ordinary run otherwise: it has a run id and the project lock, shows in `status`, and can be resumed (the run remembers that it is solo) and cleared. `--assume-defaults` has no effect with it. A name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
+Options:
+
+- `"task"`: the task as text. Give this *or* `--task-file`, not both.
+- `--task-file f`: read the task from a file.
+- `-p name`: the project (default: inferred from the current directory).
+- `--assume-defaults`: when a question has a suggested value, use it instead of pausing. Questions without a suggestion still pause.
+- `--agent a`: give the task to that one member of the project, and wake nobody else. See below.
+
+With `--agent`:
+
+- the member cannot mail teammates, cannot ask you and cannot edit any `AGENT.md`;
+- its own `done` mail ends the run, so it must send one;
+- it is an ordinary run otherwise: it has a run id and the project lock, shows in `status`, and can be resumed (the run remembers that it is solo) and cleared;
+- `--assume-defaults` has no effect;
+- a name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
 
 ## call
 
 **Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
 
-Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent works in `--dir` (default: the current directory), with its global `AGENT.md` and its global memory. It may change files in that directory and its own global memory; it cannot mail anyone or ask you. Only the called agent's own `AGENT.md`, `COMMON.md` and the working directory's `CLAUDE.md`/`AGENTS.md` are checked: a change to one of them is put back and reported. A `--dir` that is inside or above the agent-lyceum home is refused, because a call lists only the called agent and could otherwise change other agents' files there. Give the task as text *or* `--task-file`.
+Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent uses its global `AGENT.md` and its global memory. It may change files in the working directory and its own global memory; it cannot mail anyone or ask you.
+
+Options:
+
+- `"task"`: the task as text. Give this *or* `--task-file`.
+- `--task-file f`: read the task from a file.
+- `--dir d`: the directory the agent works in (default: the current directory). A directory inside or above the agent-lyceum home is refused, because a call lists only the called agent and could otherwise change other agents' files there.
+
+Only the called agent's own `AGENT.md`, `COMMON.md` and the working directory's `CLAUDE.md`/`AGENTS.md` are checked: a change to one of them is put back and reported.
 
 The agent's final reply is printed on stdout; everything else (progress, the call id) goes to stderr, so the answer can be piped. Each call keeps `task.md`, `log/` and `result.md` in `<home>/calls/<call-id>/` (nothing deletes them). Exit codes: `0` success, `1` failure or timeout (`dispatcher.wake_timeout_sec` default), `130` Ctrl-C. Only one call per agent can run at a time: a second one is refused while the first runs. A call cannot be resumed; call again.
 
@@ -40,7 +62,15 @@ The agent's final reply is printed on stdout; everything else (progress, the cal
 
 **Usage:** `resume [run-id] [--answer [--no-edit]] [--assume-defaults] [-p name]`
 
-Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`). A run that is waiting for answers only continues once every open question has a valid answer; otherwise `resume` lists the missing ones and exits `3`. `--answer` is for that case: see [Answering questions](#answering-questions).
+Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`). A run that is waiting for answers only continues once every open question has a valid answer; otherwise `resume` lists the missing ones and exits `3`.
+
+Options:
+
+- `run-id`: the run to continue (default: the newest run that is neither done nor running).
+- `-p name`: the project.
+- `--answer`: first answer the questions the run is waiting on; see [Answering questions](#answering-questions).
+- `--no-edit`: with `--answer`, do not open the editor.
+- `--assume-defaults`: use the suggested answer for every open question that has one.
 
 ## Answering questions
 
@@ -62,21 +92,54 @@ Answer the questions a waiting run asked. An agent asks with a `type: ask` mail 
 </ask-reply>
 ```
 
-You only fill in the `<answer>` tags. For a question with `<options>` write one of them, or start with `other:` and write your own text; a question without options takes any non-empty text. `resume --answer` opens the file in `$VISUAL`/`$EDITOR` (default `vi`), checks the answers, and, once they are all valid, sends them to the agent that asked (as a `reply` mail with an `<answers>` block) and continues the run. `--no-edit` skips the editor and only checks a file you already edited; editing the file by hand and running `resume` does the same. If something is missing or invalid, the problems are listed and the exit code is `3`. In a terminal, `run` and `resume` open the editor by themselves when a run starts waiting. `--assume-defaults` fills every unanswered question that has a `<suggested>` value (marked `by="default"` in the file); the others keep waiting. Questions you already answered stay in the file and are not asked again when the agent asks a second batch.
+You only fill in the `<answer>` tags:
+
+- a question with `<options>`: write one of them, or start with `other:` and write your own text;
+- a question without options: write any non-empty text.
+
+Options:
+
+- `--answer`: open the file in `$VISUAL`/`$EDITOR` (default `vi`) and check the answers. Once they are all valid, they are sent to the agent that asked (as a `reply` mail with an `<answers>` block) and the run continues.
+- `--no-edit`: skip the editor and only check a file you already edited. Editing the file by hand and running `resume` does the same.
+- `--assume-defaults`: fill every unanswered question that has a `<suggested>` value (marked `by="default"` in the file); the others keep waiting.
+
+Also:
+
+- if something is missing or invalid, the problems are listed and the exit code is `3`;
+- in a terminal, `run` and `resume` open the editor by themselves when a run starts waiting;
+- questions you already answered stay in the file and are not asked again when the agent asks a second batch.
 
 ## status
 
 **Usage:** `status [-p name] [--monitor]`
 
-Agents, unread mail, what is running right now (agent, elapsed time, message being handled), last run (task source, rounds, end reason, output tokens). Without `--monitor` it also prints the full wake-by-wake record of the latest run; `--monitor` keeps a live page open showing only the latest three wakes of each run. `--task-id <id>` prints everything about one task (every wake, its result, log directory). `--task-list [project]` lists every run of the project with its id, state, rounds and task (feed the id to `resume`). `--json` prints the same report as JSON (`schema_version: 1`, no colour, nothing else on stdout; errors go to stderr with a non-zero exit); it works with `--task-list` and `--task-id`. Text and JSON are made from the same report.
+Shows the agents, unread mail, what is running right now (agent, elapsed time, message being handled) and the last run (task source, rounds, end reason, output tokens).
+
+Options:
+
+- (none): also prints the full wake-by-wake record of the latest run.
+- `-p name`: the project.
+- `--monitor`: keep a live page open, showing only the latest three wakes of each run.
+- `--task-id id`: print everything about one task (every wake, its result, log directory).
+- `--task-list [project]`: list every run of the project with its id, state, rounds and task (feed the id to `resume`).
+- `--json`: print the same report as JSON (`schema_version: 1`, no colour, nothing else on stdout; errors go to stderr with a non-zero exit). It works with `--task-list` and `--task-id`. Text and JSON are made from the same report.
 
 ## clear
 
 **Usage:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [-p name] --force`
 
-Delete a task (run) by id: its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. `--keep-worktrees` keeps the worktrees and their branches and still clears the rest. `--dry-run` only prints what would be deleted and kept. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
+Delete a task (run) by id: its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
 
-**`clear --lock`** (no run id) removes the project's run lock left behind by a crashed run (only one run per project at a time). Without `--force` it only shows who holds the lock.
+Options:
+
+- `-p name`: the project.
+- `--dry-run`: only print what would be deleted and kept.
+- `--keep-worktrees`: keep the worktrees and their branches, and still clear the rest.
+
+**`clear --lock`** (no run id) removes the project's run lock left behind by a crashed run (only one run per project at a time):
+
+- without `--force`: only shows who holds the lock;
+- `--force`: removes the lock even though its owner cannot be confirmed dead.
 
 **Upgrading from an older version:** on Linux a lock records the holder's start time as `proc:<ticks>` (read from `/proc`), where older versions wrote the `ps` text. The two cannot be compared, so a lock written by an older version is judged by its pid alone: if that pid has since been reused by an unrelated process, the stale lock is not reclaimed automatically and you need `clear --lock --force`.
 
@@ -84,7 +147,21 @@ Delete a task (run) by id: its run directory (state, log, result, kept copies of
 
 **Usage:** `doctor [-p name] [--task-file f] [--json]` · `doctor --resolved [-p name] [--json]`
 
-Check the setup without running any agent: configuration (each agent's enforcement level is printed; `--task-file` also checks a task file), git (for parallel runs), the project lock, and what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`). Exit 1 on configuration errors or when something the team needs is explicitly unsupported. It does not read credentials: login status is reported as unknown. `run` and `resume` do the same capability check first: they refuse to start on an explicit `no` and warn on `unknown`. A real end-to-end check against the live CLIs (a tiny task) spends tokens and is deliberately manual.
+Check the setup without running any agent:
+
+- configuration (each agent's enforcement level is printed);
+- git (for parallel runs);
+- the project lock;
+- what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`).
+
+Options:
+
+- `-p name`: the project.
+- `--task-file f`: also check a task file.
+- `--resolved`: print the effective settings instead; see below.
+- `--json`: print the report as JSON.
+
+Exit 1 on configuration errors or when something the team needs is explicitly unsupported. It does not read credentials: login status is reported as unknown. `run` and `resume` do the same capability check first: they refuse to start on an explicit `no` and warn on `unknown`. A real end-to-end check against the live CLIs (a tiny task) spends tokens and is deliberately manual.
 
 **`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`, `owns`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
@@ -94,17 +171,32 @@ Check the setup without running any agent: configuration (each agent's enforceme
 
 Have agents tidy their own long-term memory: merge entries that say the same thing, rewrite stale ones, and retire what is obsolete. **It only ever runs when you run it**: a run ending, a large memory or changes in the repo never start a tidy; `status` and `doctor` at most suggest one.
 
-By default it tidies the **project** memory of every agent. **Global** memory is shared by every project, so it is only tidied with `--layer global`; task memory is never tidied (`clear` deletes it). Note that the project template gives agents global memory only: to use project memory, set `memory.project` for an agent in `project.yaml`. With no such agent the command says so and exits `0`.
+Options:
+
+- `-p name`: the project.
+- `--agent a`: tidy only this agent (default: every agent).
+- `--layer project`: the default; tidy the **project** memory of the agent(s).
+- `--layer global`: tidy **global** memory. It is shared by every project, so it is only tidied when you ask.
+- `--dry-run`: only print the memory sizes, the project changes and the missing paths. It wakes nobody, changes nothing and takes no lock.
+
+Task memory is never tidied (`clear` deletes it). Note that the project template gives agents global memory only: to use project memory, set `memory.project` for an agent in `project.yaml`. With no such agent the command says so and exits `0`.
 
 Each agent is woken once for this, outside any run (no round is used), and may only change its own memory. Retiring is archiving, never deleting: files go to `memory/.archive/<timestamp>/` under the same relative path, together with a `tidy-report.md` (what was merged, what was archived and why, what is still doubtful). The agent is shown the size and age of every memory file, the `MEMORY.md` index, what changed in the project repo (`git log` and `git diff --stat`) since the last tidy, and the paths its memory mentions that no longer exist. `memory/.tidy-state.json` remembers the repo `HEAD` of the last tidy; the first tidy has no baseline and only does the path check.
 
-agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project lock, so it refuses while a run is active. `--dry-run` only prints the memory sizes, the project changes and the missing paths: it wakes nobody, changes nothing and takes no lock.
+agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project lock, so it refuses while a run is active.
 
 ## memory restore
 
 **Usage:** `memory restore <timestamp> -p name --agent a [--layer project|global]`
 
 Undo a tidy: move the files of `memory/.archive/<timestamp>/` back to where they were and add them to `MEMORY.md` if the index does not mention them. A file whose name exists now is not overwritten; it is reported and stays in the archive. `tidy` prints the timestamp when it finishes.
+
+Options:
+
+- `timestamp`: which tidy to undo.
+- `-p name`: the project.
+- `--agent a`: whose memory to restore (required).
+- `--layer project|global`: which memory layer (default `project`).
 
 ## Stopping a run
 
