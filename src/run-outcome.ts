@@ -32,7 +32,7 @@ export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; n
     case "lead_failed":
       return { outcome: "failed", note: "The lead's wake-up failed." };
     case "waiting":
-      return { outcome: "waiting", note: "Waiting for your answers. Fill in ask-reply.md or run `agent-lyceum answer <run-id>`, then continue with `agent-lyceum resume`." };
+      return { outcome: "waiting", note: "Waiting for your answers. Fill in ask-reply.md or run `agent-lyceum resume <run-id> --answer`, then continue with `agent-lyceum resume`." };
     case "cancelled":
       return { outcome: "cancelled", note: "Cancelled before the lead finished. Unread mail was kept; continue with `agent-lyceum resume`." };
     case "idle":

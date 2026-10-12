@@ -129,7 +129,7 @@ function heldError(info: LockInfo): Error {
 }
 
 function unreadableError(root: string): Error {
-  return new Error(`The project lock ${path.join(root, LOCK_FILE)} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum unlock --force\`.`);
+  return new Error(`The project lock ${path.join(root, LOCK_FILE)} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum clear --lock --force\`.`);
 }
 
 /** Create the lock file only if absent: write a private temp file, then hard-link it into place (atomic, never half-written). */
@@ -236,7 +236,7 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
   };
 }
 
-/** Remove the lock regardless of owner (the `unlock --force` escape hatch). Returns what was there, if readable. */
+/** Remove the lock regardless of owner (the `clear --lock --force` escape hatch). Returns what was there, if readable. */
 export function forceUnlock(root: string): LockInfo | undefined {
   const info = inspectProjectLock(root);
   fs.rmSync(path.join(root, LOCK_FILE), { force: true });
