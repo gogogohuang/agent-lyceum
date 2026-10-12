@@ -74,7 +74,15 @@ program
     console.log(`\nNext: agent-lyceum project add <name> --dir <your-repo>`);
   });
 
-const project = program.command("project").description("Manage registered projects");
+const project = program
+  .command("project")
+  .summary("List registered projects, or add / remove one")
+  .description("Without a subcommand, list the registered projects.\n\nSubcommands:\n  - add <name> --dir <repo>: register a project\n  - remove <name> [--purge]: unregister one")
+  .action(() => {
+    const list = listProjects(home());
+    if (!list.length) console.log("No projects registered.");
+    for (const p of list) console.log(`${p.name}  ->  ${p.dir}`);
+  });
 project
   .command("add <name>")
   .description("Register a project (config and context live in the home, not in the repo)")
@@ -86,14 +94,6 @@ project
     } catch (e) {
       fail((e as Error).message);
     }
-  });
-project
-  .command("list")
-  .description("List registered projects")
-  .action(() => {
-    const list = listProjects(home());
-    if (!list.length) console.log("No projects registered.");
-    for (const p of list) console.log(`${p.name}  ->  ${p.dir}`);
   });
 project
   .command("remove <name>")
