@@ -649,8 +649,8 @@ describe("dispatcher integration", () => {
       expect(leadRoot).not.toBe(env.repo);
       expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", summary.resultBranch!.branch]);
       const body = fs.readFileSync(path.join(runDir, "pr-body.md"), "utf8");
-      expect(body.trimEnd().endsWith(PR_FOOTER)).toBe(true);
-      expect(body).not.toMatch(/tech-lead/i);
+      // the description is the lead's report as written plus the one footer line, so the dispatcher adds no name of its own
+      expect(body).toBe(`${FULL_DONE.trim()}\n\n${PR_FOOTER}\n`);
     });
 
     it("does nothing when done does not ask for a PR", async () => {

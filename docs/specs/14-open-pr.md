@@ -15,7 +15,7 @@
 | 2 | 沒有旗標，也不改 `project.yaml`。是否開 PR 直接依使用者輸入的 task 內容：lead（或 `run --agent` 的單獨 agent）讀 task，task 要求開 PR（例如「做完開 PR」「open a PR」）時，在 `done` 的 frontmatter 加 `open_pr: true`；task 沒提就不寫，行為與現在相同。dispatcher 只認這個欄位，不解析 task 文字。prompt 的 `done` 說明加一條規則：「只有 task 明確要求開 PR 時才寫 `open_pr: true`，不要自行決定」。 |
 | 3 | 只在 `open_pr: true` 且 `outcome` 為 `completed` 時開。`open_pr: true` 但 outcome 不是 `completed`、或 run 以 `partial`／`failed`／`cancelled`／`waiting` 結束，都不開，結果訊息說明原因；工作照舊保留。`doneContract` 對 `open_pr` 只做讀取，值不是 `true` 一律視為沒要求。 |
 | 4 | 流程：在 `agent-lyceum/<run-id>` 分支提交（身分 `agent-lyceum <agent-lyceum@localhost>`，訊息含 run id 與任務摘要）→ `git push -u origin` → `gh pr create --base <repo 預設分支>`。標題取任務摘要。 |
-| 5 | PR 描述：lead 的完成報告摘要，結尾一行 `🤖 Opened by agent-lyceum`。不出現任何 agent 或角色名稱（含 tech-lead）。 |
+| 5 | PR 描述：lead 的完成報告摘要，結尾一行 `🤖 Opened by agent-lyceum`。描述除了 lead 的報告原文與這一行署名，不含 dispatcher 自己加的任何 agent 或角色名稱。 |
 | 6 | 不碰使用者目前的 working tree 與分支：提交在 run 自己的 worktree／分支上完成。需要 git repo、`origin` 與已登入的 `gh`。因為是否開 PR 要到 `done` 才知道，run 開始時不能預檢；改為 `doctor` 檢查並提示，真正缺少時在開 PR 那一步失敗，依決議 7 處理（分支保留、印手動指令）。 |
 | 7 | 推送或 `gh` 失敗不改變 run 的 `outcome`：分支與 commit 保留，結果訊息印出可手動執行的 `git push` 與 `gh pr create` 指令。 |
 | 8 | PR 開出後 run 即結束（`end_reason: done`），結果訊息印出 PR 網址並寫入 `state.json`（`pr_url`）。不等 CI 或 merge，不自動 merge。 |
@@ -40,7 +40,7 @@
 
 先寫失敗測試再實作（`gh` 與 `git push` 以 fake 取代）：
 
-1. `done` 帶 `open_pr: true` 且 `completed`：呼叫順序為 commit → push → `gh pr create`；描述結尾有 `Opened by agent-lyceum`，且不含 `tech-lead` 或任何 agent 名稱。
+1. `done` 帶 `open_pr: true` 且 `completed`：呼叫順序為 commit → push → `gh pr create`；描述結尾有 `Opened by agent-lyceum`，且描述正好是 lead 的報告原文加那一行署名，沒有 dispatcher 加的任何名稱。
 2. `done` 沒有 `open_pr`（或不是 `true`）：不 push、不呼叫 `gh`。
    prompt 含「只有 task 明確要求才寫」的規則。
 3. `open_pr: true` 但 outcome 為 `partial`／`blocked`／`failed`：不開 PR，訊息說明原因。
