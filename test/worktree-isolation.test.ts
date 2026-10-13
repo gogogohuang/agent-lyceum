@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ResolvedProject } from "../src/config.js";
@@ -12,6 +13,7 @@ import {
   type ChangeSet,
   collectAgentChanges,
   commitWorkspace,
+  assertWorktreeRunnable,
   existingAgentWorkspace,
   finishLeadBranch,
   inspectWorkspace,
@@ -593,7 +595,9 @@ describe("a HEAD that is not the worktree's own branch", () => {
     expect(collectAgentChanges(s.member, ["src/web/**"]).files.map((f) => f.path)).toEqual(["src/web/f1.txt", "src/web/f2.txt", "src/web/f3.txt", "src/web/feature.txt"]);
     const fresh = prepareAgentWorkspace(s.p, "run-1", "qa-member", snapshotBase(s.p, "run-1", 2, s.lead));
     write(path.join(s.lead.dir, "src/web/later.txt"), "later\n");
-    expect(prepareAgentWorkspace(s.p, "run-1", "qa-member", snapshotBase(s.p, "run-1", 3, s.lead)).base).not.toBe(fresh.base); // reset --hard
+    const reset = prepareAgentWorkspace(s.p, "run-1", "qa-member", snapshotBase(s.p, "run-1", 3, s.lead));
+    expect(reset.base).not.toBe(fresh.base); // reset --hard
+    expect(fs.readFileSync(headOf(reset), "utf8")).toBe("ref: refs/heads/agent-lyceum/run-1/qa-member\n"); // and a reset leaves HEAD alone
     expect(finishLeadBranch(s.lead, "m", path.join(env.root, "p.patch")).files).toBe(2);
     expect(fs.readFileSync(headOf(s.member), "utf8")).toBe("ref: refs/heads/agent-lyceum/run-1/fe-member\n");
   });
@@ -667,3 +671,91 @@ describe("a refusal between batches", () => {
     expect(leadMail).toMatch(/fe-member cannot be woken/);
   });
 });
+
+// git's reftable ref backend keeps a linked worktree's HEAD in `<gitDir>/reftable/` (agent-writable) and writes the file
+// `<gitDir>/HEAD` as `ref: refs/heads/.invalid`, so the HEAD check cannot hold the invariant there: such a repository is
+// refused up front, instead of every worktree being refused one by one in the middle of a run.
+const reftableSupported = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reftable-probe-"));
+  try {
+    execFileSync("git", ["init", "-q", "--ref-format=reftable", dir], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false; // a git too old to know reftable
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+describe.skipIf(!reftableSupported || posixOnly)("a repository that uses git's reftable ref storage", () => {
+  function reftableProject() {
+    env = makeEnv();
+    fs.mkdirSync(env.repo, { recursive: true });
+    git(env.repo, "init", "-q", "-b", "main", "--ref-format=reftable");
+    git(env.repo, "config", "user.email", "t@example.com");
+    git(env.repo, "config", "user.name", "t");
+    write(path.join(env.repo, "src/web/a.txt"), "a\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "init");
+    expect(git(env.repo, "rev-parse", "--show-ref-format")).toBe("reftable");
+  }
+  const noWorktreeYet = (project: ResolvedProject) => {
+    expect(fs.existsSync(path.join(project.paths.root, "worktrees"))).toBe(false);
+    expect(git(env.repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
+    expect(git(env.repo, "for-each-ref", "refs/agent-lyceum/")).toBe("");
+  };
+
+  it("is refused before anything is created, for concurrent runs, for parallel agents, and on resume", () => {
+    reftableProject();
+    makeParallel(env);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const msg = /reftable/;
+    expect(() => assertWorktreeRunnable(project, { fresh: true, concurrent: true })).toThrow(msg);
+    expect(() => assertWorktreeRunnable(project, { fresh: true })).toThrow(msg);
+    expect(() => assertWorktreeRunnable(project, { fresh: false, concurrent: true })).toThrow(msg);
+    // the message says what to do instead
+    expect(() => assertWorktreeRunnable(project, { fresh: true, concurrent: true })).toThrow(/max_concurrent_runs: 1/);
+    noWorktreeYet(project);
+  });
+
+  it("makes a whole run fail early instead of refusing every worktree in the middle of it", async () => {
+    reftableProject();
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "go", cwd: env.root, runDir });
+    await expect(
+      runTeam({ project, task, runDir, log: () => {}, invoker: async () => ({ ok: true, text: "", exitCode: 0, timedOut: false }) }),
+    ).rejects.toThrow(/reftable/);
+    noWorktreeYet(project);
+  });
+
+  it("is not refused when no worktree is used (one run, one agent at a time), and a normal repository is not refused either", async () => {
+    reftableProject();
+    const project = env.project();
+    expect(project.dispatcher.max_parallel).toBe(1);
+    expect(project.dispatcher.max_concurrent_runs).toBe(1);
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "go", cwd: env.root, runDir });
+    const s = await runTeam({
+      project,
+      task,
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        write(path.join(outboxDir(i.project, i.agent.name), "d.md"), "---\nto: lead\ntype: done\nsubject: d\noutcome: partial\n---\n\n## Result\nx\n\n## Not done\nx\n");
+        return { ok: true, text: "", exitCode: 0, timedOut: false };
+      },
+    });
+    expect(s.endReason).toBe("done");
+    noWorktreeYet(project);
+
+    env.cleanup();
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    expect(() => assertWorktreeRunnable(env.project(), { fresh: true, concurrent: true })).not.toThrow();
+  });
+});
+

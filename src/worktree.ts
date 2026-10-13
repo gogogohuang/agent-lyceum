@@ -161,7 +161,7 @@ export function assertWorkspaceIntact(ws: PinnedWorkspace): void {
   if (problems.length) {
     throw new Error(
       `Refusing to run git in the worktree ${ws.root}: ${problems.join("; ")}. Its git files were changed after it was made (an agent can write them); nothing in it was touched. ` +
-        `Inspect the worktree, then remove it with \`agent-lyceum clear <run-id>\` or \`git worktree remove\`.`,
+        `The work in it is still there and nothing was deleted. \`agent-lyceum clear\` will refuse this worktree too, because it counts as holding work: inspect it, and once you are sure it is safe, remove it by hand with \`git worktree remove --force <path>\`.`,
     );
   }
 }
@@ -261,6 +261,16 @@ export function dirtyPaths(dir: string): string[] {
 export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: boolean; concurrent?: boolean }): void {
   if (!isGitRepo(project.dir)) {
     throw new Error(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead: dispatcher.max_parallel: 1.`);
+  }
+  // With git's reftable ref storage a linked worktree's HEAD lives in `<gitDir>/reftable/`, a place the agent can write, and the
+  // file `<gitDir>/HEAD` only says `ref: refs/heads/.invalid`: the check that a worktree's HEAD is its own branch cannot hold
+  // there, so every worktree would be refused in the middle of the run. Say so up front instead. (`rev-parse --show-ref-format`
+  // does not exist in older git, which only knows `files`.)
+  if (tryGit(project.dir, ["rev-parse", "--show-ref-format"]) === "reftable") {
+    throw new Error(
+      `${project.dir} uses git's reftable ref storage, whose worktrees agent-lyceum cannot yet verify as isolated, so parallel agents and concurrent runs are not supported there. ` +
+        `Use a repository with the default "files" ref storage, or run one agent at a time without worktrees: dispatcher.max_parallel: 1 and dispatcher.max_concurrent_runs: 1.`,
+    );
   }
   if (!opts.fresh) return;
   if (opts.concurrent) {

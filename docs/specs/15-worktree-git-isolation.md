@@ -50,7 +50,14 @@ dispatcher 在沙箱外、用使用者的憑證，以那個 worktree 為 cwd 執
 
 5. 內嵌 repo（變體 E）：放在 worktree 內的未追蹤內嵌 repo，其設定裡的程式在 `commitWorkspace`、`collectAgentChanges`、`finishLeadBranch` 都不會執行，且該 worktree 被拒絕並回報；index 中偽造的 gitlink 同樣被拒絕；base commit 內本來就有的 gitlink 被接受。
 6. 竄改偵測（決議 9）：`commondir` 被改向、`config.worktree` 被改、`COMMIT_EDITMSG`／`logs/HEAD` 被換成連結，各自讓 worktree 被拒絕。
-7. 拒絕的呈現：成員 → 既有的 blocked integration 路徑（訊息說明原因與位置）；lead → `finishLead` 的 note，工作留在 worktree，run 的結果不變。
+7. 拒絕的呈現（降級而不是崩潰）：
+   - 成員在整合時被拒 → 既有的 blocked integration 路徑（訊息說明原因與位置）。
+   - 成員在下一批要準備或重用 worktree 時被拒 → 留 note、用 `deliverOnce` 寄失敗信給 lead（說明不要等它）、**該 run 剩餘時間都不再喚醒它**（集合只增不減，所以沒讀的信不會讓主迴圈空轉；資料只在記憶體，`resume` 會因新的 snapshot 再確定性地拒絕一次）。
+   - lead 的 worktree 在 snapshot 時被拒 → run 以 `lead_failed` 結束並留 note，工作留在 worktree，`finishLead` 也只留 note。
+   - `inspectWorkspace` 被拒 → `unknown`，`clear` 因此不刪除工作。
+   - 預設路徑（沒有 agent worktree）不受影響。
+8. HEAD（決議 9）：`<gitDir>/HEAD` 不是普通檔案、有多重連結、或內容不是正好 `ref: refs/heads/<該 worktree 的分支>`（含 detached、指向別的分支、符號連結）→ 拒絕，且使用者的其他分支（例如 `main`）的 tip 不變；對照組證明沒有這個檢查時純 git 會把 commit 提交到別的分支上。正常 worktree 在多次 commit、`reset --hard` 之後不被誤拒。
+9. reftable：使用者 repo 的 `extensions.refStorage` 是 `reftable` 時，併發／並行 worktree 模式在 `assertWorktreeRunnable` 就被清楚拒絕（說明原因與改用 `files` 後端或 `max_concurrent_runs: 1`）；不是跑到一半才每個 worktree 都被拒。
 
 ## 15.5 範圍外
 
@@ -66,9 +73,10 @@ dispatcher 在沙箱外、用使用者的憑證，以那個 worktree 為 cwd 執
 - (b) agent 寫的 index（含 `sharedindex.*`、split／sparse index）會被 `add`／`commit`／`status` 讀取，沒有逐一稽核各 index extension。曾考慮改用 dispatcher 自有的暫存 index，但不採用：透過它 commit 之後 worktree 的真 index 會過期，`inspectWorkspace` 的 `status` 會回報不存在的變更，`clear` 會誤拒。
 - (c) 其他 per-worktree 檔案（`info/`、`MERGE_HEAD`／`rebase-merge`、`sparse-checkout`、各種 lock）沒有逐一稽核。
 - (d) dispatcher 對 worktree 的所有 git 呼叫，都在 `await Promise.all(batch.map(wake))` 之後執行，所以該批 agent 已不在執行中；剩下的是 **agent 在喚醒結束後留下仍在執行的程序**（若 Claude／Codex 的沙箱允許程序活過那一輪；未驗證）。這種程序可以在完整性檢查與 git 實際讀取之間改動檔案。
-- (e) 舊版 meta 的 fallback 信任 agent 可寫的 `gitdir` 檔案；agent 最多只能造成拒絕（0 或 2 個以上符合）。
+- (e) 舊版 meta 的 fallback 信任 agent 可寫的 `gitdir` 檔案；agent 最多只能造成拒絕（0 或 2 個以上符合）。在 `resume` 的復原路徑與 `clear` 的清理路徑上，這個拒絕是**丟出的錯誤**而不是降級（僅限舊版建立的 worktree）。
 - (f) `removeAgentWorkspace` 從使用者 repo 執行 `git worktree remove --force`，git 可能讀 agent 寫的 `gitdir`／指標檔來決定要刪什麼（就目前所知它不執行 hook）。
 - (g) 這次變更的審查沒有獨立執行的繞過實驗；已執行的證據是實作者用真實 git 跑的對照組。
+- (h) **reftable。** git 的 reftable ref 後端把 per-worktree 的 `<gitDir>/HEAD` 寫成 `ref: refs/heads/.invalid`，真正的 HEAD 在 agent 可寫的 `<gitDir>/reftable/` 裡；這個修補的 HEAD 檢查無法表達那個不變量，所以改為在 `assertWorktreeRunnable` 事先拒絕這種 repo（驗收 9）。用 reftable 的使用者目前不能用併發或並行 worktree 模式；git 3.0 計畫把 reftable 變成預設，屆時需要另外處理。
 
 ### 可以聲稱什麼
 
