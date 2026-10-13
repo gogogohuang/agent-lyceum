@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { executeRunCleanup, planRunCleanup } from "../src/run-cleanup.js";
 import { newRunState, saveRunState } from "../src/run-store.js";
-import { collectAgentChanges, integrateAgentChanges, prepareAgentWorkspace, snapshotBase } from "../src/worktree.js";
-import { git, initGitRepo, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { collectAgentChanges, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 const extra: string[] = [];
@@ -274,5 +274,65 @@ describe("the clear command", () => {
     expect(keep.code).toBe(0);
     expect(fs.existsSync(a)).toBe(false);
     expect(fs.existsSync(ws.root)).toBe(true);
+  });
+});
+
+describe("clear: a concurrent run's branch", () => {
+  function concurrentRun() {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeParallel(env);
+    makeConcurrent(env, 2);
+    const p = env.project();
+    makeRun("run-1");
+    const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
+    write(path.join(lead.dir, "src/web/lead.txt"), "lead work\n");
+    return { p, lead };
+  }
+
+  it("refuses while the lead's branch is not merged, and says how to merge it", () => {
+    const { p, lead } = concurrentRun();
+    finishLeadBranch(lead, "msg", path.join(env.root, "x.patch"));
+    const plan = planRunCleanup(p, "run-1");
+    expect(plan.refusals.join("\n")).toMatch(/lead has work that is not in the repo.*src\/web\/lead\.txt/s);
+    expect(plan.refusals.join("\n")).toContain(`git merge ${lead.branch}`);
+  });
+
+  it("deletes the lead's worktree and branch once the branch is merged", () => {
+    const { p, lead } = concurrentRun();
+    finishLeadBranch(lead, "msg", path.join(env.root, "x.patch"));
+    git(env.repo, "merge", "-q", "--no-edit", lead.branch);
+    const plan = planRunCleanup(p, "run-1");
+    expect(plan.refusals).toEqual([]);
+    expect(plan.items.map((i) => i.kind)).toContain("workspace");
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(git(env.repo, "branch", "--list", lead.branch)).toBe("");
+    expect(exists(p.paths.root, "worktrees", "run-1", "lead")).toBe(false);
+  });
+
+  it("--keep-worktrees keeps the unmerged branch and clears the rest", () => {
+    const { p, lead } = concurrentRun();
+    finishLeadBranch(lead, "msg", path.join(env.root, "x.patch"));
+    const plan = planRunCleanup(p, "run-1", { keepWorktrees: true });
+    expect(plan.refusals).toEqual([]);
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(git(env.repo, "branch", "--list", lead.branch)).toContain("run-1/lead");
+    expect(exists(p.paths.runs, "run-1")).toBe(false);
+  });
+
+  it("does not make a member's work block clear when the lead's worktree already has it", () => {
+    const { p, lead } = concurrentRun();
+    const member = prepareAgentWorkspace(p, "run-1", "fe-member", snapshotBase(p, "run-1", 1, lead.root));
+    write(path.join(member.dir, "src/web/feature.txt"), "built\n");
+    // The member's commit stays ahead of its base (integrating would move it forward), and the same file is in the lead's worktree.
+    collectAgentChanges(member, ["src/web/**"]);
+    write(path.join(lead.dir, "src/web/feature.txt"), "built\n");
+    finishLeadBranch(lead, "msg", path.join(env.root, "x.patch"));
+    // The lead branch is NOT merged yet: feature.txt is in the lead's worktree but not in the user's repo.
+    expect(exists(env.repo, "src/web/feature.txt")).toBe(false);
+    const plan = planRunCleanup(p, "run-1");
+    expect(plan.refusals.some((r) => r.includes("fe-member"))).toBe(false);
+    expect(plan.refusals.some((r) => r.startsWith("lead has work"))).toBe(true);
+    expect(plan.items.filter((i) => i.kind === "workspace").map((i) => i.agent)).toEqual(["fe-member"]);
   });
 });

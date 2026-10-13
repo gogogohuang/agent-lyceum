@@ -15,7 +15,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, existingAgentWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, type AgentWorkspace } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, type AgentWorkspace, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -47,6 +47,8 @@ export interface RunSummary {
   doneMessage?: { subject: string; body: string };
   /** Set when the run waits for the user: the file with the questions. */
   askReplyPath?: string;
+  /** Concurrent runs: the branch holding the lead's work. */
+  resultBranch?: ResultBranch;
 }
 
 export interface RunOptions {
@@ -91,6 +93,8 @@ export class RunSession {
   private readonly noSessionNoted = new Set<string>();
   /** Git worktrees of the non-lead agents in the batch being woken (empty in shared mode and for the lead). */
   private batchSpaces: Record<string, AgentWorkspace> = {};
+  /** Concurrent runs: the lead's own git worktree for the whole run. */
+  private readonly leadSpace: AgentWorkspace | undefined;
   /** The attempt that produced each batch member's output; committed together with its claim. */
   private readonly attempts = new Map<string, AttemptRecord>();
 
@@ -109,11 +113,26 @@ export class RunSession {
     // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
     const project = bindRunProject(base, runDir, layout);
     // Parallel agents work in their own git worktrees; refuse early (before anything is written) when that cannot be done.
-    const wsMode = resolveWorkspaceMode(cfg);
-    if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume });
+    // Whether the lead has its own worktree is decided when the run starts and kept for its resumes, whatever the config says by then.
+    const concurrent = resume ? resume.lead_workspace === true : cfg.max_concurrent_runs > 1;
+    const wsMode = concurrent ? "worktree" : resolveWorkspaceMode({ ...cfg, max_concurrent_runs: 1 });
+    if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume, concurrent });
+    // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
+    let leadSpace: AgentWorkspace | undefined;
+    if (concurrent && resume) {
+      leadSpace = existingAgentWorkspace(project, runId, project.lead);
+      if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
+    }
     ensureProjectDirs(project);
     fs.mkdirSync(runDir, { recursive: true });
     const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
+    if (concurrent && !resume) {
+      // Before the task is delivered or any state written, so a failure here leaves no half-started run.
+      leadSpace = prepareAgentWorkspace(project, runId, project.lead, snapshotHead(project, runId));
+      const uncommitted = dirtyPaths(project.dir).length;
+      say(`  starting from HEAD ${leadSpace.base.slice(0, 8)}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
+      log("lead-workspace", { base: leadSpace.base, branch: leadSpace.branch, dir: leadSpace.dir, uncommitted });
+    }
 
     let state: RunState;
     if (resume) {
@@ -145,13 +164,15 @@ export class RunSession {
         mail_layout: layout,
         workspace_mode: wsMode,
         solo_agent: soloName,
+        lead_workspace: concurrent ? true : undefined,
       });
       const seed = parseSteps(task!.content, false);
       if (seed.length) state.steps = seed;
     }
     const saveState = () => saveRunState(runDir, state);
 
-    const guard = new ProtectedGuard(project);
+    // Concurrent runs: the repo's instruction files the run can touch are the lead worktree's copies; your own tree is never watched (or restored).
+    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
     } else {
@@ -161,6 +182,7 @@ export class RunSession {
       log("start", { task_source: task!.source, bytes: task!.bytes, inline: task!.inline });
     }
     saveState();
+    this.leadSpace = leadSpace;
 
     this.opts = opts;
     this.resume = resume;
@@ -247,12 +269,13 @@ export class RunSession {
     const claim = claimMessages(runDir, agent.name, unread);
     claims.set(agent.name, claim);
     const workDir = path.join(runDir, "agents", agent.name);
-    const aproject = Object.keys(this.batchSpaces).length ? { ...project, workspaces: this.batchSpaces } : project;
+    const spaces = this.leadSpace ? { ...this.batchSpaces, [project.lead]: this.leadSpace } : this.batchSpaces;
+    const aproject = Object.keys(spaces).length ? { ...project, workspaces: spaces } : project;
     const base = {
       project: aproject,
       agent,
       workDir,
-      workspace: this.batchSpaces[agent.name],
+      workspace: spaces[agent.name],
       systemPrompt: buildSystemPrompt(aproject, agent),
       userPrompt: buildUserPrompt(project, agent, queue, unread.length),
       timeoutSec: cfg.wake_timeout_sec,
@@ -353,7 +376,7 @@ export class RunSession {
   private integrateMember(agent: ResolvedAgent, ws: AgentWorkspace, key: string): void {
     const { say, project, log, state } = this;
     const changes = collectAgentChanges(ws, agent.owns);
-    const r = integrateAgentChanges(project, changes);
+    const r = integrateAgentChanges(project, changes, this.leadSpace?.root);
     log("integrate", { agent: agent.name, status: r.status, files: changes.files.map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
     const blocked = (state.blocked_integrations ?? []).filter((b) => b.agent !== agent.name);
     if (r.status === "integrated") {
@@ -554,6 +577,26 @@ export class RunSession {
   }
 
 
+  /**
+   * Concurrent runs, at the end of the run: the lead's work is committed on its branch for you to merge.
+   * A run that waits for your answers has not ended (it will be resumed in the same worktree), so it commits nothing.
+   */
+  private finishLead(endReason: EndReason): ResultBranch | undefined {
+    const { say, log, state, runDir, runId, project } = this;
+    if (!this.leadSpace || endReason === "waiting") return undefined;
+    try {
+      const rb = finishLeadBranch(this.leadSpace, `agent-lyceum: ${project.lead}'s work for run ${runId}\n\n${state.task_summary}`, path.join(runDir, "lead.patch"));
+      state.result_branch = rb;
+      log("lead-branch", { ...rb });
+      say(rb.files ? `  work is on branch ${rb.branch} (${rb.files} file(s)); bring it into your repo with: git merge ${rb.branch}` : `  ${rb.branch}: no file changes`);
+      return rb;
+    } catch (e) {
+      this.note(`Could not commit the work on ${this.leadSpace.branch}: ${(e as Error).message.split("\n")[0]}. It is still in ${this.leadSpace.root}.`);
+      return undefined;
+    }
+  }
+
+
   /** On resume: sort out what the interrupted process left behind before anything is woken. */
   private recover(): void {
     const { say, runId, runDir, project, wsMode, log } = this;
@@ -623,10 +666,11 @@ export class RunSession {
       if (wsMode === "worktree" && members.length) {
         state.snapshots = (state.snapshots ?? 0) + 1;
         this.saveState();
-        const ref = snapshotBase(project, runId, state.snapshots);
+        const ref = snapshotBase(project, runId, state.snapshots, this.leadSpace?.root);
         for (const a of members) this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
         log("workspaces", { snapshot: ref, agents: Object.fromEntries(Object.entries(this.batchSpaces).map(([n, w]) => [n, w.dir])) });
       }
+      this.guard.rebase();
       const results = await Promise.all(batch.map((a) => this.wake(a)));
       leadWasLast = batch.some((a) => a.name === project.lead);
       if (batch.some((a) => a.name !== project.lead)) nudged = false;
@@ -641,9 +685,10 @@ export class RunSession {
     state.outcome_note = outcomeNote;
     state.verification = this.doneVerification;
     state.ended_at = new Date().toISOString();
+    const resultBranch = this.finishLead(endReason);
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined };
+    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch };
   }
 }

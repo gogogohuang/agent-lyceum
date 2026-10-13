@@ -9,7 +9,7 @@ import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
-import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, type ProjectLease } from "./project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
@@ -115,10 +115,10 @@ async function preflight(pr: ResolvedProject): Promise<void> {
   if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-lyceum doctor\`).`);
 }
 
-/** Take the project's single-run lock, or exit with the reason. */
-function takeLock(pr: ResolvedProject, runId: string): ProjectLease {
+/** Take the lock of one run, or exit with the reason. `ignoreLimit`: the caller does not start a run (e.g. `clear`). `exclusive`: it needs the whole project (memory tidy). */
+function takeLock(pr: ResolvedProject, runId: string, opts: { ignoreLimit?: boolean; exclusive?: boolean } = {}): ProjectLease {
   try {
-    return acquireProjectLock(pr.paths.root, runId);
+    return acquireProjectLock(pr.paths.root, runId, { maxConcurrent: opts.ignoreLimit ? Number.MAX_SAFE_INTEGER : pr.dispatcher.max_concurrent_runs, exclusive: opts.exclusive });
   } catch (e) {
     return fail((e as Error).message);
   }
@@ -152,6 +152,9 @@ function printRun(summary: RunSummary, runDir: string): void {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
+  if (summary.resultBranch?.files) {
+    console.log(`\nThe work is on branch ${summary.resultBranch.branch} (${summary.resultBranch.files} file(s)); your working tree was not touched.\nBring it in with: git merge ${summary.resultBranch.branch}${summary.resultBranch.patch ? `\n(or apply the patch: git apply ${summary.resultBranch.patch})` : ""}`);
+  }
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);
@@ -317,19 +320,47 @@ program
   });
 
 /** Color when writing to a terminal, unless NO_COLOR is set; FORCE_COLOR overrides. */
-/** `clear --lock`: show who holds the project lock; remove it only with --force. */
-function unlockProject(pr: ResolvedProject, force: boolean): void {
-  const info = inspectProjectLock(pr.paths.root);
-  if (!info && !fs.existsSync(path.join(pr.paths.root, "lock.json"))) {
-    console.log(`Project ${pr.name} has no run lock.`);
+/** `clear --lock [run-id]`: show who holds a run lock; remove it only with --force. With several locks, name the run. */
+function unlockProject(pr: ResolvedProject, runId: string | undefined, force: boolean): void {
+  const root = pr.paths.root;
+  const locks = listRunLocks(root);
+  const unreadable = listUnreadableRunLocks(root);
+  if (runId && unreadable.includes(runId)) {
+    console.log(`The lock file of run ${runId} exists but cannot be read.`);
+    if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+    forceUnlock(root, runId);
+    console.log(`Lock removed. Resume the run with: agent-lyceum resume ${runId}`);
     return;
   }
-  if (info) {
-    console.log(`Lock held for run ${info.run_id} by pid ${info.pid} on ${info.hostname}, last heartbeat ${info.heartbeat_at}${lockHolderAlive(info) ? " (that process is still alive)" : " (that process is gone)"}.`);
-  } else console.log("The lock file exists but cannot be read.");
+  if (!runId && unreadable.length && locks.length + unreadable.length > 1) {
+    const list = [...locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`), ...unreadable.map((id) => `  ${id}  (lock file cannot be read)`)].join("\n");
+    fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum clear --lock <run-id> --force`);
+  }
+  if (!runId && unreadable.length && !locks.length) {
+    fail(`The lock file of run ${unreadable[0]} cannot be read. Name it to remove it: agent-lyceum clear --lock ${unreadable[0]} --force`);
+  }
+  if (!runId && locks.length > 1) {
+    const list = locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`).join("\n");
+    fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum clear --lock <run-id> --force`);
+  }
+  const target = runId ?? locks[0]?.run_id;
+  if (!target) {
+    if (!fs.existsSync(path.join(root, LOCK_FILE))) {
+      console.log(`Project ${pr.name} has no run lock.`);
+      return;
+    }
+    console.log("The lock file exists but cannot be read.");
+    if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+    forceUnlock(root);
+    console.log("Lock removed.");
+    return;
+  }
+  const info = inspectRunLock(root, target);
+  if (!info) fail(`Run "${target}" holds no readable lock. List the locks with: agent-lyceum doctor`);
+  console.log(`Lock held for run ${info!.run_id} by pid ${info!.pid} on ${info!.hostname}, last heartbeat ${info!.heartbeat_at}${lockHolderAlive(info!) ? " (that process is still alive)" : " (that process is gone)"}.`);
   if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
-  forceUnlock(pr.paths.root);
-  console.log("Lock removed. Resume the run with: agent-lyceum resume");
+  forceUnlock(root, target);
+  console.log(`Lock removed. Resume the run with: agent-lyceum resume ${target}`);
 }
 
 program
@@ -339,20 +370,20 @@ program
     "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots.\n\n" +
       "Long-term (global and project) memory is never touched.\n" +
       "Refuses while the run is running, or while a worktree holds work that is not in the repo.\n\n" +
-      "With --lock (no run id) it does something else:\n" +
-      "  - removes the run lock a crashed run left behind\n" +
+      "With --lock it does something else (the run id is optional):\n" +
+      "  - removes the run lock a crashed run left behind (name the run when several hold a lock)\n" +
       "  - needs --force to actually remove it",
   )
   .option("-p, --project <name>")
   .option("--dry-run", "only list what would be deleted and what would be kept")
-  .option("--lock", "remove the project's run lock left behind by a crashed run (takes no run id; needs --force)")
+  .option("--lock", "remove the run lock left behind by a crashed run (give its run id when several runs hold a lock; needs --force)")
   .option("--force", "with --lock: remove the lock even though its owner cannot be confirmed dead")
   .option("--keep-worktrees", "keep the agents' worktrees and branches (and their snapshots), and still clear the run and its task memory")
   .action((runId: string | undefined, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean; lock?: boolean; force?: boolean }) => {
     try {
       if (opts.lock) {
-        if (runId) fail("--lock takes no run id.");
-        return unlockProject(loadProject(opts.project), !!opts.force);
+        if (runId) assertName("run", runId);
+        return unlockProject(loadProject(opts.project), runId, !!opts.force);
       }
       if (opts.force) fail("--force only goes with --lock.");
       if (!runId) fail("Give the run id to clear (see `agent-lyceum status --task-list`), or use --lock.");
@@ -374,7 +405,7 @@ program
         if (plan.refusals.length) refuse(plan);
         return;
       }
-      const lease = takeLock(pr, runId);
+      const lease = takeLock(pr, runId, { ignoreLimit: true });
       try {
         const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
         if (plan.refusals.length) refuse(plan);
@@ -506,7 +537,7 @@ program
         if (opts.dryRun) fail("--undo cannot be combined with --dry-run.");
         if (!opts.agent) fail("--undo needs --agent <name>: an archive belongs to one agent's memory.");
         const target = loadProject(opts.project);
-        const undoLease = takeLock(target, `restore-${tidyStamp()}`);
+        const undoLease = takeLock(target, `restore-${tidyStamp()}`, { exclusive: true });
         try {
           const r = restoreMemory({ project: target, agent: opts.agent, layer, stamp: opts.undo });
           for (const f of r.restored) console.log(`  restored  ${f}`);
@@ -527,7 +558,7 @@ program
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
       await preflight(pr);
-      const lease = takeLock(pr, `tidy-${tidyStamp()}`);
+      const lease = takeLock(pr, `tidy-${tidyStamp()}`, { exclusive: true });
       const cancel = cancelOnSignals();
       let results: Awaited<ReturnType<typeof tidyMemory>>;
       try {

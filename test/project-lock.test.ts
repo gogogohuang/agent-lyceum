@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireProjectLock, forceUnlock, inspectProjectLock, lockHolderAlive, LOCK_FILE, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -16,13 +16,20 @@ const tmp = () => {
   dirs.push(d);
   return d;
 };
+const runLockFile = (root: string, runId: string) => path.join(root, LOCKS_DIR, `${runId}.json`);
+const deadPid = () => Number(spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"]).stdout.toString());
+const writeLock = (file: string, over: Partial<LockInfo> & { run_id: string }) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const now = new Date().toISOString();
+  fs.writeFileSync(file, JSON.stringify({ token: `t-${over.run_id}`, hostname: os.hostname(), pid: process.pid, acquired_at: now, heartbeat_at: now, ...over }));
+};
 afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
 /** Start a child that takes the lock and holds it for `holdMs`; resolves with its first output line. */
-function startHolder(root: string, runId: string, holdMs: number) {
-  const child = spawn(tsx, [holder, root, runId, String(holdMs)], { stdio: ["ignore", "pipe", "pipe"] });
+function startHolder(root: string, runId: string, holdMs: number, max = 1) {
+  const child = spawn(tsx, [holder, root, runId, String(holdMs), String(max)], { stdio: ["ignore", "pipe", "pipe"] });
   const first = new Promise<string>((resolve) => {
     let buf = "";
     child.stdout.on("data", (b) => {
@@ -35,8 +42,8 @@ function startHolder(root: string, runId: string, holdMs: number) {
   return { child, first, exited };
 }
 
-describe("project lock", () => {
-  it("lets exactly one of two processes start on the same project", async () => {
+describe("run locks", () => {
+  it("lets exactly one of two processes start when only one run may be active", async () => {
     const root = tmp();
     const a = startHolder(root, "run-a", 1500);
     const b = startHolder(root, "run-b", 1500);
@@ -44,21 +51,52 @@ describe("project lock", () => {
     expect(results[0]).toBe("ACQUIRED");
     expect(results[1]).toMatch(/^DENIED .*run-(a|b)/);
     await Promise.all([a.exited, b.exited]);
-    expect(inspectProjectLock(root)).toBeUndefined();
+    expect(listRunLocks(root)).toEqual([]);
   }, 20_000);
+
+  it("lets two processes run at the same time when two runs may be active, and never a third", async () => {
+    const root = tmp();
+    const a = startHolder(root, "run-a", 2000, 2);
+    const b = startHolder(root, "run-b", 2000, 2);
+    const c = startHolder(root, "run-c", 2000, 2);
+    const results = (await Promise.all([a.first, b.first, c.first])).sort();
+    expect(results.filter((r) => r === "ACQUIRED")).toHaveLength(2);
+    expect(results.filter((r) => r.startsWith("DENIED"))).toHaveLength(1);
+    await Promise.all([a.exited, b.exited, c.exited]);
+    expect(listRunLocks(root)).toEqual([]);
+  }, 30_000);
 
   it("lets different projects run at the same time", () => {
     const r1 = tmp();
     const r2 = tmp();
     const l1 = acquireProjectLock(r1, "x");
     const l2 = acquireProjectLock(r2, "y");
-    expect(inspectProjectLock(r1)?.run_id).toBe("x");
-    expect(inspectProjectLock(r2)?.run_id).toBe("y");
+    expect(inspectRunLock(r1, "x")?.run_id).toBe("x");
+    expect(inspectRunLock(r2, "y")?.run_id).toBe("y");
     l1.release();
     l2.release();
   });
 
-  it("refuses a second acquire in the same process and names the holder", () => {
+  it("lets two different runs hold a lock when the limit is 2, and refuses a third naming the runs in the way", () => {
+    const root = tmp();
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    expect(listRunLocks(root).map((l) => l.run_id).sort()).toEqual(["run-a", "run-b"]);
+    expect(() => acquireProjectLock(root, "run-c", { maxConcurrent: 2 })).toThrow(/run-a.*run-b.*max_concurrent_runs/s);
+    expect(fs.existsSync(runLockFile(root, "run-c"))).toBe(false);
+    a.release();
+    acquireProjectLock(root, "run-c", { maxConcurrent: 2 }).release();
+    b.release();
+  });
+
+  it("refuses the same run twice, however high the limit, and names the holder", () => {
+    const root = tmp();
+    const l = acquireProjectLock(root, "run-1", { maxConcurrent: 5 });
+    expect(() => acquireProjectLock(root, "run-1", { maxConcurrent: 5 })).toThrow(/run-1.*still running/s);
+    l.release();
+  });
+
+  it("allows only one run by default and names the one in the way", () => {
     const root = tmp();
     const l = acquireProjectLock(root, "run-1");
     expect(() => acquireProjectLock(root, "run-2")).toThrow(/run-1/);
@@ -66,54 +104,69 @@ describe("project lock", () => {
     acquireProjectLock(root, "run-2").release();
   });
 
+  it("does not count locks whose process is gone", () => {
+    const root = tmp();
+    writeLock(runLockFile(root, "dead"), { run_id: "dead", pid: deadPid() });
+    expect(lockHolderAlive(inspectRunLock(root, "dead")!)).toBe(false);
+    acquireProjectLock(root, "new").release();
+  });
+
+  it("counts an older version's project-wide lock.json held by a live process", () => {
+    const root = tmp();
+    writeLock(path.join(root, LOCK_FILE), { run_id: "old-run" });
+    expect(inspectRunLock(root, "old-run")?.run_id).toBe("old-run");
+    expect(() => acquireProjectLock(root, "new")).toThrow(/old-run/);
+    const l = acquireProjectLock(root, "new", { maxConcurrent: 2 });
+    expect(listRunLocks(root).map((x) => x.run_id).sort()).toEqual(["new", "old-run"]);
+    l.release();
+  });
+
+  it("replaces an older version's lock.json whose process is gone", () => {
+    const root = tmp();
+    writeLock(path.join(root, LOCK_FILE), { run_id: "old-run", pid: deadPid(), hostname: "other-host.local" });
+    acquireProjectLock(root, "run-new").release();
+    expect(fs.existsSync(path.join(root, LOCK_FILE))).toBe(false);
+  });
+
   it("release never deletes a lock that belongs to another token", () => {
     const root = tmp();
     const l = acquireProjectLock(root, "run-1");
-    const file = path.join(root, LOCK_FILE);
+    const file = runLockFile(root, "run-1");
     const other = { ...JSON.parse(fs.readFileSync(file, "utf8")), token: "someone-else" };
     fs.writeFileSync(file, JSON.stringify(other));
     l.release();
     expect(fs.existsSync(file)).toBe(true);
-    expect(inspectProjectLock(root)?.token).toBe("someone-else");
+    expect(inspectRunLock(root, "run-1")?.token).toBe("someone-else");
   });
 
   it("does not take over a live holder just because its heartbeat is late", () => {
     const root = tmp();
     const l = acquireProjectLock(root, "run-1");
-    const file = path.join(root, LOCK_FILE);
+    const file = runLockFile(root, "run-1");
     const info = JSON.parse(fs.readFileSync(file, "utf8"));
     info.heartbeat_at = new Date(Date.now() - 3600_000).toISOString();
     fs.writeFileSync(file, JSON.stringify(info));
-    expect(() => acquireProjectLock(root, "run-2")).toThrow(/still running|heartbeat/);
+    expect(() => acquireProjectLock(root, "run-1")).toThrow(/still running|heartbeat/);
     l.release();
   });
 
-  it("reclaims a lock whose process is gone, even if the hostname changed since", () => {
+  it("reclaims a run's lock whose process is gone, even if the hostname changed since", () => {
     const root = tmp();
-    const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"]);
-    const pid = Number(dead.stdout.toString());
-    fs.writeFileSync(
-      path.join(root, LOCK_FILE),
-      JSON.stringify({ token: "old", hostname: "other-host.local", pid, run_id: "old-run", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
-    );
-    expect(lockHolderAlive(inspectProjectLock(root)!)).toBe(false);
-    const l = acquireProjectLock(root, "run-new");
-    expect(inspectProjectLock(root)?.run_id).toBe("run-new");
+    writeLock(runLockFile(root, "run-x"), { run_id: "run-x", pid: deadPid(), hostname: "other-host.local" });
+    const l = acquireProjectLock(root, "run-x");
+    expect(inspectRunLock(root, "run-x")?.pid).toBe(process.pid);
     l.release();
   });
 
   it("treats a reused pid (different start time) as a dead holder", () => {
     // the start time is in the format this platform writes: `proc:<ticks>` on Linux, `ps` text elsewhere
     const root = tmp();
-    fs.writeFileSync(
-      path.join(root, LOCK_FILE),
-      JSON.stringify({ token: "old", hostname: os.hostname(), pid: process.pid, pid_started: process.platform === "linux" ? "proc:1" : "Thu Jan  1 00:00:00 1970", run_id: "old", heartbeat_at: new Date().toISOString(), acquired_at: new Date().toISOString() }),
-    );
-    expect(lockHolderAlive(inspectProjectLock(root)!)).toBe(false);
+    writeLock(runLockFile(root, "old"), { run_id: "old", pid_started: process.platform === "linux" ? "proc:1" : "Thu Jan  1 00:00:00 1970" });
+    expect(lockHolderAlive(inspectRunLock(root, "old")!)).toBe(false);
     acquireProjectLock(root, "new").release();
   });
 
-  it("asks for a manual unlock when the lock file cannot be understood, and force-unlock clears it", () => {
+  it("asks for a manual unlock when the old lock file cannot be understood, and force-unlock clears it", () => {
     const root = tmp();
     fs.writeFileSync(path.join(root, LOCK_FILE), "garbage");
     expect(() => acquireProjectLock(root, "r")).toThrow(/clear --lock/);
@@ -122,13 +175,57 @@ describe("project lock", () => {
     acquireProjectLock(root, "r").release();
   });
 
+  it("an unreadable per-run lock names the run id in its error, and force-unlock by run id removes it", () => {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, LOCKS_DIR), { recursive: true });
+    fs.writeFileSync(runLockFile(root, "run-z"), "garbage");
+    expect(() => acquireProjectLock(root, "run-z")).toThrow(/clear --lock run-z --force/);
+    expect(listUnreadableRunLocks(root)).toEqual(["run-z"]);
+    expect(forceUnlock(root, "run-z")).toBeUndefined();
+    expect(fs.existsSync(runLockFile(root, "run-z"))).toBe(false);
+    acquireProjectLock(root, "run-z").release();
+  });
+
+  it("force-unlock by run id removes only that run's lock", () => {
+    const root = tmp();
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    expect(forceUnlock(root, "run-a")?.run_id).toBe("run-a");
+    expect(listRunLocks(root).map((l) => l.run_id)).toEqual(["run-b"]);
+    a.release();
+    b.release();
+  });
+
   it("keeps the heartbeat fresh while held", async () => {
     const root = tmp();
     const l = acquireProjectLock(root, "r", { heartbeatMs: 30 });
-    const t0 = inspectProjectLock(root)!.heartbeat_at;
+    const t0 = inspectRunLock(root, "r")!.heartbeat_at;
     await new Promise((r) => setTimeout(r, 150));
-    expect(inspectProjectLock(root)!.heartbeat_at > t0).toBe(true);
+    expect(inspectRunLock(root, "r")!.heartbeat_at > t0).toBe(true);
     l.release();
+  });
+
+  it("an exclusive lock needs the project to be idle, and keeps every other lock out while held", () => {
+    const root = tmp();
+    const run = acquireProjectLock(root, "run-a", { maxConcurrent: 3 });
+    expect(() => acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true })).toThrow(/run-a/);
+    run.release();
+    const tidy = acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true });
+    expect(inspectRunLock(root, "tidy-1")?.exclusive).toBe(true);
+    expect(() => acquireProjectLock(root, "run-b", { maxConcurrent: 3 })).toThrow(/tidy-1/);
+    tidy.release();
+    acquireProjectLock(root, "run-b", { maxConcurrent: 3 }).release();
+  });
+
+  it("an exclusive lock whose process is gone does not block anyone", () => {
+    const root = tmp();
+    writeLock(runLockFile(root, "tidy-dead"), { run_id: "tidy-dead", pid: deadPid(), exclusive: true });
+    acquireProjectLock(root, "run-a", { maxConcurrent: 2 }).release();
+  });
+
+  it("rejects a run id that is not a plain name", () => {
+    const root = tmp();
+    expect(() => acquireProjectLock(root, "../escape")).toThrow(/run id/i);
   });
 });
 

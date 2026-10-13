@@ -2,13 +2,42 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { validateProject } from "../src/validate.js";
-import { initGitRepo, makeEnv, type TestEnv } from "./helpers.js";
+import { initGitRepo, makeConcurrent, makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 const errors = (env: TestEnv) => validateProject(env.project()).issues.filter((i) => i.level === "error").map((i) => i.message);
 
 describe("validate", () => {
+  it("accepts max_concurrent_runs > 1 in a git repo", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 3);
+    expect(env.project().dispatcher.max_concurrent_runs).toBe(3);
+    expect(errors(env)).toEqual([]);
+  });
+
+  it("rejects max_concurrent_runs > 1 with workspace_mode shared", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    env.editProjectYaml((t) => t.replace("workspace_mode: auto", "workspace_mode: shared"));
+    expect(errors(env).join("\n")).toMatch(/max_concurrent_runs/);
+  });
+
+  it("rejects max_concurrent_runs > 1 when the project is not a git repository, with one clear message", () => {
+    env = makeEnv();
+    makeConcurrent(env, 2);
+    const list = errors(env);
+    expect(list.filter((m) => /git repository/.test(m))).toHaveLength(1);
+    expect(list.join("\n")).toMatch(/max_concurrent_runs: 1/);
+  });
+
+  it("defaults max_concurrent_runs to 1", () => {
+    env = makeEnv();
+    expect(env.project().dispatcher.max_concurrent_runs).toBe(1);
+  });
+
   it("accepts the generated template project", () => {
     env = makeEnv();
     expect(errors(env)).toEqual([]);

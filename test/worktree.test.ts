@@ -7,18 +7,24 @@ import { runTeam } from "../src/dispatcher.js";
 import { outboxDir, writePolicy } from "../src/policy.js";
 import { prepareTask } from "../src/task.js";
 import { validateProject } from "../src/validate.js";
-import { dirtyPaths, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase } from "../src/worktree.js";
-import { git, initGitRepo, makeEnv, makeParallel, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
+import { assertWorktreeRunnable, collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
-const settings = (over: Partial<{ max_parallel: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
-  max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
+const settings = (over: Partial<{ max_parallel: number; max_concurrent_runs: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
+  max_rounds: 30, max_parallel: 1, max_concurrent_runs: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
 });
 
 describe("workspace mode", () => {
+  it("uses worktrees for every run when several runs may be active at once", () => {
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2 }))).toBe("worktree");
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2, workspace_mode: "auto" }))).toBe("worktree");
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 1 }))).toBe("shared");
+  });
+
   it("uses worktrees when agents can run in parallel, or when asked to", () => {
     expect(resolveWorkspaceMode(settings({}))).toBe("shared");
     expect(resolveWorkspaceMode(settings({ max_parallel: 2 }))).toBe("worktree");
@@ -231,5 +237,87 @@ describe("dispatcher with worktrees", () => {
     write(path.join(env.repo, "src/web/a.txt"), "my own unfinished edit\n");
     await expect(start(async () => OK)).rejects.toThrow(/uncommitted.*src\/web\/a\.txt/s);
     expect(fs.existsSync(path.join(env.project().paths.runs, "run-1", "state.json"))).toBe(false);
+  });
+});
+
+describe("concurrent runs: base and lead workspace", () => {
+  function concurrentRepo() {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    return env.project();
+  }
+
+  it("starts from HEAD even when the working tree has uncommitted changes, and leaves the working tree alone", () => {
+    const p = concurrentRepo();
+    write(path.join(env.repo, "src/web/a.txt"), "uncommitted edit\n");
+    expect(() => assertWorktreeRunnable(p, { fresh: true, concurrent: true })).not.toThrow();
+    expect(() => assertWorktreeRunnable(p, { fresh: true })).toThrow(/uncommitted/);
+    const ref = snapshotHead(p, "run-1");
+    expect(ref).toBe("refs/agent-lyceum/run-1/base-0");
+    expect(git(env.repo, "rev-parse", ref)).toBe(git(env.repo, "rev-parse", "HEAD"));
+    const ws = prepareAgentWorkspace(p, "run-1", "lead", ref);
+    expect(fs.readFileSync(path.join(ws.dir, "src/web/a.txt"), "utf8")).toBe("a\n"); // the edit is not part of the run
+    expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("uncommitted edit\n");
+    expect(ws.branch).toBe("agent-lyceum/run-1/lead");
+  });
+
+  it("refuses a repository without any commit", () => {
+    env = makeEnv();
+    git(env.repo, "init", "-q", "-b", "main");
+    makeConcurrent(env, 2);
+    expect(() => assertWorktreeRunnable(env.project(), { fresh: true, concurrent: true })).toThrow(/no commit yet/);
+  });
+
+  it("snapshots the lead's worktree for members and brings a member's files into the lead's worktree, not the repo", () => {
+    const p = concurrentRepo();
+    const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
+    write(path.join(lead.dir, "src/web/lead-note.txt"), "lead was here\n");
+    const ref = snapshotBase(p, "run-1", 1, lead.root);
+    const member = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
+    expect(fs.readFileSync(path.join(member.dir, "src/web/lead-note.txt"), "utf8")).toBe("lead was here\n");
+    write(path.join(member.dir, "src/web/feature.txt"), "built\n");
+    const r = integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead.root);
+    expect(r.status).toBe("integrated");
+    expect(fs.readFileSync(path.join(lead.dir, "src/web/feature.txt"), "utf8")).toBe("built\n");
+    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false);
+    expect(git(env.repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("commits the lead's work on its branch and writes a patch; a run with no changes commits nothing", () => {
+    const p = concurrentRepo();
+    const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
+    const none = finishLeadBranch(lead, "msg", path.join(env.root, "none.patch"));
+    expect(none).toMatchObject({ files: 0, head: lead.base });
+    expect(none.patch).toBeUndefined();
+
+    write(path.join(lead.dir, "src/web/new.txt"), "new\n");
+    const rb = finishLeadBranch(lead, "agent-lyceum: lead's work for run run-1", path.join(env.root, "lead.patch"));
+    expect(rb.files).toBe(1);
+    expect(rb.branch).toBe("agent-lyceum/run-1/lead");
+    expect(git(env.repo, "log", "-1", "--format=%s", rb.branch)).toBe("agent-lyceum: lead's work for run run-1");
+    expect(fs.readFileSync(rb.patch!, "utf8")).toContain("src/web/new.txt");
+    expect(commitWorkspace(lead.root, "again")).toMatchObject({ committed: false, head: rb.head });
+    expect(git(env.repo, "status", "--porcelain")).toBe("");
+    // merging the branch brings the work in
+    git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+    expect(fs.readFileSync(path.join(env.repo, "src/web/new.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("inspectWorkspace compares a member with the lead's worktree, and the lead with the repo", () => {
+    const p = concurrentRepo();
+    const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
+    const ref = snapshotBase(p, "run-1", 1, lead.root);
+    const member = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
+    write(path.join(member.dir, "src/web/feature.txt"), "built\n");
+    integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead.root);
+    // the member's file is in the lead's worktree, so the member holds nothing that exists nowhere else
+    expect(inspectWorkspace(p, "run-1", "fe-member", lead.root)?.unintegrated).toEqual([]);
+    // the lead's worktree holds it, and the repo does not have it yet
+    expect(inspectWorkspace(p, "run-1", "lead")?.dirty).toContain("src/web/feature.txt");
+    finishLeadBranch(lead, "m", path.join(env.root, "p.patch"));
+    expect(inspectWorkspace(p, "run-1", "lead")?.unintegrated).toContain("src/web/feature.txt");
+    git(env.repo, "merge", "-q", "--no-edit", lead.branch);
+    expect(inspectWorkspace(p, "run-1", "lead")?.unintegrated).toEqual([]);
   });
 });

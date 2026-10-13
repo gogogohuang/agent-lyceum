@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { runTeam } from "../src/dispatcher.js";
+import { listRunLocks } from "../src/project-lock.js";
 import { listUnread } from "../src/mailbox.js";
 import { listAttempts, mailDir } from "../src/message-store.js";
 import { outboxDir } from "../src/policy.js";
@@ -111,7 +112,7 @@ describe("the CLI on Ctrl-C", () => {
     await until(() => fs.existsSync(marker));
     expect(fs.existsSync(marker)).toBe(true);
     const pids = JSON.parse(fs.readFileSync(marker, "utf8")) as { pid: number; grandchild: number };
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(true);
+    expect(listRunLocks(env.project().paths.root).length > 0).toBe(true);
 
     first.kill("SIGINT");
     const code = await exited(first);
@@ -119,7 +120,7 @@ describe("the CLI on Ctrl-C", () => {
     await until(() => !alive(pids.pid) && !alive(pids.grandchild));
     expect(alive(pids.pid)).toBe(false);
     expect(alive(pids.grandchild)).toBe(false);
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(listRunLocks(env.project().paths.root).length > 0).toBe(false);
 
     const second = cliRun(env.home, bin, ["resume", "-p", "demo"], { FAKE_MODE: "completed" });
     expect(await exited(second)).toBe(0);

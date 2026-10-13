@@ -43,6 +43,8 @@
 - `--assume-defaults` 沒有作用；
 - 名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
 
+`dispatcher.max_concurrent_runs > 1` 時，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch；見 [README](../README.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
+
 ## call
 
 **用法:** `call <agent> ["task"] [--task-file f] [--dir d]`
@@ -128,7 +130,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 ## clear
 
-**用法:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [-p name] --force`
+**用法:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
 依 id 刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
 
@@ -138,12 +140,15 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - `--dry-run`：只列出會刪除與會保留的項目。
 - `--keep-worktrees`：保留 worktree 與 branch，其餘照樣清除。
 
-**`clear --lock`**（不帶 run id）移除當機 run 留下的專案鎖（每個專案同時只能有一個 run）：
+**`clear --lock`** 移除當機 run 留下的 run 鎖。每個執行中的 run 各持有一把鎖（同時最多 `dispatcher.max_concurrent_runs` 把）。沒有 `--force` 時只顯示鎖的持有者。不帶 run id 時處理唯一的那把鎖；有多個 run 各持有一把時會列出它們，並要求你指定是哪個 run。無法讀取的鎖檔也會一併清除。
 
-- 沒有 `--force`：只顯示鎖的持有者；
-- `--force`：即使無法確認持有者已死，也移除鎖。
+加上 `--force`：
 
-**從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `clear --lock --force`。
+- 即使無法確認持有者已死，也移除鎖。
+
+**從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `clear --lock --force`。舊版的專案層級 `lock.json` 仍然有效：其程序還活著時，算作一個執行中的 run。
+
+併發 run 的 lead branch 在合併進 `HEAD` 之前，視為不在 repo 裡的成果。
 
 ## doctor
 
@@ -186,7 +191,7 @@ task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 
 
 每個 agent 會被喚醒一次來做這件事，不屬於任何 run（不消耗輪數），而且只能改動自己的記憶。淘汰＝封存，不是刪除：檔案會以相同的相對路徑搬到 `memory/.archive/<時間戳>/`，並附上 `tidy-report.md`（合併了什麼、封存了什麼與理由、仍存疑的項目）。agent 會看到每個記憶檔的大小與修改時間、`MEMORY.md` 索引、自上次整理以來 repo 的變化（`git log` 與 `git diff --stat`），以及記憶中提到但已不存在的路徑。`memory/.tidy-state.json` 記錄上次整理時 repo 的 `HEAD`；第一次整理沒有基準，只做路徑檢查。
 
-agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要專案鎖，所以有 run 在執行時會拒絕。
+agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要獨占專案：有任何 run 在執行時，`tidy`（與 `tidy --undo`）會拒絕，執行期間也不能啟動任何 run，與 `max_concurrent_runs` 的值無關。
 
 **`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 

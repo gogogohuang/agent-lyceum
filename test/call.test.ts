@@ -5,6 +5,7 @@ import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "../src/call.js";
 import { ConfigError } from "../src/config.js";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
+import { listRunLocks } from "../src/project-lock.js";
 import { writePolicy } from "../src/policy.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
@@ -93,7 +94,7 @@ describe("callAgent", () => {
     expect(fs.readFileSync(path.join(r.callDir, "task.md"), "utf8")).toBe("what is in this repo?");
     expect(fs.readFileSync(path.join(r.callDir, "result.md"), "utf8")).toMatch(/it is a demo repo/);
     expect(path.dirname(r.callDir)).toBe(callsDir(env.home));
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(listRunLocks(env.project().paths.root)).toEqual([]);
   });
 
   it("creates the global memory directory the agent is told about", async () => {

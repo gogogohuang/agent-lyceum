@@ -43,6 +43,8 @@ With `--agent`:
 - `--assume-defaults` has no effect;
 - a name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
 
+With `dispatcher.max_concurrent_runs > 1` the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge; see "Several runs at once" in the [README](../README.md#several-runs-at-once).
+
 ## call
 
 **Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
@@ -128,7 +130,7 @@ Options:
 
 ## clear
 
-**Usage:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [-p name] --force`
+**Usage:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
 Delete a task (run) by id: its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
 
@@ -138,12 +140,15 @@ Options:
 - `--dry-run`: only print what would be deleted and kept.
 - `--keep-worktrees`: keep the worktrees and their branches, and still clear the rest.
 
-**`clear --lock`** (no run id) removes the project's run lock left behind by a crashed run (only one run per project at a time):
+**`clear --lock`** removes the run lock a crashed run left behind. Each active run holds its own lock (up to `dispatcher.max_concurrent_runs` at once). Without `--force` it only shows who holds the lock. Without a run id it acts on the only lock; when several runs hold one it lists them and asks you to name the run. A lock file that cannot be read is cleared too.
 
-- without `--force`: only shows who holds the lock;
-- `--force`: removes the lock even though its owner cannot be confirmed dead.
+With `--force`:
 
-**Upgrading from an older version:** on Linux a lock records the holder's start time as `proc:<ticks>` (read from `/proc`), where older versions wrote the `ps` text. The two cannot be compared, so a lock written by an older version is judged by its pid alone: if that pid has since been reused by an unrelated process, the stale lock is not reclaimed automatically and you need `clear --lock --force`.
+- the lock is removed even though its owner cannot be confirmed dead.
+
+**Upgrading from an older version:** on Linux a lock records the holder's start time as `proc:<ticks>` (read from `/proc`), where older versions wrote the `ps` text. The two cannot be compared, so a lock written by an older version is judged by its pid alone: if that pid has since been reused by an unrelated process, the stale lock is not reclaimed automatically and you need `clear --lock --force`. An older version's project-wide `lock.json` is still honoured: while its process is alive it counts as one active run.
+
+A concurrent run's lead branch counts as work that is not in the repo until it is merged into `HEAD`.
 
 ## doctor
 
@@ -186,7 +191,7 @@ Task memory is never tidied (`clear` deletes it). Note that the project template
 
 Each agent is woken once for this, outside any run (no round is used), and may only change its own memory. Retiring is archiving, never deleting: files go to `memory/.archive/<timestamp>/` under the same relative path, together with a `tidy-report.md` (what was merged, what was archived and why, what is still doubtful). The agent is shown the size and age of every memory file, the `MEMORY.md` index, what changed in the project repo (`git log` and `git diff --stat`) since the last tidy, and the paths its memory mentions that no longer exist. `memory/.tidy-state.json` remembers the repo `HEAD` of the last tidy; the first tidy has no baseline and only does the path check.
 
-agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project lock, so it refuses while a run is active.
+agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project to itself: `tidy` (and `tidy --undo`) is refused while any run is active, and no run can start while it runs, whatever `max_concurrent_runs` is.
 
 **`tidy --undo <timestamp>`** undoes one tidy: it moves the files of `memory/.archive/<timestamp>/` back to where they were and adds them to `MEMORY.md` if the index does not mention them. `tidy` prints the timestamp, and the exact undo command, when it finishes.
 

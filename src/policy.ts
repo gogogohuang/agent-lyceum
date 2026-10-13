@@ -43,8 +43,10 @@ export function inboxDir(project: ResolvedProject, agent: string): string {
   return path.join(project.paths.inboxRoot, agent);
 }
 
+/** The repo's own CLAUDE.md/AGENTS.md: in the lead's worktree when it has one (concurrent runs), else in the repo. */
 export function repoInstructionFiles(project: ResolvedProject): string[] {
-  return [path.join(project.dir, "CLAUDE.md"), path.join(project.dir, "AGENTS.md")];
+  const dir = repoDirFor(project, project.lead);
+  return [path.join(dir, "CLAUDE.md"), path.join(dir, "AGENTS.md")];
 }
 
 export function memoryDirs(a: ResolvedAgent): string[] {
@@ -154,7 +156,7 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
     agent: agent.name,
     runtime: agent.runtime ?? "?",
     ...e,
-    writablePaths: [...pol.allowDirs, ...pol.allowFiles.filter((f) => !f.startsWith(project.dir + path.sep))],
+    writablePaths: [...pol.allowDirs, ...pol.allowFiles.filter((f) => !f.startsWith(project.dir + path.sep) && !f.startsWith(repoDirFor(project, project.lead) + path.sep))],
     notes,
   };
 }

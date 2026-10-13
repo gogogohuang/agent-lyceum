@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { listRunLocks } from "../src/project-lock.js";
 import { loadRunState } from "../src/run-store.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
@@ -98,7 +99,7 @@ describe("call", { timeout: 60_000 }, () => {
     const [id] = fs.readdirSync(calls).filter((n) => !n.startsWith("."));
     expect(fs.readFileSync(path.join(calls, id!, "result.md"), "utf8")).toMatch(/ask the owner first/);
     expect(fs.readFileSync(path.join(calls, id!, "task.md"), "utf8")).toBe("is this ready to build?");
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(listRunLocks(env.project().paths.root)).toEqual([]);
     expect(fs.existsSync(path.join(calls, ".lock-pm"))).toBe(false);
   });
 

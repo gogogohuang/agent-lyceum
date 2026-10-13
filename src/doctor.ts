@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { tidyAdvice } from "./memory-tidy.js";
-import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
+import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
@@ -156,19 +156,27 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   if (fs.existsSync(project.dir) && isGitRepo(project.dir)) {
     if (resolveWorkspaceMode(project.dispatcher) === "worktree") {
       const dirty = dirtyPaths(project.dir);
-      if (dirty.length) checks.push({ level: "warn", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: a parallel run would refuse to start until they are committed or stashed.` });
-      else checks.push({ level: "ok", subject: "git", message: "Repo is clean; parallel runs can start." });
+      if (dirty.length && project.dispatcher.max_concurrent_runs > 1) {
+        checks.push({ level: "info", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: concurrent runs start from HEAD and do not see them.` });
+      } else if (dirty.length) {
+        checks.push({ level: "warn", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: a parallel run would refuse to start until they are committed or stashed.` });
+      } else checks.push({ level: "ok", subject: "git", message: "Repo is clean; parallel runs can start." });
     }
   }
 
-  const lock = inspectProjectLock(project.paths.root);
-  if (lock) {
+  for (const lock of listRunLocks(project.paths.root)) {
     const alive = lockHolderAlive(lock);
     checks.push({
       level: "warn",
       subject: "lock",
-      message: alive ? `A run is active: ${lock.run_id} (pid ${lock.pid}).` : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum clear --lock --force\` clears it.`,
+      message: alive
+        ? `A run is active: ${lock.run_id} (pid ${lock.pid}).`
+        : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum clear --lock ${lock.run_id} --force\` clears it.`,
     });
+  }
+
+  for (const id of listUnreadableRunLocks(project.paths.root)) {
+    checks.push({ level: "warn", subject: "lock", message: `The lock file of run ${id} cannot be read; if no run is active, \`agent-lyceum clear --lock ${id} --force\` clears it.` });
   }
 
   for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });

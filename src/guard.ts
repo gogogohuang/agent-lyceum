@@ -29,7 +29,15 @@ export class ProtectedGuard {
   private baseline = new Map<string, Buffer | null>();
 
   constructor(private project: ResolvedProject) {
-    for (const f of ProtectedGuard.protectedFiles(project)) this.baseline.set(f, read(f));
+    this.rebase();
+  }
+
+  /**
+   * Take the current files as the baseline. Called right before a batch is woken, so only what changes while it runs is
+   * judged: edits made in between (you, or another run of the project) are not the batch's doing.
+   */
+  rebase(): void {
+    for (const f of ProtectedGuard.protectedFiles(this.project)) this.baseline.set(f, read(f));
   }
 
   static protectedFiles(project: ResolvedProject): string[] {

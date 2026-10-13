@@ -66,6 +66,11 @@ export function makeParallel(env: TestEnv): void {
   );
 }
 
+/** Let the demo project run `n` runs at once (each in its own git worktree). */
+export function makeConcurrent(env: TestEnv, n = 2): void {
+  env.editProjectYaml((t) => t.replace("max_concurrent_runs: 1", `max_concurrent_runs: ${n}`));
+}
+
 /** The template gives agents global memory only; this also gives each of them a project memory directory (`agents/<name>/memory`). */
 export function makeMemoryEnv(name = "demo"): TestEnv {
   const e = makeEnv(name);

@@ -5,9 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import { atomicWrite } from "./fs-util.js";
 
+/** The project-wide lock of older versions. Still read (it counts as one active run) and cleared; never written. */
 export const LOCK_FILE = "lock.json";
-const RECLAIM_FILE = "lock.json.reclaim";
+/** One lock file per active run: `<project home>/locks/<run-id>.json`. */
+export const LOCKS_DIR = "locks";
+const ADMIT_FILE = ".admit";
 const HEARTBEAT_MS = 5000;
+
+export interface LockOptions {
+  heartbeatMs?: number;
+  /** Most runs that may hold a lock of this project at once, this one included. Default 1. */
+  maxConcurrent?: number;
+  /** The holder needs the whole project (e.g. a memory tidy): refused while any other lock is alive, and it keeps every other lock out while held. */
+  exclusive?: boolean;
+}
 
 export interface LockInfo {
   token: string;
@@ -18,6 +29,8 @@ export interface LockInfo {
   run_id: string;
   acquired_at: string;
   heartbeat_at: string;
+  /** Held by an operation that needs the project to itself (a memory tidy). */
+  exclusive?: boolean;
 }
 
 export interface ProjectLease {
@@ -25,10 +38,6 @@ export interface ProjectLease {
   /** True once another process replaced our lock file; the run should stop writing. */
   readonly lost: boolean;
   release(): void;
-}
-
-export interface LockOptions {
-  heartbeatMs?: number;
 }
 
 /** Field 22 (starttime, in clock ticks) of a /proc/<pid>/stat line. The command name (field 2) may contain spaces and ")". */
@@ -79,30 +88,6 @@ function pidStart(pid: number): string | undefined {
 /** Two start times can only be compared when they were taken the same way. */
 const sameKind = (a: string, b: string) => a.startsWith("proc:") === b.startsWith("proc:");
 
-type Read = { kind: "none" } | { kind: "unreadable" } | { kind: "ok"; info: LockInfo };
-
-function readLock(root: string): Read {
-  let text: string;
-  try {
-    text = fs.readFileSync(path.join(root, LOCK_FILE), "utf8");
-  } catch {
-    return { kind: "none" };
-  }
-  try {
-    const j = JSON.parse(text);
-    if (j && typeof j.token === "string" && typeof j.pid === "number" && typeof j.run_id === "string") return { kind: "ok", info: j as LockInfo };
-  } catch {
-    /* fall through */
-  }
-  return { kind: "unreadable" };
-}
-
-/** The lock of a project (`root` = the project's home directory), if one is held and readable. */
-export function inspectProjectLock(root: string): LockInfo | undefined {
-  const r = readLock(root);
-  return r.kind === "ok" ? r.info : undefined;
-}
-
 /**
  * Is the process that wrote this lock still the same running process? Judged by pid and its start time,
  * never by hostname (macOS changes it with the network) or by heartbeat age (a busy holder may be late).
@@ -120,24 +105,142 @@ export function lockHolderAlive(info: LockInfo): boolean {
   return true;
 }
 
+type Read = { kind: "none" } | { kind: "unreadable" } | { kind: "ok"; info: LockInfo };
+
+function readLockFile(file: string): Read {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { kind: "none" };
+  }
+  try {
+    const j = JSON.parse(text);
+    if (j && typeof j.token === "string" && typeof j.pid === "number" && typeof j.run_id === "string") return { kind: "ok", info: j as LockInfo };
+  } catch {
+    /* fall through */
+  }
+  return { kind: "unreadable" };
+}
+
+const runLockFile = (root: string, runId: string) => path.join(root, LOCKS_DIR, `${runId}.json`);
+const legacyFile = (root: string) => path.join(root, LOCK_FILE);
+
+function assertRunId(runId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(runId)) throw new Error(`Invalid run id "${runId}" for a lock: use letters, digits, ".", "-" or "_".`);
+}
+
+/** Per-run lock files (not temp or mutex files), then the old project-wide one if it exists. */
+function lockFiles(root: string): string[] {
+  const dir = path.join(root, LOCKS_DIR);
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("."));
+  } catch {
+    /* no locks yet */
+  }
+  const files = names.sort().map((n) => path.join(dir, n));
+  if (fs.existsSync(legacyFile(root))) files.push(legacyFile(root));
+  return files;
+}
+
+/** Every lock of a project that can be read: one per run, plus an older version's `lock.json`. Oldest first. */
+export function listRunLocks(root: string): LockInfo[] {
+  const out: LockInfo[] = [];
+  for (const f of lockFiles(root)) {
+    const r = readLockFile(f);
+    if (r.kind === "ok") out.push(r.info);
+  }
+  return out.sort((a, b) => a.acquired_at.localeCompare(b.acquired_at) || a.run_id.localeCompare(b.run_id));
+}
+
+/** Run ids whose per-run lock file exists but cannot be read (it can only be removed with `forceUnlock(root, runId)`). */
+export function listUnreadableRunLocks(root: string): string[] {
+  return lockFiles(root)
+    .filter((f) => path.dirname(f) !== root && readLockFile(f).kind === "unreadable")
+    .map((f) => path.basename(f, ".json"));
+}
+
+/** The lock a run holds (per-run file, or an older version's `lock.json` written for that run), if readable. */
+export function inspectRunLock(root: string, runId: string): LockInfo | undefined {
+  const own = readLockFile(runLockFile(root, runId));
+  if (own.kind === "ok") return own.info;
+  const old = readLockFile(legacyFile(root));
+  return old.kind === "ok" && old.info.run_id === runId ? old.info : undefined;
+}
+
 function heldError(info: LockInfo): Error {
   const late = Math.round((Date.now() - Date.parse(info.heartbeat_at)) / 1000);
   return new Error(
-    `This project is still running: run ${info.run_id} (pid ${info.pid}, heartbeat ${Number.isFinite(late) ? late : "?"}s ago). ` +
-      `Only one run per project at a time; wait for it to end, or stop it first.`,
+    `Run ${info.run_id} is still running (pid ${info.pid}, heartbeat ${Number.isFinite(late) ? late : "?"}s ago). ` +
+      `A run cannot be started or resumed twice; wait for it to end, or stop it first.`,
   );
 }
 
-function unreadableError(root: string): Error {
-  return new Error(`The project lock ${path.join(root, LOCK_FILE)} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum clear --lock --force\`.`);
+function limitError(active: LockInfo[], max: number): Error {
+  const list = active.map((l) => `${l.run_id} (pid ${l.pid})`).join(", ");
+  return new Error(
+    `This project already has ${active.length} run(s) active: ${list}. At most ${max} may run at once (dispatcher.max_concurrent_runs: ${max}); ` +
+      `wait for one to end, stop one, or raise max_concurrent_runs in project.yaml.`,
+  );
+}
+
+function exclusiveError(holder: LockInfo): Error {
+  return new Error(`${holder.run_id} (pid ${holder.pid}) needs the project to itself (a memory tidy or restore); wait for it to finish, then try again.`);
+}
+
+function needsIdleError(active: LockInfo[]): Error {
+  return new Error(`This needs the project to itself, but ${active.map((l) => `${l.run_id} (pid ${l.pid})`).join(", ")} ${active.length === 1 ? "is" : "are"} active. Wait for ${active.length === 1 ? "it" : "them"} to end, or stop ${active.length === 1 ? "it" : "them"}.`);
+}
+
+function unreadableError(file: string): Error {
+  const perRun = path.basename(path.dirname(file)) === LOCKS_DIR;
+  const cmd = perRun ? `agent-lyceum clear --lock ${path.basename(file, ".json")} --force` : "agent-lyceum clear --lock --force";
+  return new Error(`The run lock ${file} cannot be read or has no known owner. Check that no run is active, then run \`${cmd}\`.`);
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Counting the active runs and creating our lock must happen as one step, or two starts could both pass the count.
+ * A short-lived mutex file serialises them; a holder that died leaves it behind for at most 10 s.
+ */
+function withAdmission<T>(root: string, fn: () => T): T {
+  const mutex = path.join(root, LOCKS_DIR, ADMIT_FILE);
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(mutex, "wx");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    if (fd !== undefined) {
+      try {
+        return fn();
+      } finally {
+        fs.closeSync(fd);
+        fs.rmSync(mutex, { force: true });
+      }
+    }
+    try {
+      if (Date.now() - fs.statSync(mutex).mtimeMs > 10_000) fs.rmSync(mutex, { force: true });
+    } catch {
+      /* released meanwhile */
+    }
+    if (Date.now() > deadline) throw new Error(`Could not take the project's admission lock ${mutex}; another process holds it. Try again.`);
+    sleepSync(20);
+  }
 }
 
 /** Create the lock file only if absent: write a private temp file, then hard-link it into place (atomic, never half-written). */
-function tryCreate(root: string, info: LockInfo): boolean {
-  const tmp = path.join(root, `.${LOCK_FILE}.${info.token}.tmp`);
+function tryCreate(file: string, info: LockInfo): boolean {
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${info.token}.tmp`);
   fs.writeFileSync(tmp, JSON.stringify(info, null, 2));
   try {
-    fs.linkSync(tmp, path.join(root, LOCK_FILE));
+    fs.linkSync(tmp, file);
     return true;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -147,33 +250,11 @@ function tryCreate(root: string, info: LockInfo): boolean {
   }
 }
 
-/** Replace a lock whose holder is gone. Reclaimers take a short mutex so two of them cannot delete each other's fresh lock. */
-function reclaim(root: string, info: LockInfo, stale: LockInfo): boolean {
-  const mutex = path.join(root, RECLAIM_FILE);
-  try {
-    if (Date.now() - fs.statSync(mutex).mtimeMs > 10_000) fs.rmSync(mutex, { force: true });
-  } catch {
-    /* no mutex yet */
-  }
-  let fd: number;
-  try {
-    fd = fs.openSync(mutex, "wx");
-  } catch {
-    return false;
-  }
-  try {
-    const again = readLock(root);
-    if (again.kind !== "ok" || again.info.token !== stale.token) return false;
-    fs.rmSync(path.join(root, LOCK_FILE), { force: true });
-    return tryCreate(root, info);
-  } finally {
-    fs.closeSync(fd);
-    fs.rmSync(mutex, { force: true });
-  }
-}
-
 export function acquireProjectLock(root: string, runId: string, opts: LockOptions = {}): ProjectLease {
-  fs.mkdirSync(root, { recursive: true });
+  assertRunId(runId);
+  fs.mkdirSync(path.join(root, LOCKS_DIR), { recursive: true });
+  const file = runLockFile(root, runId);
+  const max = opts.maxConcurrent ?? 1;
   const now = new Date().toISOString();
   const info: LockInfo = {
     token: crypto.randomBytes(16).toString("hex"),
@@ -183,23 +264,35 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     run_id: runId,
     acquired_at: now,
     heartbeat_at: now,
+    ...(opts.exclusive ? { exclusive: true } : {}),
   };
 
-  for (let attempt = 0; ; attempt++) {
-    if (tryCreate(root, info)) break;
-    const cur = readLock(root);
-    if (cur.kind === "unreadable") throw unreadableError(root);
-    if (cur.kind === "none") continue; // released between our two calls
-    if (lockHolderAlive(cur.info)) throw heldError(cur.info);
-    if (reclaim(root, info, cur.info)) break;
-    if (attempt >= 5) throw new Error(`Could not take the project lock ${path.join(root, LOCK_FILE)}; another process is reclaiming it. Try again.`);
-  }
+  withAdmission(root, () => {
+    // 1. This run's own lock: a live holder means it is already running; a dead one is replaced.
+    const own = readLockFile(file);
+    if (own.kind === "unreadable") throw unreadableError(file);
+    if (own.kind === "ok") {
+      if (lockHolderAlive(own.info)) throw heldError(own.info);
+      fs.rmSync(file, { force: true });
+    }
+    // 2. An older version's project-wide lock counts as one active run; a dead one is cleared.
+    const old = readLockFile(legacyFile(root));
+    if (old.kind === "unreadable") throw unreadableError(legacyFile(root));
+    if (old.kind === "ok" && old.info.run_id === runId && lockHolderAlive(old.info)) throw heldError(old.info);
+    if (old.kind === "ok" && !lockHolderAlive(old.info)) fs.rmSync(legacyFile(root), { force: true });
+    // 3. The other runs that are active now.
+    const active = listRunLocks(root).filter((l) => l.run_id !== runId && lockHolderAlive(l));
+    const exclusiveHolder = active.find((l) => l.exclusive);
+    if (exclusiveHolder) throw exclusiveError(exclusiveHolder);
+    if (opts.exclusive && active.length) throw needsIdleError(active);
+    if (active.length >= max) throw limitError(active, max);
+    if (!tryCreate(file, info)) throw new Error(`Could not take the run lock ${file}; another process just took it. Try again.`);
+  });
 
   let released = false;
   let lost = false;
-  const file = path.join(root, LOCK_FILE);
   const mine = () => {
-    const r = readLock(root);
+    const r = readLockFile(file);
     return r.kind === "ok" && r.info.token === info.token;
   };
   const timer = setInterval(() => {
@@ -236,10 +329,22 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
   };
 }
 
-/** Remove the lock regardless of owner (the `clear --lock --force` escape hatch). Returns what was there, if readable. */
-export function forceUnlock(root: string): LockInfo | undefined {
-  const info = inspectProjectLock(root);
-  fs.rmSync(path.join(root, LOCK_FILE), { force: true });
-  fs.rmSync(path.join(root, RECLAIM_FILE), { force: true });
+/**
+ * Remove a lock regardless of owner (the `clear --lock --force` escape hatch). With a run id: that run's lock (and an
+ * older version's `lock.json` when it was written for that run). Without: only the older project-wide `lock.json`.
+ * Returns what was there, if readable.
+ */
+export function forceUnlock(root: string, runId?: string): LockInfo | undefined {
+  if (runId === undefined) {
+    const old = readLockFile(legacyFile(root));
+    fs.rmSync(legacyFile(root), { force: true });
+    fs.rmSync(`${legacyFile(root)}.reclaim`, { force: true });
+    return old.kind === "ok" ? old.info : undefined;
+  }
+  assertRunId(runId);
+  const info = inspectRunLock(root, runId);
+  fs.rmSync(runLockFile(root, runId), { force: true });
+  const old = readLockFile(legacyFile(root));
+  if (old.kind === "ok" && old.info.run_id === runId) fs.rmSync(legacyFile(root), { force: true });
   return info;
 }

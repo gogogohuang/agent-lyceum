@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { git, initGitRepo, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
+import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -56,7 +57,7 @@ describe("a run from start to clear", () => {
     await until(() => fs.existsSync(t.marker));
     first.child.kill("SIGINT");
     expect(await first.done).toBe(130);
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(listRunLocks(env.project().paths.root)).toEqual([]);
     expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // nothing reached the repo from the cancelled wake-up
 
     // 2. the status of the interrupted run, as JSON
@@ -119,4 +120,111 @@ describe("a run from start to clear", () => {
     expect(kept.code).toBe(0);
     expect(git(env.repo, "branch", "--list", `agent-lyceum/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
   }, 120_000);
+
+  it("refuses to start a second run while another holds the lock and max_concurrent_runs is 1", () => {
+    const t = setup({ calls: [] });
+    const lease = acquireProjectLock(env.project().paths.root, "other-run");
+    try {
+      const r = t.sync(["run", "x", "-p", "demo"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(/other-run/);
+      expect(r.err).toMatch(/max_concurrent_runs/);
+    } finally {
+      lease.release();
+    }
+  }, 60_000);
+
+  it("with max_concurrent_runs: 2 a second run is admitted next to an active one, a third is refused", () => {
+    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
+    makeConcurrent(env, 2);
+    const root = env.project().paths.root;
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    try {
+      const second = t.sync(["run", "x", "-p", "demo"]);
+      expect(second.err).not.toMatch(/At most/);
+      expect(second.code).toBe(0);
+      const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+      try {
+        const third = t.sync(["run", "y", "-p", "demo"]);
+        expect(third.code).toBe(1);
+        expect(third.err).toMatch(/run-a/);
+        expect(third.err).toMatch(/run-b/);
+        expect(third.err).toMatch(/max_concurrent_runs: 2/);
+      } finally {
+        b.release();
+      }
+    } finally {
+      a.release();
+    }
+  }, 60_000);
+
+  it("clear of a finished run goes ahead while another run is active (limit 1), but not while that run itself is", () => {
+    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
+    expect(t.sync(["run", "x", "-p", "demo"]).code).toBe(0);
+    const id: string = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
+    const root = env.project().paths.root;
+    const runDir = path.join(env.project().paths.runs, id);
+
+    const self = acquireProjectLock(root, id); // the run is alive (its process holds its lock)
+    try {
+      const refused = t.sync(["clear", id, "-p", "demo"]);
+      expect(refused.code).toBe(1);
+      expect(refused.err).toMatch(new RegExp(id));
+      expect(fs.existsSync(runDir)).toBe(true); // nothing deleted
+    } finally {
+      self.release();
+    }
+
+    const other = acquireProjectLock(root, "other-run");
+    try {
+      const cleared = t.sync(["clear", id, "-p", "demo"]);
+      expect(cleared.code).toBe(0);
+      expect(fs.existsSync(runDir)).toBe(false);
+    } finally {
+      other.release();
+    }
+  }, 60_000);
+
+  it("clear --lock names the lock, needs --force, and with several locks insists on a run id", () => {
+    const t = setup({ calls: [] });
+    const root = env.project().paths.root;
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    try {
+      const many = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
+      expect(many.code).toBe(1);
+      expect(many.err).toMatch(/run-a/);
+      expect(many.err).toMatch(/run-b/);
+      expect(many.err).toMatch(/clear --lock <run-id>/);
+      expect(listRunLocks(root)).toHaveLength(2);
+
+      const noForce = t.sync(["clear", "--lock", "run-a", "-p", "demo"]);
+      expect(noForce.code).toBe(1);
+      expect(listRunLocks(root)).toHaveLength(2);
+
+      const one = t.sync(["clear", "--lock", "run-a", "-p", "demo", "--force"]);
+      expect(one.code).toBe(0);
+      expect(listRunLocks(root).map((l) => l.run_id)).toEqual(["run-b"]);
+    } finally {
+      a.release();
+      b.release();
+    }
+  }, 60_000);
+
+  it("clear --lock <run-id> removes an unreadable per-run lock only with --force", () => {
+    const t = setup({ calls: [] });
+    const file = path.join(env.project().paths.root, "locks", "run-bad.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "garbage");
+    const noId = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
+    expect(noId.code).toBe(1);
+    expect(noId.err).toMatch(/clear --lock run-bad --force/);
+    const refused = t.sync(["clear", "--lock", "run-bad", "-p", "demo"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toMatch(/--force/);
+    expect(fs.existsSync(file)).toBe(true);
+    const done = t.sync(["clear", "--lock", "run-bad", "-p", "demo", "--force"]);
+    expect(done.code).toBe(0);
+    expect(fs.existsSync(file)).toBe(false);
+  }, 60_000);
 });
