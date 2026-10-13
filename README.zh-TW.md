@@ -145,6 +145,7 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 
 - 它需要 lead 的 branch，所以只有在 run 有自己的 worktree 時（`dispatcher.max_concurrent_runs` 為 2 或以上）才有作用。否則這個要求會被回報並略過。
 - 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
+- 開 PR 會把 lead 的 branch 與報告發布到 `origin`。因此，提出要求（`open_pr: true`）的 agent 能把它在沙箱內讀得到的任何東西送上遠端，所以只有在可以接受這件事時，才在 task 裡要求開 PR。push 與 `gh pr create` 從你的主 repo 執行，絕不在 agent 的 worktree 裡執行，因為 agent 能寫入那個目錄。
 - agent-lyceum 從不合併，也不等待 CI 或審查。`max_concurrent_runs` 為 2 以上時，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。
 
 ## 網路存取（`allow_web`）

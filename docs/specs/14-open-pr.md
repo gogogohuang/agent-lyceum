@@ -30,7 +30,7 @@
 
 - `src/prompt.ts`：lead 與單獨 agent 的 `done` 說明加 `open_pr` 規則。
 - `src/run-session.ts`：在接受 lead 的 `done` 時讀 `meta.open_pr === true`（`src/format.ts` 不動）；run 結束（`done`、`completed`）後呼叫開 PR 步驟。
-- 新增 `src/open-pr.ts`：提交、推送、`gh pr create`、組 PR 描述（純函式拆出以便測試）。
+- 新增 `src/open-pr.ts`：推送、`gh pr create`、組 PR 描述（commit 由 `finishLead` 在 lead 的 branch 上完成，見 spec 07）（純函式拆出以便測試）。
 - `src/run-store.ts`：`pr_url` 欄位（可省略，舊 run 可讀）。
 - `src/doctor.ts`：`gh` 與 `origin` 檢查。
 - `README.md`、`README.zh-TW.md`、`docs/commands.md`（含 zh-TW）。
@@ -39,7 +39,7 @@
 
 先寫失敗測試再實作（`gh` 與 `git push` 以 fake 取代）：
 
-1. `done` 帶 `open_pr: true` 且 `completed`：呼叫順序為 commit → push → `gh pr create`；描述結尾有 `Opened by agent-lyceum`，且描述正好是 lead 的報告原文加那一行署名，沒有 dispatcher 加的任何名稱。
+1. `done` 帶 `open_pr: true` 且 `completed`：呼叫順序為 push → `gh pr create`（commit 已在 lead 的 branch 上）；描述結尾有 `Opened by agent-lyceum`，且描述正好是 lead 的報告原文加那一行署名，沒有 dispatcher 加的任何名稱。
 2. `done` 沒有 `open_pr`（或不是 `true`）：不 push、不呼叫 `gh`。
    prompt 含「只有 task 明確要求才寫」的規則。
 3. `open_pr: true` 但 outcome 為 `partial`／`blocked`／`failed`：不開 PR，訊息說明原因。

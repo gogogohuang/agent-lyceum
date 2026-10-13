@@ -144,6 +144,7 @@ When your task asks for a pull request, the lead puts `open_pr: true` in the fro
 
 - It needs a lead branch, so it works only when the run has its own worktree (`dispatcher.max_concurrent_runs` of 2 or more). Otherwise the request is reported and skipped.
 - A request that cannot be honoured (the run did not complete, no changes, no `gh`, no `origin`, push or `gh` failed) never changes how the run turned out. The run says why it was not opened and keeps the branch; when a push or `gh pr create` failed it also prints the commands to finish by hand.
+- Opening a pull request publishes the lead's branch and report to `origin`. An agent that asks for one (`open_pr: true`) can therefore get anything it can read inside its sandbox onto the remote, so only ask for a pull request in a task when that is acceptable. The push and `gh pr create` run from your main repository, never inside the agent's worktree, because an agent can write that directory.
 - agent-lyceum never merges and does not wait for CI or review. With `max_concurrent_runs` of 2 or more, `doctor` tells you whether `gh` and `origin` are there (it does not check that `gh` is logged in).
 
 ## Web access (`allow_web`)
