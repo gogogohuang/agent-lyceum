@@ -152,6 +152,9 @@ function printRun(summary: RunSummary, runDir: string): void {
   console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
+  if (summary.resultBranch?.files) {
+    console.log(`\nThe work is on branch ${summary.resultBranch.branch} (${summary.resultBranch.files} file(s)); your working tree was not touched.\nBring it in with: git merge ${summary.resultBranch.branch}${summary.resultBranch.patch ? `\n(or apply the patch: git apply ${summary.resultBranch.patch})` : ""}`);
+  }
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);

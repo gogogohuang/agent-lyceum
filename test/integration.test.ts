@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { readAskReply, writeAskReply } from "../src/ask-reply.js";
 import { runTeam } from "../src/dispatcher.js";
 import { setFaultHook } from "../src/message-store.js";
 import { outboxDir } from "../src/policy.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
-import { git, initGitRepo, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
 import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
@@ -229,6 +230,144 @@ describe("dispatcher integration", () => {
     const summary = await runTeam({ project, task, runDir, invoker, log: () => {} });
     return { summary, runDir, bound: bindRunProject(env.project(), runDir, "run") };
   }
+
+  it("a concurrent run works in the lead's own worktree, brings members into it, and commits one branch without touching the repo", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeParallel(env);
+    makeConcurrent(env, 2);
+    write(path.join(env.repo, "src/web/a.txt"), "uncommitted edit\n"); // yours, and not part of the run
+    const headBefore = git(env.repo, "rev-parse", "HEAD");
+    let leadCalls = 0;
+    let leadDir = "";
+    const { summary, runDir } = await start(async (i) => {
+      if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
+        expect(i.workspace!.branch).toBe("agent-lyceum/run-1/lead");
+        expect(fs.readFileSync(path.join(leadDir, "src/web/a.txt"), "utf8")).toBe("a\n");
+        if (++leadCalls === 1) {
+          write(path.join(leadDir, "tests/lead-note.txt"), "lead\n");
+          mail(i.project, "lead", "fe-member", "job", "task");
+        } else {
+          expect(fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8")).toBe("member built\n"); // brought into the lead's worktree
+          mail(i.project, "lead", "lead", "bye", "done");
+        }
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/feature.txt"), "member built\n");
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
+      return OK;
+    });
+    expect(summary.outcome).toBe("completed");
+    expect(summary.resultBranch).toMatchObject({ branch: "agent-lyceum/run-1/lead", files: 2 });
+    expect(loadRunState(runDir).result_branch?.head).toBe(summary.resultBranch!.head);
+    expect(fs.readFileSync(path.join(runDir, "lead.patch"), "utf8")).toContain("src/web/feature.txt");
+    // the repo: HEAD, working tree and index are as they were
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(env.repo, "status", "--porcelain")).toBe("M src/web/a.txt");
+    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false);
+    // the branch carries the work
+    expect(git(env.repo, "show", "agent-lyceum/run-1/lead:src/web/feature.txt")).toBe("member built");
+    expect(git(env.repo, "show", "agent-lyceum/run-1/lead:tests/lead-note.txt")).toBe("lead");
+  });
+
+  it("two concurrent runs of one project do not see each other's files", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runOne = async (id: string) => {
+      const runDir = path.join(project.paths.runs, id);
+      const task = prepareTask({ text: `task ${id}`, cwd: env.root, runDir });
+      return runTeam({
+        project,
+        task,
+        runDir,
+        log: () => {},
+        invoker: async (i) => {
+          write(path.join(i.workspace!.dir, `src/web/${id}.txt`), `${id}\n`);
+          expect(fs.readdirSync(path.join(i.workspace!.dir, "src/web")).filter((f) => f.endsWith(".txt") && f !== "a.txt")).toEqual([`${id}.txt`]);
+          mail(i.project, "lead", "lead", "bye", "done");
+          return OK;
+        },
+      });
+    };
+    const [a, b] = await Promise.all([runOne("run-a"), runOne("run-b")]);
+    expect([a.outcome, b.outcome]).toEqual(["completed", "completed"]);
+    expect(git(env.repo, "status", "--porcelain")).toBe("");
+    expect(git(env.repo, "ls-tree", "--name-only", "agent-lyceum/run-a/lead", "src/web/")).toBe("src/web/a.txt\nsrc/web/run-a.txt");
+    expect(git(env.repo, "ls-tree", "--name-only", "agent-lyceum/run-b/lead", "src/web/")).toBe("src/web/a.txt\nsrc/web/run-b.txt");
+  });
+
+  it("a concurrent run that stops to ask the user does not commit or announce a branch, and its resume goes on in the same worktree", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    let leadDir = "";
+    const { summary, runDir } = await start(async (i) => {
+      leadDir = i.workspace!.dir;
+      write(path.join(leadDir, "src/web/draft.txt"), "draft\n");
+      write(
+        path.join(outboxDir(i.project, "lead"), "ask.md"),
+        `---\nto: lead\ntype: ask\nsubject: ask\n---\n\n<ask><question id="q1"><text>JWT?</text><options><option>session</option><option>jwt</option></options><suggested>session</suggested></question></ask>\n`,
+      );
+      return OK;
+    });
+    expect(summary.endReason).toBe("waiting");
+    expect(summary.resultBranch).toBeUndefined();
+    expect(loadRunState(runDir).result_branch).toBeUndefined();
+    expect(git(env.repo, "log", "-1", "--format=%s", "agent-lyceum/run-1/lead")).toBe("init"); // no commit yet
+    expect(fs.existsSync(path.join(runDir, "lead.patch"))).toBe(false);
+    expect(fs.readFileSync(path.join(leadDir, "src/web/draft.txt"), "utf8")).toBe("draft\n"); // the work waits in the worktree
+
+    const r = readAskReply(runDir)!;
+    writeAskReply(runDir, { ...r, questions: r.questions.map((q) => ({ ...q, answer: { value: "jwt", by: "user" as const } })) });
+    let resumedDir = "";
+    const s = await runTeam({
+      project: env.project(),
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        resumedDir = i.workspace!.dir;
+        mail(i.project, "lead", "lead", "bye", "done");
+        return OK;
+      },
+    });
+    expect(resumedDir).toBe(leadDir);
+    expect(s.outcome).toBe("completed");
+    expect(s.resultBranch).toMatchObject({ branch: "agent-lyceum/run-1/lead", files: 1 });
+    expect(git(env.repo, "show", "agent-lyceum/run-1/lead:src/web/draft.txt")).toBe("draft");
+  });
+
+  it("a solo run in a concurrent project works in its own worktree", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "go", cwd: env.root, runDir });
+    let branch: string | undefined;
+    const summary = await runTeam({
+      project,
+      task,
+      runDir,
+      soloAgent: "fe-member",
+      log: () => {},
+      invoker: async (i) => {
+        branch = i.workspace?.branch;
+        write(path.join(i.workspace!.dir, "src/web/solo.txt"), "solo\n");
+        mail(i.project, "fe-member", "fe-member", "bye", "done");
+        return OK;
+      },
+    });
+    expect(branch).toBe("agent-lyceum/run-1/fe-member");
+    expect(summary.outcome).toBe("completed");
+    expect(summary.resultBranch).toMatchObject({ branch: "agent-lyceum/run-1/fe-member", files: 1 });
+    expect(git(env.repo, "status", "--porcelain")).toBe("");
+    expect(fs.existsSync(path.join(env.repo, "src/web/solo.txt"))).toBe(false);
+    expect(git(env.repo, "show", "agent-lyceum/run-1/fe-member:src/web/solo.txt")).toBe("solo");
+  });
 
   it("brings a member's files into the repo before the lead hears the member is done", async () => {
     env = makeEnv();

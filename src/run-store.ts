@@ -6,6 +6,7 @@ import type { ResolvedProject } from "./config.js";
 import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
+import type { ResultBranch } from "./worktree.js";
 
 export const STATE_FILE = "state.json";
 export const STATE_SCHEMA_VERSION = 2;
@@ -82,6 +83,8 @@ export interface RunState {
   blocked_integrations?: { agent: string; branch: string; reason: string; report: string }[];
   /** Snapshots of the repo taken so far (`refs/agent-lyceum/<run>/base-<n>`). */
   snapshots?: number;
+  /** Concurrent runs: where the lead's work ended up (`git merge <branch>`). Set when the run ends. */
+  result_branch?: ResultBranch;
   sessions: Record<string, string>;
   output_tokens: number;
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
