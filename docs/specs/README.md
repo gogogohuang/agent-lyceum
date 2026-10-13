@@ -14,6 +14,7 @@
 | [10](10-memory-tidy.md) | 記憶整理 | 中 | 中 | [plan](../plans/2026-10-08-10-memory-tidy.md) |
 | [11](11-solo-agent.md) | 單獨呼叫 agent | 中 | 中 | [plan](../plans/2026-10-08-11-solo-agent.md) |
 | [12](12-flatten-subcommands.md) | 收掉巢狀子指令 | 低 | 低（破壞舊寫法） | [plan](../plans/2026-10-12-12-flatten-subcommands.md) |
+| [13](13-status-monitor-visual.md) | status-monitor 圖形化面板 | 中 | 低（只加欄位） | [plan](../plans/2026-10-13-13-status-monitor-visual.md) |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 

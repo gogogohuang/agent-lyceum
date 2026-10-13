@@ -65,8 +65,10 @@ describe("dispatcher", () => {
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
     expect(state.wakes[0].sent).toEqual([{ to: "fe-member", type: "task", subject: "implement login" }]);
     expect(state.wakes[1].handling[0].brief).toBe("Build the login form");
+    expect(state.wakes[1].handling[0].digest).toEqual([{ label: "目標", lines: ["Build the login form"] }]);
     expect(state.wakes[1].sent[0].to).toBe("lead");
     expect(state.wakes[2].handling[0].brief).toBe("added login.ts");
+    expect(state.wakes[2].handling[0].digest).toEqual([{ label: "變更", lines: ["added login.ts"] }]);
     expect(state.wakes[2].sent).toEqual([{ to: "(done)", type: "done", subject: "all good" }]);
     expect(state.steps).toEqual([
       { text: "design", done: true },

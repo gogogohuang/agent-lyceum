@@ -10,5 +10,5 @@
     "types": [],
     "paths": { "claude-code/testing": ["../../test/shims/claude-code-testing.ts"] }
   },
-  "include": ["hooks/summary.ts", "hooks/summary.test.ts", "types/index.d.ts"]
+  "include": ["hooks/summary.ts", "hooks/summary.test.ts", "hooks/graph.ts", "hooks/graph.test.ts", "types/index.d.ts"]
 }

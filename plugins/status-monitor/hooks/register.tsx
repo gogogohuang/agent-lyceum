@@ -3,11 +3,15 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
 import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, parseProjects, progress, runLabel, tagToast, transition } from './summary'
+import { bar, paneWidth } from './graph'
+import { graphView } from './graph-view'
 
 const PANE = 'agent-lyceum'
 const snapshot = atom({ plugin: 'status-monitor', key: 'snapshot' } as const, {} as Snapshots)
 /** Id of the tab the pane shows ('' = the first). */
 const tab = atom({ plugin: 'status-monitor', key: 'tab' } as const, '')
+/** 'graph' draws one block per agent; 'text' is the plain list. `v` switches. */
+const view = atom({ plugin: 'status-monitor', key: 'view' } as const, 'graph' as 'graph' | 'text')
 
 type Target = { key: string; status: string[] }
 
@@ -68,13 +72,15 @@ export const register: Register = (on, options) => {
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
-    return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
+    return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, v switches graph/text, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const snap = await read($, snapshot)
     const now = await $.clock.now()
+    const mode = await read($, view)
+    const width = paneWidth(e.props.bodyColumns)
 
     const section = (t: Target) => {
       const { report, error } = snap[t.key] ?? { report: null, error: null }
@@ -102,32 +108,39 @@ export const register: Register = (on, options) => {
                 {run.live === false && run.state === 'running' ? ' · 程序已不存在' : ''}
               </Text>
             )}
-            <Text>進度：{progress(run)}</Text>
+            <Text>
+              進度：{mode === 'graph' ? `${bar(run.steps?.length ? run.steps.filter(s => s.done).length : run.rounds, run.steps?.length || run.max_rounds)} ` : ''}
+              {progress(run)}
+            </Text>
             {run.current_step && <Text>目前：{run.current_step}</Text>}
             {(run.steps ?? []).map(s => (
               <Text dimColor={s.done}>
                 {s.done ? '[x]' : '[ ]'} {s.text}
               </Text>
             ))}
-            {Object.entries(run.active).map(([name, w]) => (
+            {mode === 'graph' ? graphView($.ui.resolve(e), report, now, width) : (
               <Box flexDirection="column">
-                <Text color="green">
-                  進行中：{name} {w.round ? `#${w.round} ` : ''}
-                  {elapsed(w.since, now)}
-                </Text>
-                {(w.handling ?? []).map(m => (
+                {Object.entries(run.active).map(([name, w]) => (
+                  <Box flexDirection="column">
+                    <Text color="green">
+                      進行中：{name} {w.round ? `#${w.round} ` : ''}
+                      {elapsed(w.since, now)}
+                    </Text>
+                    {(w.handling ?? []).map(m => (
+                      <Text dimColor>
+                        {'  '}處理 {m.from}→{m.type}：{clip(m.subject, 60)}
+                      </Text>
+                    ))}
+                  </Box>
+                ))}
+                {run.queue.length > 0 && <Text bold>排隊</Text>}
+                {run.queue.map(q => (
                   <Text dimColor>
-                    {'  '}處理 {m.from}→{m.type}：{clip(m.subject, 60)}
+                    {q.agent} ← {q.from} {q.type}：{clip(q.subject, 60)}
                   </Text>
                 ))}
               </Box>
-            ))}
-            {run.queue.length > 0 && <Text bold>排隊</Text>}
-            {run.queue.map(q => (
-              <Text dimColor>
-                {q.agent} ← {q.from} {q.type}：{clip(q.subject, 60)}
-              </Text>
-            ))}
+            )}
             {(run.blocked_integrations ?? []).length > 0 && (
               <Text color="yellow">受阻整合：{(run.blocked_integrations ?? []).map(line).join('；')}</Text>
             )}
@@ -139,26 +152,30 @@ export const register: Register = (on, options) => {
             {(run.result_head ?? []).map(n => (
               <Text>{clip(line(n), 100)}</Text>
             ))}
-            <Text bold>各 LLM output tokens</Text>
-            {runtimeTokens(run.wakes, report.agents).map(x => (
-              <Text>
-                {x.runtime} {x.tokens.toLocaleString('en-US')} tok
-              </Text>
-            ))}
-            <Text bold>各 agent 統計</Text>
-            {agentStats(run.wakes).map(a => (
-              <Text color={a.failed ? 'red' : undefined}>
-                {a.agent} [{report.agents.find(x => x.name === a.agent)?.runtime ?? '?'}] 喚醒 {a.wakes} 次{a.failed ? `（失敗 ${a.failed}）` : ''} · {a.tokens.toLocaleString('en-US')} tok · 平均 {a.avgSeconds}s
-              </Text>
-            ))}
-            <Text bold>最近喚醒</Text>
-            {run.wakes.slice(-8).map(w => (
-              <Text color={w.ok ? undefined : 'red'}>
-                #{w.round} {w.agent} {w.ok ? 'ok' : `失敗 ${w.error ?? ''}`} {Math.round(w.duration_ms / 1000)}s
-                {w.output_tokens ? ` · ${w.output_tokens.toLocaleString('en-US')} tok` : ''}
-                {(w.sent ?? []).length ? ` → ${(w.sent ?? []).map(s => `${s.to}(${s.type})`).join(', ')}` : ''}
-              </Text>
-            ))}
+            {mode === 'text' && (
+              <Box flexDirection="column">
+                <Text bold>各 LLM output tokens</Text>
+                {runtimeTokens(run.wakes, report.agents).map(x => (
+                  <Text>
+                    {x.runtime} {x.tokens.toLocaleString('en-US')} tok
+                  </Text>
+                ))}
+                <Text bold>各 agent 統計</Text>
+                {agentStats(run.wakes).map(a => (
+                  <Text color={a.failed ? 'red' : undefined}>
+                    {a.agent} [{report.agents.find(x => x.name === a.agent)?.runtime ?? '?'}] 喚醒 {a.wakes} 次{a.failed ? `（失敗 ${a.failed}）` : ''} · {a.tokens.toLocaleString('en-US')} tok · 平均 {a.avgSeconds}s
+                  </Text>
+                ))}
+                <Text bold>最近喚醒</Text>
+                {run.wakes.slice(-8).map(w => (
+                  <Text color={w.ok ? undefined : 'red'}>
+                    #{w.round} {w.agent} {w.ok ? 'ok' : `失敗 ${w.error ?? ''}`} {Math.round(w.duration_ms / 1000)}s
+                    {w.output_tokens ? ` · ${w.output_tokens.toLocaleString('en-US')} tok` : ''}
+                    {(w.sent ?? []).length ? ` → ${(w.sent ?? []).map(s => `${s.to}(${s.type})`).join(', ')}` : ''}
+                  </Text>
+                ))}
+              </Box>
+            )}
           </Box>
         )}
         </Box>
@@ -187,6 +204,7 @@ export const register: Register = (on, options) => {
         <Box>
           <Text bold>agent-lyceum </Text>
           <Button key="close" label="關閉 (x)" hotkey="x" role="dismiss" variant="primary" onPress={() => $.ui.close({ id: PANE })} />
+          <Button key="view" label={mode === 'graph' ? '文字版 (v)' : '圖形版 (v)'} hotkey="v" variant="secondary" onPress={() => update($, view, m => (m === 'graph' ? 'text' : 'graph'))} />
         </Box>
         <Box>
           {tabs.map((x, i) => (
