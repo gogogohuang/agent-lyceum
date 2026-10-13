@@ -1,6 +1,6 @@
 # 13 status-monitor 圖形化面板
 
-狀態：設計已核准，尚未實作（plan：待寫）。
+狀態：已實作（plan：docs/plans/2026-10-13-13-status-monitor-visual.md）。
 
 ## 13.1 問題
 
@@ -43,7 +43,7 @@
 
 `run-session.ts` 在組 `handling` 時除了 `brief` 一併寫入 `digest`；`status.ts` 的 `QueueItem` 與 `ActiveWake.handling` 型別加 `digest?`，並在建 `queue` 時讀出信件本文產生 `brief` 與 `digest`。`wakes[].handling` 已存在於 state.json 的欄位自然帶出，舊 run 沒有 `digest` 就是缺欄位。
 
-`can_message` 在 `status.ts` 組 `AgentReport` 時由 `ResolvedProject` 的 agent 設定展開。`solo` 的專案（`run --agent`）下，成員的 `can_message` 是空陣列。
+`can_message` 在 `status.ts` 組 `AgentReport` 時由 `ResolvedProject` 的 agent 設定展開。
 
 ## 13.4 面板版面
 
@@ -60,6 +60,8 @@
 │ ...               │ │   task 為登入頁寫測試   │
 └───────────────────┘ └─────────────────────────┘
 ```
+
+連結符號只畫 lead 與成員之間（▼ ▲ ↕）；其餘的邊列在區塊底部的「→」清單，最近的一次標 ●。
 
 - 上方保留步驟進度條與輪次進度條；下方保留備註、受阻整合與結果摘要（現有內容，改成緊湊呈現）。
 - lead 的區塊在上，其他成員在下面一排，排不下就換行。

@@ -124,6 +124,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - `--task-id id`：印出單一任務的完整內容（每次 wake、結果、log 目錄）。
 - `--task-list [project]`：列出專案所有任務（run）的 id、狀態、輪數與任務內容，id 可直接給 `resume` 使用。
 - `--json`：把同一份報告以 JSON 輸出（`schema_version: 1`、無顏色，stdout 只有 JSON；錯誤走 stderr 並以非零 exit code 結束），可搭配 `--task-list`、`--task-id`。文字與 JSON 由同一份報告產生。
+- `--json` 另外在每個 agent 附上 `can_message`（它可以寄信的對象；`all` 已展開、不含自己），並在 `run.active[*].handling`、`run.queue[*]` 與 `run.wakes[*].handling` 的每封信附上 `digest`：依信種整理的短段落（`[{ "label": "目標", "lines": ["…"] }]`）。兩者都只是新增欄位，`schema_version` 仍是 `1`。
 
 ## clear
 

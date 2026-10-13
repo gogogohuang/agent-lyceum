@@ -124,6 +124,7 @@ Options:
 - `--task-id id`: print everything about one task (every wake, its result, log directory).
 - `--task-list [project]`: list every run of the project with its id, state, rounds and task (feed the id to `resume`).
 - `--json`: print the same report as JSON (`schema_version: 1`, no colour, nothing else on stdout; errors go to stderr with a non-zero exit). It works with `--task-list` and `--task-id`. Text and JSON are made from the same report.
+- `--json` also carries, per agent, `can_message` (who it may send mail to; `all` expanded, itself left out), and, for every message in `run.active[*].handling`, `run.queue[*]` and `run.wakes[*].handling`, a `digest`: short sections by message type (`[{ "label": "目標", "lines": ["…"] }]`). Both are additive; `schema_version` stays `1`.
 
 ## clear
 
