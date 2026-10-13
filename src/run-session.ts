@@ -113,12 +113,26 @@ export class RunSession {
     // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
     const project = bindRunProject(base, runDir, layout);
     // Parallel agents work in their own git worktrees; refuse early (before anything is written) when that cannot be done.
-    const wsMode = resolveWorkspaceMode(cfg);
-    const concurrent = cfg.max_concurrent_runs > 1;
+    // Whether the lead has its own worktree is decided when the run starts and kept for its resumes, whatever the config says by then.
+    const concurrent = resume ? resume.lead_workspace === true : cfg.max_concurrent_runs > 1;
+    const wsMode = concurrent ? "worktree" : resolveWorkspaceMode({ ...cfg, max_concurrent_runs: 1 });
     if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume, concurrent });
+    // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
+    let leadSpace: AgentWorkspace | undefined;
+    if (concurrent && resume) {
+      leadSpace = existingAgentWorkspace(project, runId, project.lead);
+      if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
+    }
     ensureProjectDirs(project);
     fs.mkdirSync(runDir, { recursive: true });
     const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
+    if (concurrent && !resume) {
+      // Before the task is delivered or any state written, so a failure here leaves no half-started run.
+      leadSpace = prepareAgentWorkspace(project, runId, project.lead, snapshotHead(project, runId));
+      const uncommitted = dirtyPaths(project.dir).length;
+      say(`  starting from HEAD ${leadSpace.base.slice(0, 8)}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
+      log("lead-workspace", { base: leadSpace.base, branch: leadSpace.branch, dir: leadSpace.dir, uncommitted });
+    }
 
     let state: RunState;
     if (resume) {
@@ -150,6 +164,7 @@ export class RunSession {
         mail_layout: layout,
         workspace_mode: wsMode,
         solo_agent: soloName,
+        lead_workspace: concurrent ? true : undefined,
       });
       const seed = parseSteps(task!.content, false);
       if (seed.length) state.steps = seed;
@@ -166,20 +181,6 @@ export class RunSession {
       log("start", { task_source: task!.source, bytes: task!.bytes, inline: task!.inline });
     }
     saveState();
-
-    // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
-    let leadSpace: AgentWorkspace | undefined;
-    if (concurrent) {
-      if (resume) {
-        leadSpace = existingAgentWorkspace(project, runId, project.lead);
-        if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
-      } else {
-        leadSpace = prepareAgentWorkspace(project, runId, project.lead, snapshotHead(project, runId));
-        const uncommitted = dirtyPaths(project.dir).length;
-        say(`  starting from HEAD ${leadSpace.base.slice(0, 8)}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
-        log("lead-workspace", { base: leadSpace.base, branch: leadSpace.branch, dir: leadSpace.dir, uncommitted });
-      }
-    }
     this.leadSpace = leadSpace;
 
     this.opts = opts;

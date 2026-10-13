@@ -85,6 +85,8 @@ export interface RunState {
   snapshots?: number;
   /** Concurrent runs: where the lead's work ended up (`git merge <branch>`). Set when the run ends. */
   result_branch?: ResultBranch;
+  /** Set when the run started with the lead in its own worktree (max_concurrent_runs > 1 then); its resumes keep that, whatever the config says later. */
+  lead_workspace?: true;
   sessions: Record<string, string>;
   output_tokens: number;
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
