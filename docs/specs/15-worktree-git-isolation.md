@@ -26,6 +26,8 @@ dispatcher 在沙箱外、用使用者的憑證，以那個 worktree 為 cwd 執
 | 6 | 縱深防禦（只對能表達「禁止單一檔案」的 runtime，即 Claude）：`denyWrite` 加上 `<root>/.git`、`<gitDir>/commondir`、`<gitDir>/config.worktree`、`<gitDir>/gitdir`。Codex 做不到，靠決議 1–5。不為此改變 agent 本來能做的事（agent 本來就不能寫共用 objects，無法在 worktree 內 commit）。 |
 | 7 | 行為不變：沒有 agent worktree 的 run（預設 `max_concurrent_runs: 1` 且 `max_parallel: 1`）完全不經過 `agentGit`；既有測試除了簽名改動外不改期望值。 |
 | 8 | 不改使用者 repo 的呼叫（`git(top, …)`、`snapshotHead`、`worktree add/remove`）：那是使用者自己的 repo，agent 寫不進去。 |
+| 9 | （實作時用真實 git 驗證後補）只釘環境變數不夠：git 的 ref store 仍會跟著 `<gitDir>/commondir` 走；`-c` 擋不住 `config.worktree` 裡的 filter driver 與 `gpg.program`；`git commit` 會透過符號連結寫 `COMMIT_EDITMSG`、`logs/HEAD`。所以 `agentGit` 之前先做 `assertWorkspaceIntact`，發現被動過就**拒絕使用該 worktree**，不試圖讓 git 安全處理：`commondir` 被改向、`config.worktree` 與建立當下的指紋不同、`COMMIT_EDITMSG`／`logs/HEAD` 是連結、worktree 根或 git dir 被換成符號連結。`git apply` 需要 cwd 在 work tree 內，因此 `agentGit` 的 cwd 是 `ws.root`，同時保留三個環境變數。 |
+| 10 | （同上）內嵌的 git repo 會讓 `git add -A` 去執行它自己的設定：拒絕含未追蹤內嵌 repo 的 worktree（`git ls-files -o --exclude-standard -z` 出現以 `/` 結尾的項目），也拒絕 index 中不在 base commit 裡的 gitlink（agent 可改寫 index）；使用者 repo 本來就有的 submodule（base 內的 gitlink）照常運作。拒絕的結果走既有路徑：成員的整合被擋下並回報（blocked integration），lead 的結尾提交只留下說明、工作留在 worktree。 |
 
 ## 15.3 影響的檔案
 
@@ -45,6 +47,10 @@ dispatcher 在沙箱外、用使用者的憑證，以那個 worktree 為 cwd 執
 4. `diff.external` 設在假設定裡。
 
 對下列函式各自斷言「標記檔不存在，且功能結果正確」：`commitWorkspace`、`collectAgentChanges`、`inspectWorkspace`、`finishLeadBranch`、`prepareAgentWorkspace`（既有 worktree 的 status／reset）、`integrateAgentChanges(target = lead 的 workspace)`、`snapshotBase(from = lead 的 workspace)`。另測：meta 記了 `gitDir`／`commonDir`；舊 meta 的 fallback（剛好一個符合才用，0 或 2 個就拒絕）；`policy` 對 Claude 產生決議 6 的 deny、Codex 不產生；預設路徑（無 worktree）不經 `agentGit`。
+
+5. 內嵌 repo（變體 E）：放在 worktree 內的未追蹤內嵌 repo，其設定裡的程式在 `commitWorkspace`、`collectAgentChanges`、`finishLeadBranch` 都不會執行，且該 worktree 被拒絕並回報；index 中偽造的 gitlink 同樣被拒絕；base commit 內本來就有的 gitlink 被接受。
+6. 竄改偵測（決議 9）：`commondir` 被改向、`config.worktree` 被改、`COMMIT_EDITMSG`／`logs/HEAD` 被換成連結，各自讓 worktree 被拒絕。
+7. 拒絕的呈現：成員 → 既有的 blocked integration 路徑（訊息說明原因與位置）；lead → `finishLead` 的 note，工作留在 worktree，run 的結果不變。
 
 ## 15.5 範圍外
 
