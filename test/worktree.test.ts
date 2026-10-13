@@ -273,11 +273,11 @@ describe("concurrent runs: base and lead workspace", () => {
     const p = concurrentRepo();
     const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
     write(path.join(lead.dir, "src/web/lead-note.txt"), "lead was here\n");
-    const ref = snapshotBase(p, "run-1", 1, lead.root);
+    const ref = snapshotBase(p, "run-1", 1, lead);
     const member = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
     expect(fs.readFileSync(path.join(member.dir, "src/web/lead-note.txt"), "utf8")).toBe("lead was here\n");
     write(path.join(member.dir, "src/web/feature.txt"), "built\n");
-    const r = integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead.root);
+    const r = integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead);
     expect(r.status).toBe("integrated");
     expect(fs.readFileSync(path.join(lead.dir, "src/web/feature.txt"), "utf8")).toBe("built\n");
     expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false);
@@ -297,7 +297,7 @@ describe("concurrent runs: base and lead workspace", () => {
     expect(rb.branch).toBe("agent-lyceum/run-1/lead");
     expect(git(env.repo, "log", "-1", "--format=%s", rb.branch)).toBe("agent-lyceum: lead's work for run run-1");
     expect(fs.readFileSync(rb.patch!, "utf8")).toContain("src/web/new.txt");
-    expect(commitWorkspace(lead.root, "again")).toMatchObject({ committed: false, head: rb.head });
+    expect(commitWorkspace(lead, "again")).toMatchObject({ committed: false, head: rb.head });
     expect(git(env.repo, "status", "--porcelain")).toBe("");
     // merging the branch brings the work in
     git(env.repo, "merge", "-q", "--no-edit", rb.branch);
@@ -307,12 +307,12 @@ describe("concurrent runs: base and lead workspace", () => {
   it("inspectWorkspace compares a member with the lead's worktree, and the lead with the repo", () => {
     const p = concurrentRepo();
     const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
-    const ref = snapshotBase(p, "run-1", 1, lead.root);
+    const ref = snapshotBase(p, "run-1", 1, lead);
     const member = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
     write(path.join(member.dir, "src/web/feature.txt"), "built\n");
-    integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead.root);
+    integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead);
     // the member's file is in the lead's worktree, so the member holds nothing that exists nowhere else
-    expect(inspectWorkspace(p, "run-1", "fe-member", lead.root)?.unintegrated).toEqual([]);
+    expect(inspectWorkspace(p, "run-1", "fe-member", lead)?.unintegrated).toEqual([]);
     // the lead's worktree holds it, and the repo does not have it yet
     expect(inspectWorkspace(p, "run-1", "lead")?.dirty).toContain("src/web/feature.txt");
     finishLeadBranch(lead, "m", path.join(env.root, "p.patch"));

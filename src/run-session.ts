@@ -15,7 +15,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -386,9 +386,16 @@ export class RunSession {
    */
   private integrateMember(agent: ResolvedAgent, ws: AgentWorkspace, key: string): void {
     const { say, project, log, state } = this;
-    const changes = collectAgentChanges(ws, agent.owns);
-    const r = integrateAgentChanges(project, changes, this.leadSpace?.root);
-    log("integrate", { agent: agent.name, status: r.status, files: changes.files.map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
+    let changes: ChangeSet | undefined;
+    let r: IntegrationResult;
+    try {
+      changes = collectAgentChanges(ws, agent.owns);
+      r = integrateAgentChanges(project, changes, this.leadSpace);
+    } catch (e) {
+      // e.g. a worktree whose git files were tampered with: nothing is applied, and the lead is told like for any blocked integration
+      r = refusedIntegration(project, ws, (e as Error).message);
+    }
+    log("integrate", { agent: agent.name, status: r.status, files: (changes?.files ?? []).map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
     const blocked = (state.blocked_integrations ?? []).filter((b) => b.agent !== agent.name);
     if (r.status === "integrated") {
       state.blocked_integrations = blocked;
@@ -713,7 +720,7 @@ export class RunSession {
       if (wsMode === "worktree" && members.length) {
         state.snapshots = (state.snapshots ?? 0) + 1;
         this.saveState();
-        const ref = snapshotBase(project, runId, state.snapshots, this.leadSpace?.root);
+        const ref = snapshotBase(project, runId, state.snapshots, this.leadSpace);
         for (const a of members) this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
         log("workspaces", { snapshot: ref, agents: Object.fromEntries(Object.entries(this.batchSpaces).map(([n, w]) => [n, w.dir])) });
       }
