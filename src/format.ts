@@ -163,7 +163,10 @@ function digestLines(text: string): string[] {
     .split(/\r?\n/)
     .map(digestLine)
     .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l));
-  return lines.length > DIGEST_MAX_LINES ? [...lines.slice(0, DIGEST_MAX_LINES - 1), `${lines[DIGEST_MAX_LINES - 1]}…`] : lines;
+  if (lines.length <= DIGEST_MAX_LINES) return lines;
+  const last = lines[DIGEST_MAX_LINES - 1] ?? "";
+  const cut = last.endsWith("…") ? last : `${last.slice(0, last.length >= DIGEST_MAX_CHARS ? DIGEST_MAX_CHARS - 1 : last.length)}…`;
+  return [...lines.slice(0, DIGEST_MAX_LINES - 1), cut];
 }
 
 /**

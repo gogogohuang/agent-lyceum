@@ -70,6 +70,15 @@ describe("digestOf", () => {
     expect(s?.lines[0]?.endsWith("…")).toBe(true);
   });
 
+  it("keeps a truncated 3rd line within 80 characters", () => {
+    const body = `## Acceptance criteria\n- a\n- b\n- ${"字".repeat(100)}\n- 第四行`;
+    const [s] = digestOf("task", body);
+    expect(s?.lines).toHaveLength(3);
+    for (const l of s?.lines ?? []) expect(l.length).toBeLessThanOrEqual(80);
+    expect(s?.lines[2]?.endsWith("…")).toBe(true);
+    expect(s?.lines[2]?.endsWith("……")).toBe(false);
+  });
+
   it("skips the dispatcher's format warning", () => {
     expect(digestOf("task", "[agent-lyceum] Format warning: x\n\n## Goal\nShip it")).toEqual([{ label: "目標", lines: ["Ship it"] }]);
   });
