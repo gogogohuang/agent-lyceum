@@ -77,11 +77,18 @@ export function dirtyPaths(dir: string): string[] {
 }
 
 /** Refuse to start a worktree run when it cannot be isolated; returns nothing when it is fine. */
-export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: boolean }): void {
+export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: boolean; concurrent?: boolean }): void {
   if (!isGitRepo(project.dir)) {
     throw new Error(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead: dispatcher.max_parallel: 1.`);
   }
   if (!opts.fresh) return;
+  if (opts.concurrent) {
+    // A concurrent run starts from HEAD and never touches the working tree, so uncommitted changes are fine.
+    if (tryGit(project.dir, ["rev-parse", "--verify", "-q", "HEAD"]) === undefined) {
+      throw new Error(`Concurrent runs start from HEAD, but ${project.dir} has no commit yet. Make an initial commit, or set dispatcher.max_concurrent_runs: 1.`);
+    }
+    return;
+  }
   const dirty = dirtyPaths(project.dir);
   if (dirty.length) {
     const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, ... (${dirty.length} in all)` : "");
@@ -92,13 +99,22 @@ export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: 
   }
 }
 
+/** `refs/agent-lyceum/<run>/base-0` pointing at the repo's HEAD: where a concurrent run starts. Nothing in the repo changes. */
+export function snapshotHead(project: ResolvedProject, runId: string): string {
+  const top = toplevel(project.dir);
+  const sha = git(top, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  const ref = `refs/agent-lyceum/${runId}/base-0`;
+  git(top, ["update-ref", ref, sha]);
+  return ref;
+}
+
 /**
  * Commit the repo's current working tree (tracked changes and new, non-ignored files) as an unreferenced-by-branch
  * snapshot `refs/agent-lyceum/<run>/base-<n>`. Uses a throwaway index, so HEAD, branches, the real index and the
  * working tree are not touched. Returns the ref.
  */
-export function snapshotBase(project: ResolvedProject, runId: string, n: number): string {
-  const top = toplevel(project.dir);
+export function snapshotBase(project: ResolvedProject, runId: string, n: number, from: string = project.dir): string {
+  const top = toplevel(from);
   const index = path.join(os.tmpdir(), `agent-lyceum-index-${crypto.randomBytes(6).toString("hex")}`);
   const env = { ...IDENTITY, GIT_INDEX_FILE: index };
   try {
@@ -241,6 +257,18 @@ export function globMatch(glob: string, file: string): boolean {
 
 const PROTECTED_NAMES = ["CLAUDE.md", "AGENTS.md"];
 
+/** Commit whatever is in a checkout (user hooks and signing off, dispatcher identity). Returns the HEAD afterwards and whether a commit was made. */
+export function commitWorkspace(root: string, message: string): { head: string; committed: boolean } {
+  git(root, ["add", "-A"]);
+  let committed = false;
+  if (tryGit(root, ["diff", "--cached", "--quiet"]) === undefined) {
+    // hooks belong to the user's repo (a worktree shares them): do not run them for the dispatcher's own commit
+    git(root, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", message], IDENTITY);
+    committed = true;
+  }
+  return { head: git(root, ["rev-parse", "HEAD"]), committed };
+}
+
 /**
  * Commit whatever the agent left in its worktree and list what changed since its snapshot, checking every
  * changed path (modified, added, deleted, or either end of a rename) against the agent's `owns`, the project
@@ -248,12 +276,7 @@ const PROTECTED_NAMES = ["CLAUDE.md", "AGENTS.md"];
  */
 export function collectAgentChanges(workspace: AgentWorkspace, owns: string[]): ChangeSet {
   const { root } = workspace;
-  git(root, ["add", "-A"]);
-  if (tryGit(root, ["diff", "--cached", "--quiet"]) === undefined) {
-    // hooks belong to the user's repo (a worktree shares them): do not run them for the dispatcher's own commit
-    git(root, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", `agent-lyceum: changes by ${workspace.agent}`], IDENTITY);
-  }
-  const head = git(root, ["rev-parse", "HEAD"]);
+  const { head } = commitWorkspace(root, `agent-lyceum: changes by ${workspace.agent}`);
   const base = workspace.base;
   const raw = base === head ? "" : execFileSync("git", ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", base, head], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   const parts = raw.split("\0").filter(Boolean);
@@ -346,9 +369,10 @@ function advanceBase(workspace: AgentWorkspace, newBase: string): void {
  * Blocked, with nothing applied and the agent's work kept, when the changes break the rules, when a file
  * changed in the repo since the agent's snapshot, or when git cannot apply the patch. Repeating a call whose
  * changes are already in place is harmless.
+ * `targetRoot`: the checkout to bring the changes into — the lead's worktree in a concurrent run; by default your repo's working tree.
  */
-export function integrateAgentChanges(project: ResolvedProject, changes: ChangeSet): IntegrationResult {
-  const top = toplevel(project.dir);
+export function integrateAgentChanges(project: ResolvedProject, changes: ChangeSet, targetRoot?: string): IntegrationResult {
+  const top = targetRoot ?? toplevel(project.dir);
   const { workspace, base, head } = changes;
   const fullPatch = (paths: string[]): string =>
     paths.length === 0 ? "" : git(top, ["--literal-pathspecs", "diff", "--binary", "--full-index", base, head, "--", ...paths]) + "\n";
@@ -413,7 +437,7 @@ export interface WorkspaceWork {
 }
 
 /** What is in an agent's worktree that exists nowhere else: uncommitted changes, and commits whose files are not in the main repo. */
-export function inspectWorkspace(project: ResolvedProject, runId: string, agent: string): WorkspaceWork | undefined {
+export function inspectWorkspace(project: ResolvedProject, runId: string, agent: string, target?: string): WorkspaceWork | undefined {
   const root = workspaceRoot(project, runId, agent);
   if (!fs.existsSync(root)) return undefined;
   const ws = existingAgentWorkspace(project, runId, agent);
@@ -422,7 +446,7 @@ export function inspectWorkspace(project: ResolvedProject, runId: string, agent:
   if (!ws) return { ...work, unknown: "its metadata is missing, so what it holds cannot be compared with the repo" };
   try {
     work.dirty = dirtyPaths(root);
-    const top = toplevel(project.dir);
+    const top = target ?? toplevel(project.dir);
     const head = git(root, ["rev-parse", "HEAD"]);
     if (head !== ws.base && tryGit(top, ["merge-base", "--is-ancestor", head, "HEAD"]) === undefined) {
       const raw = execFileSync("git", ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", ws.base, head], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -436,6 +460,25 @@ export function inspectWorkspace(project: ResolvedProject, runId: string, agent:
     work.unknown = `its state could not be read (${(e as Error).message.split("\n")[0]})`;
   }
   return work;
+}
+
+export interface ResultBranch {
+  branch: string;
+  head: string;
+  /** The snapshot the run started from. */
+  base: string;
+  /** Files the branch changes relative to `base`. */
+  files: number;
+  /** The same changes as a patch file (absent when nothing changed). */
+  patch?: string;
+}
+
+/** Commit the lead's checkout on its branch (once, at the end of a run) and write what changed as a patch. Never touches your repo's working tree. */
+export function finishLeadBranch(ws: AgentWorkspace, message: string, patchFile: string): ResultBranch {
+  const { head } = commitWorkspace(ws.root, message);
+  const files = head === ws.base ? [] : git(ws.root, ["diff", "--name-only", ws.base, head]).split("\n").filter(Boolean);
+  if (files.length) fs.writeFileSync(patchFile, git(ws.root, ["diff", "--binary", "--full-index", ws.base, head]) + "\n");
+  return { branch: ws.branch, head, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
 }
 
 /** Names of the agents that have a worktree for this run. */
