@@ -143,8 +143,8 @@ Known limits:
 When your task asks for a pull request, the lead puts `open_pr: true` in the frontmatter of its `done` report. If the run then ends `completed` and the lead's branch has changes, agent-lyceum — not an agent — pushes `agent-lyceum/<run-id>/<lead>` to `origin` and runs `gh pr create` against the repo's default branch, using the lead's report as the description (ending with `🤖 Opened by agent-lyceum`). The run result prints the PR URL, and `state.json` records it as `pr_url`. Only the lead can ask: nobody else can send `done`, and no agent's sandbox is loosened — `git push` and `gh` run outside it, with your own credentials.
 
 - It needs a lead branch, so it works only when the run has its own worktree (`dispatcher.max_concurrent_runs` of 2 or more). Otherwise the request is reported and skipped.
-- A request that cannot be honoured (the run did not complete, no changes, no `gh`, no `origin`, push or `gh` failed) never changes how the run turned out. The branch is kept and the run prints the commands to finish by hand.
-- agent-lyceum never merges and does not wait for CI or review. `doctor` tells you whether `gh` and `origin` are there.
+- A request that cannot be honoured (the run did not complete, no changes, no `gh`, no `origin`, push or `gh` failed) never changes how the run turned out. The run says why it was not opened and keeps the branch; when a push or `gh pr create` failed it also prints the commands to finish by hand.
+- agent-lyceum never merges and does not wait for CI or review. With `max_concurrent_runs` of 2 or more, `doctor` tells you whether `gh` and `origin` are there (it does not check that `gh` is logged in).
 
 ## Web access (`allow_web`)
 

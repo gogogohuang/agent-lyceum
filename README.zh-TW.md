@@ -144,8 +144,8 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 當你的 task 要求開 PR 時，lead 會在它的 `done` 報告的 frontmatter 加上 `open_pr: true`。如果 run 之後以 `completed` 結束，且 lead 的 branch 有變更，就由 agent-lyceum（不是 agent）把 `agent-lyceum/<run-id>/<lead>` 推到 `origin`，並對 repo 的預設分支執行 `gh pr create`，以 lead 的報告作為描述（結尾為 `🤖 Opened by agent-lyceum`）。run 的結果會印出 PR 網址，`state.json` 也會把它記為 `pr_url`。只有 lead 能提出要求：其他人都不能送出 `done`，也沒有任何 agent 的沙箱被放寬——`git push` 與 `gh` 在沙箱外以你自己的憑證執行。
 
 - 它需要 lead 的 branch，所以只有在 run 有自己的 worktree 時（`dispatcher.max_concurrent_runs` 為 2 或以上）才有作用。否則這個要求會被回報並略過。
-- 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。branch 會保留，run 會印出可手動完成的指令。
-- agent-lyceum 從不合併，也不等待 CI 或審查。`doctor` 會告訴你有沒有 `gh` 與 `origin`。
+- 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
+- agent-lyceum 從不合併，也不等待 CI 或審查。`max_concurrent_runs` 為 2 以上時，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。
 
 ## 網路存取（`allow_web`）
 
