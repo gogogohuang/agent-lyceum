@@ -212,7 +212,7 @@ export interface StatusReport {
   project: { name: string; dir: string; lead: string };
   agents: AgentReport[];
   run?: RunReport;
-  /** Hints that a `memory tidy` might help. Only a suggestion; nothing runs it. */
+  /** Hints that a `tidy` might help. Only a suggestion; nothing runs it. */
   memory_advice?: string[];
 }
 
@@ -511,6 +511,6 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
 
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}`);
-  if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum memory tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
+  if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
 }

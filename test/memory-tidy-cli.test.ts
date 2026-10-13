@@ -45,10 +45,10 @@ const TIDY = (memDir: string) => ({
   ],
 });
 
-describe("memory tidy → restore", { timeout: 60_000 }, () => {
+describe("tidy → tidy --undo", { timeout: 60_000 }, () => {
   it("tidies the lead's project memory, archives b.md, then restore brings it back", () => {
     const t = setup(TIDY);
-    const r = t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead"]);
+    const r = t.sync(["tidy", "-p", "demo", "--agent", "lead"]);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/tidied/);
     expect(fs.existsSync(path.join(t.memDir, "b.md"))).toBe(false);
@@ -57,7 +57,8 @@ describe("memory tidy → restore", { timeout: 60_000 }, () => {
     expect(fs.existsSync(path.join(t.memDir, ".archive", stamp!, "b.md"))).toBe(true);
     expect(readTidyState(t.memDir)?.archive).toBe(stamp);
 
-    const back = t.sync(["memory", "restore", stamp!, "-p", "demo", "--agent", "lead"]);
+    expect(r.out).toContain(`agent-lyceum tidy --undo ${stamp} -p demo --agent lead`);
+    const back = t.sync(["tidy", "--undo", stamp!, "-p", "demo", "--agent", "lead"]);
     expect(back.code).toBe(0);
     expect(fs.readFileSync(path.join(t.memDir, "b.md"), "utf8")).toBe("beta");
     expect(fs.readFileSync(path.join(t.memDir, "MEMORY.md"), "utf8")).toMatch(/b\.md/);
@@ -66,7 +67,7 @@ describe("memory tidy → restore", { timeout: 60_000 }, () => {
   it("--dry-run does not wake the agent or change anything", () => {
     const t = setup(() => ({ calls: [] }));
     const before = fingerprint(t.memDir);
-    const r = t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead", "--dry-run"]);
+    const r = t.sync(["tidy", "-p", "demo", "--agent", "lead", "--dry-run"]);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/lead/);
     expect(fs.existsSync(t.counter)).toBe(false); // fake claude never started
@@ -77,7 +78,7 @@ describe("memory tidy → restore", { timeout: 60_000 }, () => {
   it("exits 1 and leaves the memory as it was when the agent writes no report", () => {
     const t = setup(() => ({ calls: [{ agent: "lead" }] }));
     const before = fingerprint(t.memDir);
-    const r = t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead"]);
+    const r = t.sync(["tidy", "-p", "demo", "--agent", "lead"]);
     expect(r.code).toBe(1);
     expect(r.out + r.err).toMatch(/tidy-report/);
     expect(fingerprint(t.memDir)).toEqual(before);
@@ -88,7 +89,7 @@ describe("memory tidy → restore", { timeout: 60_000 }, () => {
     const t = setup(() => ({ calls: [] }));
     const lease = acquireProjectLock(env.project().paths.root, "some-run");
     try {
-      const r = t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead"]);
+      const r = t.sync(["tidy", "-p", "demo", "--agent", "lead"]);
       expect(r.code).toBe(1);
       expect(r.err).toMatch(/some-run|lock/i);
       expect(fs.existsSync(t.counter)).toBe(false);
@@ -102,17 +103,42 @@ describe("memory tidy → restore", { timeout: 60_000 }, () => {
     const globalDir = env.project().agents.lead!.memory.global!;
     write(path.join(globalDir, "MEMORY.md"), "g");
     const before = fingerprint(globalDir);
-    expect(t.sync(["memory", "tidy", "-p", "demo", "--agent", "lead"]).code).toBe(0);
+    expect(t.sync(["tidy", "-p", "demo", "--agent", "lead"]).code).toBe(0);
     expect(fingerprint(globalDir)).toEqual(before);
     expect(fs.existsSync(path.join(globalDir, ".tidy-state.json"))).toBe(false);
-    expect(t.sync(["memory", "tidy", "-p", "demo", "--layer", "task"]).code).not.toBe(0);
+    expect(t.sync(["tidy", "-p", "demo", "--layer", "task"]).code).not.toBe(0);
   });
 
   it("explains how to get project memory when no agent has any", () => {
     const t = setup(() => ({ calls: [] }), makeEnv);
-    const r = t.sync(["memory", "tidy", "-p", "demo"]);
+    const r = t.sync(["tidy", "-p", "demo"]);
     expect(r.code).toBe(0);
     expect(r.out + r.err).toMatch(/memory\.project/);
     expect(fs.existsSync(t.counter)).toBe(false);
+  });
+
+  it("--undo without --agent is refused before anything is touched", () => {
+    const t = setup(() => ({ calls: [] }));
+    const before = fingerprint(t.memDir);
+    const r = t.sync(["tidy", "--undo", "20261008T031500Z", "-p", "demo"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/--agent/);
+    expect(fingerprint(t.memDir)).toEqual(before);
+  });
+
+  it("--undo with --dry-run is refused", () => {
+    const t = setup(() => ({ calls: [] }));
+    const before = fingerprint(t.memDir);
+    const r = t.sync(["tidy", "--undo", "20261008T031500Z", "-p", "demo", "--agent", "lead", "--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/--dry-run/);
+    expect(fingerprint(t.memDir)).toEqual(before);
+  });
+
+  it("the old `memory` command is gone", () => {
+    const t = setup(() => ({ calls: [] }));
+    const r = t.sync(["memory", "tidy", "-p", "demo", "--dry-run"]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/unknown command/);
   });
 });
