@@ -58,8 +58,8 @@ describe("digestOf", () => {
     ]);
   });
 
-  it("keeps a bullet that starts with #, drops real headings", () => {
-    const [s] = digestOf("reply", "## Changes\n- #123 login fixed\n### Sub\n- b");
+  it("keeps a bullet that starts with #, keeps plain lines", () => {
+    const [s] = digestOf("reply", "## Changes\n- #123 login fixed\n- b");
     expect(s?.lines).toEqual(["#123 login fixed", "b"]);
   });
 

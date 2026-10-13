@@ -51,7 +51,7 @@ export function briefOf(body: string): string | undefined {
       .trim()
       .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
       .trim();
-  const usable = (l: string) => l !== "" && !/^#+\s/.test(l) && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l);
+  const usable = (l: string) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l);
   for (const want of ["changes", "goal"]) {
     const i = lines.findIndex((l) => new RegExp(`^#{1,6}[ \\t]+${want}[ \\t]*:?[ \\t]*#*[ \\t]*$`, "i").test(l));
     if (i < 0) continue;
@@ -162,7 +162,7 @@ function digestLines(text: string): string[] {
   const lines = text
     .split(/\r?\n/)
     .map(digestLine)
-    .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l));
+    .filter((l) => l !== "" && !/^#+\s/.test(l) && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l));
   if (lines.length <= DIGEST_MAX_LINES) return lines;
   const last = lines[DIGEST_MAX_LINES - 1] ?? "";
   const cut = last.endsWith("…") ? last : `${last.slice(0, last.length >= DIGEST_MAX_CHARS ? DIGEST_MAX_CHARS - 1 : last.length)}…`;
