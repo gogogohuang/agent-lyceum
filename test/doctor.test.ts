@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -228,5 +229,21 @@ describe("runtime output variants", () => {
     const none = feed(inv, ["only text"]);
     expect(none.sessionId).toBeUndefined();
     expect(none.outputTokens).toBeUndefined();
+  });
+});
+
+describe("diagnoseProject pull request hint", () => {
+  it("says whether a run could open a pull request when several runs may be active", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const { bin } = fakeBin(env.root);
+    const none = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+    expect(none.checks.map((c) => `${c.level}:${c.subject}:${c.message}`).join("\n")).toMatch(/info:pr:.*cannot open a pull request.*`origin`/);
+
+    execFileSync("git", ["remote", "add", "origin", "https://example.invalid/o/r.git"], { cwd: env.repo });
+    fs.writeFileSync(path.join(bin, "gh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const ok = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+    expect(ok.checks.map((c) => `${c.level}:${c.subject}`)).toContain("ok:pr");
   });
 });

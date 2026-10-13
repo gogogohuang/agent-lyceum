@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeInvocation, buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation, codexWritableRoots } from "../src/adapters/codex.js";
 import { commonFile, repoInstructionFiles, writePolicy } from "../src/policy.js";
-import { buildSystemPrompt } from "../src/prompt.js";
+import { buildSoloSystemPrompt, buildSystemPrompt } from "../src/prompt.js";
+import { soloProject } from "../src/solo.js";
 import { makeEnv, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -170,6 +171,31 @@ describe("prompts", () => {
       expect(s).toContain("opened by agent-lyceum");
       expect(s).toContain("Do not name any agent or role");
     }
+  });
+
+  it("tells the lead when it may ask for a pull request, and keeps role names out of the report", () => {
+    env = makeEnv();
+    const p = env.project();
+    const prompt = buildSystemPrompt(p, p.agents.lead);
+    expect(prompt).toMatch(/open_pr: true/);
+    expect(prompt).toMatch(/only when the user's task explicitly asks for a pull request/);
+    expect(prompt).toMatch(/agent-lyceum \(not you\) then pushes the branch and opens the pull request/);
+    expect(prompt).toMatch(/Keep agent and role names out of the report/);
+    expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toMatch(/open_pr/);
+  });
+
+  it("gives a solo agent the same rule", () => {
+    env = makeEnv();
+    const sp = soloProject(env.project(), "fe-member");
+    const prompt = buildSoloSystemPrompt(sp, sp.agents["fe-member"]);
+    expect(prompt).toMatch(/open_pr: true/);
+    expect(prompt).toMatch(/only when the user's task explicitly asks for a pull request/);
+  });
+
+  it("does not mention open_pr to a call (no done mail there)", () => {
+    env = makeEnv();
+    const sp = { ...soloProject(env.project(), "fe-member"), solo: "call" as const };
+    expect(buildSoloSystemPrompt(sp, sp.agents["fe-member"])).not.toMatch(/open_pr/);
   });
 });
 

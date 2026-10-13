@@ -155,6 +155,11 @@ function printRun(summary: RunSummary, runDir: string): void {
   if (summary.resultBranch?.files) {
     console.log(`\nThe work is on branch ${summary.resultBranch.branch} (${summary.resultBranch.files} file(s)); your working tree was not touched.\nBring it in with: git merge ${summary.resultBranch.branch}${summary.resultBranch.patch ? `\n(or apply the patch: git apply ${summary.resultBranch.patch})` : ""}`);
   }
+  if (summary.pr) {
+    if (summary.pr.status === "opened") console.log(`\nPull request opened: ${summary.pr.url}`);
+    else if (summary.pr.status === "skipped") console.log(`\nA pull request was asked for but not opened: ${summary.pr.reason}`);
+    else console.log(`\nThe pull request could not be opened (${summary.pr.step}: ${summary.pr.reason}).${summary.pr.manual.length ? ` To finish by hand:\n${summary.pr.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
+  }
   if (summary.doneMessage) {
     console.log(`\nLead's final message — ${summary.doneMessage.subject}\n\n${summary.doneMessage.body}`);
     console.log(`\nResult saved to: ${path.join(runDir, RESULT_FILE)}`);

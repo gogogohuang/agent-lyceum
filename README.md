@@ -138,6 +138,15 @@ Known limits:
 - `COMMON.md` and the `AGENT.md` files are shared by all runs of the project. Each run's guard only judges what changes while its own agents are working, so an edit by one run is kept; but if two runs' wake-ups overlap in time, a change one makes while the other's agents are working can be reverted by the other.
 - Two runs that edit the same file are for you to reconcile when merging; agent-lyceum never merges.
 
+### Opening a pull request
+
+When your task asks for a pull request, the lead puts `open_pr: true` in the frontmatter of its `done` report. If the run then ends `completed` and the lead's branch has changes, agent-lyceum — not an agent — pushes `agent-lyceum/<run-id>/<lead>` to `origin` and runs `gh pr create` against the repo's default branch, using the lead's report as the description (ending with `🤖 Opened by agent-lyceum`). The run result prints the PR URL, and `state.json` records it as `pr_url`. Only the lead can ask: nobody else can send `done`, and no agent's sandbox is loosened — `git push` and `gh` run outside it, with your own credentials.
+
+- It needs a lead branch, so it works only when the run has its own worktree (`dispatcher.max_concurrent_runs` of 2 or more). Otherwise the request is reported and skipped.
+- A request that cannot be honoured (the run did not complete, no changes, no `gh`, no `origin`, push or `gh` failed) never changes how the run turned out. The run says why it was not opened and keeps the branch; when a push or `gh pr create` failed it also prints the commands to finish by hand.
+- Opening a pull request publishes the lead's branch and report to `origin`. An agent that asks for one (`open_pr: true`) can therefore get anything it can read inside its sandbox onto the remote, so only ask for a pull request in a task when that is acceptable. The push and `gh pr create` run from your main repository, never inside the agent's worktree, because an agent can write that directory.
+- agent-lyceum never merges and does not wait for CI or review. With `max_concurrent_runs` of 2 or more, `doctor` tells you whether `gh` and `origin` are there (it does not check that `gh` is logged in).
+
 ## Web access (`allow_web`)
 
 By default no agent can use the web. Claude Code agents are woken in headless `dontAsk` mode, where anything not explicitly allowed is refused, so `WebSearch` and `WebFetch` are denied unless you opt in per agent with `allow_web` (in `team.yaml` or `project.yaml`; the project value wins). It only decides whether the agent may use the web tools; the write scope below is unchanged.

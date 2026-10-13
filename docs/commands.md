@@ -45,6 +45,8 @@ With `--agent`:
 
 With `dispatcher.max_concurrent_runs > 1` the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge; see "Several runs at once" in the [README](../README.md#several-runs-at-once).
 
+If the lead's done asks for a pull request (`open_pr: true`) and the run completes on its own branch, the run opens it; see "Opening a pull request" in the [README](../README.md#opening-a-pull-request).
+
 ## call
 
 **Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
@@ -158,6 +160,7 @@ Check the setup without running any agent:
 
 - configuration (each agent's enforcement level is printed);
 - git (for parallel runs);
+- whether `gh` and `origin` are available for opening a pull request (when `max_concurrent_runs > 1`);
 - the project lock;
 - what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`).
 
