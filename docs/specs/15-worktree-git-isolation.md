@@ -1,6 +1,6 @@
 # 15 dispatcher 不信任 agent 可寫的 git 狀態
 
-狀態：設計已與使用者確認（2026-10-13 授權另開分支修補），尚未實作。
+狀態：已實作（計畫：docs/plans/2026-10-13-15-worktree-git-isolation.md）。
 
 ## 15.1 問題
 

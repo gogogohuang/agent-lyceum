@@ -115,6 +115,9 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
   for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
   if (ws) for (const f of ["CLAUDE.md", "AGENTS.md"]) addDeny(path.join(ws.dir, f));
+  // Defence in depth: the dispatcher pins git's dir, common dir and work tree and never reads these, but a runtime that can
+  // forbid single files should not let the agent rewrite them either. Codex cannot; it relies on the pinning alone.
+  if (ws) deny.push(path.join(ws.root, ".git"), ...["commondir", "config.worktree", "gitdir"].map((f) => path.join(ws.gitDir, f)));
 
   return {
     allowDirs,
