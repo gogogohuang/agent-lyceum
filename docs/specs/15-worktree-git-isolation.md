@@ -57,3 +57,19 @@ dispatcher 在沙箱外、用使用者的憑證，以那個 worktree 為 cwd 執
 - 使用者自己 repo 裡的 hook／設定被 agent 污染（agent 寫不進去）。
 - 沙箱本身的繞過（Claude／Codex 的 runtime 行為）。
 - 阻止 agent 在自己的 worktree 裡放惡意檔案內容（那只是資料，由使用者在 merge 前審查）。
+
+## 15.6 殘留風險
+
+以下是這次修補**沒有**處理或沒有逐項驗證的部分，照實列出：
+
+- (a) 使用者**自己**的 git 設定裡定義的 filter driver（例如 LFS），仍可能對 agent 在 `.gitattributes` 標記的檔案執行。程式本身是使用者的，但由 agent 決定對哪些檔案觸發。
+- (b) agent 寫的 index（含 `sharedindex.*`、split／sparse index）會被 `add`／`commit`／`status` 讀取，沒有逐一稽核各 index extension。曾考慮改用 dispatcher 自有的暫存 index，但不採用：透過它 commit 之後 worktree 的真 index 會過期，`inspectWorkspace` 的 `status` 會回報不存在的變更，`clear` 會誤拒。
+- (c) 其他 per-worktree 檔案（`info/`、`MERGE_HEAD`／`rebase-merge`、`sparse-checkout`、各種 lock）沒有逐一稽核。
+- (d) dispatcher 對 worktree 的所有 git 呼叫，都在 `await Promise.all(batch.map(wake))` 之後執行，所以該批 agent 已不在執行中；剩下的是 **agent 在喚醒結束後留下仍在執行的程序**（若 Claude／Codex 的沙箱允許程序活過那一輪；未驗證）。這種程序可以在完整性檢查與 git 實際讀取之間改動檔案。
+- (e) 舊版 meta 的 fallback 信任 agent 可寫的 `gitdir` 檔案；agent 最多只能造成拒絕（0 或 2 個以上符合）。
+- (f) `removeAgentWorkspace` 從使用者 repo 執行 `git worktree remove --force`，git 可能讀 agent 寫的 `gitdir`／指標檔來決定要刪什麼（就目前所知它不執行 hook）。
+- (g) 這次變更的審查沒有獨立執行的繞過實驗；已執行的證據是實作者用真實 git 跑的對照組。
+
+### 可以聲稱什麼
+
+當 agent 在自己的 git worktree 裡工作時，dispatcher 在那裡執行 git，會把 git dir、common dir 與 work tree 固定在 agent 開始之前就記錄下來的位置；hook、fsmonitor、external diff 與 textconv 都關閉；若 worktree 的 git 檔案被改向或連結到別處、HEAD 不是它自己的分支、或內含巢狀 repository，dispatcher 會拒絕使用該 worktree。**不**聲稱 dispatcher 絕不會執行 agent 埋下的程式碼。

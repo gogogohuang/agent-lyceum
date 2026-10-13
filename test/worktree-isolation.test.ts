@@ -206,7 +206,10 @@ const VARIANTS: Variant[] = [
   },
 ];
 
-/** Plain git in the worktree, the way the dispatcher ran it before: it discovers the git dir from the worktree. */
+/**
+ * Plain git in the worktree, the way the dispatcher ran it before: it discovers the git dir from the worktree.
+ * The controls use it, so they prove each attack works against git; they do not prove that each subject function was vulnerable before the fix.
+ */
 function plainGit(ws: AgentWorkspace, ...args: string[]): void {
   try {
     execFileSync("git", args, { cwd: ws.root, env: { ...process.env, ...IDENTITY }, stdio: ["ignore", "pipe", "pipe"] });
@@ -538,5 +541,129 @@ describe("a refused worktree during a run", () => {
     expect(loadRunState(runDir).notes?.join("\n")).toMatch(/Could not commit the work.*nested git repository/);
     expect(fs.readFileSync(path.join(leadDir, "src/web/lead.txt"), "utf8")).toBe("lead\n");
     expect(fs.existsSync(a.marker)).toBe(false);
+  });
+});
+
+describe("a HEAD that is not the worktree's own branch", () => {
+  const headOf = (ws: AgentWorkspace) => path.join(ws.gitDir, "HEAD");
+
+  it.skipIf(posixOnly)("control: plain git in a worktree whose HEAD names main commits onto the user's main", () => {
+    const s = scene();
+    const mainBefore = git(env.repo, "rev-parse", "main");
+    fs.writeFileSync(headOf(s.member), "ref: refs/heads/main\n");
+    plainGit(s.member, "add", "-A");
+    plainGit(s.member, "commit", "-q", "--no-verify", "-m", "onto main");
+    expect(git(env.repo, "rev-parse", "main")).not.toBe(mainBefore);
+    expect(git(env.repo, "log", "-1", "--format=%s", "main")).toBe("onto main");
+  });
+
+  const forged: Array<[string, (ws: AgentWorkspace) => void]> = [
+    ["names the user's main", (ws) => fs.writeFileSync(headOf(ws), "ref: refs/heads/main\n")],
+    ["is detached at a commit", (ws) => fs.writeFileSync(headOf(ws), `${ws.base}\n`)],
+    [
+      "is a symlink (even to the right content)",
+      (ws) => {
+        const elsewhere = path.join(env.root, `head-${ws.agent}`);
+        fs.writeFileSync(elsewhere, fs.readFileSync(headOf(ws)));
+        fs.rmSync(headOf(ws));
+        fs.symlinkSync(elsewhere, headOf(ws));
+      },
+    ],
+  ];
+
+  describe.each(forged)("HEAD %s", (_name, forge) => {
+    it.skipIf(posixOnly)("commitWorkspace, collectAgentChanges and finishLeadBranch refuse, and main is untouched", () => {
+      const s = scene();
+      const mainBefore = git(env.repo, "rev-parse", "main");
+      forge(s.member);
+      forge(s.lead);
+      expect(() => commitWorkspace(s.member, "m")).toThrow(/is not a plain file naming its own branch agent-lyceum\/run-1\/fe-member/);
+      expect(() => collectAgentChanges(s.member, ["src/web/**"])).toThrow(/Refusing to run git.*agent-lyceum clear/s);
+      expect(() => finishLeadBranch(s.lead, "m", path.join(env.root, "p.patch"))).toThrow(/Refusing to run git/);
+      expect(git(env.repo, "rev-parse", "main")).toBe(mainBefore);
+    });
+  });
+
+  it("is never refused for a worktree git left alone, through several commits, a reset and a finish", () => {
+    const s = scene();
+    for (const n of [1, 2, 3]) {
+      write(path.join(s.member.dir, `src/web/f${n}.txt`), `${n}\n`);
+      expect(commitWorkspace(s.member, `c${n}`).committed).toBe(true);
+    }
+    expect(collectAgentChanges(s.member, ["src/web/**"]).files.map((f) => f.path)).toEqual(["src/web/f1.txt", "src/web/f2.txt", "src/web/f3.txt", "src/web/feature.txt"]);
+    const fresh = prepareAgentWorkspace(s.p, "run-1", "qa-member", snapshotBase(s.p, "run-1", 2, s.lead));
+    write(path.join(s.lead.dir, "src/web/later.txt"), "later\n");
+    expect(prepareAgentWorkspace(s.p, "run-1", "qa-member", snapshotBase(s.p, "run-1", 3, s.lead)).base).not.toBe(fresh.base); // reset --hard
+    expect(finishLeadBranch(s.lead, "m", path.join(env.root, "p.patch")).files).toBe(2);
+    expect(fs.readFileSync(headOf(s.member), "utf8")).toBe("ref: refs/heads/agent-lyceum/run-1/fe-member\n");
+  });
+});
+
+describe("a refusal between batches", () => {
+  const OK = { ok: true, text: "", exitCode: 0, timedOut: false };
+  const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply") =>
+    write(
+      path.join(outboxDir(p, from), `${Math.random()}.md`),
+      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : "body"}\n`,
+    );
+  async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeParallel(env);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "go", cwd: env.root, runDir });
+    const summary = await runTeam({ project, task, runDir, invoker, log: () => {} });
+    return { summary, runDir };
+  }
+
+  it("of the lead's worktree at the next snapshot ends the run as a lead failure with a note, without throwing", async () => {
+    let mainBefore = "";
+    let leadDir = "";
+    const { summary, runDir } = await start(async (i) => {
+      mainBefore ||= git(env.repo, "rev-parse", "main");
+      leadDir = i.workspace!.dir;
+      write(path.join(leadDir, "src/web/lead.txt"), "lead\n");
+      fs.writeFileSync(path.join(i.workspace!.gitDir, "HEAD"), "ref: refs/heads/main\n");
+      mail(i.project, "lead", "fe-member", "job", "task");
+      return OK;
+    });
+    expect(summary.endReason).toBe("lead_failed");
+    const state = loadRunState(runDir);
+    expect(state.end_reason).toBe("lead_failed");
+    expect(state.notes?.join("\n")).toMatch(/Could not snapshot lead's worktree.*Refusing to run git/);
+    expect(git(env.repo, "rev-parse", "main")).toBe(mainBefore);
+    expect(fs.readFileSync(path.join(leadDir, "src/web/lead.txt"), "utf8")).toBe("lead\n"); // the work stays
+  });
+
+  it("of a member's worktree when it is reused: it is not woken again, the lead is told, and the run goes on", async () => {
+    let leadCalls = 0;
+    let memberCalls = 0;
+    let leadMail = "";
+    const { summary, runDir } = await start(async (i) => {
+      if (i.agent.name === "lead") {
+        leadCalls++;
+        if (leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else if (leadCalls === 2) {
+          write(path.join(i.workspace!.dir, "src/web/more.txt"), "more\n"); // a new snapshot: the member's worktree gets reused
+          mail(i.project, "lead", "fe-member", "again", "task");
+        } else {
+          leadMail = i.userPrompt;
+          mail(i.project, "lead", "lead", "bye", "done");
+        }
+      } else {
+        memberCalls++;
+        fs.writeFileSync(path.join(i.workspace!.gitDir, "HEAD"), `${i.workspace!.base}\n`); // detached
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
+      return OK;
+    });
+    expect(summary.endReason).toBe("done");
+    expect(memberCalls).toBe(1);
+    const state = loadRunState(runDir);
+    expect(state.notes?.join("\n")).toMatch(/fe-member was not woken: Refusing to run git/);
+    expect(state.blocked_integrations?.map((b) => b.agent)).toEqual(["fe-member"]);
+    expect(leadMail).toMatch(/fe-member cannot be woken/);
   });
 });

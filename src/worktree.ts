@@ -86,7 +86,7 @@ const PINNED_CONFIG = [
 const DIFF_PINS = ["--no-ext-diff", "--no-textconv"];
 const DIFF_COMMANDS = new Set(["diff", "show", "log"]);
 
-type PinnedWorkspace = Pick<AgentWorkspace, "root" | "gitDir" | "commonDir" | "worktreeConfig">;
+type PinnedWorkspace = Pick<AgentWorkspace, "root" | "gitDir" | "commonDir" | "worktreeConfig" | "branch">;
 
 const fingerprint = (file: string): string | undefined => {
   let st: fs.Stats;
@@ -113,6 +113,9 @@ const samePath = (a: string, b: string): boolean => {
  * - `config.worktree` (read when the user enabled extensions.worktreeConfig): it can name filters, chosen by the worktree's own
  *   .gitattributes, and a signing program — more than any `-c` list can switch off;
  * - files git writes by following links (COMMIT_EDITMSG, logs/HEAD): a symlink or hard link would make git write outside the sandbox;
+ * - `HEAD` not the worktree's own branch: the ref store is shared, so a HEAD naming another branch (say `main`) or a detached
+ *   commit would make the dispatcher commit onto, or measure against, a ref the agent chose. git writes exactly
+ *   `ref: refs/heads/<branch>\n` and keeps it so through the dispatcher's commits and `reset --hard`;
  * - the worktree or its git dir replaced by a symlink.
  */
 export function assertWorkspaceIntact(ws: PinnedWorkspace): void {
@@ -145,9 +148,21 @@ export function assertWorkspaceIntact(ws: PinnedWorkspace): void {
       const ok = name === "logs" ? st.isDirectory() : st.isFile() && st.nlink === 1;
       if (!ok) problems.push(`${path.join(ws.gitDir, name)} is a link or not what git made`);
     }
+    const head = path.join(ws.gitDir, "HEAD");
+    let headOk = false;
+    try {
+      const st = fs.lstatSync(head);
+      headOk = st.isFile() && st.nlink === 1 && fs.readFileSync(head, "utf8") === `ref: refs/heads/${ws.branch}\n`;
+    } catch {
+      headOk = false;
+    }
+    if (!headOk) problems.push(`${head} is not a plain file naming its own branch ${ws.branch}`);
   }
   if (problems.length) {
-    throw new Error(`Refusing to run git in the worktree ${ws.root}: ${problems.join("; ")}. Its git files were changed after it was made (an agent can write them); nothing in it was touched.`);
+    throw new Error(
+      `Refusing to run git in the worktree ${ws.root}: ${problems.join("; ")}. Its git files were changed after it was made (an agent can write them); nothing in it was touched. ` +
+        `Inspect the worktree, then remove it with \`agent-lyceum clear <run-id>\` or \`git worktree remove\`.`,
+    );
   }
 }
 
@@ -506,8 +521,8 @@ export function commitWorkspace(ws: AgentWorkspace, message: string): { head: st
   agentGit(ws, ["add", "-A"]);
   let committed = false;
   if (tryAgentGit(ws, ["diff", "--cached", "--quiet"]) === undefined) {
-    // agentGit already switches hooks and signing off; --no-verify and gpgsign=false say so here too
-    agentGit(ws, ["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", message], IDENTITY);
+    // agentGit already switches hooks and signing off; --no-verify says so here too
+    agentGit(ws, ["commit", "-q", "--no-verify", "-m", message], IDENTITY);
     committed = true;
   }
   return { head: agentGit(ws, ["rev-parse", "HEAD"]), committed };
