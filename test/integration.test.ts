@@ -5,7 +5,8 @@ import { readAskReply, writeAskReply } from "../src/ask-reply.js";
 import { runTeam } from "../src/dispatcher.js";
 import { listUnread } from "../src/mailbox.js";
 import { setFaultHook } from "../src/message-store.js";
-import { outboxDir } from "../src/policy.js";
+import { commonFile, outboxDir } from "../src/policy.js";
+import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
@@ -281,6 +282,74 @@ describe("dispatcher integration", () => {
     // the branch carries the work
     expect(git(env.repo, "show", "agent-lyceum/run-1/lead:src/web/feature.txt")).toBe("member built");
     expect(git(env.repo, "show", "agent-lyceum/run-1/lead:tests/lead-note.txt")).toBe("lead");
+  });
+
+  it("a concurrent run guards the lead worktree's CLAUDE.md and leaves yours alone", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo, { "src/web/a.txt": "a\n", "tests/t.txt": "t\n", "CLAUDE.md": "rules\n" });
+    makeConcurrent(env, 2);
+    env.editProjectYaml((t) => t.replace("can_edit_agent_md: true", "can_edit_agent_md: false"));
+    let leadCalls = 0;
+    let leadClaude = "";
+    let leadPrompt = "";
+    const { summary, runDir } = await start(async (i) => {
+      leadClaude = path.join(i.workspace!.dir, "CLAUDE.md");
+      if (++leadCalls === 1) {
+        write(leadClaude, "lead rewrote the rules\n"); // no sandbox here: only the guard can catch it
+        write(path.join(env.repo, "CLAUDE.md"), "my own edit\n"); // you, in your tree, while the lead works
+      } else {
+        leadPrompt = i.userPrompt;
+        mail(i.project, "lead", "lead", "bye", "done");
+      }
+      return OK;
+    });
+    expect(summary.endReason).toBe("done");
+    const violations = fs.readFileSync(path.join(runDir, "log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.event === "violation");
+    expect(violations.map((v) => v.file)).toEqual([leadClaude]); // (i) the lead's own copy, and only it
+    expect(fs.readFileSync(leadClaude, "utf8")).toBe("rules\n"); // reverted there
+    expect(leadPrompt).toContain("Protected file restored"); // and the lead hears of it
+    expect(fs.readFileSync(path.join(env.repo, "CLAUDE.md"), "utf8")).toBe("my own edit\n"); // (ii) yours is left as you wrote it
+    expect(git(env.repo, "show", "agent-lyceum/run-1/lead:CLAUDE.md")).toBe("rules");
+  });
+
+  it("a run does not undo another run's edit to COMMON.md made before its batch", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const common = commonFile(project);
+    const before = fs.readFileSync(common, "utf8");
+    const runDirB = path.join(project.paths.runs, "run-b");
+    // Run B starts (its guard takes its baseline); its only agent is a member that may not edit COMMON.md.
+    const b = new RunSession({
+      project,
+      task: prepareTask({ text: "task b", cwd: env.root, runDir: runDirB }),
+      runDir: runDirB,
+      soloAgent: "fe-member",
+      log: () => {},
+      invoker: async (i) => {
+        mail(i.project, "fe-member", "fe-member", "bye", "done");
+        return OK;
+      },
+    });
+    // Meanwhile run A's lead edits COMMON.md, which it may.
+    const runDirA = path.join(project.paths.runs, "run-a");
+    const a = await runTeam({
+      project,
+      task: prepareTask({ text: "task a", cwd: env.root, runDir: runDirA }),
+      runDir: runDirA,
+      log: () => {},
+      invoker: async (i) => {
+        write(common, `${before}A's rule\n`);
+        mail(i.project, "lead", "lead", "bye", "done");
+        return OK;
+      },
+    });
+    expect(a.outcome).toBe("completed");
+    const sb = await b.run();
+    expect(sb.outcome).toBe("completed");
+    expect(fs.readFileSync(common, "utf8")).toBe(`${before}A's rule\n`);
+    expect(fs.readFileSync(path.join(runDirB, "log.jsonl"), "utf8")).not.toContain('"violation"');
   });
 
   it("two concurrent runs of one project do not see each other's files", async () => {

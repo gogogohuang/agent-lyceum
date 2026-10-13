@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
-import { git, initGitRepo, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -131,6 +131,57 @@ describe("a run from start to clear", () => {
       expect(r.err).toMatch(/max_concurrent_runs/);
     } finally {
       lease.release();
+    }
+  }, 60_000);
+
+  it("with max_concurrent_runs: 2 a second run is admitted next to an active one, a third is refused", () => {
+    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
+    makeConcurrent(env, 2);
+    const root = env.project().paths.root;
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    try {
+      const second = t.sync(["run", "x", "-p", "demo"]);
+      expect(second.err).not.toMatch(/At most/);
+      expect(second.code).toBe(0);
+      const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+      try {
+        const third = t.sync(["run", "y", "-p", "demo"]);
+        expect(third.code).toBe(1);
+        expect(third.err).toMatch(/run-a/);
+        expect(third.err).toMatch(/run-b/);
+        expect(third.err).toMatch(/max_concurrent_runs: 2/);
+      } finally {
+        b.release();
+      }
+    } finally {
+      a.release();
+    }
+  }, 60_000);
+
+  it("clear of a finished run goes ahead while another run is active (limit 1), but not while that run itself is", () => {
+    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
+    expect(t.sync(["run", "x", "-p", "demo"]).code).toBe(0);
+    const id: string = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
+    const root = env.project().paths.root;
+    const runDir = path.join(env.project().paths.runs, id);
+
+    const self = acquireProjectLock(root, id); // the run is alive (its process holds its lock)
+    try {
+      const refused = t.sync(["clear", id, "-p", "demo"]);
+      expect(refused.code).toBe(1);
+      expect(refused.err).toMatch(new RegExp(id));
+      expect(fs.existsSync(runDir)).toBe(true); // nothing deleted
+    } finally {
+      self.release();
+    }
+
+    const other = acquireProjectLock(root, "other-run");
+    try {
+      const cleared = t.sync(["clear", id, "-p", "demo"]);
+      expect(cleared.code).toBe(0);
+      expect(fs.existsSync(runDir)).toBe(false);
+    } finally {
+      other.release();
     }
   }, 60_000);
 

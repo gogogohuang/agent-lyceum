@@ -171,7 +171,8 @@ export class RunSession {
     }
     const saveState = () => saveRunState(runDir, state);
 
-    const guard = new ProtectedGuard(project);
+    // Concurrent runs: the repo's instruction files the run can touch are the lead worktree's copies; your own tree is never watched (or restored).
+    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
     } else {
@@ -669,6 +670,7 @@ export class RunSession {
         for (const a of members) this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
         log("workspaces", { snapshot: ref, agents: Object.fromEntries(Object.entries(this.batchSpaces).map(([n, w]) => [n, w.dir])) });
       }
+      this.guard.rebase();
       const results = await Promise.all(batch.map((a) => this.wake(a)));
       leadWasLast = batch.some((a) => a.name === project.lead);
       if (batch.some((a) => a.name !== project.lead)) nudged = false;
