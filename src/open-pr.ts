@@ -44,7 +44,7 @@ export function defaultBase(cwd: string, run: CommandRunner): string {
 
 export type OpenPrResult =
   | { status: "opened"; url: string }
-  | { status: "failed"; step: "push" | "create"; reason: string; manual: string[] };
+  | { status: "failed"; step: "push" | "create" | "write"; reason: string; manual: string[] };
 
 /** What happened to a requested pull request; `skipped` means it was asked for but the run could not support it. */
 export type PrOutcome = OpenPrResult | { status: "skipped"; reason: string };
@@ -62,13 +62,20 @@ export interface OpenPrInput {
 
 const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "no output";
 
+/** POSIX single-quote: safe to paste into a shell whatever the string holds. */
+const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
 /** Push the branch and open a pull request against the default branch. Never throws; says how to finish by hand when a step fails. */
 export function openPullRequest(i: OpenPrInput): OpenPrResult {
   const base = defaultBase(i.cwd, i.run);
-  atomicWrite(i.bodyFile, i.body);
+  try {
+    atomicWrite(i.bodyFile, i.body);
+  } catch (e) {
+    return { status: "failed", step: "write", reason: firstLine((e as Error).message ?? String(e)), manual: [] };
+  }
   const createArgs = ["pr", "create", "--head", i.branch, "--base", base, "--title", i.title, "--body-file", i.bodyFile];
-  const manualPush = `git -C ${i.cwd} push -u origin ${i.branch}`;
-  const manualCreate = `gh pr create --head ${i.branch} --base ${base} --title ${JSON.stringify(i.title)} --body-file ${path.resolve(i.bodyFile)}`;
+  const manualPush = `git -C ${sh(i.cwd)} push -u origin ${sh(i.branch)}`;
+  const manualCreate = `gh pr create --head ${sh(i.branch)} --base ${sh(base)} --title ${sh(i.title)} --body-file ${sh(path.resolve(i.bodyFile))}`;
 
   const push = i.run("git", ["push", "-u", "origin", i.branch], i.cwd);
   if (!push.ok) return { status: "failed", step: "push", reason: firstLine(push.out), manual: [manualPush, manualCreate] };

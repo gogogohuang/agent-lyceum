@@ -81,10 +81,8 @@ describe("openPullRequest", () => {
     expect(r.step).toBe("push");
     expect(r.reason).toBe("remote: Permission denied");
     expect(r.manual).toHaveLength(2);
-    expect(r.manual[0]).toContain("git -C");
-    expect(r.manual[0]).toContain("push -u origin b");
-    expect(r.manual[1]).toContain("gh pr create");
-    expect(r.manual[1]).toContain(bodyFile);
+    expect(r.manual[0]).toBe(`git -C '${cwd}' push -u origin 'b'`);
+    expect(r.manual[1]).toBe(`gh pr create --head 'b' --base 'main' --title 'T' --body-file '${path.resolve(bodyFile)}'`);
     expect(f.calls.some((c) => c.cmd === "gh" && c.args[0] === "pr")).toBe(false);
   });
 
@@ -101,5 +99,32 @@ describe("openPullRequest", () => {
       run: fake({ ...base, "git push -u": { ok: true, out: "" }, "gh pr create": { ok: true, out: "done" } }).run,
     });
     expect(silent).toMatchObject({ status: "failed", step: "create" });
+  });
+
+  it("fails with step write, and neither pushes nor calls gh, when the body file cannot be written", () => {
+    const cwd = tmp();
+    const blocker = path.join(tmp(), "a-file");
+    fs.writeFileSync(blocker, "x");
+    const f = fake({ ...base, "git push -u": { ok: true, out: "" }, "gh pr create": { ok: true, out: "https://x/pull/1" } });
+    const r = openPullRequest({ cwd, branch: "b", title: "T", body: "B", bodyFile: path.join(blocker, "pr-body.md"), run: f.run });
+    expect(r).toMatchObject({ status: "failed", step: "write", manual: [] });
+    expect(f.calls.some((c) => c.args[0] === "push" || c.args[0] === "pr")).toBe(false);
+  });
+
+  it("prints manual commands that are safe to paste into a shell", () => {
+    const base2 = tmp();
+    const cwd = path.join(base2, "my repo");
+    fs.mkdirSync(cwd);
+    const bodyFile = path.join(tmp(), "pr-body.md");
+    const title = "fix $HOME and `x` and it's \"quoted\"";
+    const r = openPullRequest({
+      cwd, branch: "agent-lyceum/run-1/lead", title, body: "B", bodyFile,
+      run: fake({ ...base, "git push -u": { ok: false, out: "nope" } }).run,
+    });
+    if (r.status !== "failed") throw new Error("expected failure");
+    expect(r.manual).toEqual([
+      `git -C '${cwd}' push -u origin 'agent-lyceum/run-1/lead'`,
+      `gh pr create --head 'agent-lyceum/run-1/lead' --base 'main' --title 'fix $HOME and \`x\` and it'\\''s "quoted"' --body-file '${path.resolve(bodyFile)}'`,
+    ]);
   });
 });
