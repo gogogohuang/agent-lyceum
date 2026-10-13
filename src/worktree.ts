@@ -9,8 +9,11 @@ import type { DispatcherSettings } from "./schema.js";
 
 export type WorkspaceMode = "shared" | "worktree";
 
-/** Agents share the repo, or each non-lead agent gets its own git worktree. `auto` picks worktrees as soon as agents can run in parallel. */
-export function resolveWorkspaceMode(d: Pick<DispatcherSettings, "workspace_mode" | "max_parallel">): WorkspaceMode {
+/** Agents share the repo, or each non-lead agent gets its own git worktree. `auto` picks worktrees as soon as agents can run in parallel; several concurrent runs always do. */
+export function resolveWorkspaceMode(
+  d: Pick<DispatcherSettings, "workspace_mode" | "max_parallel"> & Partial<Pick<DispatcherSettings, "max_concurrent_runs">>,
+): WorkspaceMode {
+  if ((d.max_concurrent_runs ?? 1) > 1) return "worktree";
   if (d.workspace_mode === "worktree") return "worktree";
   if (d.workspace_mode === "shared") return "shared";
   return d.max_parallel > 1 ? "worktree" : "shared";

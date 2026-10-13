@@ -83,10 +83,15 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     }
   }
 
-  // Parallel agents each need their own checkout, which needs git.
-  if (project.dispatcher.workspace_mode === "shared" && project.dispatcher.max_parallel > 1) {
+  // Parallel agents and concurrent runs each need their own checkout, which needs git.
+  const concurrent = project.dispatcher.max_concurrent_runs > 1;
+  if (concurrent && project.dispatcher.workspace_mode === "shared") {
+    err(`dispatcher.workspace_mode "shared" cannot be combined with max_concurrent_runs > 1: every run needs its own git worktree (use "auto" or "worktree").`);
+  } else if (concurrent && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
+    err(`max_concurrent_runs > 1 needs ${project.dir} to be a git repository (each run works in its own git worktree). Set max_concurrent_runs: 1.`);
+  } else if (project.dispatcher.workspace_mode === "shared" && project.dispatcher.max_parallel > 1) {
     err(`dispatcher.workspace_mode "shared" cannot be combined with max_parallel > 1: parallel agents need separate git worktrees (use "auto" or "worktree").`);
-  } else if (resolveWorkspaceMode(project.dispatcher) === "worktree" && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
+  } else if (!concurrent && resolveWorkspaceMode(project.dispatcher) === "worktree" && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
     err(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead (max_parallel: 1, workspace_mode: auto or shared).`);
   }
 

@@ -96,6 +96,7 @@ team:
 dispatcher:
   max_rounds: 30        # stop after this many agent wake-ups
   max_parallel: 1       # >1 needs non-overlapping "owns" for every non-lead agent, and a git repo
+  max_concurrent_runs: 1  # >1 lets several runs of this project be active at once, each in its own git worktree (needs a git repo); every run's work stays on its own branch
   workspace_mode: auto  # auto = a git worktree per non-lead agent when max_parallel > 1; shared | worktree to force
   wake_timeout_sec: 600
   retry: 1

@@ -54,6 +54,7 @@ export const DispatcherPartial = z
   .object({
     max_rounds: z.number().int().positive().optional(),
     max_parallel: z.number().int().positive().optional(),
+    max_concurrent_runs: z.number().int().positive().optional(),
     wake_timeout_sec: z.number().int().positive().optional(),
     retry: z.number().int().min(0).optional(),
     strict: z.boolean().optional(),
@@ -80,6 +81,8 @@ export const ProjectConfig = z
 export interface DispatcherSettings {
   max_rounds: number;
   max_parallel: number;
+  /** How many runs of one project may be active at once. Above 1, every run works in its own git worktree. */
+  max_concurrent_runs: number;
   wake_timeout_sec: number;
   retry: number;
   strict: boolean;
@@ -92,6 +95,7 @@ export interface DispatcherSettings {
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   max_rounds: 30,
   max_parallel: 1,
+  max_concurrent_runs: 1,
   wake_timeout_sec: 600,
   retry: 1,
   strict: false,

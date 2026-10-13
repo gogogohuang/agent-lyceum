@@ -14,11 +14,17 @@ import type { ResolvedProject } from "../src/config.js";
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
-const settings = (over: Partial<{ max_parallel: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
-  max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
+const settings = (over: Partial<{ max_parallel: number; max_concurrent_runs: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
+  max_rounds: 30, max_parallel: 1, max_concurrent_runs: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
 });
 
 describe("workspace mode", () => {
+  it("uses worktrees for every run when several runs may be active at once", () => {
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2 }))).toBe("worktree");
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2, workspace_mode: "auto" }))).toBe("worktree");
+    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 1 }))).toBe("shared");
+  });
+
   it("uses worktrees when agents can run in parallel, or when asked to", () => {
     expect(resolveWorkspaceMode(settings({}))).toBe("shared");
     expect(resolveWorkspaceMode(settings({ max_parallel: 2 }))).toBe("worktree");
