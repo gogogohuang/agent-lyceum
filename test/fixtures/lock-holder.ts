@@ -1,9 +1,9 @@
-// Helper process for project-lock tests: tries to take the lock, reports, optionally holds it.
+// Helper process for project-lock tests: tries to take a run's lock, reports, optionally holds it.
 import { acquireProjectLock } from "../../src/project-lock.js";
 
-const [root, runId, holdMs] = process.argv.slice(2);
+const [root, runId, holdMs, max, mode] = process.argv.slice(2);
 try {
-  const lease = acquireProjectLock(root, runId);
+  const lease = acquireProjectLock(root, runId, { maxConcurrent: max ? Number(max) : 1, exclusive: mode === "exclusive" });
   process.stdout.write("ACQUIRED\n");
   setTimeout(() => {
     lease.release();
