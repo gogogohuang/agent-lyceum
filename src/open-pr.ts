@@ -5,10 +5,19 @@ import { atomicWrite } from "./fs-util.js";
 /** Runs `git` or `gh` in `cwd`. Injected so tests never touch a network or a real remote. */
 export type CommandRunner = (cmd: "git" | "gh", args: string[], cwd: string) => { ok: boolean; out: string };
 
-/** The real thing: runs outside any agent sandbox, with the user's own git and gh credentials. */
+/**
+ * The real thing: runs outside any agent sandbox, with the user's own git and gh credentials.
+ * Prompts are off, so a missing credential fails at once instead of hanging until the timeout.
+ */
 export const realRunner: CommandRunner = (cmd, args, cwd) => {
   try {
-    const out = execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 });
+    const out = execFileSync(cmd, args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" },
+    });
     return { ok: true, out: out.trim() };
   } catch (e) {
     const err = e as { stderr?: string | Buffer; message: string };
@@ -50,7 +59,10 @@ export type OpenPrResult =
 export type PrOutcome = OpenPrResult | { status: "skipped"; reason: string };
 
 export interface OpenPrInput {
-  /** The lead's worktree: where the branch is checked out. */
+  /**
+   * The main repo: never a directory an agent can write. An agent can rewrite its worktree's git pointers and so plant hooks or
+   * config that git would run here, outside the sandbox. The branch is in the shared refs, so pushing it from the main repo works.
+   */
   cwd: string;
   branch: string;
   title: string;

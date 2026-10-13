@@ -645,12 +645,34 @@ describe("dispatcher integration", () => {
       expect(summary.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
       expect(loadRunState(runDir).pr_url).toBe("https://github.com/o/r/pull/9");
       expect(pr.calls.map((c) => `${c.cmd} ${c.args[0]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
-      expect(pr.calls.every((c) => c.cwd === leadRoot)).toBe(true); // git and gh run in the lead's worktree, not in your repo
-      expect(leadRoot).not.toBe(env.repo);
+      const mainTop = git(env.repo, "rev-parse", "--show-toplevel");
+      expect(pr.calls.every((c) => c.cwd === mainTop)).toBe(true); // git and gh run in your repo, never in the worktree the lead can write
+      expect(leadRoot).not.toBe(mainTop);
       expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", summary.resultBranch!.branch]);
       const body = fs.readFileSync(path.join(runDir, "pr-body.md"), "utf8");
       // the description is the lead's report as written plus the one footer line, so the dispatcher adds no name of its own
       expect(body).toBe(`${FULL_DONE.trim()}\n\n${PR_FOOTER}\n`);
+    });
+
+    it("stores the run as ended before the network step starts", async () => {
+      concurrentRepo();
+      let runDirSeen = "";
+      let seen: { end_reason?: string; outcome?: string; pr_url?: string } | undefined;
+      const pr = fakePr();
+      const run: CommandRunner = (cmd, args, cwd) => {
+        if (cmd === "git" && args[0] === "push") seen = JSON.parse(fs.readFileSync(path.join(runDirSeen, "state.json"), "utf8"));
+        return pr.run(cmd, args, cwd);
+      };
+      const { summary, runDir } = await start(async (i) => {
+        runDirSeen = path.join(env.project().paths.runs, "run-1");
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: run });
+      expect(seen).toMatchObject({ end_reason: "done", outcome: "completed" });
+      expect(seen!.pr_url).toBeUndefined();
+      expect(summary.pr).toMatchObject({ status: "opened" });
+      expect(loadRunState(runDir).pr_url).toBe("https://github.com/o/r/pull/9");
     });
 
     it("does nothing when done does not ask for a PR", async () => {

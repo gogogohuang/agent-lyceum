@@ -61,7 +61,8 @@ export function isGitRepo(dir: string): boolean {
   return tryGit(dir, ["rev-parse", "--is-inside-work-tree"]) === "true";
 }
 
-const toplevel = (dir: string): string => git(dir, ["rev-parse", "--show-toplevel"]);
+/** The main repository's top-level directory for `dir`. */
+export const toplevel = (dir: string): string => git(dir, ["rev-parse", "--show-toplevel"]);
 
 /** Files in the repo with changes nobody committed (modified, staged or new and not ignored). Paths are relative to the repo root. */
 export function dirtyPaths(dir: string): string[] {

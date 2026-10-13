@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultBase, openPullRequest, PR_FOOTER, prBody, prTitle, type CommandRunner } from "../src/open-pr.js";
+import { defaultBase, openPullRequest, PR_FOOTER, prBody, prTitle, realRunner, type CommandRunner } from "../src/open-pr.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -126,5 +127,57 @@ describe("openPullRequest", () => {
       `git -C '${cwd}' push -u origin 'agent-lyceum/run-1/lead'`,
       `gh pr create --head 'agent-lyceum/run-1/lead' --base 'main' --title 'fix $HOME and \`x\` and it'\\''s "quoted"' --body-file '${path.resolve(bodyFile)}'`,
     ]);
+  });
+});
+
+describe("where the dispatcher pushes from", () => {
+  const sh = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const saved = { global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM };
+  afterEach(() => {
+    for (const [k, v] of [["GIT_CONFIG_GLOBAL", saved.global], ["GIT_CONFIG_NOSYSTEM", saved.nosystem]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  /** A repo with a linked worktree whose git dir was redirected (as an agent could) to a fake common dir with a pre-push hook. */
+  function plantedRepo() {
+    process.env.GIT_CONFIG_GLOBAL = path.join(tmp(), "none"); // the user's own hooksPath or hooks must not decide the outcome
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    const root = fs.realpathSync(tmp());
+    const remote = path.join(root, "remote.git");
+    const repo = path.join(root, "repo");
+    const wt = path.join(root, "wt");
+    const marker = path.join(root, "hook-ran");
+    sh(root, "init", "-q", "--bare", remote);
+    sh(root, "init", "-q", "-b", "main", repo);
+    sh(repo, "config", "user.email", "t@t");
+    sh(repo, "config", "user.name", "t");
+    fs.writeFileSync(path.join(repo, "a.txt"), "a\n");
+    sh(repo, "add", "a.txt");
+    sh(repo, "commit", "-q", "-m", "init");
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "worktree", "add", "-q", "-b", "lead-branch", wt);
+    // The planting: a copy of the common dir with a hook in it, and the worktree's commondir pointed at the copy.
+    const gitDir = sh(wt, "rev-parse", "--absolute-git-dir");
+    const fake = path.join(root, "fake-common");
+    fs.cpSync(path.join(repo, ".git"), fake, { recursive: true });
+    fs.mkdirSync(path.join(fake, "hooks"), { recursive: true });
+    fs.writeFileSync(path.join(fake, "hooks", "pre-push"), `#!/bin/sh\necho planted > '${marker}'\nexit 0\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(gitDir, "commondir"), `${fake}\n`);
+    return { repo, wt, marker };
+  }
+
+  it.skipIf(process.platform === "win32")("a hook planted through the worktree's git dir runs when pushing from the worktree (control)", () => {
+    const { wt, marker } = plantedRepo();
+    realRunner("git", ["push", "-u", "origin", "lead-branch"], wt);
+    expect(fs.existsSync(marker)).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("and does not run when pushing the same branch from the main repo", () => {
+    const { repo, marker } = plantedRepo();
+    const r = realRunner("git", ["push", "-u", "origin", "lead-branch"], repo);
+    expect(r.ok).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
   });
 });

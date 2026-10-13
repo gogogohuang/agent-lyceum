@@ -15,7 +15,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, type AgentWorkspace, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -612,7 +612,7 @@ export class RunSession {
    */
   private maybeOpenPr(endReason: EndReason, outcome: RunOutcome, rb: ResultBranch | undefined): PrOutcome | undefined {
     if (!this.openPrRequested) return undefined;
-    const { say, log, state, runDir } = this;
+    const { say, log, state, runDir, project } = this;
     const skip = (reason: string): PrOutcome => {
       this.note(`A pull request was asked for but not opened: ${reason}`);
       return { status: "skipped", reason };
@@ -623,7 +623,8 @@ export class RunSession {
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 
     const result = openPullRequest({
-      cwd: this.leadSpace.root,
+      // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
+      cwd: toplevel(project.dir),
       branch: rb.branch,
       title: prTitle(state.task_summary),
       body: prBody(this.doneMessage?.body ?? ""),
@@ -730,7 +731,14 @@ export class RunSession {
     state.verification = this.doneVerification;
     state.ended_at = new Date().toISOString();
     const resultBranch = this.finishLead(endReason);
-    const pr = this.maybeOpenPr(endReason, outcome, resultBranch);
+    let pr: PrOutcome | undefined;
+    if (this.openPrRequested) {
+      // The network step can take minutes: the run is stored as ended first, so an interruption there loses nothing and a resume does not push again.
+      this.saveState();
+      if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
+      this.pendingDoneFile = undefined;
+      pr = this.maybeOpenPr(endReason, outcome, resultBranch);
+    }
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
