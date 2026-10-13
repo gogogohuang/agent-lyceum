@@ -1,6 +1,6 @@
 # 14 run 結束時由 dispatcher 開 PR
 
-狀態：設計草案，已與使用者確認「由 dispatcher 開 PR」、「是否開 PR 直接依 task 內容決定」與「只有設為 team lead 的 agent 才能觸發沙箱外的動作」，尚未實作。
+狀態：已實作（計畫：docs/plans/2026-10-13-14-open-pr.md）。
 
 ## 14.1 問題
 
@@ -20,10 +20,11 @@
 | 7 | 推送或 `gh` 失敗不改變 run 的 `outcome`：分支與 commit 保留，結果訊息印出可手動執行的 `git push` 與 `gh pr create` 指令。 |
 | 8 | PR 開出後 run 即結束（`end_reason: done`），結果訊息印出 PR 網址並寫入 `state.json`（`pr_url`）。不等 CI 或 merge，不自動 merge。 |
 | 9 | 沙箱外的動作只有團隊設為 `lead` 的 agent 能觸發（使用者規則，2026-10-13）：`open_pr` 只認 lead 的 `done`（`run --agent` 的單獨 agent 是它那個一人團隊的 lead）；非 lead 的 agent 即使在信件或回覆文字裡寫了 `open_pr: true` 也一律忽略，不開 PR、不報錯。lead 本身不拿到不受限的 shell：沙箱設定不變，commit、push、`gh pr create` 都由 dispatcher 在沙箱外執行（Claude 與 Codex 都適用，不需要 `allowUnsandboxedCommands` 或 `danger-full-access`）。判斷依據是設定裡的 `project.lead`，程式與 prompt 不寫死任何 agent 名稱。 |
+| 10 | （開工前補）PR 要從 lead 分支開，而這個分支只有「有自己 worktree 的 run」（`max_concurrent_runs > 1`）才有。沒有 lead worktree 的 run 要求開 PR 時不開，在結果與 `notes` 說明並指向 `max_concurrent_runs`，不改 `outcome`。不為了開 PR 而替預設模式的 run 另外建分支或提交使用者的 working tree。 |
 
 ## 14.3 與其他 spec 的關係
 
-- 需要 run 結束時有一條乾淨的分支可提交。這正是 [07](07-concurrent-runs.md) 決議 6、7（lead worktree 與結束時提交）要提供的；07 尚未實作，實作 14 時一併做其中「lead 分支＋結束提交」的部分，或先做 07。
+- 07 已實作（lead worktree 與結束時提交）；14 直接使用 07 的 lead 分支。
 
 ## 14.4 影響的檔案
 

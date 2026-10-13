@@ -45,6 +45,8 @@
 
 `dispatcher.max_concurrent_runs > 1` 時，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch；見 [README](../README.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
 
+如果 lead 的 done 要求開 PR（`open_pr: true`），且 run 在自己的 branch 上完成，run 會開 PR；見 [README](../README.zh-TW.md#開-pr) 的「開 PR」。
+
 ## call
 
 **用法:** `call <agent> ["task"] [--task-file f] [--dir d]`
@@ -158,6 +160,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 - 設定（會印出每個 agent 的防護等級）；
 - git（平行 run 需要）；
+- 是否有 `gh` 與 `origin` 可用來開 PR（`max_concurrent_runs > 1` 時）；
 - 專案鎖；
 - 各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。
 
