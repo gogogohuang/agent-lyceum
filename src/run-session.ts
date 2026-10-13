@@ -15,11 +15,12 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, type AgentWorkspace, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
+import { openPullRequest, prBody, prTitle, realRunner, type CommandRunner, type PrOutcome } from "./open-pr.js";
 
 export { newRunId };
 export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
@@ -49,6 +50,8 @@ export interface RunSummary {
   askReplyPath?: string;
   /** Concurrent runs: the branch holding the lead's work. */
   resultBranch?: ResultBranch;
+  /** The lead asked for a pull request: what became of it. */
+  pr?: PrOutcome;
 }
 
 export interface RunOptions {
@@ -61,6 +64,8 @@ export interface RunOptions {
   resume?: RunState;
   runDir: string;
   invoker?: Invoker;
+  /** Runs git and gh for the pull request. Tests pass a fake; the default is the real thing. */
+  pr?: CommandRunner;
   /** Stop the run when this fires: running agents are killed, unread mail is kept, the run ends `cancelled` and can be resumed. */
   signal?: AbortSignal;
   log?: (line: string) => void;
@@ -88,6 +93,9 @@ export class RunSession {
   private doneOutcome: RunOutcome | undefined;
   private doneNote: string | undefined;
   private doneVerification: string | undefined;
+  /** The accepted `done` carried `open_pr: true` (only the lead can send `done`). */
+  private openPrRequested = false;
+  private readonly prRunner: CommandRunner;
   /** Inbox mail each agent in the current batch is working on; it is marked read only after its output is routed. */
   private readonly claims = new Map<string, ClaimRecord>();
   private readonly noSessionNoted = new Set<string>();
@@ -185,6 +193,7 @@ export class RunSession {
     this.leadSpace = leadSpace;
 
     this.opts = opts;
+    this.prRunner = opts.pr ?? realRunner;
     this.resume = resume;
     this.invoke = invoke;
     this.say = say;
@@ -478,6 +487,7 @@ export class RunSession {
     }
     if (route.done) {
       this.doneMessage = { subject: route.done.subject, body: route.done.body };
+      this.openPrRequested = route.done.meta.open_pr === true;
       const resolved = resolveDoneOutcome(must(contract, "completion contract of the done report"), state.done_rejections ?? 0, state.blocked_integrations ?? []);
       this.doneOutcome = resolved.outcome;
       this.doneNote = resolved.note;
@@ -596,6 +606,41 @@ export class RunSession {
     }
   }
 
+  /**
+   * The lead asked for a pull request in `done`. It is opened from the lead's branch, by the dispatcher, outside any agent sandbox.
+   * A request that cannot be honoured is reported and noted; it never changes how the run turned out.
+   */
+  private maybeOpenPr(endReason: EndReason, outcome: RunOutcome, rb: ResultBranch | undefined): PrOutcome | undefined {
+    if (!this.openPrRequested) return undefined;
+    const { say, log, state, runDir, project } = this;
+    const skip = (reason: string): PrOutcome => {
+      this.note(`A pull request was asked for but not opened: ${reason}`);
+      return { status: "skipped", reason };
+    };
+    if (endReason !== "done" || outcome !== "completed") return skip(`the run did not end completed (${endReason}, outcome ${outcome}).`);
+    if (!this.leadSpace) return skip("this run has no worktree of its own, so there is no branch to push. Set dispatcher.max_concurrent_runs: 2 (or more) in project.yaml.");
+    if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
+    if (!rb.files) return skip(`${rb.branch} has no file changes.`);
+
+    const result = openPullRequest({
+      // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
+      cwd: toplevel(project.dir),
+      branch: rb.branch,
+      title: prTitle(state.task_summary),
+      body: prBody(this.doneMessage?.body ?? ""),
+      bodyFile: path.join(runDir, "pr-body.md"),
+      run: this.prRunner,
+    });
+    log("pull-request", { ...result });
+    if (result.status === "opened") {
+      state.pr_url = result.url;
+      say(`  pull request opened: ${result.url}`);
+    } else {
+      this.note(`The pull request could not be opened (${result.step}: ${result.reason}). The branch ${rb.branch} is kept.${result.manual.length ? ` To finish by hand:\n${result.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
+    }
+    return result;
+  }
+
 
   /** On resume: sort out what the interrupted process left behind before anything is woken. */
   private recover(): void {
@@ -686,9 +731,17 @@ export class RunSession {
     state.verification = this.doneVerification;
     state.ended_at = new Date().toISOString();
     const resultBranch = this.finishLead(endReason);
+    let pr: PrOutcome | undefined;
+    if (this.openPrRequested) {
+      // The network step can take minutes: the run is stored as ended first, so an interruption there loses nothing and a resume does not push again.
+      this.saveState();
+      if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
+      this.pendingDoneFile = undefined;
+      pr = this.maybeOpenPr(endReason, outcome, resultBranch);
+    }
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch };
+    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
   }
 }

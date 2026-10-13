@@ -31,6 +31,10 @@ const PR_ATTRIBUTION_RULE =
 const NO_DAEMONS_RULE =
   "- Never start a server, daemon or watcher (pm2, `serve`, `dev`, `--watch`) in the foreground of a command, and never leave one running. Run it in the background, bound every such command with `timeout 60`, stop what you started before you finish, and if it cannot start (e.g. a sandbox denies binding a port) report that as unverified instead of retrying.";
 
+/** Only the lead (or a solo agent, the lead of a team of one) can send `done`, so only it can ask for a pull request. */
+const OPEN_PR_RULE =
+  "Add the frontmatter line `open_pr: true` to `done` only when the user's task explicitly asks for a pull request; otherwise leave it out. It only has an effect when the run ends `completed` with changes on its own branch, and agent-lyceum (not you) then pushes the branch and opens the pull request. Keep agent and role names out of the report, because it becomes the pull request description.";
+
 export function readPersona(agent: ResolvedAgent): string {
   return fs.readFileSync(agent.agentMd, "utf8").trim();
 }
@@ -63,7 +67,7 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
       "## Not done",
       "```",
       "",
-      "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all four headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report.",
+      "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all four headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report. " + OPEN_PR_RULE,
     );
   }
   lines.push("", "## Memory");
@@ -149,7 +153,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
     isLead
-      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run."
+      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run. " + OPEN_PR_RULE
       : "- `done` has no required headings.",
     ...(agent.canAskUser
       ? [

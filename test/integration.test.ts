@@ -10,7 +10,8 @@ import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
-import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { PR_FOOTER, type CommandRunner } from "../src/open-pr.js";
 import type { ResolvedProject } from "../src/config.js";
 
 let env: TestEnv;
@@ -225,11 +226,11 @@ describe("dispatcher integration", () => {
       `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Not done\nNone\n" : "body"}\n`,
     );
 
-  async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {
+  async function start(invoker: Parameters<typeof runTeam>[0]["invoker"], opts: { pr?: CommandRunner } = {}) {
     const project = env.project();
     const runDir = path.join(project.paths.runs, "run-1");
     const task = prepareTask({ text: "go", cwd: env.root, runDir });
-    const summary = await runTeam({ project, task, runDir, invoker, log: () => {} });
+    const summary = await runTeam({ project, task, runDir, invoker, log: () => {}, pr: opts.pr });
     return { summary, runDir, bound: bindRunProject(env.project(), runDir, "run") };
   }
   const ask = (p: ResolvedProject) =>
@@ -597,5 +598,212 @@ describe("dispatcher integration", () => {
     expect(s.outcome).toBe("completed");
     expect(loadRunState(runDir).blocked_integrations ?? []).toEqual([]);
     expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("feature\n");
+  });
+
+  /** A runner that records every call and answers like a healthy git + gh. */
+  function fakePr(over: Partial<Record<string, { ok: boolean; out: string }>> = {}) {
+    const calls: { cmd: string; args: string[]; cwd: string }[] = [];
+    const answers: Record<string, { ok: boolean; out: string }> = {
+      "git symbolic-ref": { ok: true, out: "origin/main" },
+      "git push": { ok: true, out: "" },
+      "gh pr": { ok: true, out: "https://github.com/o/r/pull/9\n" },
+      ...(over as Record<string, { ok: boolean; out: string }>),
+    };
+    const run: CommandRunner = (cmd, args, cwd) => {
+      calls.push({ cmd, args, cwd });
+      return answers[`${cmd} ${args[0]}`] ?? { ok: false, out: "unexpected" };
+    };
+    return { run, calls };
+  }
+
+  /** A `done` mail from `from` with extra frontmatter lines (e.g. "open_pr: true") and the given outcome. */
+  function leadDone(i: { project: ResolvedProject }, extra: string, outcome = "completed", from = "lead") {
+    write(
+      path.join(outboxDir(i.project, from), `${Math.random()}.md`),
+      `---\nto: ${from}\ntype: done\nsubject: bye\noutcome: ${outcome}\n${extra}---\n\n${FULL_DONE}\n`,
+    );
+  }
+
+  describe("opening a pull request", () => {
+    function concurrentRepo() {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      makeConcurrent(env, 2);
+    }
+
+    it("pushes the lead's branch and opens a PR when the lead's completed done asks for it", async () => {
+      concurrentRepo();
+      const pr = fakePr();
+      let leadRoot = "";
+      const { summary, runDir } = await start(async (i) => {
+        leadRoot = i.workspace!.root;
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.outcome).toBe("completed");
+      expect(summary.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
+      expect(loadRunState(runDir).pr_url).toBe("https://github.com/o/r/pull/9");
+      expect(pr.calls.map((c) => `${c.cmd} ${c.args[0]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+      const mainTop = git(env.repo, "rev-parse", "--show-toplevel");
+      expect(pr.calls.every((c) => c.cwd === mainTop)).toBe(true); // git and gh run in your repo, never in the worktree the lead can write
+      expect(leadRoot).not.toBe(mainTop);
+      expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", summary.resultBranch!.branch]);
+      const body = fs.readFileSync(path.join(runDir, "pr-body.md"), "utf8");
+      // the description is the lead's report as written plus the one footer line, so the dispatcher adds no name of its own
+      expect(body).toBe(`${FULL_DONE.trim()}\n\n${PR_FOOTER}\n`);
+    });
+
+    it("stores the run as ended before the network step starts", async () => {
+      concurrentRepo();
+      let runDirSeen = "";
+      let seen: { end_reason?: string; outcome?: string; pr_url?: string } | undefined;
+      const pr = fakePr();
+      const run: CommandRunner = (cmd, args, cwd) => {
+        if (cmd === "git" && args[0] === "push") seen = JSON.parse(fs.readFileSync(path.join(runDirSeen, "state.json"), "utf8"));
+        return pr.run(cmd, args, cwd);
+      };
+      const { summary, runDir } = await start(async (i) => {
+        runDirSeen = path.join(env.project().paths.runs, "run-1");
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: run });
+      expect(seen).toMatchObject({ end_reason: "done", outcome: "completed" });
+      expect(seen!.pr_url).toBeUndefined();
+      expect(summary.pr).toMatchObject({ status: "opened" });
+      expect(loadRunState(runDir).pr_url).toBe("https://github.com/o/r/pull/9");
+    });
+
+    it("does nothing when done does not ask for a PR", async () => {
+      concurrentRepo();
+      const pr = fakePr();
+      const { summary, runDir } = await start(async (i) => {
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.pr).toBeUndefined();
+      expect(pr.calls).toEqual([]);
+      expect(loadRunState(runDir).pr_url).toBeUndefined();
+      expect(fs.existsSync(path.join(runDir, "pr-body.md"))).toBe(false);
+    });
+
+    it("ignores open_pr unless it is the boolean true", async () => {
+      concurrentRepo();
+      const pr = fakePr();
+      const { summary } = await start(async (i) => {
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, 'open_pr: "yes"\n');
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.pr).toBeUndefined();
+      expect(pr.calls).toEqual([]);
+    });
+
+    it("only the lead can ask: a member's mail with open_pr is never read", async () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      makeParallel(env);
+      makeConcurrent(env, 2);
+      const pr = fakePr();
+      let leadCalls = 0;
+      const { summary } = await start(async (i) => {
+        if (i.agent.name === "lead") {
+          if (++leadCalls === 1) {
+            mail(i.project, "lead", "fe-member", "job", "task");
+          } else {
+            leadDone(i, "");
+          }
+        } else {
+          write(path.join(i.workspace!.dir, "src/web/feature.txt"), "built\n");
+          write(
+            path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`),
+            `---\nto: lead\ntype: reply\nsubject: finished\nopen_pr: true\n---\n\nbody of finished\n`,
+          );
+        }
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.outcome).toBe("completed");
+      expect(summary.pr).toBeUndefined();
+      expect(pr.calls).toEqual([]);
+    });
+
+    it("does not open a PR for a run that did not complete, and says why", async () => {
+      concurrentRepo();
+      const pr = fakePr();
+      const { summary, runDir } = await start(async (i) => {
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "open_pr: true\n", "partial");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.outcome).toBe("partial");
+      expect(summary.pr).toMatchObject({ status: "skipped" });
+      expect(pr.calls).toEqual([]);
+      expect(loadRunState(runDir).notes?.join("\n")).toMatch(/pull request was asked for but not opened/);
+    });
+
+    it("does not open a PR when the lead's branch has no changes", async () => {
+      concurrentRepo();
+      const pr = fakePr();
+      const { summary } = await start(async (i) => {
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.pr).toMatchObject({ status: "skipped", reason: expect.stringMatching(/no file changes/) });
+      expect(pr.calls).toEqual([]);
+    });
+
+    it("does not open a PR for a run without its own worktree, and points at max_concurrent_runs", async () => {
+      env = makeEnv();
+      initGitRepo(env.repo); // max_concurrent_runs stays 1: the lead works in the repo itself
+      const pr = fakePr();
+      const { summary } = await start(async (i) => {
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.outcome).toBe("completed");
+      expect(summary.pr).toMatchObject({ status: "skipped", reason: expect.stringMatching(/max_concurrent_runs/) });
+      expect(pr.calls).toEqual([]);
+    });
+
+    it("keeps the outcome and the branch when the push fails, and prints how to finish by hand", async () => {
+      concurrentRepo();
+      const pr = fakePr({ "git push": { ok: false, out: "remote: denied" } });
+      const { summary, runDir } = await start(async (i) => {
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        leadDone(i, "open_pr: true\n");
+        return OK;
+      }, { pr: pr.run });
+      expect(summary.outcome).toBe("completed");
+      expect(summary.pr).toMatchObject({ status: "failed", step: "push", reason: "remote: denied" });
+      expect(loadRunState(runDir).pr_url).toBeUndefined();
+      expect(git(env.repo, "branch", "--list", summary.resultBranch!.branch)).toContain("run-1/lead");
+      expect(loadRunState(runDir).notes?.join("\n")).toMatch(/push -u origin/);
+    });
+
+    it("a solo agent, which is its own lead, can ask for a PR from its branch", async () => {
+      concurrentRepo();
+      const project = env.project();
+      const runDir = path.join(project.paths.runs, "run-1");
+      const task = prepareTask({ text: "go", cwd: env.root, runDir });
+      const pr = fakePr();
+      const summary = await runTeam({
+        project,
+        task,
+        runDir,
+        soloAgent: "fe-member",
+        log: () => {},
+        pr: pr.run,
+        invoker: async (i) => {
+          write(path.join(i.workspace!.dir, "src/web/solo.txt"), "solo\n");
+          leadDone(i, "open_pr: true\n", "completed", "fe-member");
+          return OK;
+        },
+      });
+      expect(summary.outcome).toBe("completed");
+      expect(summary.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
+      expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", "agent-lyceum/run-1/fe-member"]);
+    });
   });
 });

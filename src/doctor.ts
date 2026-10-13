@@ -3,12 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
+import { findOnPath } from "./fs-util.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
-import { dirtyPaths, isGitRepo, resolveWorkspaceMode } from "./worktree.js";
+import { dirtyPaths, git, isGitRepo, resolveWorkspaceMode } from "./worktree.js";
 
 export type Cap = "yes" | "no" | "unknown";
 
@@ -162,6 +163,23 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
         checks.push({ level: "warn", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: a parallel run would refuse to start until they are committed or stashed.` });
       } else checks.push({ level: "ok", subject: "git", message: "Repo is clean; parallel runs can start." });
     }
+  }
+
+  if (project.dispatcher.max_concurrent_runs > 1 && fs.existsSync(project.dir) && isGitRepo(project.dir)) {
+    const missing: string[] = [];
+    if (!findOnPath("gh", opts.env?.PATH ?? process.env.PATH)) missing.push("`gh` is not on PATH");
+    let remotes = "";
+    try {
+      remotes = git(project.dir, ["remote"]);
+    } catch {
+      /* no remotes readable */
+    }
+    if (!remotes.split(/\s+/).includes("origin")) missing.push("the repo has no `origin` remote");
+    checks.push(
+      missing.length
+        ? { level: "info", subject: "pr", message: `A run cannot open a pull request (a lead asks for one with \`open_pr: true\`): ${missing.join("; ")}.` }
+        : { level: "ok", subject: "pr", message: "`gh` and `origin` found: a run can open a pull request when the lead asks for one." },
+    );
   }
 
   for (const lock of listRunLocks(project.paths.root)) {

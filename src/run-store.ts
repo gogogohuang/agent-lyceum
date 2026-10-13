@@ -87,6 +87,8 @@ export interface RunState {
   result_branch?: ResultBranch;
   /** Set when the run started with the lead in its own worktree (max_concurrent_runs > 1 then); its resumes keep that, whatever the config says later. */
   lead_workspace?: true;
+  /** The pull request the dispatcher opened for this run (when the lead asked for one and it worked). */
+  pr_url?: string;
   sessions: Record<string, string>;
   output_tokens: number;
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
