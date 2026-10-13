@@ -31,7 +31,7 @@ npx agent-lyceum status
 | 診斷 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
 | 執行 | `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
 | 執行 | `resume [run-id] [--answer] [-p name]` | 接續被中斷或失敗的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
-| 執行 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
+| 執行 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
 | 執行 | `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
 | 執行 | `tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#tidy) |
 | 執行 | `tidy --undo <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#tidy) |
@@ -89,7 +89,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
     ├── project.yaml                  # 團隊、repo 路徑、覆寫設定
     ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶
     ├── shared/common/COMMON.md
-    ├── lock.json                     # run 執行期間持有：同一專案同時只能有一個 run
+    ├── locks/<run-id>.json           # 該 run 執行期間持有（同時最多 dispatcher.max_concurrent_runs 個）
     ├── task-memory/<run-id>/<agent>/   # 任務記憶：每次 run 獨立，不與其他任務共用
     └── runs/<run-id>/{task.md, log.jsonl, state.json, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
@@ -100,7 +100,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 # project.yaml
 dir: ~/code/web-app
 team: { lead: lead }
-dispatcher: { max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto, log_max_bytes: 8388608 }
+dispatcher: { max_rounds: 30, max_parallel: 1, max_concurrent_runs: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto, log_max_bytes: 8388608 }
 agents:
   lead:      { resume: true, can_message: all, can_edit_agent_md: true }
   fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
@@ -110,7 +110,7 @@ agents:
 
 Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`owns`（repo glob）。
 
-`doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository。
+`doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在、記憶資料夾互不重疊，且當 `max_parallel > 1` 時，每個非 lead 的 agent 都必須有互不重疊的 `owns`，repo 也必須是 git repository；而 `max_concurrent_runs > 1` 時，repo 必須是 git repository，且 `workspace_mode` 不能是 `shared`。
 
 ## 一次執行如何運作
 
@@ -122,6 +122,21 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或喚醒次數達到 `max_rounds`。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗會重試一次，之後以失敗訊息通知 lead（若 lead 本身失敗，則整個 run 中止）。
 
 平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。此時每個非 lead 的 agent 都在**自己的 git worktree**（`projects/<name>/worktrees/<run-id>/<agent>`，branch `agent-lyceum/<run-id>/<agent>`）工作；worktree 是從喚醒當下 repo 的快照（`refs/agent-lyceum/<run-id>/base-<n>`，包含 lead 尚未提交的修改與新增、未被 ignore 的檔案）切出來的，你的 HEAD、branch 與工作目錄都不會被動到。`dispatcher.workspace_mode` 可設為 `auto`（`max_parallel > 1` 時用 worktree）、`worktree` 或 `shared`；`shared` 不能與平行 agent 並用。平行 run 在 repo 有你自己未提交的修改時，或 repo 不是 git repository 時，會拒絕啟動（請改為序列執行）。成員完成後，dispatcher 會提交它 worktree 中的修改，並在 lead 讀到該成員的信之前，把變更套用到你的工作目錄（不動你的 index 與 HEAD）。每個被改動的路徑都會先檢查：必須在該成員的 `owns` 內（rename 與刪除也算）、不得是 `CLAUDE.md`／`AGENTS.md`，symlink 不得指向專案或該成員 `owns` 之外。若同一檔案在成員的快照之後又在你的 repo 被改過、檢查未通過，或 `git apply` 失敗，就一個檔案都不套用：成果保留在它的 branch 與 worktree，報告與 patch 寫到 `runs/<run-id>/integration/`，並通知 lead，且這個 run 不能以 `completed` 結束（會以 `blocked` 結束）。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
+
+### 同時執行多個 task
+
+預設一個專案一次只跑一個 task。設定 `dispatcher.max_concurrent_runs: N`（N > 1，需要 git repository）後，同一專案最多可有 N 個 run 同時進行；再多開一個會被拒絕，並列出擋住的 run。此模式下**每個** run（包括沒有平行成員的 run，以及單獨的 `run --agent <name>`）都在自己的 git worktree 工作：lead 在 `projects/<name>/worktrees/<run-id>/<lead>`、branch 為 `agent-lyceum/<run-id>/<lead>`，成員的 worktree 則從 lead 的內容分出。run 從你 repo 的 `HEAD` 起跑，所以允許你有未提交的修改，但這些修改**不會**在其中（啟動訊息會寫出有幾個檔案）。你的工作目錄、index 與 HEAD 一律不會被動到。
+
+- **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），lead 的成果會一次提交在它的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。停下來向你提問（`waiting`）的 run 還沒結束：不會提交、也不會印 merge 提示；成果留在 lead 的 worktree，`resume` 會在同一個 worktree 繼續。
+- **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`）。`resume` 沿用 run 啟動時的方式，而不是看目前的設定：以併發模式啟動的 run，即使你之後調低 `max_concurrent_runs`，仍會在它的 worktree 接續；以非併發模式啟動的 run，即使你之後調高，仍以非併發方式接續。這個設定只決定同時可有幾個 run，以及新的 run 怎麼做。
+- **`tidy`：** `tidy` 與 `tidy --undo` 需要獨占專案：有任何 run 在執行時會拒絕，執行期間也不能啟動任何 run，與 `max_concurrent_runs` 的值無關。
+- **`clear`：** lead 的 branch 尚未合併時，`clear <run-id>` 會拒絕（用 `--keep-worktrees` 可保留它）。當機 run 留下的鎖用 `clear --lock [run-id] [-p name] --force` 移除；有多把鎖時要指定是哪個 run。
+
+已知限制：
+
+- agent 程序數量最多可達 `max_concurrent_runs × max_parallel`，沒有全域上限。
+- `can_edit_agent_md: true` 的 lead 仍可直接修改你 repo 的 `CLAUDE.md`／`AGENTS.md`。
+- 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 
 ## 網路存取（`allow_web`）
 

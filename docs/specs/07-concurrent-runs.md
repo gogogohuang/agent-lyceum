@@ -1,6 +1,6 @@
 # 07 同一專案同時跑多個 task
 
-狀態：設計已與使用者逐題確認（grilling），尚未實作。
+狀態：已實作（計畫：docs/plans/2026-10-07-07-concurrent-runs.md）。
 
 ## 7.1 問題
 

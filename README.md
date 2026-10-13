@@ -31,7 +31,7 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
 | Run | `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
 | Run | `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
-| Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
+| Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
 | Run | `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
 | Run | `tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#tidy) |
 | Run | `tidy --undo <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#tidy) |
@@ -89,7 +89,7 @@ Changes take effect on the next session start. If the pane shows `無法取得�
     ├── project.yaml                  # team, repo dir, overrides
     ├── agents/<agent>/{AGENT.md?, memory/}   # project-level persona (optional) + project memory
     ├── shared/common/COMMON.md
-    ├── lock.json                     # held while a run is active: one run per project
+    ├── locks/<run-id>.json           # held while that run is active (up to dispatcher.max_concurrent_runs at once)
     └── runs/<run-id>/{task.md, log.jsonl, state.json, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
 
@@ -99,7 +99,7 @@ Changes take effect on the next session start. If the pane shows `無法取得�
 # project.yaml
 dir: ~/code/web-app
 team: { lead: lead }
-dispatcher: { max_rounds: 30, max_parallel: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto, log_max_bytes: 8388608 }
+dispatcher: { max_rounds: 30, max_parallel: 1, max_concurrent_runs: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: auto, log_max_bytes: 8388608 }
 agents:
   lead:      { resume: true, can_message: all, can_edit_agent_md: true }
   fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
@@ -109,7 +109,7 @@ agents:
 
 Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `owns` (repo globs).
 
-Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository.
+Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, memory dirs don't overlap, and with `max_parallel > 1` every non-lead agent needs non-overlapping `owns` and the repo must be a git repository, and with `max_concurrent_runs > 1` the repo must be a git repository and `workspace_mode` must not be shared.
 
 ## How a run works
 
@@ -121,6 +121,21 @@ Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template h
 5. The run ends when the lead sends `type: done`, when all mailboxes are empty, or after `max_rounds` wake-ups. A `done` must declare `outcome: completed|partial|blocked|failed` in its frontmatter and carry `## Result`, `## Files`, `## Verification`, `## Not done`; `completed` also needs every `## Steps` item ticked. A `done` that breaks this is sent back to the lead (twice at most, then it is kept as `partial`). Agent-lyceum does not verify what the lead reports. A failed wake-up is retried once, then reported to the lead as a failure message (if the lead itself fails, the run aborts).
 
 Parallelism (`max_parallel > 1`) only runs agents with disjoint `owns`, and never alongside the lead. Each non-lead agent then works in its **own git worktree** (`projects/<name>/worktrees/<run-id>/<agent>`, branch `agent-lyceum/<run-id>/<agent>`) cut from a snapshot of the repo as it is when the agent is woken (`refs/agent-lyceum/<run-id>/base-<n>`; it includes the lead's uncommitted and new, non-ignored files; your HEAD, branches and working tree are not touched). `dispatcher.workspace_mode` is `auto` (worktrees when `max_parallel > 1`), `worktree` or `shared`; `shared` cannot be combined with parallel agents. A parallel run refuses to start while the repo has uncommitted changes of yours, and when the repo is not a git repository (run sequentially instead). When a member finishes, the dispatcher commits its worktree and brings the changes into your working tree (not your index or HEAD) before the lead reads the member's mail. Every changed path is checked first: it must be inside the member's `owns` (renames and deletions included), must not be `CLAUDE.md`/`AGENTS.md`, and symlinks may not point out of the project or the member's `owns`. If a file also changed in your repo since the member's snapshot, if a check fails, or if `git apply` fails, nothing is applied: the work stays on its branch and worktree, a report and patch are written to `runs/<run-id>/integration/`, the lead is told, and the run cannot end as `completed` (it ends `blocked`). A worktree isolates files only: it cannot isolate side effects on external services, databases or the network.
+
+### Several runs at once
+
+By default a project runs one task at a time. Set `dispatcher.max_concurrent_runs: N` (N > 1, needs a git repository) to let up to N runs of the same project be active together; starting one more is refused and names the runs in the way. In this mode **every** run, including a run that has no parallel members and a solo `run --agent <name>`, works in its own git worktree: the lead in `projects/<name>/worktrees/<run-id>/<lead>` on branch `agent-lyceum/<run-id>/<lead>`, members in worktrees cut from the lead's. A run starts from your repo's `HEAD`, so your uncommitted changes are allowed and are **not** part of it (the start line says how many files that is). Your working tree, index and HEAD are never touched.
+
+- **Ending:** when a run ends (done, cancelled, failed, idle or round limit), the lead's work is committed once on its branch and written as `runs/<run-id>/lead.patch`, and the run prints `git merge <branch>`. A run that stops to ask you (`waiting`) is not finished: nothing is committed and no merge hint is printed; its work stays in the lead's worktree and `resume` continues in the same one.
+- **Decided at start:** a run records whether its lead works in a worktree (`lead_workspace` in its state). `resume` follows what the run was started with, not the current setting: a run started concurrent resumes in its worktree even if you lowered `max_concurrent_runs`, and a run started non-concurrent resumes non-concurrently even if you raised it. The setting only governs how many runs may be active at once and what new runs do.
+- **`tidy`:** `tidy` and `tidy --undo` need the project to themselves: they are refused while any run is active, and no run can start while they run, whatever `max_concurrent_runs` is.
+- **`clear`:** `clear <run-id>` refuses while the lead's branch is not merged (use `--keep-worktrees` to keep it). A lock left by a crashed run is removed with `clear --lock [run-id] [-p name] --force`; with several locks, name the run.
+
+Known limits:
+
+- The number of agent processes can reach `max_concurrent_runs × max_parallel`; there is no global cap.
+- A lead with `can_edit_agent_md: true` can still edit your repo's `CLAUDE.md`/`AGENTS.md` directly.
+- Two runs that edit the same file are for you to reconcile when merging; agent-lyceum never merges.
 
 ## Web access (`allow_web`)
 
