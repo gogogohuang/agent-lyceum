@@ -322,7 +322,7 @@ describe("clear: a concurrent run's branch", () => {
 
   it("does not make a member's work block clear when the lead's worktree already has it", () => {
     const { p, lead } = concurrentRun();
-    const member = prepareAgentWorkspace(p, "run-1", "fe-member", snapshotBase(p, "run-1", 1, lead.root));
+    const member = prepareAgentWorkspace(p, "run-1", "fe-member", snapshotBase(p, "run-1", 1, lead));
     write(path.join(member.dir, "src/web/feature.txt"), "built\n");
     // The member's commit stays ahead of its base (integrating would move it forward), and the same file is in the lead's worktree.
     collectAgentChanges(member, ["src/web/**"]);

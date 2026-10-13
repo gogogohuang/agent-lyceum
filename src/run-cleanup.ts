@@ -69,7 +69,7 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   // A concurrent run has a worktree for the lead: members' work lands there, and the lead's branch is what you merge.
   const leadWs = existingAgentWorkspace(project, runId, project.lead);
   for (const agent of listWorkspaceAgents(project, runId)) {
-    const w = inspectWorkspace(project, runId, agent, agent === project.lead ? undefined : leadWs?.root);
+    const w = inspectWorkspace(project, runId, agent, agent === project.lead ? undefined : leadWs);
     if (!w) continue;
     const files = [...new Set([...w.dirty, ...w.unintegrated])];
     const holdsWork = files.length > 0 || !!w.unknown;

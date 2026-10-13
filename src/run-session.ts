@@ -15,7 +15,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -101,6 +101,8 @@ export class RunSession {
   private readonly noSessionNoted = new Set<string>();
   /** Git worktrees of the non-lead agents in the batch being woken (empty in shared mode and for the lead). */
   private batchSpaces: Record<string, AgentWorkspace> = {};
+  /** Members whose worktree was refused (its git files were tampered with): never woken again in this run. */
+  private readonly refused = new Set<string>();
   /** Concurrent runs: the lead's own git worktree for the whole run. */
   private readonly leadSpace: AgentWorkspace | undefined;
   /** The attempt that produced each batch member's output; committed together with its claim. */
@@ -243,6 +245,7 @@ export class RunSession {
   private pendingAgents(): ResolvedAgent[] {
     const { project } = this;
     const rows = Object.values(project.agents)
+      .filter((a) => !this.refused.has(a.name))
       .map((a) => ({ a, files: unreadFiles(project, a.name) }))
       .flatMap((r) => (r.files[0] ? [{ a: r.a, first: path.basename(r.files[0]) }] : []));
     rows.sort((x, y) => x.first.localeCompare(y.first));
@@ -386,9 +389,16 @@ export class RunSession {
    */
   private integrateMember(agent: ResolvedAgent, ws: AgentWorkspace, key: string): void {
     const { say, project, log, state } = this;
-    const changes = collectAgentChanges(ws, agent.owns);
-    const r = integrateAgentChanges(project, changes, this.leadSpace?.root);
-    log("integrate", { agent: agent.name, status: r.status, files: changes.files.map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
+    let changes: ChangeSet | undefined;
+    let r: IntegrationResult;
+    try {
+      changes = collectAgentChanges(ws, agent.owns);
+      r = integrateAgentChanges(project, changes, this.leadSpace);
+    } catch (e) {
+      // e.g. a worktree whose git files were tampered with: nothing is applied, and the lead is told like for any blocked integration
+      r = refusedIntegration(project, ws, (e as Error).message);
+    }
+    log("integrate", { agent: agent.name, status: r.status, files: (changes?.files ?? []).map((f) => `${f.status} ${f.path}`), ...(r.status === "blocked" ? { reason: r.reason, report: r.report } : {}) });
     const blocked = (state.blocked_integrations ?? []).filter((b) => b.agent !== agent.name);
     if (r.status === "integrated") {
       state.blocked_integrations = blocked;
@@ -407,6 +417,22 @@ export class RunSession {
         `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
         `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. ` +
         `Do not report the job \`completed\` while this work is missing from the repo.`,
+    });
+    this.saveState();
+  }
+
+
+  /** A member whose worktree was refused: it is not woken again in this run, and the lead is told so it can react. */
+  private refuseMember(agent: ResolvedAgent, reason: string): void {
+    const { project, runId } = this;
+    this.refused.add(agent.name);
+    this.note(`${agent.name} was not woken: ${reason.split("\n")[0]}`);
+    deliverOnce(project, this.journal(), `refused:${runId}:${agent.name}`, {
+      from: "dispatcher",
+      to: project.lead,
+      type: "failure",
+      subject: `${agent.name} cannot be woken: its worktree was refused`,
+      body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nDo its work yourself or give it to another agent; do not wait for ${agent.name}.`,
     });
     this.saveState();
   }
@@ -713,15 +739,31 @@ export class RunSession {
       if (wsMode === "worktree" && members.length) {
         state.snapshots = (state.snapshots ?? 0) + 1;
         this.saveState();
-        const ref = snapshotBase(project, runId, state.snapshots, this.leadSpace?.root);
-        for (const a of members) this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
+        let ref: string;
+        try {
+          ref = snapshotBase(project, runId, state.snapshots, this.leadSpace);
+        } catch (e) {
+          // The lead's worktree was refused (or could not be read): the run cannot go on, and the work stays where it is.
+          this.note(`Could not snapshot ${this.leadSpace ? `${project.lead}'s worktree ${this.leadSpace.root}` : "the repo"} for the next batch: ${(e as Error).message.split("\n")[0]}`);
+          this.endReason = "lead_failed";
+          break;
+        }
+        for (const a of members) {
+          try {
+            this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
+          } catch (e) {
+            this.refuseMember(a, (e as Error).message);
+          }
+        }
         log("workspaces", { snapshot: ref, agents: Object.fromEntries(Object.entries(this.batchSpaces).map(([n, w]) => [n, w.dir])) });
       }
       this.guard.rebase();
-      const results = await Promise.all(batch.map((a) => this.wake(a)));
-      leadWasLast = batch.some((a) => a.name === project.lead);
-      if (batch.some((a) => a.name !== project.lead)) nudged = false;
-      this.settle(batch, results);
+      // a member whose worktree was refused is not woken (it would have no worktree of its own)
+      const awake = wsMode === "worktree" ? batch.filter((a) => a.name === project.lead || this.batchSpaces[a.name]) : batch;
+      const results = await Promise.all(awake.map((a) => this.wake(a)));
+      leadWasLast = awake.some((a) => a.name === project.lead);
+      if (awake.some((a) => a.name !== project.lead)) nudged = false;
+      this.settle(awake, results);
       if (!this.endReason && opts.signal?.aborted) this.endReason = "cancelled";
     }
 
