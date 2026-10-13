@@ -11,6 +11,7 @@ import {
   parseAskReply,
   renderAnswers,
   renderAskReply,
+  resolveOptionLetters,
   type AskReply,
 } from "../src/ask-reply.js";
 
@@ -186,5 +187,45 @@ describe("answers for the asker", () => {
     expect(r.status).toBe("answered");
     expect(r.questions.every((q) => q.delivered)).toBe(true);
     expect(askersWithAnswers(r)).toEqual([]);
+  });
+});
+
+describe("resolveOptionLetters", () => {
+  const lettered = (): AskReply => {
+    const r = addBatch(undefined, "lead", 7, [
+      { id: "q1", text: "怎麼拆？", options: ["a: 兩個 commit", "b: 三個 commit", "c: 不拆"] },
+      { id: "q2", text: "登入？", options: ["session", "jwt"] },
+    ]);
+    if (!r.ok) throw new Error(r.error);
+    return r.reply;
+  };
+  const value = (r: AskReply, id: string) => r.questions.find((q) => q.id === id)?.answer?.value;
+
+  it("turns a bare letter into the option that starts with it", () => {
+    const r = resolveOptionLetters(answer(lettered(), "q1", "b"));
+    expect(value(r, "q1")).toBe("b: 三個 commit");
+    expect(isComplete(checkAnswers(answer(r, "q2", "jwt")))).toBe(true);
+  });
+
+  it("ignores case, surrounding space and a trailing ':', '.' or ')'", () => {
+    for (const v of ["A", " a ", "a:", "a.", "a)"]) expect(value(resolveOptionLetters(answer(lettered(), "q1", v)), "q1")).toBe("a: 兩個 commit");
+  });
+
+  it("keeps the answer and its author when nothing matches or the question has no lettered options", () => {
+    expect(value(resolveOptionLetters(answer(lettered(), "q1", "d")), "q1")).toBe("d");
+    expect(value(resolveOptionLetters(answer(lettered(), "q2", "s")), "q2")).toBe("s");
+    expect(resolveOptionLetters(answer(lettered(), "q1", "a")).questions[0]?.answer?.by).toBe("user");
+  });
+
+  it("does not guess when two options start with the same letter", () => {
+    const r = lettered();
+    const dup = { ...r, questions: r.questions.map((q) => (q.id === "q1" ? { ...q, options: ["a: x", "a: y"] } : q)) };
+    expect(value(resolveOptionLetters(answer(dup, "q1", "a")), "q1")).toBe("a");
+  });
+
+  it("leaves delivered questions alone", () => {
+    const r = answer(lettered(), "q1", "a");
+    const delivered = { ...r, questions: r.questions.map((q) => (q.id === "q1" ? { ...q, delivered: true } : q)) };
+    expect(resolveOptionLetters(delivered)).toEqual(delivered);
   });
 });

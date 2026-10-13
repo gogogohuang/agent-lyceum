@@ -5,7 +5,7 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
-import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, writeAskReply } from "./ask-reply.js";
+import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { isInside } from "./paths.js";
@@ -210,8 +210,10 @@ export class RunSession {
 
   /** A waiting run only continues once every unanswered question has a valid answer. */
   private static assertAnswered(runDir: string, runId: string): void {
-    const reply = readAskReply(runDir);
-    if (!reply) return;
+    const read = readAskReply(runDir);
+    if (!read) return;
+    const reply = resolveOptionLetters(read);
+    if (JSON.stringify(reply) !== JSON.stringify(read)) writeAskReply(runDir, reply);
     const check = checkAnswers(reply);
     if (!isComplete(check)) {
       throw new Error(`Run ${runId} is still waiting for answers in ${askReplyPath(runDir)}:\n${describeCheck(check).map((l) => `  ${l}`).join("\n")}`);

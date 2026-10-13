@@ -159,6 +159,19 @@ function problem(q: AskQuestion): string | undefined {
   return undefined;
 }
 
+/** An answer that is just a letter ("b", "B:", "b)") becomes the one option that starts with that letter and a ":", "." or ")". No match, or more than one, leaves it as typed. */
+export function resolveOptionLetters(r: AskReply): AskReply {
+  return {
+    ...r,
+    questions: r.questions.map((q) => {
+      const v = q.answer?.value.trim().match(/^([A-Za-z])[:.)]?$/)?.[1]?.toLowerCase();
+      if (q.delivered || !v || !q.options?.length) return q;
+      const hits = q.options.filter((o) => o.toLowerCase().match(/^([a-z])[:.)]/)?.[1] === v);
+      return hits.length === 1 && q.answer ? { ...q, answer: { ...q.answer, value: hits[0]! } } : q;
+    }),
+  };
+}
+
 /** Only questions whose answer was not sent yet count. */
 export function checkAnswers(r: AskReply): AnswerCheck {
   const c: AnswerCheck = { missing: [], invalid: [] };
