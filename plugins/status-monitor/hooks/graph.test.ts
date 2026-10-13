@@ -130,9 +130,29 @@ test('bar, padCenter and paneWidth', () => {
   expect(bar(0, 0, 4)).toBe('░░░░')
   expect(bar(9, 4, 4)).toBe('▓▓▓▓')
   expect(padCenter('▼', 9)).toBe('    ▼')
-  expect(paneWidth(200, true)).toBe(96)
-  expect(paneWidth(100, true)).toBe(96)
-  expect(paneWidth(100, false)).toBe(96)
-  expect(paneWidth(undefined, undefined)).toBe(56)
-  expect(paneWidth(30, false)).toBe(40)
+  expect(paneWidth(96)).toBe(96)
+  expect(paneWidth(30)).toBe(40)
+  expect(paneWidth(0)).toBe(56)
+  expect(paneWidth(undefined)).toBe(56)
+})
+
+test('layout turns narrow below 70 cells', () => {
+  const bs = blocks(report(run()), NOW)
+  expect(layout(bs, 69).narrow).toBe(true)
+  expect(layout(bs, 70).narrow).toBe(false)
+})
+
+test('a report with no run shows everyone idle', () => {
+  expect(blocks(report(undefined), NOW).map(b => b.dot)).toEqual(['idle', 'idle', 'idle'])
+})
+
+test('a member-to-member target appears in the → line', () => {
+  const qa = blocks(report(run()), NOW).find(b => b.name === 'qa')!
+  expect(blockLines(qa).some(l => l.text.startsWith('→') && l.text.includes('fe'))).toBe(true)
+})
+
+test('failed takes precedence over queued', () => {
+  const rep = report(run({ queue: [{ agent: 'fe', from: 'lead', type: 'task', subject: 's' }] }))
+  rep.agents[0]!.last_wake = { at: 't', ok: false }
+  expect(blocks(rep, NOW).find(b => b.name === 'fe')!.dot).toBe('failed')
 })

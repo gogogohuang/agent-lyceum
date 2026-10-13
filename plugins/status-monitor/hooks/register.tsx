@@ -80,7 +80,7 @@ export const register: Register = (on, options) => {
     const snap = await read($, snapshot)
     const now = await $.clock.now()
     const mode = await read($, view)
-    const width = paneWidth(e.viewport?.columns, e.viewport?.isFullscreen)
+    const width = paneWidth(e.props.bodyColumns)
 
     const section = (t: Target) => {
       const { report, error } = snap[t.key] ?? { report: null, error: null }

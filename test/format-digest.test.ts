@@ -58,6 +58,11 @@ describe("digestOf", () => {
     ]);
   });
 
+  it("keeps a bullet that starts with #, drops real headings", () => {
+    const [s] = digestOf("reply", "## Changes\n- #123 login fixed\n### Sub\n- b");
+    expect(s?.lines).toEqual(["#123 login fixed", "b"]);
+  });
+
   it("falls back to the one-line brief, then to nothing", () => {
     expect(digestOf("reply", "# Title\n\nJust text")).toEqual([{ label: "摘要", lines: ["Just text"] }]);
     expect(digestOf("task", "")).toEqual([]);

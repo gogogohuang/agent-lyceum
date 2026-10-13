@@ -51,7 +51,7 @@ export function briefOf(body: string): string | undefined {
       .trim()
       .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
       .trim();
-  const usable = (l: string) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l);
+  const usable = (l: string) => l !== "" && !/^#+\s/.test(l) && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l);
   for (const want of ["changes", "goal"]) {
     const i = lines.findIndex((l) => new RegExp(`^#{1,6}[ \\t]+${want}[ \\t]*:?[ \\t]*#*[ \\t]*$`, "i").test(l));
     if (i < 0) continue;

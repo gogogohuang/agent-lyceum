@@ -27,7 +27,7 @@ export const NARROW = 70
 /** The narrowest a member block may get before a row wraps. */
 export const MIN_BLOCK = 30
 /** The pane's width when it is opened (see register.tsx). */
-const OPEN_COLUMNS = 60
+const OPEN_WIDTH = 56
 
 /** One message as a head line plus its readable sections (digest, else brief, else nothing); `compact` keeps one line. */
 export function mailView(m: MailLike, compact = false): MailView {
@@ -134,11 +134,9 @@ export function padCenter(s: string, width: number): string {
 }
 
 /**
- * How many cells the graph may use: the pane is docked at half the terminal in the fullscreen layout from 110 columns,
- * otherwise it spans the terminal; less 4 for its border and padding, never below 40.
+ * How many cells the graph may use: the pane's own body width (`props.bodyColumns`), never below 40;
+ * 0 or missing (not laid out yet) falls back to the width the pane is opened with.
  */
-export function paneWidth(columns: number | undefined, docked: boolean | undefined): number {
-  const cols = columns ?? OPEN_COLUMNS
-  const width = docked && cols >= 110 ? Math.floor(cols / 2) : cols
-  return Math.max(40, width - 4)
+export function paneWidth(bodyColumns: number | undefined): number {
+  return bodyColumns ? Math.max(40, bodyColumns) : OPEN_WIDTH
 }
