@@ -155,6 +155,12 @@ describe("prompts", () => {
     expect(buildSystemPrompt(p, p.agents.lead)).toContain("## Result");
     expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("## Not done");
   });
+
+  it("tells every agent not to leave servers or daemons running", () => {
+    env = makeEnv();
+    const p = env.project();
+    for (const a of Object.values(p.agents)) expect(buildSystemPrompt(p, a)).toContain("Never start a server, daemon or watcher");
+  });
 });
 
 describe("effort", () => {
