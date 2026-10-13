@@ -5,7 +5,7 @@ import { atomicWrite } from "./fs-util.js";
 import { assertName } from "./paths.js";
 import { loadRunState } from "./run-store.js";
 import { runIsAlive } from "./status.js";
-import { deleteSnapshotRefs, inspectWorkspace, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace } from "./worktree.js";
+import { deleteSnapshotRefs, existingAgentWorkspace, inspectWorkspace, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace } from "./worktree.js";
 import { must } from "./assert.js";
 
 export interface CleanupItem {
@@ -66,16 +66,19 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
     if (!state.end_reason && runIsAlive(state, project)) plan.refusals.push(`Run ${runId} is still running (pid ${state.pid}); stop it first.`);
   }
 
+  // A concurrent run has a worktree for the lead: members' work lands there, and the lead's branch is what you merge.
+  const leadWs = existingAgentWorkspace(project, runId, project.lead);
   for (const agent of listWorkspaceAgents(project, runId)) {
-    const w = inspectWorkspace(project, runId, agent);
+    const w = inspectWorkspace(project, runId, agent, agent === project.lead ? undefined : leadWs?.root);
     if (!w) continue;
     const files = [...new Set([...w.dirty, ...w.unintegrated])];
     const holdsWork = files.length > 0 || !!w.unknown;
     if (keepWorktrees || holdsWork) {
       plan.keep.push({ agent, branch: w.branch, path: w.root, files: files.length ? files : w.unknown ? [`(${w.unknown})`] : [] });
       if (holdsWork && !keepWorktrees) {
+        const merge = agent === project.lead && leadWs ? ` Merge it first with \`git merge ${w.branch}\`.` : "";
         plan.refusals.push(
-          `${agent} has work that is not in the repo: ${files.length ? files.join(", ") : w.unknown} (branch ${w.branch}, worktree ${w.root}). ` +
+          `${agent} has work that is not in the repo: ${files.length ? files.join(", ") : w.unknown} (branch ${w.branch}, worktree ${w.root}).${merge} ` +
             `Bring it in or discard it by hand, or use --keep-worktrees to keep the worktree and branch and clear the rest.`,
         );
       }
