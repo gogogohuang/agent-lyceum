@@ -121,3 +121,82 @@ export function doneContract(meta: Record<string, unknown>, body: string, stateS
     : undefined;
   return { outcome, missing, verification };
 }
+
+export interface DigestSection {
+  label: string;
+  lines: string[];
+}
+
+const DIGEST_MAX_LINES = 3;
+const DIGEST_MAX_CHARS = 80;
+
+/** Which `##` sections say what a message of each type is about, and the label the panel shows for them. */
+const DIGEST_SECTIONS: Record<string, { name: string; label: string }[]> = {
+  task: [
+    { name: "Goal", label: "目標" },
+    { name: "Acceptance criteria", label: "驗收" },
+  ],
+  reply: [
+    { name: "Changes", label: "變更" },
+    { name: "Verification", label: "驗證" },
+    { name: "Open items", label: "待辦" },
+    { name: "Risks", label: "風險" },
+  ],
+  done: [
+    { name: "Result", label: "結果" },
+    { name: "Not done", label: "未完成" },
+  ],
+};
+
+function digestLine(l: string): string {
+  const t = l
+    .trim()
+    .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
+    .replace(/\*\*|`/g, "")
+    .trim();
+  return t.length > DIGEST_MAX_CHARS ? `${t.slice(0, DIGEST_MAX_CHARS - 1)}…` : t;
+}
+
+/** Readable lines of a block of text: markdown marks gone, empty / heading / warning / `None` lines dropped, at most 3 lines. */
+function digestLines(text: string): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(digestLine)
+    .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l));
+  return lines.length > DIGEST_MAX_LINES ? [...lines.slice(0, DIGEST_MAX_LINES - 1), `${lines[DIGEST_MAX_LINES - 1]}…`] : lines;
+}
+
+/**
+ * What a message is about, as short readable sections for the status panel: by type, the lines under the
+ * sections that matter (task: Goal, Acceptance criteria; reply: Changes, Verification, Open items, Risks;
+ * done: Result, Not done; ask: each question; failure: the first paragraph). With none of those, the one-line brief.
+ * Never throws: a body it cannot read gives [].
+ */
+export function digestOf(type: string, body: string): DigestSection[] {
+  try {
+    const out: DigestSection[] = [];
+    if (type === "ask") {
+      for (const m of body.matchAll(/<question\b[^>]*?\bid="([^"]*)"[^>]*>[\s\S]*?<text>([\s\S]*?)<\/text>/g)) {
+        const lines = digestLines(m[2] ?? "");
+        if (lines.length) out.push({ label: m[1] ?? "問題", lines });
+      }
+    } else if (type === "failure") {
+      const first = body
+        .split(/\n[ \t]*\n/)
+        .map(digestLines)
+        .find((l) => l.length);
+      if (first) out.push({ label: "訊息", lines: first });
+    } else {
+      for (const s of DIGEST_SECTIONS[type] ?? []) {
+        const text = sectionText(body, s.name);
+        const lines = text === undefined ? [] : digestLines(text);
+        if (lines.length) out.push({ label: s.label, lines });
+      }
+    }
+    if (out.length) return out;
+    const brief = briefOf(body);
+    return brief ? [{ label: "摘要", lines: [digestLine(brief)] }] : [];
+  } catch {
+    return [];
+  }
+}
