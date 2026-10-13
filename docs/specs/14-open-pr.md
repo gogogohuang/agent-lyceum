@@ -1,6 +1,6 @@
 # 14 run 結束時由 dispatcher 開 PR
 
-狀態：設計草案，已與使用者確認「由 dispatcher 開 PR」與「是否開 PR 直接依 task 內容決定」，尚未實作。
+狀態：設計草案，已與使用者確認「由 dispatcher 開 PR」、「是否開 PR 直接依 task 內容決定」與「只有設為 team lead 的 agent 才能觸發沙箱外的動作」，尚未實作。
 
 ## 14.1 問題
 
@@ -19,6 +19,7 @@
 | 6 | 不碰使用者目前的 working tree 與分支：提交在 run 自己的 worktree／分支上完成。需要 git repo、`origin` 與已登入的 `gh`。因為是否開 PR 要到 `done` 才知道，run 開始時不能預檢；改為 `doctor` 檢查並提示，真正缺少時在開 PR 那一步失敗，依決議 7 處理（分支保留、印手動指令）。 |
 | 7 | 推送或 `gh` 失敗不改變 run 的 `outcome`：分支與 commit 保留，結果訊息印出可手動執行的 `git push` 與 `gh pr create` 指令。 |
 | 8 | PR 開出後 run 即結束（`end_reason: done`），結果訊息印出 PR 網址並寫入 `state.json`（`pr_url`）。不等 CI 或 merge，不自動 merge。 |
+| 9 | 沙箱外的動作只有團隊設為 `lead` 的 agent 能觸發（使用者規則，2026-10-13）：`open_pr` 只認 lead 的 `done`（`run --agent` 的單獨 agent 是它那個一人團隊的 lead）；非 lead 的 agent 即使在信件或回覆文字裡寫了 `open_pr: true` 也一律忽略，不開 PR、不報錯。lead 本身不拿到不受限的 shell：沙箱設定不變，commit、push、`gh pr create` 都由 dispatcher 在沙箱外執行（Claude 與 Codex 都適用，不需要 `allowUnsandboxedCommands` 或 `danger-full-access`）。判斷依據是設定裡的 `project.lead`，程式與 prompt 不寫死任何 agent 名稱。 |
 
 ## 14.3 與其他 spec 的關係
 
@@ -45,6 +46,7 @@
 4. push 失敗：`outcome` 不變，分支保留，訊息含手動指令。
 5. 缺 `gh`、未登入或沒有 `origin`：開 PR 步驟失敗，處理同第 4 點；`doctor` 會提示。
 6. 使用者的 working tree 與目前分支未被改動。
+7. 只有 lead：非 lead 的 agent 寄出帶 `open_pr: true` 的信或 `done` 時不開 PR；`run --agent` 單獨 agent 的 `done` 帶 `open_pr: true` 時會開；lead 與非 lead 的沙箱設定（Claude `allowUnsandboxedCommands: false`、Codex `-s workspace-write`）與現在完全相同。
 
 ## 14.6 範圍外
 
