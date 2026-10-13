@@ -24,6 +24,32 @@ const input = (e: TestEnv, agent: string, extra = {}) => {
 };
 
 describe("write policy", () => {
+  it("denies a Claude agent the git pointers inside its own worktree, and leaves an agent without a worktree unchanged", () => {
+    env = makeEnv();
+    const p = env.project();
+    const before = writePolicy(p, p.agents["fe-member"]).deny;
+    const ws = {
+      agent: "fe-member",
+      root: path.join(env.root, "wt", "fe-member"),
+      dir: path.join(env.root, "wt", "fe-member"),
+      gitDir: path.join(env.root, "repo", ".git", "worktrees", "fe-member"),
+      commonDir: path.join(env.root, "repo", ".git"),
+      branch: "agent-lyceum/r/fe-member",
+    };
+    const wp = { ...p, workspaces: { "fe-member": ws } } as unknown as typeof p;
+    const deny = writePolicy(wp, wp.agents["fe-member"]).deny;
+    expect(deny).toEqual(
+      expect.arrayContaining([
+        path.join(ws.root, ".git"),
+        path.join(ws.gitDir, "commondir"),
+        path.join(ws.gitDir, "config.worktree"),
+        path.join(ws.gitDir, "gitdir"),
+      ]),
+    );
+    expect(before.some((d) => d.includes(".git"))).toBe(false);
+    expect(writePolicy(wp, wp.agents["qa-member"]).deny).not.toContain(path.join(ws.gitDir, "commondir"));
+  });
+
   it("lets a normal agent write only its memory and outbox, and denies the protected files", () => {
     env = makeEnv();
     const p = env.project();

@@ -17,6 +17,7 @@
 | [12](12-flatten-subcommands.md) | 收掉巢狀子指令 | 低 | 低（破壞舊寫法） | [plan](../plans/2026-10-12-12-flatten-subcommands.md) |
 | [13](13-status-monitor-visual.md) | status-monitor 圖形化面板 | 中 | 低（只加欄位） | [plan](../plans/2026-10-13-13-status-monitor-visual.md) |
 | [14](14-open-pr.md) | run 結束時開 PR | 中 | 低（預設不變） | [plan](../plans/2026-10-13-14-open-pr.md) |
+| [15](15-worktree-git-isolation.md) | dispatcher 不信任 agent 可寫的 git 狀態 | 高 | 中（簽名改動） | [plan](../plans/2026-10-13-15-worktree-git-isolation.md) |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
