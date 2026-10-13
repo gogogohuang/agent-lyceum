@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { applyDefaults, askReplyPath, checkAnswers, describeCheck, isComplete, readAskReply, writeAskReply } from "./ask-reply.js";
+import { applyDefaults, askReplyPath, checkAnswers, describeCheck, isComplete, readAskReply, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 
 export interface PrepareResult {
   complete: boolean;
@@ -12,8 +12,9 @@ export function prepareAnswers(runDir: string, opts: { assumeDefaults?: boolean 
   const file = askReplyPath(runDir);
   let reply = readAskReply(runDir);
   if (!reply) return { complete: false, problems: ["ask-reply.md does not exist"], path: file };
-  if (opts.assumeDefaults) {
-    reply = applyDefaults(reply);
+  const resolved = resolveOptionLetters(reply);
+  if (JSON.stringify(resolved) !== JSON.stringify(reply) || opts.assumeDefaults) {
+    reply = opts.assumeDefaults ? applyDefaults(resolved) : resolved;
     writeAskReply(runDir, reply);
   }
   const check = checkAnswers(reply);
