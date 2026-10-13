@@ -17,7 +17,11 @@
 - 舊 run、舊 `project.yaml`、舊的專案層 `lock.json` 必須可讀；`schema_version: 2` 與信箱協定不變。
 - 不自動合併、不動使用者的 working tree／index／HEAD；不新增全域資源上限；不新增非必要依賴。
 - 破壞相容性或新增設定時，同步更新 `README.md`、`README.zh-TW.md`、`docs/commands.md`、`docs/commands.zh-TW.md`，並通過 `npm run check:docs`。
-- 每個 Task 結束時 `npm run typecheck`、`npm test`、`npm run lint` 都要通過。
+- 每個 Task 結束時 `npm run typecheck`、`npm test`、`npm run lint` 都要通過。**例外：Task 2 與 Task 3 由同一位 implementer 連續完成，Task 2 commit 後 typecheck 暫時失敗，Task 3 結束時必須恢復。**
+- 指令名稱以目前程式為準：`unlock` 在 0.9.0 已併入 `clear --lock`，本計畫一律用 **`clear --lock [<run-id>] [-p name] --force`**（`--lock` 現在可帶一個選填的 run id）。
+- 同一專案的記憶整理（`tidy`、`tidy --undo`）仍須獨占專案：進行中不得有任何 run，反之亦然（見 Task 2 的 `exclusive` 鎖）。
+- 以 `waiting`（等使用者回答）結束的 run 還會 `resume`，不算結束：不提交、不印 `git merge`（見 Task 5）。
+- 計畫寫於 0.6 時代，之後加了 solo 模式、`tidy`、status-monitor 等；行號與錨點可能位移，實作時以目前程式為準，保持計畫描述的行為。
 - lead 分支名為 `agent-lyceum/<run-id>/<lead 的 agent 名稱>`（spec 中的 `/lead` 是範例；預設團隊的 lead 就叫 `lead`）。
 
 ## File Structure
@@ -197,7 +201,8 @@ git commit -m "feat(config): add dispatcher.max_concurrent_runs and its validati
 - Produces:
   - `export const LOCK_FILE = "lock.json"`（舊版、專案層；只讀取與清除）
   - `export const LOCKS_DIR = "locks"`
-  - `export interface LockOptions { heartbeatMs?: number; maxConcurrent?: number }`（`maxConcurrent` 預設 `1`，含自己）
+  - `export interface LockOptions { heartbeatMs?: number; maxConcurrent?: number; exclusive?: boolean }`（`maxConcurrent` 預設 `1`，含自己；`exclusive`：記憶整理等必須獨占專案的操作，要求取得時沒有任何其他存活的鎖，而且持有期間任何其他取鎖都被拒絕，不看 `maxConcurrent`）
+  - `LockInfo.exclusive?: boolean`（寫進鎖檔；舊鎖沒有此欄位視為非獨占）
   - `acquireProjectLock(root: string, runId: string, opts?: LockOptions): ProjectLease`
   - `listRunLocks(root: string): LockInfo[]`（per-run 與舊 `lock.json`，只含讀得懂的，依 `acquired_at` 排序）
   - `inspectRunLock(root: string, runId: string): LockInfo | undefined`
@@ -206,15 +211,15 @@ git commit -m "feat(config): add dispatcher.max_concurrent_runs and its validati
 
 - [ ] **Step 1: 寫失敗的測試**
 
-`test/fixtures/lock-holder.ts` 整檔取代為：
+`test/fixtures/lock-holder.ts` 整檔取代為（argv 第 5 個參數 `mode`，值為 `exclusive` 時傳 `exclusive: true`）：
 
 ```ts
 // Helper process for project-lock tests: tries to take a run's lock, reports, optionally holds it.
 import { acquireProjectLock } from "../../src/project-lock.js";
 
-const [root, runId, holdMs, max] = process.argv.slice(2);
+const [root, runId, holdMs, max, mode] = process.argv.slice(2);
 try {
-  const lease = acquireProjectLock(root, runId, { maxConcurrent: max ? Number(max) : 1 });
+  const lease = acquireProjectLock(root, runId, { maxConcurrent: max ? Number(max) : 1, exclusive: mode === "exclusive" });
   process.stdout.write("ACQUIRED\n");
   setTimeout(() => {
     lease.release();
@@ -384,7 +389,7 @@ describe("run locks", () => {
   it("asks for a manual unlock when the old lock file cannot be understood, and force-unlock clears it", () => {
     const root = tmp();
     fs.writeFileSync(path.join(root, LOCK_FILE), "garbage");
-    expect(() => acquireProjectLock(root, "r")).toThrow(/unlock/);
+    expect(() => acquireProjectLock(root, "r")).toThrow(/clear --lock/);
     expect(forceUnlock(root)?.token).toBeUndefined();
     expect(fs.existsSync(path.join(root, LOCK_FILE))).toBe(false);
     acquireProjectLock(root, "r").release();
@@ -409,6 +414,24 @@ describe("run locks", () => {
     l.release();
   });
 
+  it("an exclusive lock needs the project to be idle, and keeps every other lock out while held", () => {
+    const root = tmp();
+    const run = acquireProjectLock(root, "run-a", { maxConcurrent: 3 });
+    expect(() => acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true })).toThrow(/run-a/);
+    run.release();
+    const tidy = acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true });
+    expect(inspectRunLock(root, "tidy-1")?.exclusive).toBe(true);
+    expect(() => acquireProjectLock(root, "run-b", { maxConcurrent: 3 })).toThrow(/tidy-1/);
+    tidy.release();
+    acquireProjectLock(root, "run-b", { maxConcurrent: 3 }).release();
+  });
+
+  it("an exclusive lock whose process is gone does not block anyone", () => {
+    const root = tmp();
+    writeLock(runLockFile(root, "tidy-dead"), { run_id: "tidy-dead", pid: deadPid(), exclusive: true });
+    acquireProjectLock(root, "run-a", { maxConcurrent: 2 }).release();
+  });
+
   it("rejects a run id that is not a plain name", () => {
     const root = tmp();
     expect(() => acquireProjectLock(root, "../escape")).toThrow(/run id/i);
@@ -423,7 +446,7 @@ Expected: FAIL（`listRunLocks`／`inspectRunLock`／`LOCKS_DIR` 不存在，imp
 
 - [ ] **Step 3: 實作**
 
-`src/project-lock.ts`：保留檔頭 import、`LockInfo`、`ProjectLease`、`parseProcStat`、`PidStartIo`、`pidStartFrom`、`realIo`、`pidStart`、`sameKind`、`lockHolderAlive`。其餘（常數、`Read`、`readLock`、`inspectProjectLock`、`heldError`、`unreadableError`、`tryCreate`、`reclaim`、`acquireProjectLock`、`forceUnlock`）以下列內容取代。
+`src/project-lock.ts`：保留檔頭 import、`LockInfo`（加一個選填欄位 `exclusive?: boolean`，註解：「Held by an operation that needs the project to itself (a memory tidy).」）、`ProjectLease`、`parseProcStat`、`PidStartIo`、`pidStartFrom`、`realIo`、`pidStart`、`sameKind`、`lockHolderAlive`。其餘（常數、`Read`、`readLock`、`inspectProjectLock`、`heldError`、`unreadableError`、`tryCreate`、`reclaim`、`acquireProjectLock`、`forceUnlock`）以下列內容取代。
 
 常數與型別（取代檔頭的 `LOCK_FILE`／`RECLAIM_FILE`／`HEARTBEAT_MS`／`LockOptions`）：
 
@@ -439,6 +462,8 @@ export interface LockOptions {
   heartbeatMs?: number;
   /** Most runs that may hold a lock of this project at once, this one included. Default 1. */
   maxConcurrent?: number;
+  /** The holder needs the whole project (e.g. a memory tidy): refused while any other lock is alive, and it keeps every other lock out while held. */
+  exclusive?: boolean;
 }
 ```
 
@@ -518,8 +543,16 @@ function limitError(active: LockInfo[], max: number): Error {
   );
 }
 
+function exclusiveError(holder: LockInfo): Error {
+  return new Error(`${holder.run_id} (pid ${holder.pid}) needs the project to itself (a memory tidy or restore); wait for it to finish, then try again.`);
+}
+
+function needsIdleError(active: LockInfo[]): Error {
+  return new Error(`This needs the project to itself, but ${active.map((l) => `${l.run_id} (pid ${l.pid})`).join(", ")} ${active.length === 1 ? "is" : "are"} active. Wait for ${active.length === 1 ? "it" : "them"} to end, or stop ${active.length === 1 ? "it" : "them"}.`);
+}
+
 function unreadableError(file: string): Error {
-  return new Error(`The run lock ${file} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum unlock --force\`.`);
+  return new Error(`The run lock ${file} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum clear --lock --force\`.`);
 }
 
 function sleepSync(ms: number): void {
@@ -587,6 +620,7 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     run_id: runId,
     acquired_at: now,
     heartbeat_at: now,
+    ...(opts.exclusive ? { exclusive: true } : {}),
   };
 
   withAdmission(root, () => {
@@ -604,6 +638,9 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     if (old.kind === "ok" && !lockHolderAlive(old.info)) fs.rmSync(legacyFile(root), { force: true });
     // 3. The other runs that are active now.
     const active = listRunLocks(root).filter((l) => l.run_id !== runId && lockHolderAlive(l));
+    const exclusiveHolder = active.find((l) => l.exclusive);
+    if (exclusiveHolder) throw exclusiveError(exclusiveHolder);
+    if (opts.exclusive && active.length) throw needsIdleError(active);
     if (active.length >= max) throw limitError(active, max);
     if (!tryCreate(file, info)) throw new Error(`Could not take the run lock ${file}; another process just took it. Try again.`);
   });
@@ -649,7 +686,7 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
 }
 
 /**
- * Remove a lock regardless of owner (the `unlock --force` escape hatch). With a run id: that run's lock (and an
+ * Remove a lock regardless of owner (the `clear --lock --force` escape hatch). With a run id: that run's lock (and an
  * older version's `lock.json` when it was written for that run). Without: only the older project-wide `lock.json`.
  * Returns what was there, if readable.
  */
@@ -683,23 +720,23 @@ git add src/project-lock.ts test/project-lock.test.ts test/fixtures/lock-holder.
 git commit -m "feat(lock): one lock per run with an admission mutex and a concurrency limit"
 ```
 
-> 注意：此 commit 之後到 Task 3 完成之前，`npm run typecheck` 會失敗；Task 2 與 Task 3 要連續完成。
+> 注意：此 commit 之後到 Task 3 完成之前，`npm run typecheck` 會失敗；Task 2 與 Task 3 由同一位 implementer 連續完成。
 
 ---
 
 ### Task 3: CLI、status、doctor 改看 run 層級的鎖
 
 **Files:**
-- Modify: `src/cli.ts`（import、`takeLock`、`clear`、`unlock`）
+- Modify: `src/cli.ts`（import、`takeLock`、`clear`〔含 `--lock [run-id]`、`unlockProject`〕、`tidy` 與 `tidy --undo` 的取鎖）
 - Modify: `src/status.ts:9`、`src/status.ts:61-66`
 - Modify: `src/doctor.ts:6`、`src/doctor.ts:154-173`
-- Test: `test/status.test.ts`、`test/doctor.test.ts`、`test/run-lifecycle.test.ts`、`test/cancel.test.ts`
+- Test: `test/status.test.ts`、`test/doctor.test.ts`、`test/run-lifecycle.test.ts`、`test/cancel.test.ts`、`test/solo-cli.test.ts`、`test/call.test.ts`、`test/memory-tidy-cli.test.ts`
 
 **Interfaces:**
 - Consumes: Task 2 的 `acquireProjectLock(root, runId, { maxConcurrent })`、`listRunLocks`、`inspectRunLock`、`forceUnlock(root, runId?)`
 - Produces:
-  - `takeLock(pr, runId, opts?: { ignoreLimit?: boolean })`（`clear` 傳 `ignoreLimit: true`，因為它不是新的 run）
-  - CLI：`unlock [run-id] [-p name] --force`
+  - `takeLock(pr, runId, opts?: { ignoreLimit?: boolean; exclusive?: boolean })`（`clear` 傳 `ignoreLimit: true`，因為它不是新的 run；`tidy` 與 `tidy --undo` 傳 `exclusive: true`）
+  - CLI：`clear --lock [<run-id>] [-p name] --force`（`--lock` 的 run id 選填；`unlock` 已不存在）
 
 - [ ] **Step 1: 寫失敗的測試**
 
@@ -783,24 +820,24 @@ describe("several runs at once", () => {
     }
   }, 60_000);
 
-  it("unlock names the lock, needs --force, and with several locks insists on a run id", () => {
+  it("clear --lock names the lock, needs --force, and with several locks insists on a run id", () => {
     const t = setup({ calls: [] });
     const root = env.project().paths.root;
     const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
     const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
     try {
-      const many = t.sync(["unlock", "-p", "demo", "--force"]);
+      const many = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
       expect(many.code).toBe(1);
       expect(many.err).toMatch(/run-a/);
       expect(many.err).toMatch(/run-b/);
-      expect(many.err).toMatch(/unlock <run-id>/);
+      expect(many.err).toMatch(/clear --lock <run-id>/);
       expect(listRunLocks(root)).toHaveLength(2);
 
-      const noForce = t.sync(["unlock", "run-a", "-p", "demo"]);
+      const noForce = t.sync(["clear", "--lock", "run-a", "-p", "demo"]);
       expect(noForce.code).toBe(1);
       expect(listRunLocks(root)).toHaveLength(2);
 
-      const one = t.sync(["unlock", "run-a", "-p", "demo", "--force"]);
+      const one = t.sync(["clear", "--lock", "run-a", "-p", "demo", "--force"]);
       expect(one.code).toBe(0);
       expect(listRunLocks(root).map((l) => l.run_id)).toEqual(["run-b"]);
     } finally {
@@ -810,12 +847,14 @@ describe("several runs at once", () => {
   }, 60_000);
 ```
 
-`test/cancel.test.ts`：檔頭加 `import { listRunLocks } from "../src/project-lock.js";`，把兩處 `fs.existsSync(path.join(env.project().paths.root, "lock.json"))` 改成 `listRunLocks(env.project().paths.root).length > 0`（第一處期望 `true`，第二處期望 `false`，其餘不變）。
+`test/cancel.test.ts`：檔頭加 `import { listRunLocks } from "../src/project-lock.js";`，把兩處 `fs.existsSync(path.join(env.project().paths.root, "lock.json"))` 改成 `listRunLocks(env.project().paths.root).length > 0`（第一處期望 `true`，第二處期望 `false`，其餘不變）。`test/solo-cli.test.ts`（約第 101 行）與 `test/call.test.ts`（約第 96 行）也各有一處 `lock.json` 不存在的斷言，同樣改成 `expect(listRunLocks(env.project().paths.root)).toEqual([])`（加 import），否則它們在新鎖檔下會變成永遠成立的空斷言。
+
+`test/memory-tidy-cli.test.ts`：看檔內既有的 `tidy` 測試怎麼跑 CLI，加兩個測試：(1) `max_concurrent_runs: 2` 的專案，另一個 run 的鎖（`acquireProjectLock(root, "other", { maxConcurrent: 2 })`）還在時，`tidy` 與 `tidy --undo <stamp> --agent <name>` 都以非 0 結束、錯誤訊息含 `other` 與 `needs the project to itself`；(2) `tidy` 持有鎖期間（用既有的方式在 `tidyMemory` 內攔截，或直接先 `acquireProjectLock(root, "tidy-x", { exclusive: true })` 模擬）新 run 的 `acquireProjectLock(root, "r", { maxConcurrent: 2 })` 被拒，訊息含 `tidy-x`。
 
 - [ ] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run test/status.test.ts test/doctor.test.ts test/run-lifecycle.test.ts test/cancel.test.ts`
-Expected: FAIL（`src/cli.ts` 等仍 import 已移除的 `inspectProjectLock`；`unlock` 不接受 run id）。
+Expected: FAIL（`src/cli.ts` 等仍 import 已移除的 `inspectProjectLock`；`clear --lock` 不接受 run id）。
 
 - [ ] **Step 3: 實作**
 
@@ -851,7 +890,7 @@ Expected: FAIL（`src/cli.ts` 等仍 import 已移除的 `inspectProjectLock`；
       subject: "lock",
       message: alive
         ? `A run is active: ${lock.run_id} (pid ${lock.pid}).`
-        : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum unlock ${lock.run_id} --force\` clears it.`,
+        : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum clear --lock ${lock.run_id} --force\` clears it.`,
     });
   }
 ```
@@ -872,47 +911,43 @@ function takeLock(pr: ResolvedProject, runId: string, opts: { ignoreLimit?: bool
 }
 ```
 - `clear` 內 `const lease = takeLock(pr, runId);` 改為 `const lease = takeLock(pr, runId, { ignoreLimit: true });`。`run`、`resume` 不變。
-- `unlock` 指令整段取代為：
+- `takeLock` 的 `opts` 型別為 `{ ignoreLimit?: boolean; exclusive?: boolean }`，把 `exclusive` 傳給 `acquireProjectLock`。`tidy --undo` 的 `takeLock(target, \`restore-${tidyStamp()}\`)` 與 `tidy` 的 `takeLock(pr, \`tidy-${tidyStamp()}\`)` 都加上 `{ exclusive: true }`（記憶整理與還原要獨占專案，不看 `max_concurrent_runs`）。
+- `unlock` 指令已不存在；改 `clear --lock`：
+  - `unlockProject(pr, force)` 改為 `unlockProject(pr, runId: string | undefined, force: boolean)`，內容取代為：
 
 ```ts
-program
-  .command("unlock [run-id]")
-  .description("Remove the run lock a crashed run left behind. Shows the lock first; needs --force to remove it. With several locks, name the run.")
-  .option("-p, --project <name>")
-  .option("--force", "remove the lock even though its owner cannot be confirmed dead")
-  .action((runId: string | undefined, opts: { project?: string; force?: boolean }) => {
-    try {
-      const pr = loadProject(opts.project);
-      const root = pr.paths.root;
-      if (runId) assertName("run", runId);
-      const locks = listRunLocks(root);
-      if (!runId && locks.length > 1) {
-        const list = locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`).join("\n");
-        fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum unlock <run-id> --force`);
-      }
-      const target = runId ?? locks[0]?.run_id;
-      if (!target) {
-        if (!fs.existsSync(path.join(root, LOCK_FILE))) {
-          console.log(`Project ${pr.name} has no run lock.`);
-          return;
-        }
-        console.log("The lock file exists but cannot be read.");
-        if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
-        forceUnlock(root);
-        console.log("Lock removed.");
-        return;
-      }
-      const info = inspectRunLock(root, target);
-      if (!info) fail(`Run "${target}" holds no readable lock. List the locks with: agent-lyceum doctor`);
-      console.log(`Lock held for run ${info!.run_id} by pid ${info!.pid} on ${info!.hostname}, last heartbeat ${info!.heartbeat_at}${lockHolderAlive(info!) ? " (that process is still alive)" : " (that process is gone)"}.`);
-      if (!opts.force) fail("Not removed. Check that no run is active, then repeat with --force.");
-      forceUnlock(root, target);
-      console.log(`Lock removed. Resume the run with: agent-lyceum resume ${target}`);
-    } catch (e) {
-      fail((e as Error).message);
+/** `clear --lock [run-id]`: show who holds a run lock; remove it only with --force. With several locks, name the run. */
+function unlockProject(pr: ResolvedProject, runId: string | undefined, force: boolean): void {
+  const root = pr.paths.root;
+  const locks = listRunLocks(root);
+  if (!runId && locks.length > 1) {
+    const list = locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`).join("\n");
+    fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum clear --lock <run-id> --force`);
+  }
+  const target = runId ?? locks[0]?.run_id;
+  if (!target) {
+    if (!fs.existsSync(path.join(root, LOCK_FILE))) {
+      console.log(`Project ${pr.name} has no run lock.`);
+      return;
     }
-  });
+    console.log("The lock file exists but cannot be read.");
+    if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+    forceUnlock(root);
+    console.log("Lock removed.");
+    return;
+  }
+  const info = inspectRunLock(root, target);
+  if (!info) fail(`Run "${target}" holds no readable lock. List the locks with: agent-lyceum doctor`);
+  console.log(`Lock held for run ${info!.run_id} by pid ${info!.pid} on ${info!.hostname}, last heartbeat ${info!.heartbeat_at}${lockHolderAlive(info!) ? " (that process is still alive)" : " (that process is gone)"}.`);
+  if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+  forceUnlock(root, target);
+  console.log(`Lock removed. Resume the run with: agent-lyceum resume ${target}`);
+}
 ```
+
+  - `clear` 的 action 內 `if (opts.lock) { if (runId) fail("--lock takes no run id."); return unlockProject(loadProject(opts.project), !!opts.force); }` 改為 `if (opts.lock) { if (runId) assertName("run", runId); return unlockProject(loadProject(opts.project), runId, !!opts.force); }`。
+  - `--lock` 選項說明改為 `"remove the run lock left behind by a crashed run (give its run id when several runs hold a lock; needs --force)"`；`clear` 的 `.description`／幫助文字裡「(no run id)」「takes no run id」之類的敘述一併改成可帶 run id。
+  - import 改為 `import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";`（`fs`、`path` 檔內已有）。
 
 - [ ] **Step 4: 跑測試確認通過**
 
@@ -923,7 +958,7 @@ Expected: PASS（全部 25+ 個測試檔；`fatal: path 'ignored.log' exists ...
 
 ```bash
 git add src/cli.ts src/status.ts src/doctor.ts test/status.test.ts test/doctor.test.ts test/run-lifecycle.test.ts test/cancel.test.ts
-git commit -m "feat(cli): per-run locks in run, resume, clear, unlock, status and doctor"
+git commit -m "feat(cli): per-run locks in run, resume, clear, tidy, status and doctor"
 ```
 
 ---
@@ -1253,6 +1288,11 @@ git commit -m "feat(worktree): start from HEAD, integrate into a chosen checkout
   });
 ```
 
+再加兩個測試（沿用同一個 `start` 輔助函式與 `OK`、`mail`、`makeConcurrent`；先看檔內既有的 `ask`／`waiting`、`soloAgent` 測試怎麼寫，照同樣方式驅動）：
+
+- 「a concurrent run that stops to ask the user does not commit or announce a branch」：`max_concurrent_runs: 2`，lead 寄一封 `type: ask` 讓 run 以 `waiting` 結束。期望 `summary.endReason === "waiting"`、`summary.resultBranch` 為 `undefined`、`loadRunState(runDir).result_branch` 為 `undefined`、`git(env.repo, "log", "-1", "--format=%s", "agent-lyceum/run-1/lead")` 仍是起點 commit 的訊息（沒有新 commit），lead 的 worktree 內檔案還在。
+- 「a solo run (`soloAgent`) in a concurrent project works in its own worktree」：`max_concurrent_runs: 2`，`runTeam({ ..., soloAgent: "<某個 agent>" })`。期望該 agent 的 `i.workspace` 有值且分支為 `agent-lyceum/<run-id>/<該 agent>`，使用者 repo 的 working tree 不變（`soloProject` 把 `workspace_mode` 設成 `shared`，但 `resolveWorkspaceMode` 在 `max_concurrent_runs > 1` 時仍回 `"worktree"`，這個測試就是要鎖住這點）。
+
 - [ ] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run test/integration.test.ts -t "concurrent"`
@@ -1332,13 +1372,14 @@ import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentW
 
 7. `run()` 迴圈內：`const ref = snapshotBase(project, runId, state.snapshots);` 改為 `const ref = snapshotBase(project, runId, state.snapshots, this.leadSpace?.root);`。
 
-8. 新增方法（放在 `recover()` 之前）：
+8. `waiting` 不是結束：`end_reason` 為 `waiting`（等使用者回答）時 run 之後會 `resume`，**不提交、不寫 `result_branch`、不印 `git merge`**，工作留在 lead 的 worktree，resume 後從同一個 worktree 繼續。`finishLead` 因此在 `endReason === "waiting"` 時直接回傳 `undefined`；其他 `end_reason`（含 `cancelled`、`lead_failed`、`idle`、`max_rounds`、`done`）照常提交。
+9. 新增方法（放在 `recover()` 之前）：
 
 ```ts
   /** Concurrent runs, at the end of the run whatever the reason: the lead's work is committed on its branch for you to merge. */
-  private finishLead(): ResultBranch | undefined {
+  private finishLead(endReason: EndReason): ResultBranch | undefined {
     const { say, log, state, runDir, runId, project } = this;
-    if (!this.leadSpace) return undefined;
+    if (!this.leadSpace || endReason === "waiting") return undefined;
     try {
       const rb = finishLeadBranch(this.leadSpace, `agent-lyceum: ${project.lead}'s work for run ${runId}\n\n${state.task_summary}`, path.join(runDir, "lead.patch"));
       state.result_branch = rb;
@@ -1352,16 +1393,18 @@ import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentW
   }
 ```
 
-9. `run()` 結尾：在 `log("end", ...)` 之前呼叫，並放進回傳：
+10. `run()` 結尾：在 `log("end", ...)` 之前呼叫，並放進回傳：
 
 ```ts
-    const resultBranch = this.finishLead();
+    const resultBranch = this.finishLead(endReason);
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
     return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, resultBranch };
 ```
 （`finishLead` 要在 `state.ended_at = ...` 之後、`this.saveState()` 之前，確保 `result_branch` 被寫進 `state.json`。）
+
+`EndReason` 型別自 `./run-store.js` import（若檔內尚未 import）。
 
 `src/cli.ts` `reportRun`：在 `if (summary.doneMessage) {...}` 之前加：
 
@@ -1515,11 +1558,7 @@ git commit -m "feat(clear): refuse to delete a concurrent run's lead branch unti
 
 - [ ] **Step 1: 更新 `README.md`**
 
-1. 指令表 `unlock` 那列改為：
-
-```
-| `unlock [run-id] [-p name] --force` | Remove the lock a crashed run left behind. [details](docs/commands.md#unlock) |
-```
+1. 指令表（約第 34 行）`clear` 那列：把 `clear --lock --force` 改為 `clear --lock [run-id] --force`，說明維持「or remove the lock a crashed run left behind」。
 2. Layout 區塊：把 `├── lock.json                     # held while a run is active: one run per project` 改為
 
 ```
@@ -1541,11 +1580,12 @@ By default a project runs one task at a time. Set `dispatcher.max_concurrent_run
 
 - [ ] **Step 3: 更新 `docs/commands.md` 與 `docs/commands.zh-TW.md`**
 
-`unlock` 一節（英文版第 65–71 行）：
+`clear` 一節（約第 131–146 行，已有 `clear --lock` 的說明）：
 
-- Usage 改為 ``**Usage:** `unlock [run-id] [-p name] --force` ``。
-- 說明段改為：`Remove the lock a crashed run left behind. Each active run holds its own lock (up to dispatcher.max_concurrent_runs at once). Without --force it only shows who holds the lock. Without a run id it acts on the only lock; when several runs hold one it lists them and asks you to name the run.`
+- Usage 的 `clear --lock [-p name] --force` 改為 `clear --lock [run-id] [-p name] --force`。
+- `**`clear --lock`**（no run id）…` 那一段改為：`**`clear --lock`** removes the run lock a crashed run left behind. Each active run holds its own lock (up to dispatcher.max_concurrent_runs at once). Without --force it only shows who holds the lock. Without a run id it acts on the only lock; when several runs hold one it lists them and asks you to name the run.`
 - 保留「Upgrading from an older version」段，並在其後加一句：`An older version's project-wide lock.json is still honoured: while its process is alive it counts as one active run.`
+- `tidy` 一節加一句：`A tidy (and tidy --undo) needs the project to itself: it is refused while any run is active, and no run can start while it runs, whatever max_concurrent_runs is.`
 
 `run` 一節加一句：`With dispatcher.max_concurrent_runs > 1 the run starts from HEAD in its own worktree and ends with a branch to merge; see "Several runs at once" in the README.`
 
@@ -1590,14 +1630,16 @@ git commit -m "docs: several runs at once (max_concurrent_runs, per-run locks, l
 | 2 非 git repo 報錯 | Task 1 |
 | 3 起點 `HEAD`、允許未提交、啟動時印出 | Task 4（`snapshotHead`、`assertWorktreeRunnable`）、Task 5（`say`） |
 | 4 per-run 鎖、併發上限 | Task 2、Task 3 |
-| 5 舊 `lock.json` 相容 | Task 2（計數、清除死鎖）、Task 3（`unlock`） |
+| 5 舊 `lock.json` 相容 | Task 2（計數、清除死鎖）、Task 3（`clear --lock`） |
 | 6 lead worktree；成員從 lead 分出並合回 lead | Task 4（`snapshotBase(..., from)`、`integrateAgentChanges(..., targetRoot)`）、Task 5 |
 | 7 結束時自動 commit、不自動合併、印 merge 指令、保留 patch | Task 4（`finishLeadBranch`）、Task 5 |
 | 8 `clear` 拒絕未合入分支；`--keep-worktrees` | Task 6 |
-| 9 不帶 id 的指令 | Task 3（`resume` 沿用現有邏輯；`unlock` 多鎖要求指定；`status` 以 per-run `runIsAlive` 列出全部執行中） |
+| 9 不帶 id 的指令 | Task 3（`resume` 沿用現有邏輯；`clear --lock` 多鎖要求指定；`status` 以 per-run `runIsAlive` 列出全部執行中） |
 | 10 不加全域資源上限 | 無程式；Task 7 文件註明乘數 |
 
 驗收 §7.4 的 9 項：1→Task 2/3、2→Task 2、3→Task 1、4→Task 4/5、5→Task 5、6→Task 6、7→Task 3、8→Task 5、9→各 Task 都先跑全套測試。
+
+**2026-10-13 開工前追加的裁決**（已併入各 Task 文字）：`unlock` 改為 `clear --lock [run-id]`；`tidy`／`tidy --undo` 以 `exclusive` 鎖保留獨占專案的語意；`waiting` 結束不提交；solo run 在併發模式下用自己的 worktree；Task 2 與 Task 3 連續完成。
 
 **已知取捨（執行者需知）**
 - `finishLead` 在 `end_reason` 為 `cancelled` 時也會提交（spec 決議 7）；被中斷的 wake 可能留下半成品檔案，commit 訊息含 run id 與任務摘要，使用者可自行決定是否 merge。

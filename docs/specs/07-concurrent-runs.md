@@ -16,22 +16,25 @@
 | 2 | `> 1` 時 `project.dir` 必須是 git repo，否則 `validate` 報錯並指向設成 `1`。 |
 | 3 | 新 run 的起點固定為 `HEAD`（快照 `refs/agent-lyceum/<run-id>/base-0`），**允許**未提交改動；啟動時印出起點 sha 與未提交檔案數的警告。task 不碰使用者的 working tree。 |
 | 4 | 鎖改為 per-run：`locks/<run-id>.json`，格式、heartbeat、pid 加 start-time 判斷、reclaim mutex 不變。同一 run 不可被同時 `resume` 兩次，不同 run 可併行，總數受 `max_concurrent_runs` 限制。 |
-| 5 | 相容舊版：專案層 `lock.json` 持有者仍存活時，視為一個存活的 run，計入併發數；持有者已死則依 `unlock` 規則處理。 |
+| 5 | 相容舊版：專案層 `lock.json` 持有者仍存活時，視為一個存活的 run，計入併發數；持有者已死則依 `clear --lock` 規則處理。 |
 | 6 | lead 在 `worktrees/<run-id>/lead` 工作，分支 `agent-lyceum/<run-id>/lead`。非 lead agent 的 worktree 從 lead 分支分出，完成後合回 lead 的 worktree（不是使用者的 repo）。 |
 | 7 | run 結束時（任何 `end_reason`）在 lead 分支提交一次，身分沿用 `agent-lyceum <agent-lyceum@localhost>`，訊息含 run id 與任務摘要。**不自動合併**；結果訊息印出 `git merge agent-lyceum/<run-id>/lead`，patch 檔仍保留。 |
 | 8 | `clear <run-id>`：lead 分支尚未合入 `HEAD` 時拒絕；`--keep-worktrees` 可保留分支並清除其餘。已合入才刪分支。 |
-| 9 | 不帶 id 的指令：`resume` 選最新、未完成且沒在跑的 run；`unlock --force` 只有一把鎖時移除它，多把時列出並要求指定 run id，不猜；`status` 列出全部執行中的 run。 |
+| 9 | 不帶 id 的指令：`resume` 選最新、未完成且沒在跑的 run；`clear --lock --force`（原 `unlock`，0.9.0 併入）只有一把鎖時移除它，多把時列出並要求指定 run id（`clear --lock <run-id> --force`），不猜；`status` 列出全部執行中的 run。 |
 | 10 | 不加全域資源上限。實際 CLI 程序數為 `max_concurrent_runs × max_parallel`，文件要註明。 |
+| 11 | （2026-10-13 補）`tidy` 與 `tidy --undo` 仍要獨占專案：它們取的鎖標記為 `exclusive`，取得時不得有其他存活的鎖，持有期間任何 run 都不能開始，不看 `max_concurrent_runs`。 |
+| 12 | （2026-10-13 補）決議 7 的「任何 `end_reason`」不含 `waiting`：run 還會 `resume`，不提交、不印 `git merge`；工作留在 lead 的 worktree。 |
+| 13 | （2026-10-13 補）`run --agent`（solo）在併發模式下一樣在自己的 worktree 工作，solo 的那個 agent 就是 lead。 |
 
 ## 7.3 影響的檔案
 
 - `src/project-lock.ts`：per-run 鎖路徑、`listRunLocks(root)`、舊 `lock.json` 相容、`forceUnlock(root, runId?)`。
 - `src/schema.ts`、`src/config.ts`、`src/validate.ts`：`max_concurrent_runs` 欄位、預設值、規則 1、2。
-- `src/cli.ts`：`takeLock` 檢查併發數；`unlock [run-id]`；`resume`、`clear` 只看該 run 的鎖。
+- `src/cli.ts`：`takeLock` 檢查併發數；`clear --lock [run-id]`；`resume`、`clear` 只看該 run 的鎖。
 - `src/worktree.ts`、`src/run-session.ts`：lead worktree、起點快照改為 HEAD、agent worktree 分出自 lead 分支、run 結束提交。
 - `src/run-cleanup.ts`：分支是否已合入 `HEAD` 的判斷。
 - `src/status.ts`、`src/doctor.ts`：`runIsAlive` 查該 run 自己的鎖；列出所有鎖；`doctor` 說明起點為 HEAD。
-- `README.md`、`README.zh-TW.md`、`docs/commands.md`（含 zh-TW）：新設定、`unlock [run-id]`、乘數說明。
+- `README.md`、`README.zh-TW.md`、`docs/commands.md`（含 zh-TW）：新設定、`clear --lock [run-id]`、乘數說明。
 - status-monitor 已是一個執行中 task 一個分頁，預期不用改，實作時以測試確認。
 
 ## 7.4 驗收
@@ -44,7 +47,7 @@
 4. 起點為 `HEAD`：working tree 有未提交檔案時仍可啟動，且 task 看不到它們、警告有印出。
 5. run 結束後 lead 分支有 commit；使用者的 working tree 與 HEAD 未被改動。
 6. `clear`：分支未合入 HEAD 拒絕；`--keep-worktrees` 保留分支；已合入則刪除；只動目標 run 的 worktree。
-7. `unlock --force`：單鎖移除；多鎖不帶 id 拒絕並列出。
+7. `clear --lock --force`：單鎖移除；多鎖不帶 id 拒絕並列出。
 8. 整合測試：用 `test/fixtures/runtime/fake-claude.mjs` 同時跑兩個 task，各在自己的 worktree，互不污染，working tree 不變。
 9. `max_concurrent_runs` 未設時，既有全部測試行為不變。
 
