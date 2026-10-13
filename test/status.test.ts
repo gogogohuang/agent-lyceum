@@ -5,8 +5,8 @@ import { askReplyPath, writeAskReply } from "../src/ask-reply.js";
 import { briefOf, parseSteps } from "../src/format.js";
 import { deliver } from "../src/mailbox.js";
 import { acquireProjectLock } from "../src/project-lock.js";
-import { loadRunState } from "../src/run-store.js";
-import { buildStatusReport, formatRunDetail, formatStatus, formatStatusReport, formatTaskList } from "../src/status.js";
+import { loadRunState, newRunState, saveRunState } from "../src/run-store.js";
+import { buildStatusReport, buildTaskListReport, formatRunDetail, formatStatus, formatStatusReport, formatTaskList } from "../src/status.js";
 import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -179,7 +179,7 @@ describe("status: project lock decides whether a run is running", () => {
   it("does not call a run running because a different run holds the lock", () => {
     env = makeEnv();
     const pr = env.project();
-    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: process.pid, active });
+    writeRun(env, { schema_version: 2, mail_layout: "legacy", pid: 2 ** 22 + 12345, active });
     const lease = acquireProjectLock(pr.paths.root, "some-other-run");
     try {
       expect(formatStatus(pr, NOW)).toContain("曾在工作（已中斷）");
@@ -245,5 +245,30 @@ describe("status: memory tidy hint", () => {
   it("has no memory_advice when memory is small", () => {
     env = makeMemoryEnv();
     expect(buildStatusReport(env.project()).memory_advice).toBeUndefined();
+  });
+});
+
+describe("several runs at once", () => {
+  it("shows every run whose own lock is held as running, and a crashed one as interrupted", () => {
+    env = makeEnv();
+    const p = env.project();
+    const mk = (id: string) => {
+      const dir = path.join(p.paths.runs, id);
+      fs.mkdirSync(dir, { recursive: true });
+      saveRunState(dir, newRunState({ run_id: id, project: "demo", max_rounds: 5, task_summary: id, pid: 999_999 }));
+    };
+    mk("20261007T000001000Z-aaaa");
+    mk("20261007T000002000Z-bbbb");
+    mk("20261007T000003000Z-cccc");
+    const l1 = acquireProjectLock(p.paths.root, "20261007T000001000Z-aaaa", { maxConcurrent: 2 });
+    const l2 = acquireProjectLock(p.paths.root, "20261007T000002000Z-bbbb", { maxConcurrent: 2 });
+    const states = Object.fromEntries(buildTaskListReport(p).runs.map((r) => [r.run_id, r.state]));
+    expect(states).toEqual({
+      "20261007T000001000Z-aaaa": "running",
+      "20261007T000002000Z-bbbb": "running",
+      "20261007T000003000Z-cccc": "interrupted",
+    });
+    l1.release();
+    l2.release();
   });
 });

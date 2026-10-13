@@ -8,7 +8,7 @@ import type { ResolvedProject } from "./config.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
 import { listUnread } from "./mailbox.js";
 import { tidyAdvice } from "./memory-tidy.js";
-import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
+import { inspectRunLock, lockHolderAlive } from "./project-lock.js";
 
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
   const root = project.paths.runs;
@@ -57,13 +57,13 @@ export function listRuns(project: ResolvedProject, limit: number): { dir: string
 }
 
 /**
- * Is this run's dispatcher running now? Runs with a project lock (schema 2) are judged by the lock holder;
+ * Is this run's dispatcher running now? Runs with a lock (schema 2) are judged by the lock holder of that run;
  * the recorded pid is only the fallback for older runs and runs started without a lock.
  */
 export function runIsAlive(s: RunState, project?: ResolvedProject): boolean {
   if (project && s.schema_version >= 2) {
-    const l = inspectProjectLock(project.paths.root);
-    if (l) return l.run_id === s.run_id && lockHolderAlive(l);
+    const l = inspectRunLock(project.paths.root, s.run_id);
+    if (l) return lockHolderAlive(l);
   }
   return alive(s.pid);
 }

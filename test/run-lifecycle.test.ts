@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
 import { git, initGitRepo, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,7 +57,7 @@ describe("a run from start to clear", () => {
     await until(() => fs.existsSync(t.marker));
     first.child.kill("SIGINT");
     expect(await first.done).toBe(130);
-    expect(fs.existsSync(path.join(env.project().paths.root, "lock.json"))).toBe(false);
+    expect(listRunLocks(env.project().paths.root)).toEqual([]);
     expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // nothing reached the repo from the cancelled wake-up
 
     // 2. the status of the interrupted run, as JSON
@@ -119,4 +120,43 @@ describe("a run from start to clear", () => {
     expect(kept.code).toBe(0);
     expect(git(env.repo, "branch", "--list", `agent-lyceum/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
   }, 120_000);
+
+  it("refuses to start a second run while another holds the lock and max_concurrent_runs is 1", () => {
+    const t = setup({ calls: [] });
+    const lease = acquireProjectLock(env.project().paths.root, "other-run");
+    try {
+      const r = t.sync(["run", "x", "-p", "demo"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(/other-run/);
+      expect(r.err).toMatch(/max_concurrent_runs/);
+    } finally {
+      lease.release();
+    }
+  }, 60_000);
+
+  it("clear --lock names the lock, needs --force, and with several locks insists on a run id", () => {
+    const t = setup({ calls: [] });
+    const root = env.project().paths.root;
+    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    try {
+      const many = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
+      expect(many.code).toBe(1);
+      expect(many.err).toMatch(/run-a/);
+      expect(many.err).toMatch(/run-b/);
+      expect(many.err).toMatch(/clear --lock <run-id>/);
+      expect(listRunLocks(root)).toHaveLength(2);
+
+      const noForce = t.sync(["clear", "--lock", "run-a", "-p", "demo"]);
+      expect(noForce.code).toBe(1);
+      expect(listRunLocks(root)).toHaveLength(2);
+
+      const one = t.sync(["clear", "--lock", "run-a", "-p", "demo", "--force"]);
+      expect(one.code).toBe(0);
+      expect(listRunLocks(root).map((l) => l.run_id)).toEqual(["run-b"]);
+    } finally {
+      a.release();
+      b.release();
+    }
+  }, 60_000);
 });

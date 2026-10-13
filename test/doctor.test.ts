@@ -5,7 +5,8 @@ import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { diagnoseProject, preflightRuntimes, probeRuntime } from "../src/doctor.js";
-import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
+import { acquireProjectLock } from "../src/project-lock.js";
+import { initGitRepo, makeConcurrent, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -103,6 +104,24 @@ describe("diagnoseProject", () => {
     await diagnoseProject(env.project(), { env: envWith(bin, "full") });
     expect(calls().length).toBeGreaterThan(0);
     for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
+  });
+
+  it("lists every active run lock and notes that concurrent runs start from HEAD", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    write(path.join(env.repo, "dirty.txt"), "x\n");
+    const p = env.project();
+    const a = acquireProjectLock(p.paths.root, "run-a", { maxConcurrent: 2 });
+    const b = acquireProjectLock(p.paths.root, "run-b", { maxConcurrent: 2 });
+    const { bin } = fakeBin(env.root);
+    const report = await diagnoseProject(p, { env: envWith(bin, "full") });
+    const msgs = report.checks.map((c) => `${c.level}:${c.message}`).join("\n");
+    expect(msgs).toMatch(/A run is active: run-a/);
+    expect(msgs).toMatch(/A run is active: run-b/);
+    expect(msgs).toMatch(/info:.*uncommitted.*concurrent runs start from HEAD/);
+    a.release();
+    b.release();
   });
 
   it("only suggests a memory tidy: it never runs one and never makes the report fail", async () => {

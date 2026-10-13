@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { fingerprint, listArchives, readTidyState } from "../src/memory-tidy.js";
 import { acquireProjectLock } from "../src/project-lock.js";
-import { makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
+import { initGitRepo, makeConcurrent, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -95,6 +95,38 @@ describe("tidy → tidy --undo", { timeout: 60_000 }, () => {
       expect(fs.existsSync(t.counter)).toBe(false);
     } finally {
       lease.release();
+    }
+  });
+
+  it("needs the project to itself: refused, undo included, while another run is active", () => {
+    const t = setup(() => ({ calls: [] }), () => {
+      const e = makeMemoryEnv();
+      initGitRepo(e.repo);
+      makeConcurrent(e, 2);
+      return e;
+    });
+    const lease = acquireProjectLock(env.project().paths.root, "other", { maxConcurrent: 2 });
+    try {
+      const r = t.sync(["tidy", "-p", "demo", "--agent", "lead"]);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toMatch(/other/);
+      expect(r.err).toMatch(/needs the project to itself/);
+      const u = t.sync(["tidy", "--undo", "20260101T000000Z", "-p", "demo", "--agent", "lead"]);
+      expect(u.code).not.toBe(0);
+      expect(u.err).toMatch(/other/);
+      expect(u.err).toMatch(/needs the project to itself/);
+    } finally {
+      lease.release();
+    }
+  });
+
+  it("keeps new runs out while a tidy holds the project", () => {
+    setup(() => ({ calls: [] }));
+    const tidy = acquireProjectLock(env.project().paths.root, "tidy-x", { exclusive: true });
+    try {
+      expect(() => acquireProjectLock(env.project().paths.root, "r", { maxConcurrent: 2 })).toThrow(/tidy-x/);
+    } finally {
+      tidy.release();
     }
   });
 
