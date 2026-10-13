@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, lockHolderAlive, LOCK_FILE, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -173,6 +173,17 @@ describe("run locks", () => {
     expect(forceUnlock(root)?.token).toBeUndefined();
     expect(fs.existsSync(path.join(root, LOCK_FILE))).toBe(false);
     acquireProjectLock(root, "r").release();
+  });
+
+  it("an unreadable per-run lock names the run id in its error, and force-unlock by run id removes it", () => {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, LOCKS_DIR), { recursive: true });
+    fs.writeFileSync(runLockFile(root, "run-z"), "garbage");
+    expect(() => acquireProjectLock(root, "run-z")).toThrow(/clear --lock run-z --force/);
+    expect(listUnreadableRunLocks(root)).toEqual(["run-z"]);
+    expect(forceUnlock(root, "run-z")).toBeUndefined();
+    expect(fs.existsSync(runLockFile(root, "run-z"))).toBe(false);
+    acquireProjectLock(root, "run-z").release();
   });
 
   it("force-unlock by run id removes only that run's lock", () => {

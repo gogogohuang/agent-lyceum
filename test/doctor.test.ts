@@ -124,6 +124,14 @@ describe("diagnoseProject", () => {
     b.release();
   });
 
+  it("reports an unreadable run lock file with the command that clears it", async () => {
+    env = makeEnv();
+    write(path.join(env.project().paths.root, "locks", "run-bad.json"), "garbage");
+    const { bin } = fakeBin(env.root);
+    const report = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+    expect(report.checks.map((c) => c.message).join("\n")).toMatch(/run-bad cannot be read.*clear --lock run-bad --force/);
+  });
+
   it("only suggests a memory tidy: it never runs one and never makes the report fail", async () => {
     env = makeMemoryEnv();
     const { bin } = fakeBin(env.root);

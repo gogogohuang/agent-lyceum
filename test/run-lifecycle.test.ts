@@ -159,4 +159,21 @@ describe("a run from start to clear", () => {
       b.release();
     }
   }, 60_000);
+
+  it("clear --lock <run-id> removes an unreadable per-run lock only with --force", () => {
+    const t = setup({ calls: [] });
+    const file = path.join(env.project().paths.root, "locks", "run-bad.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "garbage");
+    const noId = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
+    expect(noId.code).toBe(1);
+    expect(noId.err).toMatch(/clear --lock run-bad --force/);
+    const refused = t.sync(["clear", "--lock", "run-bad", "-p", "demo"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toMatch(/--force/);
+    expect(fs.existsSync(file)).toBe(true);
+    const done = t.sync(["clear", "--lock", "run-bad", "-p", "demo", "--force"]);
+    expect(done.code).toBe(0);
+    expect(fs.existsSync(file)).toBe(false);
+  }, 60_000);
 });

@@ -9,7 +9,7 @@ import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
@@ -321,6 +321,21 @@ program
 function unlockProject(pr: ResolvedProject, runId: string | undefined, force: boolean): void {
   const root = pr.paths.root;
   const locks = listRunLocks(root);
+  const unreadable = listUnreadableRunLocks(root);
+  if (runId && unreadable.includes(runId)) {
+    console.log(`The lock file of run ${runId} exists but cannot be read.`);
+    if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
+    forceUnlock(root, runId);
+    console.log(`Lock removed. Resume the run with: agent-lyceum resume ${runId}`);
+    return;
+  }
+  if (!runId && unreadable.length && locks.length + unreadable.length > 1) {
+    const list = [...locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`), ...unreadable.map((id) => `  ${id}  (lock file cannot be read)`)].join("\n");
+    fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum clear --lock <run-id> --force`);
+  }
+  if (!runId && unreadable.length && !locks.length) {
+    fail(`The lock file of run ${unreadable[0]} cannot be read. Name it to remove it: agent-lyceum clear --lock ${unreadable[0]} --force`);
+  }
   if (!runId && locks.length > 1) {
     const list = locks.map((l) => `  ${l.run_id}  pid ${l.pid}${lockHolderAlive(l) ? " (alive)" : " (gone)"}`).join("\n");
     fail(`Several runs hold a lock:\n${list}\nName the one to unlock: agent-lyceum clear --lock <run-id> --force`);

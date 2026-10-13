@@ -154,6 +154,13 @@ export function listRunLocks(root: string): LockInfo[] {
   return out.sort((a, b) => a.acquired_at.localeCompare(b.acquired_at) || a.run_id.localeCompare(b.run_id));
 }
 
+/** Run ids whose per-run lock file exists but cannot be read (it can only be removed with `forceUnlock(root, runId)`). */
+export function listUnreadableRunLocks(root: string): string[] {
+  return lockFiles(root)
+    .filter((f) => path.dirname(f) !== root && readLockFile(f).kind === "unreadable")
+    .map((f) => path.basename(f, ".json"));
+}
+
 /** The lock a run holds (per-run file, or an older version's `lock.json` written for that run), if readable. */
 export function inspectRunLock(root: string, runId: string): LockInfo | undefined {
   const own = readLockFile(runLockFile(root, runId));
@@ -187,7 +194,9 @@ function needsIdleError(active: LockInfo[]): Error {
 }
 
 function unreadableError(file: string): Error {
-  return new Error(`The run lock ${file} cannot be read or has no known owner. Check that no run is active, then run \`agent-lyceum clear --lock --force\`.`);
+  const perRun = path.basename(path.dirname(file)) === LOCKS_DIR;
+  const cmd = perRun ? `agent-lyceum clear --lock ${path.basename(file, ".json")} --force` : "agent-lyceum clear --lock --force";
+  return new Error(`The run lock ${file} cannot be read or has no known owner. Check that no run is active, then run \`${cmd}\`.`);
 }
 
 function sleepSync(ms: number): void {
