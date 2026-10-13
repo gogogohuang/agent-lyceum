@@ -134,7 +134,8 @@ By default a project runs one task at a time. Set `dispatcher.max_concurrent_run
 Known limits:
 
 - The number of agent processes can reach `max_concurrent_runs × max_parallel`; there is no global cap.
-- A lead with `can_edit_agent_md: true` can still edit your repo's `CLAUDE.md`/`AGENTS.md` directly.
+- A lead with `can_edit_agent_md: true` edits the `CLAUDE.md`/`AGENTS.md` in its own worktree; the change reaches your repo only when you merge its branch.
+- `COMMON.md` and the `AGENT.md` files are shared by all runs of the project. Each run's guard only judges what changes while its own agents are working, so an edit by one run is kept; but if two runs' wake-ups overlap in time, a change one makes while the other's agents are working can be reverted by the other.
 - Two runs that edit the same file are for you to reconcile when merging; agent-lyceum never merges.
 
 ## Web access (`allow_web`)

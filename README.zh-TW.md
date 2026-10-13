@@ -135,7 +135,8 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 已知限制：
 
 - agent 程序數量最多可達 `max_concurrent_runs × max_parallel`，沒有全域上限。
-- `can_edit_agent_md: true` 的 lead 仍可直接修改你 repo 的 `CLAUDE.md`／`AGENTS.md`。
+- `can_edit_agent_md: true` 的 lead 修改的是它自己 worktree 裡的 `CLAUDE.md`／`AGENTS.md`；這些修改要等你合併它的 branch 才會進到你的 repo。
+- `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留；但若兩個 run 的喚醒時間重疊，一個 run 在另一個 run 的 agent 工作期間所做的修改，可能被另一個 run 還原。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 
 ## 網路存取（`allow_web`）
