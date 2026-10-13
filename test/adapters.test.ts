@@ -161,6 +161,16 @@ describe("prompts", () => {
     const p = env.project();
     for (const a of Object.values(p.agents)) expect(buildSystemPrompt(p, a)).toContain("Never start a server, daemon or watcher");
   });
+
+  it("tells every agent to sign PRs as opened by agent-lyceum without naming a role", () => {
+    env = makeEnv();
+    const p = env.project();
+    for (const a of Object.values(p.agents)) {
+      const s = buildSystemPrompt(p, a);
+      expect(s).toContain("opened by agent-lyceum");
+      expect(s).toContain("Do not name any agent or role");
+    }
+  });
 });
 
 describe("effort", () => {

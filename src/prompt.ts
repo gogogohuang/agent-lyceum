@@ -23,6 +23,10 @@ function readCapped(file: string, limit: number): { text: string; truncated: boo
   return { text: buf.subarray(0, limit).toString("utf8"), truncated: true };
 }
 
+/** A PR only needs to say agent-lyceum opened it; no agent or role names. */
+const PR_ATTRIBUTION_RULE =
+  "- If you open a pull request, end its description with a line saying it was opened by agent-lyceum (e.g. `🤖 Opened by agent-lyceum`). Do not name any agent or role in it.";
+
 /** A tool call that never returns (a server or daemon started in the foreground) burns the whole wake-up timeout and the finished work is thrown away with it. */
 const NO_DAEMONS_RULE =
   "- Never start a server, daemon or watcher (pm2, `serve`, `dev`, `--watch`) in the foreground of a command, and never leave one running. Run it in the background, bound every such command with `timeout 60`, stop what you started before you finish, and if it cannot start (e.g. a sandbox denies binding a port) report that as unverified instead of retrying.";
@@ -77,6 +81,7 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
     "## Rules",
     "- Never edit any `AGENT.md`, `COMMON.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`.",
     "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum.",
+    PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
   return lines.join("\n");
@@ -199,7 +204,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       (isLead || agent.canEditAgentMd ? " unless you need to as lead (changes are logged)." : "."),
     "- Never touch another agent's memory, inbox or outbox, or the team's config files.",
     `- The shared team context is in \`${commonFile(project)}\`${isLead ? " (you maintain it; keep it short)" : " (read-only)"}.`,
-    "- If you open a pull request, end its description with a line saying it was opened by agent-lyceum (e.g. `🤖 Opened by agent-lyceum`), naming your agent.",
+    PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
   if (project.dispatcher.max_parallel > 1 && agent.owns.length > 0 && !isLead) {
