@@ -5,7 +5,7 @@ import { RESULT_FILE } from "./dispatcher.js";
 import { bindRunProject, loadRunState, outcomeOf, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
-import type { Step } from "./format.js";
+import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
 import { listUnread } from "./mailbox.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { inspectProjectLock, lockHolderAlive } from "./project-lock.js";
@@ -159,6 +159,8 @@ export interface QueueItem {
   from: string;
   type: string;
   subject: string;
+  brief?: string;
+  digest?: DigestSection[];
 }
 
 export interface RunReport {
@@ -204,6 +206,8 @@ export interface AgentReport {
   runtime?: string;
   lead: boolean;
   unread: number;
+  /** Who this agent may send mail to (`all` expanded, itself left out). */
+  can_message: string[];
   last_wake?: { at: string; ok: boolean; error?: string };
 }
 
@@ -231,7 +235,14 @@ function queueOf(project: ResolvedProject): QueueItem[] {
     if ((x.agent === project.lead) !== (y.agent === project.lead)) return x.agent === project.lead ? -1 : 1;
     return path.basename(x.msg.file).localeCompare(path.basename(y.msg.file));
   });
-  return rows.map((r) => ({ agent: r.agent, from: r.msg.meta.from, type: r.msg.meta.type, subject: r.msg.meta.subject }));
+  return rows.map((r) => ({
+    agent: r.agent,
+    from: r.msg.meta.from,
+    type: r.msg.meta.type,
+    subject: r.msg.meta.subject,
+    brief: briefOf(r.msg.body),
+    digest: digestOf(r.msg.meta.type, r.msg.body),
+  }));
 }
 
 /** One run as `status` sees it. Without `project`, liveness falls back to the recorded pid and there is no queue. */
@@ -318,6 +329,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string): Status
       runtime: a.runtime,
       lead: a.name === project.lead,
       unread: listUnread(project, a.name).length,
+      can_message: (a.canMessage === "all" ? Object.keys(project.agents) : a.canMessage).filter((n) => n !== a.name),
       last_wake: run?.state.last_wake[a.name],
     })),
     run: report,

@@ -3,7 +3,7 @@ import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { DispatcherSettings } from "./schema.js";
-import { briefOf, doneContract, parseSteps, type DoneContract } from "./format.js";
+import { briefOf, digestOf, doneContract, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
@@ -268,7 +268,7 @@ export class RunSession {
       const att = beginAttempt(runDir, claim.id);
       say(`[round ${state.rounds}/${cfg.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
-      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body) }));
+      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
       this.saveState();
       result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({

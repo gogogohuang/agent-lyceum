@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ResolvedProject } from "./config.js";
-import type { Step } from "./format.js";
+import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 
@@ -19,6 +19,8 @@ export interface WakeTopic {
   subject: string;
   /** What the message is about, in one line. */
   brief?: string;
+  /** The same, as short readable sections by message type (see `digestOf`). */
+  digest?: DigestSection[];
 }
 
 export interface SentTopic {
