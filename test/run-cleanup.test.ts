@@ -324,11 +324,15 @@ describe("clear: a concurrent run's branch", () => {
     const { p, lead } = concurrentRun();
     const member = prepareAgentWorkspace(p, "run-1", "fe-member", snapshotBase(p, "run-1", 1, lead.root));
     write(path.join(member.dir, "src/web/feature.txt"), "built\n");
-    integrateAgentChanges(p, collectAgentChanges(member, ["src/web/**"]), lead.root);
+    // The member's commit stays ahead of its base (integrating would move it forward), and the same file is in the lead's worktree.
+    collectAgentChanges(member, ["src/web/**"]);
+    write(path.join(lead.dir, "src/web/feature.txt"), "built\n");
     finishLeadBranch(lead, "msg", path.join(env.root, "x.patch"));
-    git(env.repo, "merge", "-q", "--no-edit", lead.branch);
+    // The lead branch is NOT merged yet: feature.txt is in the lead's worktree but not in the user's repo.
+    expect(exists(env.repo, "src/web/feature.txt")).toBe(false);
     const plan = planRunCleanup(p, "run-1");
-    expect(plan.refusals).toEqual([]);
-    expect(plan.items.filter((i) => i.kind === "workspace").map((i) => i.agent).sort()).toEqual(["fe-member", "lead"]);
+    expect(plan.refusals.some((r) => r.includes("fe-member"))).toBe(false);
+    expect(plan.refusals.some((r) => r.startsWith("lead has work"))).toBe(true);
+    expect(plan.items.filter((i) => i.kind === "workspace").map((i) => i.agent)).toEqual(["fe-member"]);
   });
 });
