@@ -15,8 +15,8 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
+import { bindRunProject, newRunId, newRunState, roundLimit, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
@@ -38,6 +38,8 @@ function retryPrompt(prompt: string, error?: string): string {
 
 export interface RunSummary {
   runId: string;
+  /** The run's name; absent on runs from older versions. */
+  name?: string;
   runDir: string;
   rounds: number;
   endReason: EndReason;
@@ -56,12 +58,16 @@ export interface RunSummary {
 
 export interface RunOptions {
   project: ResolvedProject;
+  /** Name for a new run: already decided and not used by another run of the project. */
+  name?: string;
   /** Run only this member of the project, alone (`run --agent`). A resumed run uses the one recorded in its state. */
   soloAgent?: string;
   /** The task for a new run; omit when resuming. */
   task?: PreparedTask;
   /** Continue this earlier run (same run dir, sessions and counters) instead of starting a new one. */
   resume?: RunState;
+  /** Reopen a done run: this text becomes a new task for the lead. Only with `resume` of a run that ended `done`. */
+  followup?: { text: string };
   runDir: string;
   invoker?: Invoker;
   /** Runs git and gh for the pull request. Tests pass a fake; the default is the real thing. */
@@ -112,6 +118,7 @@ export class RunSession {
 
     const { task, resume, runDir } = opts;
     if (resume?.end_reason === "waiting") RunSession.assertAnswered(runDir, resume.run_id);
+    if (opts.followup && resume?.end_reason !== "done") throw new Error("followup needs a finished (done) run");
     if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
     const invoke = opts.invoker ?? realInvoker;
     const say = opts.log ?? ((s: string) => console.log(s));
@@ -129,9 +136,17 @@ export class RunSession {
     if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume, concurrent });
     // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
     let leadSpace: AgentWorkspace | undefined;
+    let recut = false;
     if (concurrent && resume) {
       leadSpace = existingAgentWorkspace(project, runId, project.lead);
       if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
+      if (opts.followup) {
+        // A reopened run whose branch you already merged starts on a fresh branch from HEAD (never when work would be lost).
+        const r = recutLeadWorkspace(project, runId, project.lead, leadSpace, resume.result_branch?.head);
+        leadSpace = r.ws;
+        recut = r.recut;
+        if (r.recut) say(`  ${project.lead}'s branch was already merged: a fresh branch ${leadSpace.branch} was cut from HEAD ${leadSpace.base.slice(0, 8)}`);
+      }
     }
     ensureProjectDirs(project);
     fs.mkdirSync(runDir, { recursive: true });
@@ -146,7 +161,7 @@ export class RunSession {
 
     let state: RunState;
     if (resume) {
-      state = { ...resume, max_rounds: cfg.max_rounds, pid: process.pid, ended_at: undefined, end_reason: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
+      state = { ...resume, max_rounds: roundLimit(resume, cfg.max_rounds), pid: process.pid, ended_at: undefined, end_reason: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
       // A wake that was running when the process died never finished; keep it in the history as interrupted.
       for (const [agent, a] of Object.entries(resume.active ?? {})) {
         state.wakes.push({
@@ -159,10 +174,23 @@ export class RunSession {
           error: "interrupted",
         });
       }
+      if (opts.followup) {
+        state.reopened = [...(resume.reopened ?? []), { at: new Date().toISOString() }];
+        state.round_floor = resume.rounds;
+        state.max_rounds = roundLimit(state, cfg.max_rounds);
+        state.result_branch = undefined;
+        state.done_rejections = 0;
+        if (recut && resume.pr_url) {
+          // The recorded pull request is the merged branch's: it must not be mistaken for the new segment's.
+          state.notes = [...(resume.notes ?? []), `The earlier pull request ${resume.pr_url} belongs to the merged branch; a new one is opened for the follow-up work.`];
+          state.pr_url = undefined;
+        }
+      }
     } else {
       const t = taskMessageBody(task!);
       state = newRunState({
         run_id: runId,
+        name: opts.name,
         project: project.name,
         task_source: task!.source,
         task_path: task!.sourcePath,
@@ -185,6 +213,23 @@ export class RunSession {
     const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
+      if (opts.followup) {
+        const n = state.reopened?.length ?? 1;
+        fs.mkdirSync(path.join(runDir, "followups"), { recursive: true });
+        fs.writeFileSync(path.join(runDir, "followups", `${n}.md`), `${opts.followup.text.trimEnd()}\n`);
+        // A run finished before done-<n>.md existed has only result.md: keep that report before the next done overwrites it.
+        const prev = path.join(runDir, `done-${n}.md`);
+        const legacy = path.join(runDir, RESULT_FILE);
+        if (!fs.existsSync(prev) && fs.existsSync(legacy)) fs.copyFileSync(legacy, prev);
+        deliver(project, {
+          from: "user",
+          to: project.lead,
+          type: "task",
+          subject: opts.followup.text.split("\n").find((l) => l.trim())?.slice(0, 80) ?? "Follow-up",
+          body: `## Goal\n${opts.followup.text.trimEnd()}\n\n## Acceptance criteria\nAs stated in the goal; the earlier result still holds unless the goal changes it.\n\n## Scope\nThis run's earlier work and files.\n\n## Upstream\nThe previous final report is in \`${path.join(runDir, `done-${n}.md`)}\`; the original task is in \`${path.join(runDir, "task.md")}\`.\n`,
+        });
+        log("reopen", { n });
+      }
     } else {
       const t = taskMessageBody(task!);
       guard.saveSnapshot(path.join(runDir, "snapshots"));
@@ -296,14 +341,14 @@ export class RunSession {
     };
     let result: WakeResult | undefined;
     for (let attempt = 0; attempt <= cfg.retry; attempt++) {
-      if (state.rounds >= cfg.max_rounds) {
+      if (state.rounds >= state.max_rounds) {
         result = { ok: false, text: "", exitCode: null, timedOut: false, error: "round limit reached" };
         break;
       }
       const round = ++state.rounds;
       const started = Date.now();
       const att = beginAttempt(runDir, claim.id);
-      say(`[round ${state.rounds}/${cfg.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
+      say(`[round ${state.rounds}/${state.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
       state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
@@ -520,10 +565,9 @@ export class RunSession {
       this.doneOutcome = resolved.outcome;
       this.doneNote = resolved.note;
       this.doneVerification = resolved.verification;
-      atomicWrite(
-        path.join(runDir, RESULT_FILE),
-        `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`,
-      );
+      const report = `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`;
+      atomicWrite(path.join(runDir, RESULT_FILE), report);
+      atomicWrite(path.join(runDir, `done-${(state.reopened?.length ?? 0) + 1}.md`), report);
       this.pendingDoneFile = route.done.file;
       log("done", { subject: route.done.subject });
       this.endReason = "done";
@@ -650,6 +694,7 @@ export class RunSession {
     if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 
+    const existingUrl = state.pr_url;
     const result = openPullRequest({
       // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
       cwd: toplevel(project.dir),
@@ -658,11 +703,14 @@ export class RunSession {
       body: prBody(this.doneMessage?.body ?? ""),
       bodyFile: path.join(runDir, "pr-body.md"),
       run: this.prRunner,
+      existingUrl,
     });
     log("pull-request", { ...result });
     if (result.status === "opened") {
+      say(`  pull request ${result.updated ? "updated" : "opened"}: ${result.url}`);
+      if (existingUrl && !result.updated && !state.notes?.some((n) => n.includes(existingUrl)))
+        this.note(`The earlier pull request ${existingUrl} was no longer open; a new one was opened for the follow-up work.`);
       state.pr_url = result.url;
-      say(`  pull request opened: ${result.url}`);
     } else {
       this.note(`The pull request could not be opened (${result.step}: ${result.reason}). The branch ${rb.branch} is kept.${result.manual.length ? ` To finish by hand:\n${result.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
     }
@@ -702,7 +750,7 @@ export class RunSession {
   async run(): Promise<RunSummary> {
     if (this.resume) this.recover();
 
-    const { say, cfg, runId, runDir, project, wsMode, log, state, opts } = this;
+    const { say, runId, runDir, project, wsMode, log, state, opts } = this;
     // When the lead was the last one woken and left every mailbox empty without a `done`, remind it once instead of ending silently.
     let leadWasLast = false;
     let nudged = false;
@@ -729,7 +777,7 @@ export class RunSession {
         this.endReason = "idle";
         break;
       }
-      if (state.rounds >= cfg.max_rounds) {
+      if (state.rounds >= state.max_rounds) {
         this.endReason = "max_rounds";
         break;
       }
@@ -786,6 +834,6 @@ export class RunSession {
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
+    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
   }
 }

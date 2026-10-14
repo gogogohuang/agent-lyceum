@@ -8,6 +8,7 @@ import { makeEnv, write, type TestEnv } from "./helpers.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
 const tsx = path.join(here, "..", "node_modules", ".bin", "tsx");
+const fake = path.join(here, "fixtures", "runtime", "fake-claude.mjs");
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -91,6 +92,112 @@ describe("status --json", () => {
     expect(unknownProject.code).not.toBe(0);
     expect(unknownProject.out).toBe("");
     expect(unknownProject.err).toMatch(/ghost/);
+  });
+});
+
+function seedNamed() {
+  const runs = env.project().paths.runs;
+  const seed = (id: string, name: string | undefined, summary: string) =>
+    write(
+      path.join(runs, id, "state.json"),
+      JSON.stringify({ run_id: id, ...(name ? { name } : {}), rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "idle", task_summary: summary }),
+    );
+  seed("20261014-010000", "login", "Add login");
+  seed("20261014-020000", "login-2", "Add login again");
+  seed("20261013-010000", undefined, "An old run without a name");
+}
+
+describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
+  it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", () => {
+    env = makeEnv();
+    seedNamed();
+    for (const q of ["20261014-010000", "login", "20261014-01"]) {
+      const text = run(["status", "-p", "demo", "--task-id", q]);
+      expect(text.code, q).toBe(0);
+      expect(text.out).toContain("Add login");
+      const j = JSON.parse(run(["status", "-p", "demo", "--task-id", q, "--json"]).out);
+      expect(j.run).toMatchObject({ run_id: "20261014-010000", name: "login" });
+      const dry = run(["clear", q, "-p", "demo", "--dry-run"]);
+      expect(dry.code, q).toBe(0);
+      expect(dry.out).toContain("20261014-010000");
+    }
+  });
+
+  it("shows `name (run_id)` in the default status header, the --task-id header and clear output; a run without a name shows just its id", () => {
+    env = makeEnv();
+    seedNamed();
+    expect(run(["status", "-p", "demo"]).out).toContain("login-2 (20261014-020000)");
+    expect(run(["status", "-p", "demo", "--task-id", "login"]).out).toContain("執行 login (20261014-010000)");
+    expect(run(["status", "-p", "demo", "--task-id", "20261013-010000"]).out).toContain("執行 20261013-010000 ");
+    expect(run(["clear", "login", "-p", "demo", "--dry-run"]).out).toContain("Run login (20261014-010000)");
+    const del = run(["clear", "login", "-p", "demo"]);
+    expect(del.out).toContain("Deleted run login (20261014-010000):");
+    const old = run(["clear", "20261013-010000", "-p", "demo"]);
+    expect(old.out).toContain("Deleted run 20261013-010000:");
+  });
+
+  it("an exact name wins over a longer name that starts with it", () => {
+    env = makeEnv();
+    seedNamed();
+    expect(JSON.parse(run(["status", "-p", "demo", "--task-id", "login", "--json"]).out).run.run_id).toBe("20261014-010000");
+    expect(JSON.parse(run(["status", "-p", "demo", "--task-id", "login-2", "--json"]).out).run.run_id).toBe("20261014-020000");
+  });
+
+  it("an old run without a name still works by its id", () => {
+    env = makeEnv();
+    seedNamed();
+    const r = run(["clear", "20261013-010000", "-p", "demo", "--dry-run"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("20261013-010000");
+    expect(JSON.parse(run(["status", "-p", "demo", "--task-id", "20261013-010000", "--json"]).out).run.name).toBeUndefined();
+  });
+
+  it("an ambiguous prefix lists the candidates (name, id, task) and exits 1; nothing is deleted", () => {
+    env = makeEnv();
+    seedNamed();
+    for (const args of [["clear", "2026101", "-p", "demo"], ["status", "-p", "demo", "--task-id", "2026101"], ["resume", "2026101", "-p", "demo"]]) {
+      const r = run(args);
+      expect(r.code, args.join(" ")).toBe(1);
+      expect(r.err).toContain("matches several runs");
+      for (const x of ["login ", "login-2", "20261014-010000", "20261014-020000", "Add login", "Add login again"]) expect(r.err).toContain(x);
+    }
+    expect(fs.existsSync(path.join(env.project().paths.runs, "20261014-010000", "state.json"))).toBe(true);
+  });
+
+  it("an unknown or empty query fails cleanly", () => {
+    env = makeEnv();
+    seedNamed();
+    expect(run(["clear", "nope", "-p", "demo", "--dry-run"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
+    expect(run(["resume", "nope", "-p", "demo"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
+    const empty = run(["status", "-p", "demo", "--task-id", ""]);
+    expect(empty.code).toBe(1);
+    expect(empty.err).toMatch(/run id or name/);
+    expect(run(["resume", "", "-p", "demo"]).code).not.toBe(0);
+  });
+
+  it("resume finds a run by name", () => {
+    env = makeEnv();
+    seedNamed();
+    write(path.join(env.project().paths.runs, "20261014-010000", "state.json"), JSON.stringify({ run_id: "20261014-010000", name: "login", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "done", outcome: "completed", task_summary: "Add login" }));
+    write(path.join(env.project().paths.runs, "20261014-010000", "result.md"), "# Done\n");
+    // `resume` checks the runtime CLI before it reads the run, so give it a stand-in `claude` (CI has none installed).
+    const bin = path.join(env.root, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
+    const r = run(["resume", "login", "-p", "demo"], { PATH: `${bin}:${process.env.PATH}` });
+    expect(r.out).toContain("Run login (20261014-010000) already finished (done)");
+  });
+
+  it("the task list shows names, and leaves the column out when no run has one", () => {
+    env = makeEnv();
+    seedNamed();
+    const out = run(["status", "-p", "demo", "--task-list"]).out;
+    expect(out).toMatch(/login-2\s+20261014-020000/);
+    expect(JSON.parse(run(["status", "-p", "demo", "--task-list", "--json"]).out).runs.map((x) => x.name)).toEqual(["login-2", "login", undefined]);
+    env.cleanup();
+    env = makeEnv();
+    seedRuns();
+    expect(run(["status", "-p", "demo", "--task-list"]).out).not.toContain("名稱");
   });
 });
 

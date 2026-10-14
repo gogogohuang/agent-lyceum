@@ -772,6 +772,27 @@ export function finishLeadBranch(ws: AgentWorkspace, message: string, patchFile:
   return { branch: ws.branch, head, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
 }
 
+/**
+ * A reopened run whose lead branch was already merged into your HEAD starts its next segment on a fresh branch cut from HEAD,
+ * so the merged work is not offered again. Only when nothing would be lost: the branch's last committed head (`resultHead`) is
+ * in HEAD, the worktree is still at that head, and it holds no uncommitted work and nothing whose state is unknown.
+ * Otherwise the worktree and branch are returned unchanged. Your working tree, index and HEAD are never touched.
+ */
+export function recutLeadWorkspace(project: ResolvedProject, runId: string, agent: string, ws: AgentWorkspace, resultHead: string | undefined): { ws: AgentWorkspace; recut: boolean } {
+  const keep = { ws, recut: false };
+  if (!resultHead) return keep;
+  if (tryGit(toplevel(project.dir), ["merge-base", "--is-ancestor", resultHead, "HEAD"]) === undefined) return keep;
+  const work = inspectWorkspace(project, runId, agent, ws);
+  if (!work || work.unknown || work.dirty.length) return keep;
+  try {
+    if (agentGit(ws, ["rev-parse", "HEAD"]) !== resultHead) return keep;
+  } catch {
+    return keep;
+  }
+  removeAgentWorkspace(project, runId, agent);
+  return { ws: prepareAgentWorkspace(project, runId, agent, snapshotHead(project, runId)), recut: true };
+}
+
 /** Names of the agents that have a worktree for this run. */
 export function listWorkspaceAgents(project: ResolvedProject, runId: string): string[] {
   const dir = path.join(project.paths.root, "worktrees", runId);

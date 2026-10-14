@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, runLabel, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
@@ -33,6 +33,11 @@ export function latestRun(project: ResolvedProject): { dir: string; state: RunSt
 /** Newest run that can still be resumed: not done and not currently running. */
 export function latestUnfinishedRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
   return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !runIsAlive(r.state, project)));
+}
+
+/** Runs a follow-up text can reopen: the finished ones (end_reason "done"). Newest first. */
+export function reopenCandidates(project: ResolvedProject): { dir: string; state: RunState }[] {
+  return listRuns(project, Infinity).filter((r) => r.state.end_reason === "done");
 }
 
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
@@ -165,6 +170,8 @@ export interface QueueItem {
 
 export interface RunReport {
   run_id: string;
+  /** Absent on runs from older versions. */
+  name?: string;
   dir: string;
   /** running: its dispatcher is alive; interrupted: it died mid-run; ended: it stopped (see end_reason). */
   state: "running" | "interrupted" | "ended" | "waiting";
@@ -269,6 +276,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   }
   return {
     run_id: s.run_id,
+    name: s.name,
     dir: run.dir,
     state: s.end_reason === "waiting" ? "waiting" : s.end_reason ? "ended" : live ? "running" : "interrupted",
     live,
@@ -367,7 +375,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   const s = run;
   const live = s.live;
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, reportLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
     `${L("任務：")}${taskText(s)}`,
   ];
 
@@ -403,7 +411,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
 /** What a run is doing / did, one line per wake. */
 function describeRun(s: RunReport, now: number, c: Paint, limit = Infinity): string[] {
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, reportLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
     `  任務：${taskText(s)}`,
   ];
   const steps = stepsLine(s.steps, c);
@@ -469,10 +477,12 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
   const runs = report.runs;
   const head = `${c.bold("專案：")}${report.project.name}  ${c.dim(`（共 ${runs.length} 個任務）`)}`;
   if (!runs.length) return `${head}\n\n無執行紀錄。`;
-  const header = ["ID", "狀態", "輪次", "目前步驟", "任務"];
+  const named = runs.some((s) => s.name);
+  const header = [...(named ? ["名稱"] : []), "ID", "狀態", "輪次", "目前步驟", "任務"];
   const rows = [header];
   for (const s of runs) {
     rows.push([
+      ...(named ? [s.name ?? ""] : []),
       s.run_id,
       reportLabel(s),
       `${s.rounds}/${s.max_rounds}`,
@@ -485,7 +495,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
     r
       .map((t, i) => {
         const p = i === r.length - 1 ? t : padCols(t, w[i] ?? 0);
-        return ri === 0 ? c.bold(p) : i === 1 ? stateColor(c, t) + " ".repeat(Math.max(0, (w[i] ?? 0) - cols(t))) : p;
+        return ri === 0 ? c.bold(p) : i === (named ? 2 : 1) ? stateColor(c, t) + " ".repeat(Math.max(0, (w[i] ?? 0) - cols(t))) : p;
       })
       .join("  ")
       .trimEnd();

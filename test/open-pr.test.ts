@@ -55,6 +55,44 @@ describe("defaultBase", () => {
 describe("openPullRequest", () => {
   const base = { "git symbolic-ref --short": { ok: true, out: "origin/main" } };
 
+  const withExisting = (answers: Record<string, { ok: boolean; out: string }>) => {
+    const f = fake(answers);
+    const r = openPullRequest({ cwd: tmp(), branch: "b", title: "t", body: "x", bodyFile: path.join(tmp(), "pr-body.md"), run: f.run, existingUrl: "https://x/pull/3" });
+    return { r, calls: f.calls.map((c) => `${c.cmd} ${c.args[0]}`) };
+  };
+  const viewOf = (out: string) => ({ "gh pr view": { ok: true, out } });
+
+  it("with an existing PR that is still open it only pushes, and reports that url as updated", () => {
+    const { r, calls } = withExisting({ ...viewOf("OPEN\n"), "git push -u": { ok: true, out: "" } });
+    expect(r).toEqual({ status: "opened", url: "https://x/pull/3", updated: true });
+    expect(calls).toEqual(["gh pr", "git push"]);
+  });
+
+  it("with an existing PR that was merged or closed it pushes and creates a new one", () => {
+    for (const state of ["MERGED", "CLOSED"]) {
+      const { r, calls } = withExisting({
+        ...viewOf(`${state}\n`),
+        "git symbolic-ref --short": { ok: true, out: "origin/main" },
+        "git push -u": { ok: true, out: "" },
+        "gh pr create": { ok: true, out: "https://x/pull/9\n" },
+      });
+      expect(r, state).toEqual({ status: "opened", url: "https://x/pull/9" });
+      expect(calls, state).toEqual(["gh pr", "git symbolic-ref", "git push", "gh pr"]);
+    }
+  });
+
+  it("when the state lookup itself fails it keeps the push-only behaviour", () => {
+    const { r, calls } = withExisting({ "gh pr view": { ok: false, out: "gh: not logged in" }, "git push -u": { ok: true, out: "" } });
+    expect(r).toEqual({ status: "opened", url: "https://x/pull/3", updated: true });
+    expect(calls).toEqual(["gh pr", "git push"]);
+  });
+
+  it("with an existing open PR a failed push is the normal failed result", () => {
+    const { r, calls } = withExisting({ ...viewOf("OPEN"), "git push -u": { ok: false, out: "rejected\nmore" } });
+    expect(r).toMatchObject({ status: "failed", step: "push", reason: "rejected" });
+    expect(calls).toEqual(["gh pr", "git push"]);
+  });
+
   it("pushes the branch, then creates the PR against the default branch, and returns its URL", () => {
     const cwd = tmp();
     const bodyFile = path.join(tmp(), "pr-body.md");

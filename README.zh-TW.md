@@ -28,10 +28,10 @@ npx agent-lyceum status
 | 專案 | `project add <name> --dir <repo>` | 註冊專案。 [詳細](docs/commands.zh-TW.md#project-add) |
 | 專案 | `project` / `project remove <name> [--purge]` | 列出或取消註冊專案。 [詳細](docs/commands.zh-TW.md#project-and-project-remove) |
 | 診斷 | `doctor [-p name] [--task-file f] [--resolved] [--json]` | 不執行 agent，檢查設定（含防護等級）、git、鎖與 runtime CLI；`--resolved` 印出每項生效設定與其來源。 [詳細](docs/commands.zh-TW.md#doctor) |
-| 診斷 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）。 [詳細](docs/commands.zh-TW.md#status) |
-| 執行 | `run ["task"] [--task-file f] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
-| 執行 | `resume [run-id] [--answer] [-p name]` | 接續被中斷或失敗的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
-| 執行 | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | 刪除 run 與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
+| 診斷 | `status [-p name] [--monitor]` | 顯示 agent、信件、目前執行與歷次 run（支援 `--json`、`--monitor`）；`--task-id` 接受 id、名稱或唯一前綴。 [詳細](docs/commands.zh-TW.md#status) |
+| 執行 | `run ["task"] [--task-file f] [--name n] [--agent a] [-p name]` | 把任務交給 lead 並執行到結束；`--name` 為 run 命名；加 `--agent` 則只交給某個成員單獨做。 [詳細](docs/commands.zh-TW.md#run) |
+| 執行 | `resume [run] ["追加要求"] [--task-file f] [--answer] [-p name]` | 接續被中斷或失敗的 run，或用追加要求重開已完成的 run；`--answer` 會先回答它等待中的問題。 [詳細](docs/commands.zh-TW.md#resume) |
+| 執行 | `clear <run> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | 刪除 run（id、名稱或唯一前綴）與其任務記憶、worktree；或移除當機 run 留下的專案鎖。 [詳細](docs/commands.zh-TW.md#clear) |
 | 執行 | `call <agent> ["task"] [--task-file f] [--dir d]` | 單獨呼叫一個 global agent（不需專案），印出它的回答。 [詳細](docs/commands.zh-TW.md#call) |
 | 執行 | `tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | 讓 agent 整理自己的記憶（只能手動觸發；封存而非刪除）。 [詳細](docs/commands.zh-TW.md#tidy) |
 | 執行 | `tidy --undo <時間戳> -p name --agent a` | 還原一次整理：把封存的檔案搬回。 [詳細](docs/commands.zh-TW.md#tidy) |
@@ -138,6 +138,17 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 - `can_edit_agent_md: true` 的 lead 修改的是它自己 worktree 裡的 `CLAUDE.md`／`AGENTS.md`；這些修改要等你合併它的 branch 才會進到你的 repo。
 - `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留；但若兩個 run 的喚醒時間重疊，一個 run 在另一個 run 的 agent 工作期間所做的修改，可能被另一個 run 還原。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
+
+### 接續已完成的 run
+
+每個 run 都有**名稱**：由 task 第一行產生（小寫字母、數字與 `-`，最多 30 字元；沒有可用字元時用 `task`；重複時加 `-2`、`-3`），或用 `run --name <name>` 指定（字元與長度限制相同；名稱已被使用會拒絕）。`resume`、`clear` 與 `status --task-id` 接受完整 run id、名稱，或兩者之一的唯一前綴；前綴有歧義時會列出候選並以 `1` 結束，空字串會被拒絕。`status` 會在 id 旁顯示名稱。
+
+已完成（`done`）的 run 可以用追加要求重開：`agent-lyceum resume [run] "<追加要求>"`（或 `--task-file f`）。lead 會把這段文字當成新的 `task` 收到，run 沿用同一個 run 目錄、任務記憶、session 與 lead 的 worktree 繼續。
+
+- **哪些 run：** 只有已完成的 run 能重開。仍在執行的 run 會拒絕；尚未完成的 run 若帶文字也會拒絕（先不帶文字 resume 它）。不帶文字時行為不變：已完成的 run 只印出結果。沒指定 run 時，候選是已完成的 run，由新到舊：剛好一個就用它，沒有就報錯，有多個就列出（在終端機可用編號或名稱選；非互動環境則報錯並列出候選）。只有一個參數時，只有在它不可能是 run 參照（含空白，或含 run 名稱不能用的字元）才會被當成追加要求；單一個詞的追加要求要寫成 `resume <run> "<text>"` 或用 `--task-file`。
+- **保留什麼：** 追加要求存成 `runs/<run-id>/followups/<n>.md`。每份 `done` 報告保留為 `done-<n>.md`，`result.md` 永遠是最新一份。`state.json` 新增 `name`、`reopened`、`round_floor`（都是選填，舊的 run 照樣能讀）。未解決的 blocked integration 會保留；每段重開的 done 規範提醒重新計算。
+- **輪數上限：** `max_rounds` 從重開時起算：`rounds` 持續累加，上限是重開當下的輪數加 `max_rounds`。
+- **lead 的 branch**（lead 有 worktree 的 run）：若該 branch 已合併進你的 `HEAD`，且 lead 的 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名，`agent-lyceum/<run-id>/<lead>`）會從你目前的 `HEAD` 重新切出，並印一行說明。否則沿用原本的 worktree 與 branch。若已記錄 PR（`pr_url`）且 branch 沒有重切，新的 `open_pr: true` 只會 push（「pull request updated」），而且只在該 PR 仍開啟時；若它已被合併（含 squash merge）或關閉，就改開一個新的 PR；若 branch 重切了，已記錄的 `pr_url` 會被清掉（舊網址留在 run 的 notes），要求時再開一個新的 PR。agent-lyceum 仍然從不合併。
 
 ### 開 PR
 

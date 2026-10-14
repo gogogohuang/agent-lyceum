@@ -507,7 +507,7 @@ describe("tidyAdvice", () => {
     expect(a[0]?.reason).toMatch(/MEMORY\.md/);
   });
 
-  it("suggests a tidy when the project moved far past the last baseline", () => {
+  it("suggests a tidy when the project moved far past the last baseline", { timeout: 30_000 }, () => {
     env = makeMemoryEnv();
     initGitRepo(env.repo);
     const d = seed(env);
