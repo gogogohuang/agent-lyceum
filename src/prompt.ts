@@ -171,7 +171,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
           "</ask>",
           "```",
           "",
-          "The answers come back to you as a `reply` mail containing an `<answers>` block. A user answer that starts with `other:` is free text. Do not ask what you could decide yourself, and do not ask again for something already answered.",
+          "The answers come back to you as a `reply` mail containing an `<answers>` block. A user answer may be one of your options or any free text of their own (it may start with `other:`). Do not ask what you could decide yourself, and do not ask again for something already answered.",
         ]
       : []),
     ...(isLead
