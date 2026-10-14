@@ -90,8 +90,8 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
     ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶
     ├── shared/common/COMMON.md
     ├── locks/<run-id>.json           # 該 run 執行期間持有（同時最多 dispatcher.max_concurrent_runs 個）
-    ├── task-memory/<run-id>/<agent>/   # 任務記憶：每次 run 獨立，不與其他任務共用
-    └── runs/<run-id>/{task.md, log.jsonl, state.json, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
+    ├── task-memory/<run-id>/{<agent>/, _shared/}   # 任務記憶：每次 run 獨立，不與其他任務共用；_shared 是 lead 為追加要求寫的交接筆記
+    └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
 
 `team.yaml` 定義可重複使用的 agent；`project.yaml` 選擇團隊並覆寫欄位。物件會逐欄位合併，陣列（`can_message`、`owns`）則整個取代。相對路徑以寫入該路徑的檔案所在資料夾為基準；允許使用 `~`。

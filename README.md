@@ -90,7 +90,8 @@ Changes take effect on the next session start. If the pane shows `無法取得�
     ├── agents/<agent>/{AGENT.md?, memory/}   # project-level persona (optional) + project memory
     ├── shared/common/COMMON.md
     ├── locks/<run-id>.json           # held while that run is active (up to dispatcher.max_concurrent_runs at once)
-    └── runs/<run-id>/{task.md, log.jsonl, state.json, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
+    ├── task-memory/<run-id>/{<agent>/, _shared/}   # per-run memory, never shared between runs; _shared = the lead's handoff notes for follow-ups
+    └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
 
 `team.yaml` defines reusable agents; `project.yaml` picks the team and overrides fields. Objects merge field by field, arrays (`can_message`, `owns`) are replaced. Relative paths resolve against the folder of the file they are written in; `~` is allowed.
