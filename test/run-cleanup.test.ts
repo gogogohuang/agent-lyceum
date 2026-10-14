@@ -125,6 +125,19 @@ describe("clear: what is deleted", () => {
   });
 });
 
+describe("clear: handoff notes", () => {
+  it("removes the run's handoff notes together with its task memory", () => {
+    env = makeEnv();
+    const p = env.project();
+    makeRun("run-a");
+    write(path.join(p.paths.taskMemory, "run-a", "_shared", "MEMORY.md"), "- decided: sessions\n");
+    const plan = planRunCleanup(p, "run-a");
+    expect(plan.refusals).toEqual([]);
+    executeRunCleanup(plan);
+    expect(exists(p.paths.taskMemory, "run-a")).toBe(false);
+  });
+});
+
 describe("clear: symlinks cannot lead deletion outside the project home", () => {
   it("unlinks a symlink inside the run without touching what it points to", () => {
     env = makeEnv();

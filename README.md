@@ -148,6 +148,7 @@ A finished (`done`) run can be reopened with a follow-up request: `agent-lyceum 
 - **What is kept:** the follow-up is saved as `runs/<run-id>/followups/<n>.md`. Each `done` report is kept as `done-<n>.md`, and `result.md` is always the latest. `state.json` gains `name`, `reopened` and `round_floor` (all optional, so older runs still load). Unresolved blocked integrations stay; the done-contract reminders start afresh for each reopened segment.
 - **Round limit:** `max_rounds` counts from the reopen: `rounds` keeps accumulating, and the limit is the rounds at reopen plus `max_rounds`.
 - **The lead's branch** (runs with a lead worktree): if the branch was already merged into your `HEAD` and the lead worktree is clean and untouched since the run ended, the worktree and the branch (same name, `agent-lyceum/<run-id>/<lead>`) are re-cut from your current `HEAD`, and a line says so. Otherwise the same worktree and branch continue. If a pull request was already recorded (`pr_url`) and the branch was not re-cut, a new `open_pr: true` only pushes ("pull request updated") while that pull request is still open; if it was merged (a squash merge included) or closed, a new pull request is opened instead. If the branch was re-cut, the recorded `pr_url` is cleared (the old URL stays in the run's notes) and a new pull request is opened when asked. agent-lyceum still never merges.
+- **Handoff notes:** before it sends `done`, the lead writes what a follow-up will need into `task-memory/<run-id>/_shared/` in the agent-lyceum home (`MEMORY.md` is the index): decisions and why, interfaces agreed, current state, what is left and the next steps, pitfalls met. Members can read this folder but not write it (a run started with `run --agent` has one agent, which is its own lead and writes it; `call` has none). Once a run is reopened, every wake-up of every agent gets `MEMORY.md` in its prompt (the first 8 KB; a longer index is cut and flagged), and the reopened `task` mail's `Upstream` names it; the first segment's prompts do not contain it. If the lead sends `done` without having changed `MEMORY.md` in that segment, the run is not blocked: a note `shared-not-updated` is added to the run's notes. `clear` deletes the folder with the task memory; `tidy` does not touch it. It holds notes about this task only; lessons that outlive it belong in project or global memory.
 
 ### Opening a pull request
 
@@ -201,6 +202,7 @@ Default rules (everything else in the repo is unrestricted):
 |---|---|
 | own memory dirs, own `outbox/` | writable |
 | any `AGENT.md`, `COMMON.md`, repo `CLAUDE.md`/`AGENTS.md` | read-only; the lead (`can_edit_agent_md`) may edit them |
+| the run's handoff notes `task-memory/<run-id>/_shared/` | the lead writes; every other agent is read-only |
 | other agents' memory/inbox/outbox, `runs/`, config files | not writable |
 
 Enforcement is layered because no single mechanism is complete:
@@ -209,7 +211,7 @@ Enforcement is layered because no single mechanism is complete:
 - **Codex**: `-s workspace-write` with `-c sandbox_workspace_write.writable_roots=[...]` (OS-enforced). Codex cannot forbid a single file inside the repo, so repo `CLAUDE.md`/`AGENTS.md` are protected by **post-hoc detection** only.
 - **All runtimes**: protected files are hashed before the run; after each wake-up unauthorized changes are reverted, logged, and reported to the lead; what was written is kept in `runs/<run-id>/violations/` first.
 
-`doctor` and `run` print every agent's level per category (`os`, `tool-rules`, `post-hoc`, `prompt-only`) and the paths it can write outside the repo. With `dispatcher.strict: true`, a run is refused unless memory, `AGENT.md` and other agents' context are OS-enforced.
+`doctor` and `run` print every agent's level per category (`os`, `tool-rules`, `post-hoc`, `prompt-only`) and the paths it can write outside the repo. With `dispatcher.strict: true`, a run is refused unless memory, `AGENT.md`, other agents' context and (for non-lead agents) the handoff notes are OS-enforced.
 
 Git in agent worktrees: an agent can write its worktree's `.git` pointer file and its private git dir, which could make git read a config or hooks the agent planted. So every git call the dispatcher makes into an agent's worktree pins the git dir, common dir and work tree recorded when the worktree was made, turns off hooks, fsmonitor, external diff and textconv, and refuses a worktree whose git files were redirected or linked elsewhere, whose HEAD is not its own branch, or that contains a nested repository. Claude additionally may not write those pointer files (`denyWrite`); Codex cannot forbid single files and relies on the pinning alone. Residual risks are listed in [spec 15](docs/specs/15-worktree-git-isolation.md#156-殘留風險). This does not claim the dispatcher can never run code an agent planted. A repository using the `reftable` ref backend is refused in worktree modes.
 

@@ -31,7 +31,9 @@
 
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。
-- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
+- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。lead 也會把追加要求會用到的交接筆記寫進 `task-memory/<run-id>/_shared/`；重開後每個 agent 的 prompt 都會帶它的索引。
+
+見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。
@@ -145,7 +147,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 **用法:** `clear <run> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
-依 id、名稱或唯一前綴（前綴有歧義時會列出候選並以 `1` 結束）刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
+依 id、名稱或唯一前綴（前綴有歧義時會列出候選並以 `1` 結束）刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**（含交接筆記），以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
 
 選項：
 
@@ -169,7 +171,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 在不執行任何 agent 的前提下檢查環境：
 
-- 設定（會印出每個 agent 的防護等級）；
+- 設定（會印出每個 agent 的防護等級；`handoff` 欄是 run 的交接筆記的防護，lead 因為可寫而顯示 `n/a`）；
 - git（平行 run 需要）；
 - 是否有 `gh` 與 `origin` 可用來開 PR（`max_concurrent_runs > 1` 時）；
 - 專案鎖；

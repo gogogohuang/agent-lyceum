@@ -149,6 +149,7 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 - **保留什麼：** 追加要求存成 `runs/<run-id>/followups/<n>.md`。每份 `done` 報告保留為 `done-<n>.md`，`result.md` 永遠是最新一份。`state.json` 新增 `name`、`reopened`、`round_floor`（都是選填，舊的 run 照樣能讀）。未解決的 blocked integration 會保留；每段重開的 done 規範提醒重新計算。
 - **輪數上限：** `max_rounds` 從重開時起算：`rounds` 持續累加，上限是重開當下的輪數加 `max_rounds`。
 - **lead 的 branch**（lead 有 worktree 的 run）：若該 branch 已合併進你的 `HEAD`，且 lead 的 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名，`agent-lyceum/<run-id>/<lead>`）會從你目前的 `HEAD` 重新切出，並印一行說明。否則沿用原本的 worktree 與 branch。若已記錄 PR（`pr_url`）且 branch 沒有重切，新的 `open_pr: true` 只會 push（「pull request updated」），而且只在該 PR 仍開啟時；若它已被合併（含 squash merge）或關閉，就改開一個新的 PR；若 branch 重切了，已記錄的 `pr_url` 會被清掉（舊網址留在 run 的 notes），要求時再開一個新的 PR。agent-lyceum 仍然從不合併。
+- **交接筆記：** lead 在送 `done` 之前，把追加要求會用到的內容寫進 agent-lyceum home 裡的 `task-memory/<run-id>/_shared/`（`MEMORY.md` 為索引）：做過的決定與理由、介面約定、目前狀態、剩下的事與下一步、踩過的坑。成員可讀不可寫（用 `run --agent` 啟動的 run 只有一個 agent，它就是自己的 lead，所以可寫；`call` 沒有這個資料夾）。run 重開後，每個 agent 的每次喚醒都在 prompt 裡拿到 `MEMORY.md`（前 8 KB，較長的索引會被截斷並標示），重開的 `task` 信的 `Upstream` 也會指向它；第一段的 prompt 不含它。若 lead 在該段沒有更動 `MEMORY.md` 就送出 `done`，run 不會被擋，只會在 run 的 notes 加一筆 `shared-not-updated`。`clear` 會連同任務記憶一併刪除；`tidy` 不會動它。只放這個 task 的筆記，跨 task 的教訓仍放 project 或 global memory。
 
 ### 開 PR
 
@@ -202,6 +203,7 @@ agents:
 |---|---|
 | 自己的記憶資料夾、自己的 `outbox/` | 可寫入 |
 | 任何 `AGENT.md`、`COMMON.md`、repo 的 `CLAUDE.md`/`AGENTS.md` | 唯讀；lead（`can_edit_agent_md`）可編輯 |
+| run 的交接筆記 `task-memory/<run-id>/_shared/` | lead 可寫；其他 agent 唯讀 |
 | 其他 agent 的記憶／inbox／outbox、`runs/`、設定檔 | 不可寫入 |
 
 由於沒有單一機制是完整的，防護採分層設計：
@@ -210,7 +212,7 @@ agents:
 - **Codex**：`-s workspace-write` 搭配 `-c sandbox_workspace_write.writable_roots=[...]`（由 OS 強制）。Codex 無法禁止 repo 內的單一檔案，所以 repo 的 `CLAUDE.md`/`AGENTS.md` 只能靠**事後偵測**保護。
 - **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead；被寫入的內容會先留存在 `runs/<run-id>/violations/`。
 
-`doctor` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md` 與其他 agent 的 context 都由 OS 強制保護，否則拒絕執行。
+`doctor` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md`、其他 agent 的 context 與（非 lead 的 agent 的）交接筆記都由 OS 強制保護，否則拒絕執行。
 
 agent worktree 內的 git:agent 能寫它 worktree 的 `.git` 指標檔與私有 git 目錄,可能讓 git 去讀 agent 埋的設定或 hook。因此 dispatcher 對 agent worktree 的每一次 git 呼叫,都釘住 worktree 建立當下記錄的 git dir、common dir 與 work tree,關閉 hook、fsmonitor、external diff 與 textconv,並拒絕使用 git 檔案被改向或連到別處、HEAD 不是它自己的分支、或內含巢狀 repository 的 worktree。Claude 另外不得寫那幾個指標檔(`denyWrite`);Codex 無法禁止單一檔案,只靠釘住。殘留風險列在 [spec 15](docs/specs/15-worktree-git-isolation.md#156-殘留風險)。這**不**表示 dispatcher 絕不會執行 agent 埋下的程式碼。使用 `reftable` ref 後端的 repository 在 worktree 模式下會被拒絕。
 
