@@ -18,7 +18,7 @@
 | [13](13-status-monitor-visual.md) | status-monitor 圖形化面板 | 中 | 低（只加欄位） | [plan](../plans/2026-10-13-13-status-monitor-visual.md) |
 | [14](14-open-pr.md) | run 結束時開 PR | 中 | 低（預設不變） | [plan](../plans/2026-10-13-14-open-pr.md) |
 | [15](15-worktree-git-isolation.md) | dispatcher 不信任 agent 可寫的 git 狀態 | 高 | 中（簽名改動） | [plan](../plans/2026-10-13-15-worktree-git-isolation.md) |
-| [16](16-task-names-and-reopen.md) | task 名稱與重開已完成的 run | 中 | 中 | （草案） |
+| [16](16-task-names-and-reopen.md) | task 名稱與重開已完成的 run | 中 | 中 | [plan](../plans/2026-10-14-16-task-names-and-reopen.md) |
 | [17](17-run-shared-memory.md) | task 接續用的共享 memory | 中 | 中（write guard） | （草案） |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。

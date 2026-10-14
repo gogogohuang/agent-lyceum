@@ -23,7 +23,7 @@
 
 ## run
 
-**用法:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
+**用法:** `run ["task"] [--task-file f] [--name n] [--agent a] [--assume-defaults] [-p name]`
 
 把任務交給 lead，並執行 dispatcher 直到完成。agent 向你提問時 run 會暫停，見 [回答問題](#回答問題)。
 
@@ -31,6 +31,7 @@
 
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。
+- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。
@@ -65,17 +66,27 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 ## resume
 
-**用法:** `resume [run-id] [--answer [--no-edit]] [--assume-defaults] [-p name]`
+**用法:** `resume [run] ["追加要求"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
 
-接續被中斷或失敗的 run（每次 `run` 都是獨立任務；不指定 id 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。等待回答中的 run 要等所有未答題目都有有效答案才會繼續，否則 `resume` 會列出缺哪些題並以 `3` 結束。
+接續被中斷或失敗的 run，或用追加要求重開已完成的 run（每次 `run` 都是獨立任務；不指定 run 時接續最新一個尚未結束且未在執行的 run，指定 id 則接續該任務）：沿用同一個 run 目錄、session 與輪數，不會重送任務，未讀信件會重新處理。run 仍在執行時會拒絕。對已完成（done）的 run 不會繼續任何工作：只印出已記錄的結果狀態與內容，並以該結果對應的碼結束（`0` completed、`2` partial／blocked、`1` failed；在記錄結果狀態之前就結束的舊 run 視為未驗證的 `partial`，回傳 `2`）。因閒置或達 `max_rounds` 而結束的 run，除非補上新信件，否則已沒有未讀信件，接續後會再次以閒置結束（回傳 `2`）。等待回答中的 run 要等所有未答題目都有有效答案才會繼續，否則 `resume` 會列出缺哪些題並以 `3` 結束。
 
 選項：
 
-- `run-id`：要接續的 run（預設是最新一個尚未結束且未在執行的 run）。
+- `run`：要接續的 run：完整 id、名稱，或兩者之一的唯一前綴（預設是最新一個尚未結束且未在執行的 run）。前綴有歧義時會列出候選並以 `1` 結束；空字串會被拒絕。
+- `"追加要求"` 或 `--task-file f`：用追加要求重開已完成（`done`）的 run。lead 會把它當成新的 `task` 收到，run 沿用它的任務記憶與 worktree 繼續；見下方。文字與 `--task-file` 擇一，不能同時給。
 - `-p name`：專案。
 - `--answer`：先回答 run 正在等待的問題，見 [回答問題](#回答問題)。
 - `--no-edit`：搭配 `--answer`，不開編輯器。
 - `--assume-defaults`：每個有建議值的未答題目都採用建議值。
+
+**重開已完成的 run。** 帶追加要求時，只有已完成（`done`）的 run 會被重開：仍在執行的 run 會拒絕，尚未完成的 run 也會拒絕（先不帶文字 resume 它）。不帶文字時，已完成的 run 和以前一樣只印出結果。
+
+- 沒指定 run 時，候選是目前沒在執行的 run，由新到舊：剛好一個就用它，沒有就報錯，有多個就列出（在終端機會出現編號選單，可輸入編號或名稱；非互動環境則報錯並列出候選）。
+- 只有一個參數時，只有在它不可能是 run 參照（含空白，或含 `A-Z a-z 0-9 . _ -` 以外的字元）才會被當成追加要求；否則找不到的單一參數就是「找不到 run」。單一個詞的追加要求要寫成 `resume <run> "<text>"` 或用 `--task-file`。
+- 追加要求存成 `runs/<run-id>/followups/<n>.md`；每份 `done` 報告保留為 `done-<n>.md`，`result.md` 是最新一份。輪數上限從重開時起算（`rounds` 持續累加；上限是重開當下的輪數加 `max_rounds`）。每段重開的 done 規範提醒重新計算；未解決的 blocked integration 會保留。
+- lead 有 worktree 時：若 lead 的 branch 已合併進你的 `HEAD`，且 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名）會從目前的 `HEAD` 重新切出並印一行說明；否則沿用原本的。已記錄 PR 且沒有重切時，新的 `open_pr: true` 只會 push（「pull request updated」）；重切後，已記錄的 `pr_url` 會被清掉（留在 run 的 notes），要求時再開新的 PR。agent-lyceum 從不合併。
+
+見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 
 ## 回答問題
 
@@ -125,16 +136,16 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - （不帶選項）：一併印出最新 run 的完整 wake 紀錄。
 - `-p name`：專案。
 - `--monitor`：常駐並持續更新，每個 run 只顯示最新三筆 wake。
-- `--task-id id`：印出單一任務的完整內容（每次 wake、結果、log 目錄）。
+- `--task-id id`：印出單一任務的完整內容（每次 wake、結果、log 目錄）。`id` 可以是完整 run id、名稱，或兩者之一的唯一前綴。
 - `--task-list [project]`：列出專案所有任務（run）的 id、狀態、輪數與任務內容，id 可直接給 `resume` 使用。
 - `--json`：把同一份報告以 JSON 輸出（`schema_version: 1`、無顏色，stdout 只有 JSON；錯誤走 stderr 並以非零 exit code 結束），可搭配 `--task-list`、`--task-id`。文字與 JSON 由同一份報告產生。
 - `--json` 另外在每個 agent 附上 `can_message`（它可以寄信的對象；`all` 已展開、不含自己），並在 `run.active[*].handling`、`run.queue[*]` 與 `run.wakes[*].handling` 的每封信附上 `digest`：依信種整理的短段落（`[{ "label": "目標", "lines": ["…"] }]`）。兩者都只是新增欄位，`schema_version` 仍是 `1`。
 
 ## clear
 
-**用法:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
+**用法:** `clear <run> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
-依 id 刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
+依 id、名稱或唯一前綴（前綴有歧義時會列出候選並以 `1` 結束）刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**，以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
 
 選項：
 

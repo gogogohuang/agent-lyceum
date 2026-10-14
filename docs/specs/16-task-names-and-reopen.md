@@ -1,6 +1,6 @@
 # 16 task 名稱與重開已完成的 run
 
-狀態：草案（尚無 plan）。
+狀態：已實作（計畫：docs/plans/2026-10-14-16-task-names-and-reopen.md）。
 
 ## 16.1 問題
 

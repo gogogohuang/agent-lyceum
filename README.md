@@ -28,10 +28,10 @@ Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (already logged i
 | Project | `project add <name> --dir <repo>` | Register a project. [details](docs/commands.md#project-add) |
 | Project | `project` / `project remove <name> [--purge]` | List or unregister projects. [details](docs/commands.md#project-and-project-remove) |
 | Diagnose | `doctor [-p name] [--task-file f] [--resolved] [--json]` | Check config (with enforcement levels), git, the lock and runtime CLIs without running agents; `--resolved` prints every effective setting and its source. [details](docs/commands.md#doctor) |
-| Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`). [details](docs/commands.md#status) |
-| Run | `run ["task"] [--task-file f] [--agent a] [-p name]` | Give the task to the lead and run until done; with `--agent`, to one member alone. [details](docs/commands.md#run) |
-| Run | `resume [run-id] [--answer] [-p name]` | Continue an interrupted or failed run; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
-| Run | `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | Delete a run with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
+| Diagnose | `status [-p name] [--monitor]` | Show agents, mail, the current wake-up and past runs (`--json`, `--monitor`); `--task-id` takes an id, a name or a unique prefix. [details](docs/commands.md#status) |
+| Run | `run ["task"] [--task-file f] [--name n] [--agent a] [-p name]` | Give the task to the lead and run until done; `--name` names the run; with `--agent`, to one member alone. [details](docs/commands.md#run) |
+| Run | `resume [run] ["follow-up"] [--task-file f] [--answer] [-p name]` | Continue an interrupted or failed run, or reopen a finished one with a follow-up; `--answer` first answers the questions it is waiting on. [details](docs/commands.md#resume) |
+| Run | `clear <run> [-p name] [--dry-run] [--keep-worktrees]` / `clear --lock [run-id] --force` | Delete a run (id, name or unique prefix) with its task memory and worktrees; or remove the lock a crashed run left behind. [details](docs/commands.md#clear) |
 | Run | `call <agent> ["task"] [--task-file f] [--dir d]` | Call one global agent on its own, outside any project; prints its answer. [details](docs/commands.md#call) |
 | Run | `tidy [-p name] [--agent a] [--layer project\|global] [--dry-run]` | Have agents tidy their own memory (manual only; archives, never deletes). [details](docs/commands.md#tidy) |
 | Run | `tidy --undo <timestamp> -p name --agent a` | Undo a tidy: move its archived files back. [details](docs/commands.md#tidy) |
@@ -137,6 +137,17 @@ Known limits:
 - A lead with `can_edit_agent_md: true` edits the `CLAUDE.md`/`AGENTS.md` in its own worktree; the change reaches your repo only when you merge its branch.
 - `COMMON.md` and the `AGENT.md` files are shared by all runs of the project. Each run's guard only judges what changes while its own agents are working, so an edit by one run is kept; but if two runs' wake-ups overlap in time, a change one makes while the other's agents are working can be reverted by the other.
 - Two runs that edit the same file are for you to reconcile when merging; agent-lyceum never merges.
+
+### Continuing a finished run
+
+Every run has a **name**: made from the first line of the task (lowercase letters, digits and `-`, at most 30 characters; `task` if nothing usable is left; `-2`, `-3` on repeats), or chosen with `run --name <name>` (same characters and length; refused if the name is already used). `resume`, `clear` and `status --task-id` accept the full run id, the name, or a unique prefix of either; an ambiguous prefix lists the candidates and exits `1`, and an empty one is refused. `status` shows the name next to the id.
+
+A finished (`done`) run can be reopened with a follow-up request: `agent-lyceum resume [run] "<follow-up>"` (or `--task-file f`). The lead gets the text as a new `task`, and the run goes on with the same run dir, task memory, sessions and lead worktree.
+
+- **Which runs:** only a finished run can be reopened. A run that is still running is refused; a run that is not finished is refused when given text (resume it without text first). Without text nothing changes: a finished run just prints its result. Without a run, the candidates are the runs that are not running, newest first: exactly one is used, none is an error, and several are listed (in a terminal you pick one by number or name; without a terminal the command fails and lists them). A lone argument counts as follow-up text only when it cannot be a run reference (it contains whitespace or a character outside `A-Z a-z 0-9 . _ -`); a one-word follow-up needs `resume <run> "<text>"` or `--task-file`.
+- **What is kept:** the follow-up is saved as `runs/<run-id>/followups/<n>.md`. Each `done` report is kept as `done-<n>.md`, and `result.md` is always the latest. `state.json` gains `name`, `reopened` and `round_floor` (all optional, so older runs still load). Unresolved blocked integrations stay; the done-contract reminders start afresh for each reopened segment.
+- **Round limit:** `max_rounds` counts from the reopen: `rounds` keeps accumulating, and the limit is the rounds at reopen plus `max_rounds`.
+- **The lead's branch** (runs with a lead worktree): if the branch was already merged into your `HEAD` and the lead worktree is clean and untouched since the run ended, the worktree and the branch (same name, `agent-lyceum/<run-id>/<lead>`) are re-cut from your current `HEAD`, and a line says so. Otherwise the same worktree and branch continue. If a pull request was already recorded (`pr_url`) and the branch was not re-cut, a new `open_pr: true` only pushes ("pull request updated"). If the branch was re-cut, the recorded `pr_url` is cleared (the old URL stays in the run's notes) and a new pull request is opened when asked. agent-lyceum still never merges.
 
 ### Opening a pull request
 

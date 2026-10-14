@@ -23,7 +23,7 @@ Register a project: creates `projects/<name>/project.yaml`, shared folders and `
 
 ## run
 
-**Usage:** `run ["task"] [--task-file f] [--agent a] [--assume-defaults] [-p name]`
+**Usage:** `run ["task"] [--task-file f] [--name n] [--agent a] [--assume-defaults] [-p name]`
 
 Give the task to the lead and run the dispatcher until done. If an agent asks you something the run pauses; see [Answering questions](#answering-questions).
 
@@ -31,6 +31,7 @@ Options:
 
 - `"task"`: the task as text. Give this *or* `--task-file`, not both.
 - `--task-file f`: read the task from a file.
+- `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
 - `-p name`: the project (default: inferred from the current directory).
 - `--assume-defaults`: when a question has a suggested value, use it instead of pausing. Questions without a suggestion still pause.
 - `--agent a`: give the task to that one member of the project, and wake nobody else. See below.
@@ -65,17 +66,27 @@ The agent's final reply is printed on stdout; everything else (progress, the cal
 
 ## resume
 
-**Usage:** `resume [run-id] [--answer [--no-edit]] [--assume-defaults] [-p name]`
+**Usage:** `resume [run] ["follow-up"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
 
-Continue an interrupted or failed run (each `run` is its own task; without an id, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`). A run that is waiting for answers only continues once every open question has a valid answer; otherwise `resume` lists the missing ones and exits `3`.
+Continue an interrupted or failed run, or reopen a finished one with a follow-up (each `run` is its own task; without a run, the newest run that is neither done nor running): same run dir, sessions and round count; the task is not re-sent and unread mail is picked up again. Refuses if the run is still alive. For a run that is already done it continues nothing: it prints the recorded outcome and result and exits with the code for that outcome (`0` completed, `2` partial/blocked, `1` failed; a run from before outcomes were recorded counts as an unverified `partial`, exit `2`). A run that ended idle or at `max_rounds` has no unread mail left unless you add some, so resuming it ends idle again (exit `2`). A run that is waiting for answers only continues once every open question has a valid answer; otherwise `resume` lists the missing ones and exits `3`.
 
 Options:
 
-- `run-id`: the run to continue (default: the newest run that is neither done nor running).
+- `run`: the run to continue: its full id, its name, or a unique prefix of either (default: the newest run that is neither done nor running). An ambiguous prefix lists the candidates and exits `1`; an empty one is refused.
+- `"follow-up"` or `--task-file f`: reopen a finished (`done`) run with a follow-up request. The lead gets it as a new `task` and the run goes on with its task memory and worktree; see below. Give the text or `--task-file`, not both.
 - `-p name`: the project.
 - `--answer`: first answer the questions the run is waiting on; see [Answering questions](#answering-questions).
 - `--no-edit`: with `--answer`, do not open the editor.
 - `--assume-defaults`: use the suggested answer for every open question that has one.
+
+**Reopening a finished run.** With follow-up text, only a finished (`done`) run is reopened: a run that is still running is refused, and a run that is not finished is refused too (resume it without text first). Without text a finished run only prints its result, as before.
+
+- Without a run, the candidates are the runs that are not running, newest first: exactly one is used, none is an error, and several are listed (in a terminal a numbered picker takes a number or a name; without a terminal the command fails and lists them).
+- A lone argument is follow-up text only when it cannot be a run reference (it contains whitespace or a character outside `A-Z a-z 0-9 . _ -`); otherwise an unknown lone argument is "run not found". A one-word follow-up needs `resume <run> "<text>"` or `--task-file`.
+- The follow-up is saved as `runs/<run-id>/followups/<n>.md`; each `done` report is kept as `done-<n>.md` and `result.md` is the latest. The round limit counts from the reopen (`rounds` keeps accumulating; the limit is the rounds at reopen plus `max_rounds`). Each reopened segment gets fresh done-contract reminders; unresolved blocked integrations are kept.
+- With a lead worktree: if the lead branch was already merged into your `HEAD` and the worktree is clean and untouched since the run ended, the worktree and branch (same name) are re-cut from the current `HEAD` and a line says so; otherwise the same ones continue. With a recorded pull request and no re-cut, a new `open_pr: true` only pushes ("pull request updated"); after a re-cut the recorded `pr_url` is cleared (kept in the run's notes) and a new pull request is opened when asked. agent-lyceum never merges.
+
+See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
 
 ## Answering questions
 
@@ -125,16 +136,16 @@ Options:
 - (none): also prints the full wake-by-wake record of the latest run.
 - `-p name`: the project.
 - `--monitor`: keep a live page open, showing only the latest three wakes of each run.
-- `--task-id id`: print everything about one task (every wake, its result, log directory).
+- `--task-id id`: print everything about one task (every wake, its result, log directory). `id` is a full run id, a name or a unique prefix of either.
 - `--task-list [project]`: list every run of the project with its id, state, rounds and task (feed the id to `resume`).
 - `--json`: print the same report as JSON (`schema_version: 1`, no colour, nothing else on stdout; errors go to stderr with a non-zero exit). It works with `--task-list` and `--task-id`. Text and JSON are made from the same report.
 - `--json` also carries, per agent, `can_message` (who it may send mail to; `all` expanded, itself left out), and, for every message in `run.active[*].handling`, `run.queue[*]` and `run.wakes[*].handling`, a `digest`: short sections by message type (`[{ "label": "目標", "lines": ["…"] }]`). Both are additive; `schema_version` stays `1`.
 
 ## clear
 
-**Usage:** `clear <run-id> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
+**Usage:** `clear <run> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
-Delete a task (run) by id: its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
+Delete a task (run) by id, name or unique prefix (an ambiguous prefix lists the candidates and exits `1`): its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
 
 Options:
 
