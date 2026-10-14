@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { commonFile, mayEditProtected, repoInstructionFiles } from "./policy.js";
+import { commonFile, mayEditProtected, repoInstructionFiles, sharedIndex } from "./policy.js";
 
 export interface Violation {
   file: string;
@@ -45,6 +45,8 @@ export class ProtectedGuard {
     for (const a of Object.values(project.agents)) files.add(a.agentMd);
     files.add(commonFile(project));
     for (const f of repoInstructionFiles(project)) files.add(f);
+    const handoff = sharedIndex(project);
+    if (handoff) files.add(handoff);
     return [...files];
   }
 
