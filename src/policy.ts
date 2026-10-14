@@ -12,6 +12,7 @@ export interface AgentEnforcement {
   memory: Level;
   agentMd: Level;
   otherContext: Level;
+  shared: Level;
   repoInstructions: Level;
   owns: Level;
   /** Absolute paths outside the repo this agent may write. */
@@ -22,6 +23,8 @@ export interface AgentEnforcement {
 export interface WritePolicy {
   /** Directories the agent may write to (besides the repo). */
   allowDirs: string[];
+  /** Directories the agent may read besides the repo and its writable ones, but must not write (the run's handoff notes, for everyone but the lead). */
+  readDirs: string[];
   /** Individual files the agent may write (outside allowDirs). */
   allowFiles: string[];
   /** Files/dirs that must stay unwritable (checked even inside the repo). */
@@ -51,6 +54,21 @@ export function repoInstructionFiles(project: ResolvedProject): string[] {
 
 export function memoryDirs(a: ResolvedAgent): string[] {
   return [a.memory.global, a.memory.project, a.memory.task].filter((x): x is string => !!x);
+}
+
+/** Folder name of a run's handoff notes inside `task-memory/<run-id>/`. Agent names start with a letter or digit, so it cannot be an agent's own folder. */
+export const SHARED_DIR = "_shared";
+
+/** The run's handoff folder: read by every agent, written only by the lead. Undefined outside a run and for `call`. */
+export function sharedDir(project: ResolvedProject): string | undefined {
+  if (!project.run || project.solo === "call") return undefined;
+  return path.join(project.paths.taskMemory, project.run.id, SHARED_DIR);
+}
+
+/** The index of the handoff notes: the one file shown in prompts, and the one the guard watches. */
+export function sharedIndex(project: ResolvedProject): string | undefined {
+  const dir = sharedDir(project);
+  return dir ? path.join(dir, "MEMORY.md") : undefined;
 }
 
 const RUN_ENTRIES = ["state.json", "log.jsonl", "log.1.jsonl", "result.md", "task.md", "snapshots", "violations", "agents", "mail"];
@@ -90,9 +108,18 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
   // A `call` has no mailboxes at all; a solo member of a run keeps its outbox to send `done`.
-  const allowDirs = [...memoryDirs(agent), ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]), ...(ws ? [ws.gitDir] : [])];
+  const shared = sharedDir(project);
+  const sharedIdx = sharedIndex(project);
+  const mayWriteShared = !!shared && agent.name === project.lead;
+  const allowDirs = [
+    ...memoryDirs(agent),
+    ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
+    ...(ws ? [ws.gitDir] : []),
+    ...(shared && mayWriteShared ? [shared] : []),
+  ];
   const allowFiles: string[] = [];
   if (isLead) allowFiles.push(commonFile(project));
+  if (mayWriteShared && sharedIdx) allowFiles.push(sharedIdx);
   if (agent.canEditAgentMd) {
     for (const a of Object.values(project.agents)) allowFiles.push(a.agentMd);
     allowFiles.push(...repoInstructionFiles(project));
@@ -111,6 +138,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   }
   addDeny(commonFile(project));
   for (const f of repoInstructionFiles(project)) addDeny(f);
+  if (shared && !mayWriteShared) deny.push(shared);
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
   // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
   for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
@@ -121,6 +149,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
+    readDirs: shared && !mayWriteShared ? [shared] : [],
     allowFiles,
     deny: [...new Set(deny)],
     owns: agent.owns,
@@ -142,16 +171,19 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
   const os = osSandboxAvailable();
   const notes: string[] = [];
   const parallel = project.dispatcher.max_parallel > 1;
+  const isLeadAgent = agent.name === project.lead;
   let e: Omit<AgentEnforcement, "agent" | "runtime" | "writablePaths" | "notes">;
 
   if (agent.runtime === "claude-code") {
     const lvl: Level = os ? "os" : "tool-rules";
-    e = { memory: lvl, agentMd: lvl, otherContext: lvl, repoInstructions: lvl, owns: parallel ? "tool-rules" : "n/a" };
+    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : lvl, repoInstructions: lvl, owns: parallel ? "tool-rules" : "n/a" };
     if (!os) notes.push("OS sandbox unavailable (Windows, or Linux without bubblewrap): Bash can bypass Edit rules.");
+    if (!isLeadAgent && !os) notes.push("Without the OS sandbox Bash can write _shared; only the handoff index (_shared/MEMORY.md) is checked after each wake-up.");
   } else {
     const lvl: Level = os ? "os" : "prompt-only";
-    e = { memory: lvl, agentMd: lvl, otherContext: lvl, repoInstructions: "post-hoc", owns: parallel ? "prompt-only" : "n/a" };
+    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : os ? "os" : "post-hoc", repoInstructions: "post-hoc", owns: parallel ? "prompt-only" : "n/a" };
     notes.push("Codex cannot forbid single files inside the repo; CLAUDE.md/AGENTS.md changes are detected and reverted after each wake-up.");
+    if (!isLeadAgent && !os) notes.push("Without the OS sandbox only the handoff index (_shared/MEMORY.md) is checked after each wake-up; other files in _shared are not protected.");
     if (agent.canEditAgentMd) notes.push("can_edit_agent_md widens Codex writable roots to whole agent directories.");
   }
 

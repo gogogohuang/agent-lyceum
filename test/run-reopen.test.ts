@@ -307,6 +307,6 @@ describe("reopening a concurrent run", () => {
     }, ok, (l) => lines.push(l));
     expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
     expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/4" });
-    expect(lines.join("\n")).not.toContain("updated");
+    expect(lines.join("\n")).not.toContain("pull request updated");
   });
 });

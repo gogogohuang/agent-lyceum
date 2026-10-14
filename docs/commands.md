@@ -73,7 +73,7 @@ Continue an interrupted or failed run, or reopen a finished one with a follow-up
 Options:
 
 - `run`: the run to continue: its full id, its name, or a unique prefix of either (default: the newest run that is neither done nor running). An ambiguous prefix lists the candidates and exits `1`; an empty one is refused.
-- `"follow-up"` or `--task-file f`: reopen a finished (`done`) run with a follow-up request. The lead gets it as a new `task` and the run goes on with its task memory and worktree; see below. Give the text or `--task-file`, not both.
+- `"follow-up"` or `--task-file f`: reopen a finished (`done`) run with a follow-up request. The lead gets it as a new `task` and the run goes on with its task memory and worktree; see below. Give the text or `--task-file`, not both. After the reopen, every agent's prompt carries the index of the lead's handoff notes (`task-memory/<run-id>/_shared/MEMORY.md`).
 - `-p name`: the project.
 - `--answer`: first answer the questions the run is waiting on; see [Answering questions](#answering-questions).
 - `--no-edit`: with `--answer`, do not open the editor.
@@ -145,7 +145,7 @@ Options:
 
 **Usage:** `clear <run> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
-Delete a task (run) by id, name or unique prefix (an ambiguous prefix lists the candidates and exits `1`): its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory**, and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
+Delete a task (run) by id, name or unique prefix (an ambiguous prefix lists the candidates and exits `1`): its run directory (state, log, result, kept copies of reverted protected-file edits, mailboxes), its **task memory** (the handoff notes included), and its agents' git worktrees, branches and snapshot refs. Global and project (long-term) memory is never touched. It refuses, and deletes nothing, while the run is still running or while a worktree holds work that is not in your repo (uncommitted, or committed but not brought in); it lists that work. Symlinks are never followed out of the project home. Progress is journaled in `projects/<name>/cleanup/`, so an interrupted `clear` is finished by repeating the same command. List ids with `status --task-list`.
 
 Options:
 
@@ -169,7 +169,7 @@ A concurrent run's lead branch counts as work that is not in the repo until it i
 
 Check the setup without running any agent:
 
-- configuration (each agent's enforcement level is printed);
+- configuration (each agent's enforcement level is printed; the `handoff` column is the protection of the run's handoff notes, `n/a` for the lead because it may write them);
 - git (for parallel runs);
 - whether `gh` and `origin` are available for opening a pull request (when `max_concurrent_runs > 1`);
 - the project lock;

@@ -6,7 +6,7 @@ import type { ResolvedProject } from "./config.js";
 import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
-import { inboxDir, outboxDir } from "./policy.js";
+import { inboxDir, outboxDir, sharedDir } from "./policy.js";
 import { must } from "./assert.js";
 
 export { atomicWrite };
@@ -59,6 +59,8 @@ export function parseRaw(text: string): { data: Record<string, unknown>; body: s
 
 export function ensureProjectDirs(project: ResolvedProject): void {
   fs.mkdirSync(path.join(project.paths.shared, "common"), { recursive: true });
+  const handoff = sharedDir(project);
+  if (handoff) fs.mkdirSync(handoff, { recursive: true });
   for (const name of Object.keys(project.agents)) {
     fs.mkdirSync(path.join(inboxDir(project, name), "read"), { recursive: true });
     fs.mkdirSync(path.join(outboxDir(project, name), "rejected"), { recursive: true });

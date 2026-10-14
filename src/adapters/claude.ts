@@ -63,7 +63,7 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
 
   const pol = writePolicy(project, agent);
   const repo = repoDirFor(project, agent.name);
-  const addDirs = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
+  const addDirs = [...pol.allowDirs, ...pol.readDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
 
   const args = [
     "-p",

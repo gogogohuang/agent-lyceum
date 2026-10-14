@@ -1,10 +1,11 @@
 import fs from "node:fs";
+import { readFileCapped } from "./fs-util.js";
 import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
-import { commonFile, memoryDirs, outboxDir, repoDirFor } from "./policy.js";
+import { commonFile, memoryDirs, outboxDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -13,15 +14,11 @@ function memoryLabel(agent: ResolvedAgent, dir: string): string {
 
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
+export const HANDOFF_LIMIT = COMMON_LIMIT;
 export const LEAD_BATCH_LIMIT = 5;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
-function readCapped(file: string, limit: number): { text: string; truncated: boolean } | undefined {
-  if (!fs.existsSync(file)) return undefined;
-  const buf = fs.readFileSync(file);
-  if (buf.length <= limit) return { text: buf.toString("utf8"), truncated: false };
-  return { text: buf.subarray(0, limit).toString("utf8"), truncated: true };
-}
+const readCapped = readFileCapped;
 
 /** A PR only needs to say agent-lyceum opened it; no agent or role names. */
 const PR_ATTRIBUTION_RULE =
@@ -37,6 +34,15 @@ const OPEN_PR_RULE =
 
 export function readPersona(agent: ResolvedAgent): string {
   return fs.readFileSync(agent.agentMd, "utf8").trim();
+}
+
+/** What the lead (or a solo agent) is told about the handoff notes: they are what a reopened task starts from. */
+function handoffRule(dir: string): string[] {
+  return [
+    "",
+    "## Handoff for follow-ups",
+    `This task may be reopened later with a follow-up request, and the agents woken then start with fresh sessions. Before you send \`done\`, write what they need to carry on into \`${dir}\`: keep a \`MEMORY.md\` index there (one line per entry, pointing at a file) and record the decisions made and why, the interfaces agreed, the current state, what is left and what to do next, and the pitfalls met. Your teammates can read this folder but cannot write it; if a report from a teammate holds something worth keeping, add it yourself. Only the index is shown in prompts, and only the first ${HANDOFF_LIMIT / 1024} KB of it, so keep it short. These notes are about this task only; lessons that outlive it belong in your project or global memory.`,
+  ];
 }
 
 /** The protocol of an agent working alone: no teammates, no ask. `run --agent` still ends with a `done` mail; `call` just answers. */
@@ -70,6 +76,8 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
       "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all four headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report. " + OPEN_PR_RULE,
     );
   }
+  const shared = sharedDir(project);
+  if (!isCall && shared) lines.push(...handoffRule(shared));
   lines.push("", "## Memory");
   const mems = memoryDirs(agent);
   if (mems.length === 0) lines.push("You have no long-term memory directory.");
@@ -184,6 +192,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
           "(e.g. build, app start, commit) unticked and say so in the mail instead of reporting them as finished.",
         ]
       : []),
+    ...(isLead && sharedDir(project) ? handoffRule(sharedDir(project) as string) : []),
     "",
     "## Memory",
   );
@@ -229,7 +238,7 @@ export function pickMessages(project: ResolvedProject, agent: ResolvedAgent, que
   return run;
 }
 
-export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1): string {
+export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false): string {
   const parts: string[] = [];
 
   const common = readCapped(commonFile(project), COMMON_LIMIT);
@@ -240,6 +249,14 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     if (common.truncated) {
       parts.push(`\n[COMMON.md was truncated at ${COMMON_LIMIT} bytes — the lead should condense it.]`);
     }
+  }
+
+  const handoffFile = handoff ? sharedIndex(project) : undefined;
+  const notes = handoffFile ? readCapped(handoffFile, HANDOFF_LIMIT) : undefined;
+  if (handoffFile && notes?.text.trim()) {
+    parts.push("", `# Handoff notes from earlier segments of this task (${handoffFile})`, notes.text.trim());
+    if (notes.truncated) parts.push(`\n[handoff index truncated at ${HANDOFF_LIMIT} bytes — the lead should condense it.]`);
+    parts.push("The other files in that folder are there to read on demand.");
   }
 
   for (const dir of memoryDirs(agent)) {

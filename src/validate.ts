@@ -105,8 +105,8 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   const enforcement = Object.values(project.agents).map((a) => enforcementFor(project, a));
   if (project.dispatcher.strict) {
     for (const e of enforcement) {
-      for (const k of ["memory", "agentMd", "otherContext"] as const) {
-        if (e[k] !== "os") err(`strict: agent "${e.agent}" ${k} protection is "${e[k]}", not OS-enforced.`);
+      for (const k of ["memory", "agentMd", "otherContext", "shared"] as const) {
+        if (e[k] !== "os" && !(k === "shared" && e[k] === "n/a")) err(`strict: agent "${e.agent}" ${k} protection is "${e[k]}", not OS-enforced.`);
       }
     }
   }
@@ -115,9 +115,9 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 }
 
 export function formatEnforcement(list: AgentEnforcement[]): string {
-  const header = ["agent", "runtime", "memory", "AGENT.md", "others' ctx", "repo CLAUDE/AGENTS", "owns"];
+  const header = ["agent", "runtime", "memory", "AGENT.md", "others' ctx", "handoff", "repo CLAUDE/AGENTS", "owns"];
   const rows = [header];
-  for (const e of list) rows.push([e.agent, e.runtime, e.memory, e.agentMd, e.otherContext, e.repoInstructions, e.owns]);
+  for (const e of list) rows.push([e.agent, e.runtime, e.memory, e.agentMd, e.otherContext, e.shared, e.repoInstructions, e.owns]);
   const w = header.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
   const lines = rows.map((r) => r.map((c, i) => c.padEnd(w[i] ?? 0)).join("  ").trimEnd());
   lines.splice(1, 0, w.map((n) => "-".repeat(n)).join("  "));
