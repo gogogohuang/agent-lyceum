@@ -8,6 +8,7 @@ import { makeEnv, write, type TestEnv } from "./helpers.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
 const tsx = path.join(here, "..", "node_modules", ".bin", "tsx");
+const fake = path.join(here, "fixtures", "runtime", "fake-claude.mjs");
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -106,8 +107,8 @@ function seedNamed() {
   seed("20261013-010000", undefined, "An old run without a name");
 }
 
-describe("runs found by id, name or unique prefix", () => {
-  it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", { timeout: 30_000 }, () => {
+describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
+  it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", () => {
     env = makeEnv();
     seedNamed();
     for (const q of ["20261014-010000", "login", "20261014-01"]) {
@@ -179,7 +180,11 @@ describe("runs found by id, name or unique prefix", () => {
     seedNamed();
     write(path.join(env.project().paths.runs, "20261014-010000", "state.json"), JSON.stringify({ run_id: "20261014-010000", name: "login", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "done", outcome: "completed", task_summary: "Add login" }));
     write(path.join(env.project().paths.runs, "20261014-010000", "result.md"), "# Done\n");
-    const r = run(["resume", "login", "-p", "demo"]);
+    // `resume` checks the runtime CLI before it reads the run, so give it a stand-in `claude` (CI has none installed).
+    const bin = path.join(env.root, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
+    const r = run(["resume", "login", "-p", "demo"], { PATH: `${bin}:${process.env.PATH}` });
     expect(r.out).toContain("Run login (20261014-010000) already finished (done)");
   });
 
