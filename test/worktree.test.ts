@@ -7,7 +7,7 @@ import { runTeam } from "../src/dispatcher.js";
 import { outboxDir, writePolicy } from "../src/policy.js";
 import { prepareTask } from "../src/task.js";
 import { validateProject } from "../src/validate.js";
-import { assertWorktreeRunnable, collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead } from "../src/worktree.js";
 import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 import type { ResolvedProject } from "../src/config.js";
 
@@ -319,5 +319,54 @@ describe("concurrent runs: base and lead workspace", () => {
     expect(inspectWorkspace(p, "run-1", "lead")?.unintegrated).toContain("src/web/feature.txt");
     git(env.repo, "merge", "-q", "--no-edit", lead.branch);
     expect(inspectWorkspace(p, "run-1", "lead")?.unintegrated).toEqual([]);
+  });
+  describe("recutLeadWorkspace", () => {
+    const setup = () => {
+      const p = concurrentRepo();
+      const lead = prepareAgentWorkspace(p, "run-1", "lead", snapshotHead(p, "run-1"));
+      write(path.join(lead.dir, "src/web/first.txt"), "first\n");
+      const rb = finishLeadBranch(lead, "m", path.join(env.root, "p.patch"));
+      return { p, lead, rb };
+    };
+
+    it("cuts a fresh branch from HEAD once the old one was merged, and the old work is no change of the new branch", () => {
+      const { p, lead, rb } = setup();
+      git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+      write(path.join(env.repo, "src/web/other.txt"), "o\n");
+      git(env.repo, "add", "-A");
+      git(env.repo, "commit", "-q", "-m", "more");
+      const headBefore = git(env.repo, "rev-parse", "HEAD");
+      const r = recutLeadWorkspace(p, "run-1", "lead", lead, rb.head);
+      expect(r.recut).toBe(true);
+      expect(r.ws.branch).toBe(lead.branch);
+      expect(r.ws.base).toBe(headBefore);
+      expect(git(r.ws.root, "rev-parse", "HEAD")).toBe(headBefore);
+      expect(git(env.repo, "rev-parse", r.ws.branch)).toBe(headBefore);
+      write(path.join(r.ws.dir, "src/web/second.txt"), "second\n");
+      const rb2 = finishLeadBranch(r.ws, "m2", path.join(env.root, "p2.patch"));
+      expect(rb2.files).toBe(1);
+      expect(git(env.repo, "diff", "--name-only", rb2.base, rb2.head)).toBe("src/web/second.txt");
+      expect(git(env.repo, "rev-parse", "HEAD")).toBe(headBefore); // your HEAD is untouched
+    });
+
+    it("keeps the worktree and branch when the branch is not merged, or when there is no stored head", () => {
+      const { p, lead, rb } = setup();
+      expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head)).toEqual({ ws: lead, recut: false });
+      git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+      expect(recutLeadWorkspace(p, "run-1", "lead", lead, undefined)).toEqual({ ws: lead, recut: false });
+      expect(git(env.repo, "rev-parse", lead.branch)).toBe(rb.head);
+    });
+
+    it("never recuts a worktree with uncommitted changes or whose state is unknown, even when the branch is merged", () => {
+      const { p, lead, rb } = setup();
+      git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+      write(path.join(lead.dir, "src/web/wip.txt"), "wip\n");
+      expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head).recut).toBe(false);
+      expect(fs.existsSync(path.join(lead.dir, "src/web/wip.txt"))).toBe(true);
+      fs.rmSync(path.join(lead.dir, "src/web/wip.txt"));
+      fs.rmSync(`${lead.root}.json`); // metadata gone: what the worktree holds cannot be told
+      expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head).recut).toBe(false);
+      expect(fs.existsSync(lead.root)).toBe(true);
+    });
   });
 });

@@ -6,7 +6,8 @@ import { runTeam } from "../src/dispatcher.js";
 import { outboxDir } from "../src/policy.js";
 import { loadRunState, saveRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
+import type { CommandRunner } from "../src/open-pr.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -137,5 +138,108 @@ describe("reopening a done run", () => {
     const st = loadRunState(runDir);
     expect(st.done_rejections ?? 0).toBe(0);
     expect(st.blocked_integrations).toEqual(blocked);
+  });
+});
+
+describe("reopening a concurrent run", () => {
+  const BRANCH = "agent-lyceum/run-1/lead";
+  const concurrentFirst = async (file: string) => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "Build login", cwd: env.root, runDir });
+    const summary = await runTeam({
+      project,
+      task,
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        write(path.join(i.workspace!.dir, file), "one\n");
+        send(i, i.agent.name, "done", "first result", FULL_DONE.replace("Shipped.", "first result"));
+        return OK;
+      },
+    });
+    return { project, runDir, summary };
+  };
+  const reopen = (project: ReturnType<TestEnv["project"]>, runDir: string, invoker: Invoker, pr?: CommandRunner, say: (s: string) => void = () => {}) =>
+    runTeam({ project, resume: loadRunState(runDir), runDir, log: say, followup: { text: "More" }, pr, invoker });
+
+  it("after the lead branch was merged, the worktree is recut from HEAD and the old work is no change of the new branch", async () => {
+    const { project, runDir } = await concurrentFirst("src/web/one.txt");
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH);
+    const head = git(env.repo, "rev-parse", "HEAD");
+    let base = "";
+    const lines: string[] = [];
+    const s = await reopen(project, runDir, async (i) => {
+      base = i.workspace!.base;
+      write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
+      send(i, i.agent.name, "done", "second result");
+      return OK;
+    }, undefined, (l) => lines.push(l));
+    expect(base).toBe(head);
+    expect(lines.join("\n")).toContain("already merged");
+    expect(s.resultBranch).toMatchObject({ branch: BRANCH, base: head, files: 1 });
+    expect(git(env.repo, "diff", "--name-only", head, s.resultBranch!.head)).toBe("src/web/two.txt");
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(head);
+  });
+
+  it("before the branch is merged, the same worktree and branch carry on", async () => {
+    const { project, runDir, summary } = await concurrentFirst("src/web/one.txt");
+    let dir = "";
+    let base = "";
+    const s = await reopen(project, runDir, async (i) => {
+      dir = i.workspace!.dir;
+      base = i.workspace!.base;
+      write(path.join(dir, "src/web/two.txt"), "two\n");
+      send(i, i.agent.name, "done", "second result");
+      return OK;
+    });
+    expect(base).toBe(summary.resultBranch!.base);
+    expect(s.resultBranch).toMatchObject({ branch: BRANCH, base: summary.resultBranch!.base, files: 2 });
+    expect(git(env.repo, "ls-tree", "--name-only", BRANCH, "src/web/")).toBe("src/web/a.txt\nsrc/web/one.txt\nsrc/web/two.txt");
+    expect(git(env.repo, "log", "--format=%s", `${summary.resultBranch!.head}..${BRANCH}`)).toMatch(/lead's work/);
+  });
+
+  it("a reopened run that already has a PR only pushes when the lead asks for one again", async () => {
+    const calls: string[][] = [];
+    const ok: CommandRunner = (cmd, args) => {
+      calls.push([cmd, ...args]);
+      return cmd === "gh" ? { ok: true, out: "https://x/pull/3\n" } : { ok: true, out: args[0] === "symbolic-ref" ? "origin/main" : "" };
+    };
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const ask = (i: WakeInput, body: string) =>
+      write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${body}\n`);
+    await runTeam({
+      project,
+      task: prepareTask({ text: "go", cwd: env.root, runDir }),
+      runDir,
+      log: () => {},
+      pr: ok,
+      invoker: async (i) => {
+        write(path.join(i.workspace!.dir, "src/web/one.txt"), "one\n");
+        ask(i, FULL_DONE);
+        return OK;
+      },
+    });
+    expect(loadRunState(runDir).pr_url).toBe("https://x/pull/3");
+    expect(calls.some((c) => c[0] === "gh")).toBe(true);
+    calls.length = 0;
+    const lines: string[] = [];
+    const s = await reopen(project, runDir, async (i) => {
+      write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
+      ask(i, FULL_DONE);
+      return OK;
+    }, ok, (l) => lines.push(l));
+    expect(calls.map((c) => c[0])).toEqual(["git"]);
+    expect(calls[0]!.slice(0, 3)).toEqual(["git", "push", "-u"]);
+    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/3" });
+    expect(lines.join("\n")).toContain("pull request updated: https://x/pull/3");
+    expect(loadRunState(runDir).pr_url).toBe("https://x/pull/3");
   });
 });

@@ -15,7 +15,7 @@ import { outboxDir, ownsDirs } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, roundLimit, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -139,6 +139,12 @@ export class RunSession {
     if (concurrent && resume) {
       leadSpace = existingAgentWorkspace(project, runId, project.lead);
       if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
+      if (opts.followup) {
+        // A reopened run whose branch you already merged starts on a fresh branch from HEAD (never when work would be lost).
+        const r = recutLeadWorkspace(project, runId, project.lead, leadSpace, resume.result_branch?.head);
+        leadSpace = r.ws;
+        if (r.recut) say(`  ${project.lead}'s branch was already merged: a fresh branch ${leadSpace.branch} was cut from HEAD ${leadSpace.base.slice(0, 8)}`);
+      }
     }
     ensureProjectDirs(project);
     fs.mkdirSync(runDir, { recursive: true });
@@ -685,11 +691,12 @@ export class RunSession {
       body: prBody(this.doneMessage?.body ?? ""),
       bodyFile: path.join(runDir, "pr-body.md"),
       run: this.prRunner,
+      existingUrl: state.pr_url,
     });
     log("pull-request", { ...result });
     if (result.status === "opened") {
+      say(`  pull request ${state.pr_url ? "updated" : "opened"}: ${result.url}`);
       state.pr_url = result.url;
-      say(`  pull request opened: ${result.url}`);
     } else {
       this.note(`The pull request could not be opened (${result.step}: ${result.reason}). The branch ${rb.branch} is kept.${result.manual.length ? ` To finish by hand:\n${result.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
     }

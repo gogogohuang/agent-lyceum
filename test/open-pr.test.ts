@@ -55,6 +55,22 @@ describe("defaultBase", () => {
 describe("openPullRequest", () => {
   const base = { "git symbolic-ref --short": { ok: true, out: "origin/main" } };
 
+  it("with an existing PR url it only pushes, and reports that url", () => {
+    const cwd = tmp();
+    const f = fake({ "git push -u": { ok: true, out: "" } });
+    const r = openPullRequest({ cwd, branch: "b", title: "t", body: "x", bodyFile: path.join(tmp(), "pr-body.md"), run: f.run, existingUrl: "https://x/pull/3" });
+    expect(r).toEqual({ status: "opened", url: "https://x/pull/3" });
+    expect(f.calls.map((c) => `${c.cmd} ${c.args[0]}`)).toEqual(["git push"]);
+  });
+
+  it("with an existing PR url a failed push is the normal failed result", () => {
+    const cwd = tmp();
+    const f = fake({ "git push -u": { ok: false, out: "rejected\nmore" } });
+    const r = openPullRequest({ cwd, branch: "b", title: "t", body: "x", bodyFile: path.join(tmp(), "pr-body.md"), run: f.run, existingUrl: "https://x/pull/3" });
+    expect(r).toMatchObject({ status: "failed", step: "push", reason: "rejected" });
+    expect(f.calls.every((c) => c.cmd !== "gh")).toBe(true);
+  });
+
   it("pushes the branch, then creates the PR against the default branch, and returns its URL", () => {
     const cwd = tmp();
     const bodyFile = path.join(tmp(), "pr-body.md");

@@ -70,6 +70,8 @@ export interface OpenPrInput {
   /** Where the description is written for `gh --body-file` (and for finishing by hand). */
   bodyFile: string;
   run: CommandRunner;
+  /** The run already has a pull request for this branch: only the branch is pushed, nothing is created. */
+  existingUrl?: string;
 }
 
 const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "no output";
@@ -79,6 +81,11 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Push the branch and open a pull request against the default branch. Never throws; says how to finish by hand when a step fails. */
 export function openPullRequest(i: OpenPrInput): OpenPrResult {
+  if (i.existingUrl) {
+    const push = i.run("git", ["push", "-u", "origin", i.branch], i.cwd);
+    if (push.ok) return { status: "opened", url: i.existingUrl };
+    return { status: "failed", step: "push", reason: firstLine(push.out), manual: [`git -C ${sh(i.cwd)} push -u origin ${sh(i.branch)}`] };
+  }
   const base = defaultBase(i.cwd, i.run);
   try {
     atomicWrite(i.bodyFile, i.body);
