@@ -228,3 +228,26 @@ describe("a run from start to clear", () => {
     expect(fs.existsSync(file)).toBe(false);
   }, 60_000);
 });
+
+describe("run names", () => {
+  const done = { agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] };
+  const names = (t: ReturnType<typeof setup>) => (JSON.parse(t.sync(["status", "-p", "demo", "--task-list", "--json"]).out).runs as { name?: string }[]).map((r) => r.name);
+
+  it("a new run is named from its task, a second one gets -2, and --name sets it; a taken --name is refused", () => {
+    const t = setup({ calls: [done, done, done] });
+    const first = t.sync(["run", "Login with session\n\nmore", "-p", "demo"]);
+    expect(first.code).toBe(0);
+    expect(first.out).toMatch(/Run login-with-session ended/);
+    expect(t.sync(["run", "Login with session", "-p", "demo"]).code).toBe(0);
+    expect(t.sync(["run", "x", "--name", "my-task", "-p", "demo"]).code).toBe(0);
+    expect(names(t)).toEqual(["my-task", "login-with-session-2", "login-with-session"]);
+
+    const dup = t.sync(["run", "x", "--name", "my-task", "-p", "demo"]);
+    expect(dup.code).toBe(1);
+    expect(dup.err).toMatch(/"my-task" already exists/);
+    const bad = t.sync(["run", "x", "--name", "Bad Name", "-p", "demo"]);
+    expect(bad.code).toBe(1);
+    expect(bad.err).toMatch(/Invalid run name/);
+    expect(names(t)).toHaveLength(3); // the refused runs left nothing behind
+  }, 120_000);
+});

@@ -165,6 +165,8 @@ export interface QueueItem {
 
 export interface RunReport {
   run_id: string;
+  /** Absent on runs from older versions. */
+  name?: string;
   dir: string;
   /** running: its dispatcher is alive; interrupted: it died mid-run; ended: it stopped (see end_reason). */
   state: "running" | "interrupted" | "ended" | "waiting";
@@ -269,6 +271,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   }
   return {
     run_id: s.run_id,
+    name: s.name,
     dir: run.dir,
     state: s.end_reason === "waiting" ? "waiting" : s.end_reason ? "ended" : live ? "running" : "interrupted",
     live,
@@ -469,10 +472,12 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
   const runs = report.runs;
   const head = `${c.bold("專案：")}${report.project.name}  ${c.dim(`（共 ${runs.length} 個任務）`)}`;
   if (!runs.length) return `${head}\n\n無執行紀錄。`;
-  const header = ["ID", "狀態", "輪次", "目前步驟", "任務"];
+  const named = runs.some((s) => s.name);
+  const header = [...(named ? ["名稱"] : []), "ID", "狀態", "輪次", "目前步驟", "任務"];
   const rows = [header];
   for (const s of runs) {
     rows.push([
+      ...(named ? [s.name ?? ""] : []),
       s.run_id,
       reportLabel(s),
       `${s.rounds}/${s.max_rounds}`,
@@ -485,7 +490,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
     r
       .map((t, i) => {
         const p = i === r.length - 1 ? t : padCols(t, w[i] ?? 0);
-        return ri === 0 ? c.bold(p) : i === 1 ? stateColor(c, t) + " ".repeat(Math.max(0, (w[i] ?? 0) - cols(t))) : p;
+        return ri === 0 ? c.bold(p) : i === (named ? 2 : 1) ? stateColor(c, t) + " ".repeat(Math.max(0, (w[i] ?? 0) - cols(t))) : p;
       })
       .join("  ")
       .trimEnd();

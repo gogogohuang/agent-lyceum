@@ -10,12 +10,12 @@ import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
-import { loadRunState, newRunId, outcomeOf } from "./run-store.js";
+import { loadRunState, newRunId, outcomeOf, resolveRun, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, runIsAlive } from "./status.js";
-import { prepareTask, readTaskFile } from "./task.js";
+import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, runIsAlive } from "./status.js";
+import { prepareTask, readTaskFile, taskMessageBody } from "./task.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
@@ -116,6 +116,17 @@ async function preflight(pr: ResolvedProject): Promise<void> {
 }
 
 /** Take the lock of one run, or exit with the reason. `ignoreLimit`: the caller does not start a run (e.g. `clear`). `exclusive`: it needs the whole project (memory tidy). */
+/** The run a user typed: full id, name or unique prefix. Exits with the candidates when it is unknown or ambiguous. */
+function findRun(pr: ResolvedProject, query: string): RunRef {
+  if (!query.trim()) return fail("Give a run id or name (see `agent-lyceum status --task-list`).");
+  assertName("run", query);
+  const r = resolveRun(listRuns(pr, Infinity), query);
+  if (r.ok) return r.run;
+  if (r.reason === "none") return fail(`Run "${query}" not found in ${pr.paths.runs}. List runs with: agent-lyceum status --task-list`);
+  const list = r.candidates.map((c) => `  ${c.state.name ?? "(no name)"}  ${c.state.run_id}  ${c.state.task_summary}`).join("\n");
+  return fail(`"${query}" matches several runs:\n${list}\nGive more of the name or id.`);
+}
+
 function takeLock(pr: ResolvedProject, runId: string, opts: { ignoreLimit?: boolean; exclusive?: boolean } = {}): ProjectLease {
   try {
     return acquireProjectLock(pr.paths.root, runId, { maxConcurrent: opts.ignoreLimit ? Number.MAX_SAFE_INTEGER : pr.dispatcher.max_concurrent_runs, exclusive: opts.exclusive });
@@ -149,7 +160,7 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
 }
 
 function printRun(summary: RunSummary, runDir: string): void {
-  console.log(`\nRun ${summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
+  console.log(`\nRun ${summary.name ?? summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
   if (summary.resultBranch?.files) {
@@ -232,8 +243,9 @@ program
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the task from a file")
   .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
+  .option("--name <name>", "name for this run (default: made from the task)")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; assumeDefaults?: boolean }) => {
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
@@ -249,6 +261,12 @@ program
       }
       await preflight(checked);
 
+      const taken = listRuns(pr, Infinity).flatMap((r) => (r.state.name ? [r.state.name] : []));
+      if (opts.name !== undefined) {
+        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opts.name) || opts.name.length > 30) fail(`Invalid run name "${opts.name}": use lowercase letters, digits and "-", at most 30 characters.`);
+        if (taken.includes(opts.name)) fail(`A run named "${opts.name}" already exists in project ${pr.name}.`);
+      }
+
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
       const lease = takeLock(pr, runId);
@@ -258,7 +276,8 @@ program
         const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
         console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-        summary = await runTeam({ project: pr, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
+        const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
+        summary = await runTeam({ project: pr, name, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();
@@ -286,10 +305,7 @@ program
 
       let found: ReturnType<typeof latestUnfinishedRun>;
       if (runId) {
-        assertName("run", runId);
-        const dir = path.join(pr.paths.runs, runId);
-        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${runId}" not found in ${pr.paths.runs}.`);
-        found = { dir, state: loadRunState(dir) };
+        found = findRun(pr, runId);
       } else {
         found = latestUnfinishedRun(pr);
         if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
@@ -392,8 +408,8 @@ program
       }
       if (opts.force) fail("--force only goes with --lock.");
       if (!runId) fail("Give the run id to clear (see `agent-lyceum status --task-list`), or use --lock.");
-      assertName("run", runId);
       const pr = loadProject(opts.project);
+      const full = findRun(pr, runId).state.run_id;
       const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
         console.log(`Run ${plan.summary}`);
         for (const i of plan.items) console.log(`  ${opts.dryRun ? "would delete" : "delete      "}  ${i.label}`);
@@ -404,15 +420,15 @@ program
         return fail("Nothing was deleted.");
       };
       if (opts.dryRun) {
-        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees });
         console.log("Dry run: nothing is deleted.");
         showPlan(plan);
         if (plan.refusals.length) refuse(plan);
         return;
       }
-      const lease = takeLock(pr, runId, { ignoreLimit: true });
+      const lease = takeLock(pr, full, { ignoreLimit: true });
       try {
-        const plan = planRunCleanup(pr, runId, { keepWorktrees: opts.keepWorktrees });
+        const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees });
         if (plan.refusals.length) refuse(plan);
         showPlan(plan);
         const report = executeRunCleanup(plan);
@@ -420,7 +436,7 @@ program
           for (const f of report.failed) console.error(`FAILED  ${f.item.label}: ${f.error}`);
           fail("Cleanup stopped at the first failure; fix it and repeat the same command to finish.");
         }
-        console.log(`Deleted run ${runId}: ${plan.summary.slice(runId.length + 2)}`);
+        console.log(`Deleted run ${full}: ${plan.summary.slice(full.length + 2)}`);
       } finally {
         lease.release();
       }
@@ -607,8 +623,7 @@ program
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
       if (opts.json) {
         if (opts.monitor) fail("--json cannot be combined with --monitor.");
-        if (opts.taskId) assertName("run", opts.taskId);
-        const report = opts.taskList ? buildTaskListReport(pr) : buildStatusReport(pr, opts.taskId);
+        const report = opts.taskList ? buildTaskListReport(pr) : buildStatusReport(pr, opts.taskId !== undefined ? findRun(pr, opts.taskId).state.run_id : undefined);
         console.log(JSON.stringify(report, null, 2));
         return;
       }
@@ -616,11 +631,8 @@ program
         console.log(formatTaskList(pr, useColor()));
         return;
       }
-      if (opts.taskId) {
-        assertName("run", opts.taskId);
-        const dir = path.join(pr.paths.runs, opts.taskId);
-        if (!fs.existsSync(path.join(dir, "state.json"))) fail(`Run "${opts.taskId}" not found in ${pr.paths.runs}. List ids with: agent-lyceum status --task-list`);
-        console.log(formatRunDetail({ dir, state: loadRunState(dir) }, Date.now(), useColor(), pr));
+      if (opts.taskId !== undefined) {
+        console.log(formatRunDetail(findRun(pr, opts.taskId), Date.now(), useColor(), pr));
         return;
       }
       if (!opts.monitor) {

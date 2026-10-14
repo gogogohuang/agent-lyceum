@@ -38,6 +38,8 @@ function retryPrompt(prompt: string, error?: string): string {
 
 export interface RunSummary {
   runId: string;
+  /** The run's name; absent on runs from older versions. */
+  name?: string;
   runDir: string;
   rounds: number;
   endReason: EndReason;
@@ -56,6 +58,8 @@ export interface RunSummary {
 
 export interface RunOptions {
   project: ResolvedProject;
+  /** Name for a new run: already decided and not used by another run of the project. */
+  name?: string;
   /** Run only this member of the project, alone (`run --agent`). A resumed run uses the one recorded in its state. */
   soloAgent?: string;
   /** The task for a new run; omit when resuming. */
@@ -163,6 +167,7 @@ export class RunSession {
       const t = taskMessageBody(task!);
       state = newRunState({
         run_id: runId,
+        name: opts.name,
         project: project.name,
         task_source: task!.source,
         task_path: task!.sourcePath,
@@ -786,6 +791,6 @@ export class RunSession {
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
+    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
   }
 }
