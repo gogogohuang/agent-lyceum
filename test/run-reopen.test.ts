@@ -62,6 +62,29 @@ describe("reopening a done run", () => {
     expect(fs.readFileSync(path.join(runDir, "result.md"), "utf8")).toContain("second result");
   });
 
+  it("a run finished before done-<n>.md existed keeps its old report: result.md is copied to done-1.md on reopen", async () => {
+    env = makeEnv();
+    const { project, runDir } = await first(leadDone("first result"));
+    fs.rmSync(path.join(runDir, "done-1.md"));
+    fs.writeFileSync(path.join(runDir, "result.md"), "OLD REPORT\n");
+    let seen = "";
+    await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "Also add rate limiting" },
+      invoker: async (i) => {
+        seen = i.userPrompt;
+        send(i, i.agent.name, "done", "second result");
+        return OK;
+      },
+    });
+    expect(fs.readFileSync(path.join(runDir, "done-1.md"), "utf8")).toContain("OLD REPORT");
+    expect(seen).toContain(path.join(runDir, "done-1.md"));
+    expect(fs.readFileSync(path.join(runDir, "done-2.md"), "utf8")).toContain("second result");
+  });
+
   it("counts the round limit from the reopen, so a run that used all its rounds can be reopened", async () => {
     env = makeEnv();
     env.editProjectYaml((t) => t.replace("max_rounds: 30", "max_rounds: 2"));

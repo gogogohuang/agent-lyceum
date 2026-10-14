@@ -217,6 +217,10 @@ export class RunSession {
         const n = state.reopened?.length ?? 1;
         fs.mkdirSync(path.join(runDir, "followups"), { recursive: true });
         fs.writeFileSync(path.join(runDir, "followups", `${n}.md`), `${opts.followup.text.trimEnd()}\n`);
+        // A run finished before done-<n>.md existed has only result.md: keep that report before the next done overwrites it.
+        const prev = path.join(runDir, `done-${n}.md`);
+        const legacy = path.join(runDir, RESULT_FILE);
+        if (!fs.existsSync(prev) && fs.existsSync(legacy)) fs.copyFileSync(legacy, prev);
         deliver(project, {
           from: "user",
           to: project.lead,
