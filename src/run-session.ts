@@ -171,6 +171,7 @@ export class RunSession {
         state.round_floor = resume.rounds;
         state.max_rounds = roundLimit(state, cfg.max_rounds);
         state.result_branch = undefined;
+        state.done_rejections = 0;
       }
     } else {
       const t = taskMessageBody(task!);

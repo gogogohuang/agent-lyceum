@@ -117,4 +117,25 @@ describe("reopening a done run", () => {
     await runTeam({ project, resume: loadRunState(runDir), runDir, log: () => {}, invoker: leadDone("third result") }).catch(() => undefined);
     expect(loadRunState(runDir).max_rounds).toBe(reopened.round_floor! + cfgMax);
   });
+
+  it("gives a reopened segment fresh done reminders but keeps unresolved blocked integrations", async () => {
+    env = makeEnv();
+    let n = 0;
+    // the first done breaks the completion contract (no sections) and goes back once; the second conforms
+    const { project, runDir } = await first(async (i) => {
+      if (++n === 1) send(i, i.agent.name, "done", "too thin", "just done");
+      else send(i, i.agent.name, "done", "first result");
+      return OK;
+    });
+    const st1 = loadRunState(runDir);
+    expect(st1.end_reason).toBe("done");
+    expect(st1.done_rejections).toBe(1);
+    const blocked = [{ agent: "fe-member", branch: "agent-lyceum/x", reason: "conflict", report: "r.md" }];
+    saveRunState(runDir, { ...st1, blocked_integrations: blocked });
+
+    await runTeam({ project, resume: loadRunState(runDir), runDir, log: () => {}, followup: { text: "More" }, invoker: leadDone("second result") });
+    const st = loadRunState(runDir);
+    expect(st.done_rejections ?? 0).toBe(0);
+    expect(st.blocked_integrations).toEqual(blocked);
+  });
 });
