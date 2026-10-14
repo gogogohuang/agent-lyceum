@@ -316,7 +316,7 @@ program
   .command("resume [run] [text]")
   .summary("Continue an interrupted run, or reopen a finished one with a follow-up")
   .description(
-    'Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent.\nOr reopen a finished run with a follow-up request: the lead gets the text as a new task and the run goes on with its memory and worktree.\n\nUsage:\n  - resume                    the newest run that is not done or running\n  - resume <run>              that run (full id, name or unique prefix); a finished run only prints its result\n  - resume <run> "<text>"     reopen that finished run with the follow-up\n  - resume "<text>"           if the one argument is not a run, it is the follow-up; the run is chosen among the runs that are not running\n                              (the only one, or you pick one in a terminal; without a terminal the candidates are listed and it fails)\n  - --task-file <path>        read the follow-up from a file instead of an argument',
+    'Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent.\nOr reopen a finished run with a follow-up request: the lead gets the text as a new task and the run goes on with its memory and worktree.\n\nUsage:\n  - resume                    the newest run that is not done or running\n  - resume <run>              that run (full id, name or unique prefix); a finished run only prints its result\n  - resume <run> "<text>"     reopen that finished run with the follow-up\n  - resume "<text>"           if the one argument is not a run, it is the follow-up; the run is chosen among the runs that are not running\n                              (the only one, or you pick one in a terminal; without a terminal the candidates are listed and it fails)\n                              a one-word follow-up looks like a run name: use resume <run> "<text>" or --task-file\n  - --task-file <path>        read the follow-up from a file instead of an argument',
   )
   .option("-p, --project <name>")
   .option("--task-file <path>", "read the follow-up text from a file (reopens a finished run)")
@@ -336,9 +336,10 @@ program
         if (textArg !== undefined) fail("Give the follow-up either as text or with --task-file, not both.");
         text = readTaskFile(path.resolve(process.cwd(), opts.taskFile));
       } else if (query !== undefined && textArg === undefined) {
-        // One argument: a run if it names one; if it matches nothing, it is the follow-up text. An ambiguous match is still an error.
+        // One argument: a run if it names one. It is follow-up text only if it cannot be a run reference (whitespace or a character outside [A-Za-z0-9._-]);
+        // a mistyped run name must not silently become the task. An ambiguous match is still an error.
         const r = query.trim() ? resolveRun(listRuns(pr, Infinity), query) : undefined;
-        if (r && !r.ok && r.reason === "none") {
+        if (r && !r.ok && r.reason === "none" && /[^A-Za-z0-9._-]/.test(query)) {
           text = query;
           query = undefined;
         }

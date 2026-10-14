@@ -80,6 +80,24 @@ describe("resume [run] [text]", { timeout: 90_000 }, () => {
     expect(fs.readFileSync(path.join(dirOf(id!), "followups", "2.md"), "utf8")).toContain("line two");
   });
 
+  it("a lone one-word argument that matches no run is a mistyped name: not found, nothing reopened", () => {
+    const sh = setup([leadDone("first")]);
+    sh(["run", "Add login"]);
+    const [id] = runDirs();
+    const r = sh(["resume", "nope"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/not found/);
+    expect(fs.existsSync(path.join(dirOf(id!), "followups"))).toBe(false);
+  });
+
+  it("a lone non-ASCII argument is follow-up text", () => {
+    const sh = setup([leadDone("first"), leadDone("second")]);
+    sh(["run", "Add login"]);
+    const r = sh(["resume", "加上限流"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("(follow-up 1): 加上限流");
+  });
+
   it("several candidates and no TTY: lists them, suggests resume <name>, exits 1 and reopens nothing", () => {
     const sh = setup([leadDone("first")]);
     sh(["run", "Add login"]);
@@ -104,7 +122,7 @@ describe("resume [run] [text]", { timeout: 90_000 }, () => {
 
   it("no run at all: fails with a pointer to `run`", () => {
     const sh = setup([]);
-    const r = sh(["resume", "something"]);
+    const r = sh(["resume", "something else"]);
     expect(r.code).toBe(1);
     expect(r.err).toContain("No run to continue");
   });
