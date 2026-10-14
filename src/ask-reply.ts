@@ -153,21 +153,22 @@ export interface AnswerCheck {
 export const isComplete = (c: AnswerCheck): boolean => c.missing.length === 0 && c.invalid.length === 0;
 
 function problem(q: AskQuestion): string | undefined {
-  const v = q.answer?.value.trim();
-  if (!v) return undefined;
-  if (q.options?.length && !q.options.includes(v) && !/^other:\s*\S/.test(v)) return `must be one of: ${q.options.join(", ")} — or start with "other:" and write your own`;
+  // Any non-empty text is a valid answer: the options are shortcuts, not a limit. A bare "other:" says nothing.
+  if (/^other:\s*$/.test(q.answer?.value.trim() ?? "")) return `write your own answer after "other:", or pick one of: ${(q.options ?? []).join(", ")}`;
   return undefined;
 }
 
-/** An answer that is just a letter ("b", "B:", "b)") becomes the one option that starts with that letter and a ":", "." or ")". No match, or more than one, leaves it as typed. */
+/** An answer that is just a letter ("b", "B:", "b)") becomes the one option that starts with that letter and a ":", "." or ")"; failing that, the letter (a = first) or number (1 = first) picks an option by position. No match, or more than one, leaves it as typed. */
 export function resolveOptionLetters(r: AskReply): AskReply {
   return {
     ...r,
     questions: r.questions.map((q) => {
-      const v = q.answer?.value.trim().match(/^([A-Za-z])[:.)]?$/)?.[1]?.toLowerCase();
-      if (q.delivered || !v || !q.options?.length) return q;
-      const hits = q.options.filter((o) => o.toLowerCase().match(/^([a-z])[:.)]/)?.[1] === v);
-      return hits.length === 1 && q.answer ? { ...q, answer: { ...q.answer, value: hits[0]! } } : q;
+      const raw = q.answer?.value.trim().match(/^([A-Za-z]|\d{1,2})[:.)]?$/)?.[1]?.toLowerCase();
+      if (q.delivered || !raw || !q.options?.length || !q.answer) return q;
+      const hits = q.options.filter((o) => o.toLowerCase().match(/^([a-z])[:.)]/)?.[1] === raw);
+      const byPosition = /^\d+$/.test(raw) ? Number(raw) - 1 : raw.charCodeAt(0) - 97;
+      const pick = hits.length ? (hits.length === 1 ? hits[0] : undefined) : q.options[byPosition];
+      return pick ? { ...q, answer: { ...q.answer, value: pick } } : q;
     }),
   };
 }

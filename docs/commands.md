@@ -99,7 +99,7 @@ Answer the questions a waiting run asked. An agent asks with a `type: ask` mail 
 
 You only fill in the `<answer>` tags:
 
-- a question with `<options>`: write one of them, or start with `other:` and write your own text;
+- a question with `<options>`: pick one by its letter or number (`a`, `2`) or write it out, or type any text of your own (`other:` is optional);
 - a question without options: write any non-empty text.
 
 Options:

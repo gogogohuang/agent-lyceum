@@ -136,9 +136,8 @@ describe("checkAnswers", () => {
     expect(isComplete(checkAnswers(answer(r, "q1", "jwt")))).toBe(true);
   });
 
-  it("rejects an answer that is not one of the options", () => {
-    const c = checkAnswers(answer(answer(fresh(), "q1", "cookie"), "q2", "x"));
-    expect(c.invalid).toEqual([{ id: "q1", reason: expect.stringMatching(/session.*jwt.*other:/) }]);
+  it("accepts free text that is not one of the options", () => {
+    expect(isComplete(checkAnswers(answer(answer(fresh(), "q1", "cookie"), "q2", "x")))).toBe(true);
   });
 
   it("treats a bare 'other:' as empty", () => {
@@ -215,6 +214,12 @@ describe("resolveOptionLetters", () => {
     expect(value(resolveOptionLetters(answer(lettered(), "q1", "d")), "q1")).toBe("d");
     expect(value(resolveOptionLetters(answer(lettered(), "q2", "s")), "q2")).toBe("s");
     expect(resolveOptionLetters(answer(lettered(), "q1", "a")).questions[0]?.answer?.by).toBe("user");
+  });
+
+  it("picks by position when the options carry no letter: a/b or 1/2", () => {
+    expect(value(resolveOptionLetters(answer(lettered(), "q2", "b")), "q2")).toBe("jwt");
+    expect(value(resolveOptionLetters(answer(lettered(), "q2", "1")), "q2")).toBe("session");
+    expect(value(resolveOptionLetters(answer(lettered(), "q2", "3")), "q2")).toBe("3");
   });
 
   it("does not guess when two options start with the same letter", () => {
