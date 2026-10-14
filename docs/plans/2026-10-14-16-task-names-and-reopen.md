@@ -329,15 +329,12 @@ Expected: FAIL（`followup` 不是 `RunOptions` 欄位）
 3. `if (resume) { state = {...} }` 區塊：`max_rounds` 改為 `roundLimit(resume, cfg.max_rounds)`；之後加：
    ```ts
    if (opts.followup) {
-     const n = (resume.reopened?.length ?? 0) + 1;
      state.reopened = [...(resume.reopened ?? []), { at: new Date().toISOString() }];
      state.round_floor = resume.rounds;
      state.max_rounds = roundLimit(state, cfg.max_rounds);
      state.result_branch = undefined;
-     state.doneFollowupN = n; // 不存進 state：改成區域變數 followupN，下面寄信時用
    }
    ```
-   （不要真的加 `doneFollowupN`；用 `const followupN = ...` 區域變數。）
 4. `if (resume) { log("resume", ...) }` 之後（`saveState()` 之前）加：
    ```ts
    if (opts.followup) {
