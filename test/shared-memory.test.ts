@@ -4,9 +4,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeInvocation, buildClaudeSettings } from "../src/adapters/claude.js";
 import { codexWritableRoots } from "../src/adapters/codex.js";
 import { ProtectedGuard } from "../src/guard.js";
-import { enforcementFor, sharedDir, sharedIndex, writePolicy } from "../src/policy.js";
-import { bindRunProject } from "../src/run-store.js";
-import { makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
+import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
+import { runTeam } from "../src/dispatcher.js";
+import { enforcementFor, outboxDir, sharedDir, sharedIndex, writePolicy } from "../src/policy.js";
+import { HANDOFF_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
+import { soloProject } from "../src/solo.js";
+import { prepareTask } from "../src/task.js";
+import { bindRunProject, loadRunState } from "../src/run-store.js";
+import { FULL_DONE, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -93,5 +98,144 @@ describe("the handoff folder: where it is and who may write it", () => {
     expect(enforcementFor(p, p.agents.lead).shared).toBe("n/a");
     const m = enforcementFor(p, p.agents["fe-member"]);
     expect(["os", "tool-rules", "post-hoc"]).toContain(m.shared);
+  });
+});
+
+describe("prompts", () => {
+  it("the lead is told to write handoff notes before done; a member is not", () => {
+    env = makeEnv();
+    const p = bound();
+    const lead = buildSystemPrompt(p, p.agents.lead);
+    expect(lead).toContain("Handoff for follow-ups");
+    expect(lead).toContain(sharedDir(p) as string);
+    expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("Handoff for follow-ups");
+  });
+
+  it("a solo run agent is told too; a call is not", () => {
+    env = makeEnv();
+    const sp = bindRunProject(soloProject(env.project(), "fe-member"), path.join(env.root, "run-1"), "run");
+    expect(buildSystemPrompt(sp, sp.agents["fe-member"])).toContain("Handoff for follow-ups");
+    expect(buildSystemPrompt({ ...sp, solo: "call" }, sp.agents["fe-member"])).not.toContain("Handoff for follow-ups");
+  });
+
+  it("the user prompt carries the index only when asked to, only when it has text, and caps it", () => {
+    env = makeEnv();
+    const p = bound();
+    const idx = sharedIndex(p) as string;
+    write(idx, "- decided: sessions, not JWT\n");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1)).not.toContain("Handoff notes");
+    const withNotes = buildUserPrompt(p, p.agents["fe-member"], [], 1, true);
+    expect(withNotes).toContain(`# Handoff notes from earlier segments of this task (${idx})`);
+    expect(withNotes).toContain("decided: sessions, not JWT");
+
+    write(idx, "   \n");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+
+    write(idx, "x".repeat(HANDOFF_LIMIT + 100));
+    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+  });
+});
+
+const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
+const send = (i: WakeInput, to: string, type: string, subject: string) =>
+  write(
+    path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`),
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE.replace("Shipped.", subject) : `body of ${subject}`}\n`,
+  );
+const firstSegment = async (invoker: Invoker) => {
+  const project = env.project();
+  const runDir = path.join(project.paths.runs, "run-1");
+  const task = prepareTask({ text: "Build login", cwd: env.root, runDir });
+  const summary = await runTeam({ project, task, runDir, log: () => {}, invoker });
+  return { project, runDir, summary };
+};
+/** The lead writes handoff notes, then reports done. */
+const leadWritesNotes: Invoker = async (i) => {
+  write(path.join(sharedDir(i.project) as string, "MEMORY.md"), "- decided: sessions, not JWT\n");
+  send(i, i.agent.name, "done", "first result");
+  return OK;
+};
+
+describe("a reopened run starts from the handoff notes", () => {
+  it("the lead and a member both see them after the reopen, and the first segment's prompts do not", async () => {
+    env = makeEnv();
+    const first: string[] = [];
+    const { project, runDir } = await firstSegment(async (i) => {
+      first.push(i.userPrompt);
+      return leadWritesNotes(i);
+    });
+    expect(first.join("\n")).not.toContain("Handoff notes");
+    expect((loadRunState(runDir).notes ?? []).some((n) => n.includes("shared-not-updated"))).toBe(false);
+
+    const prompts: Record<string, string[]> = {};
+    await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "Also add rate limiting" },
+      invoker: async (i) => {
+        const seen = prompts[i.agent.name] ?? [];
+        prompts[i.agent.name] = seen;
+        seen.push(i.userPrompt);
+        if (i.agent.name !== "lead") send(i, "lead", "reply", "limiter done");
+        else if (seen.length === 1) send(i, "fe-member", "task", "do the limiter");
+        else send(i, i.agent.name, "done", "second result");
+        return OK;
+      },
+    });
+    const idx = path.join(project.paths.taskMemory, "run-1", "_shared", "MEMORY.md");
+    for (const who of ["lead", "fe-member"]) {
+      const text = (prompts[who] as string[]).join("\n");
+      expect(text).toContain("decided: sessions, not JWT");
+      expect(text).toContain("# Handoff notes from earlier segments of this task");
+    }
+    expect((prompts.lead as string[])[0]).toContain(`handoff notes written for follow-ups are in \`${idx}\``);
+  });
+
+  it("a lead that does not update the notes before done is noted, not blocked; the run can still be reopened", async () => {
+    env = makeEnv();
+    const { project, runDir, summary } = await firstSegment(async (i) => {
+      send(i, i.agent.name, "done", "first result");
+      return OK;
+    });
+    expect(summary.endReason).toBe("done");
+    expect((loadRunState(runDir).notes ?? []).some((n) => n.includes("shared-not-updated"))).toBe(true);
+
+    let seen = "";
+    const second = await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "More please" },
+      invoker: async (i) => {
+        seen = i.userPrompt;
+        send(i, i.agent.name, "done", "second result");
+        return OK;
+      },
+    });
+    expect(second.endReason).toBe("done");
+    expect(seen).not.toContain("Handoff notes");
+    expect(seen).not.toContain("handoff notes written for follow-ups");
+  });
+
+  it("a run from before the folder existed reopens fine, and the folder is created", async () => {
+    env = makeEnv();
+    const { project, runDir } = await firstSegment(leadWritesNotes);
+    fs.rmSync(path.join(project.paths.taskMemory, "run-1", "_shared"), { recursive: true, force: true });
+    const second = await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "More please" },
+      invoker: async (i) => {
+        send(i, i.agent.name, "done", "second result");
+        return OK;
+      },
+    });
+    expect(second.endReason).toBe("done");
+    expect(fs.existsSync(path.join(project.paths.taskMemory, "run-1", "_shared"))).toBe(true);
   });
 });

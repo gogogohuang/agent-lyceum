@@ -11,7 +11,7 @@ import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, c
 import { isInside } from "./paths.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { outboxDir, ownsDirs } from "./policy.js";
+import { outboxDir, ownsDirs, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
@@ -30,6 +30,16 @@ export const RESULT_FILE = "result.md";
 export const MAX_DONE_REJECTIONS = 2;
 /** How many times a malformed `ask` goes back to its sender before the lead is told instead. */
 export const MAX_ASK_REJECTIONS = 2;
+
+/** The text of a file, "" when it is missing, undefined when there is no such file for this run (no handoff folder). */
+function readIndex(file: string | undefined): string | undefined {
+  if (!file) return undefined;
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
 
 /** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
 function retryPrompt(prompt: string, error?: string): string {
@@ -81,6 +91,8 @@ export interface RunOptions {
 export class RunSession {
   private readonly opts: RunOptions;
   private readonly resume: RunState | undefined;
+  /** The handoff index as this segment started; the lead is noted when it is the same at `done`. */
+  private readonly sharedAtStart: string | undefined;
   private readonly invoke: Invoker;
   private readonly say: (line: string) => void;
   private readonly cfg: DispatcherSettings;
@@ -221,12 +233,14 @@ export class RunSession {
         const prev = path.join(runDir, `done-${n}.md`);
         const legacy = path.join(runDir, RESULT_FILE);
         if (!fs.existsSync(prev) && fs.existsSync(legacy)) fs.copyFileSync(legacy, prev);
+        const handoffIdx = sharedIndex(project);
+        const handoffLine = handoffIdx && fs.existsSync(handoffIdx) ? ` The handoff notes written for follow-ups are in \`${handoffIdx}\`.` : "";
         deliver(project, {
           from: "user",
           to: project.lead,
           type: "task",
           subject: opts.followup.text.split("\n").find((l) => l.trim())?.slice(0, 80) ?? "Follow-up",
-          body: `## Goal\n${opts.followup.text.trimEnd()}\n\n## Acceptance criteria\nAs stated in the goal; the earlier result still holds unless the goal changes it.\n\n## Scope\nThis run's earlier work and files.\n\n## Upstream\nThe previous final report is in \`${path.join(runDir, `done-${n}.md`)}\`; the original task is in \`${path.join(runDir, "task.md")}\`.\n`,
+          body: `## Goal\n${opts.followup.text.trimEnd()}\n\n## Acceptance criteria\nAs stated in the goal; the earlier result still holds unless the goal changes it.\n\n## Scope\nThis run's earlier work and files.\n\n## Upstream\nThe previous final report is in \`${path.join(runDir, `done-${n}.md`)}\`; the original task is in \`${path.join(runDir, "task.md")}\`.${handoffLine}\n`,
         });
         log("reopen", { n });
       }
@@ -252,6 +266,7 @@ export class RunSession {
     this.log = log;
     this.guard = guard;
     this.state = state;
+    this.sharedAtStart = readIndex(sharedIndex(project));
   }
 
 
@@ -336,7 +351,7 @@ export class RunSession {
       workDir,
       workspace: spaces[agent.name],
       systemPrompt: buildSystemPrompt(aproject, agent),
-      userPrompt: buildUserPrompt(project, agent, queue, unread.length),
+      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0),
       timeoutSec: cfg.wake_timeout_sec,
     };
     let result: WakeResult | undefined;
@@ -559,6 +574,10 @@ export class RunSession {
       log("rejected", r);
     }
     if (route.done) {
+      const handoffIdx = sharedIndex(project);
+      if (handoffIdx && this.sharedAtStart !== undefined && readIndex(handoffIdx) === this.sharedAtStart) {
+        this.note(`shared-not-updated: the lead did not update the handoff notes (${handoffIdx}) before done, so a follow-up on this run will start without them.`);
+      }
       this.doneMessage = { subject: route.done.subject, body: route.done.body };
       this.openPrRequested = route.done.meta.open_pr === true;
       const resolved = resolveDoneOutcome(must(contract, "completion contract of the done report"), state.done_rejections ?? 0, state.blocked_integrations ?? []);
