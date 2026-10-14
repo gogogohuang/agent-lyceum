@@ -102,6 +102,12 @@ export interface RunState {
   wakes: WakeRecord[];
   /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps`. */
   steps?: Step[];
+  /** Readable name; lets `resume`, `clear` and `status` find the run without its id. Absent on runs from older versions. */
+  name?: string;
+  /** One entry per time a finished run was reopened with a follow-up. */
+  reopened?: { at: string }[];
+  /** `rounds` at the last reopen; the round limit counts from here. */
+  round_floor?: number;
 }
 
 /** `20261006T010203456Z-<128 random bits>`: sorts by start time and cannot collide, even for two starts in one millisecond. */
@@ -139,6 +145,9 @@ const WireState = z
     wakes: z.array(z.any()).optional(),
     solo_agent: z.string().optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
+    name: z.string().optional(),
+    reopened: z.array(z.object({ at: z.string() })).optional(),
+    round_floor: nonNeg.optional(),
   })
   .passthrough();
 
@@ -226,3 +235,33 @@ export function outcomeOf(s: Pick<RunState, "outcome" | "end_reason">): { outcom
   if (!s.end_reason) return undefined;
   return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : s.end_reason === "waiting" ? "waiting" : "partial", verified: false };
 }
+
+export function slugify(text: string): string {
+  const s = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 30)
+    .replace(/-+$/g, "");
+  return s || "task";
+}
+
+/** `base`, or `base-2`, `base-3` … the first that is not in `taken`. */
+export function uniqueName(base: string, taken: string[]): string {
+  if (!taken.includes(base)) return base;
+  for (let n = 2; ; n++) if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`;
+}
+
+export type RunRef = { dir: string; state: RunState };
+export type Resolved = { ok: true; run: RunRef } | { ok: false; reason: "none" | "ambiguous"; candidates: RunRef[] };
+
+/** Find a run by full id, exact name, or a prefix of either that matches exactly one run. An exact id or name always wins. */
+export function resolveRun(runs: RunRef[], query: string): Resolved {
+  const exact = runs.filter((r) => r.state.run_id === query || r.state.name === query);
+  if (exact.length === 1) return { ok: true, run: exact[0] as RunRef };
+  const pool = exact.length ? exact : runs.filter((r) => r.state.run_id.startsWith(query) || (r.state.name ?? "").startsWith(query));
+  if (pool.length === 1) return { ok: true, run: pool[0] as RunRef };
+  return { ok: false, reason: pool.length ? "ambiguous" : "none", candidates: pool };
+}
+
+export const roundLimit = (state: Pick<RunState, "round_floor">, maxRounds: number): number => (state.round_floor ?? 0) + maxRounds;
