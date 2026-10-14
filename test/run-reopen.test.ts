@@ -202,11 +202,12 @@ describe("reopening a concurrent run", () => {
     expect(git(env.repo, "log", "--format=%s", `${summary.resultBranch!.head}..${BRANCH}`)).toMatch(/lead's work/);
   });
 
-  it("a reopened run that already has a PR only pushes when the lead asks for one again", async () => {
+  const reopenWithPr = async (merged: boolean) => {
     const calls: string[][] = [];
+    let created = 0;
     const ok: CommandRunner = (cmd, args) => {
       calls.push([cmd, ...args]);
-      return cmd === "gh" ? { ok: true, out: "https://x/pull/3\n" } : { ok: true, out: args[0] === "symbolic-ref" ? "origin/main" : "" };
+      return cmd === "gh" ? { ok: true, out: `https://x/pull/${++created + 2}\n` } : { ok: true, out: args[0] === "symbolic-ref" ? "origin/main" : "" };
     };
     env = makeEnv();
     initGitRepo(env.repo);
@@ -229,6 +230,7 @@ describe("reopening a concurrent run", () => {
     });
     expect(loadRunState(runDir).pr_url).toBe("https://x/pull/3");
     expect(calls.some((c) => c[0] === "gh")).toBe(true);
+    if (merged) git(env.repo, "merge", "-q", "--no-edit", BRANCH);
     calls.length = 0;
     const lines: string[] = [];
     const s = await reopen(project, runDir, async (i) => {
@@ -236,10 +238,25 @@ describe("reopening a concurrent run", () => {
       ask(i, FULL_DONE);
       return OK;
     }, ok, (l) => lines.push(l));
+    return { s, calls, lines, runDir };
+  };
+
+  it("a reopened run that already has a PR only pushes when the lead asks for one again", async () => {
+    const { s, calls, lines, runDir } = await reopenWithPr(false);
     expect(calls.map((c) => c[0])).toEqual(["git"]);
     expect(calls[0]!.slice(0, 3)).toEqual(["git", "push", "-u"]);
     expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/3" });
     expect(lines.join("\n")).toContain("pull request updated: https://x/pull/3");
     expect(loadRunState(runDir).pr_url).toBe("https://x/pull/3");
+  });
+
+  it("after a recut the old PR belongs to the merged branch: a new one is opened and the old url is noted", async () => {
+    const { s, calls, runDir } = await reopenWithPr(true);
+    expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/4" });
+    const st = loadRunState(runDir);
+    expect(st.pr_url).toBe("https://x/pull/4");
+    expect(st.notes?.join("\n")).toContain("https://x/pull/3");
+    expect(st.notes?.join("\n")).toMatch(/merged branch/);
   });
 });

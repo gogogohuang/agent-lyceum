@@ -111,6 +111,8 @@ export class RunSession {
   private readonly refused = new Set<string>();
   /** Concurrent runs: the lead's own git worktree for the whole run. */
   private readonly leadSpace: AgentWorkspace | undefined;
+  /** The lead's branch was recut when this run was reopened: a pull request recorded earlier belongs to the merged branch. */
+  private readonly recut: boolean;
   /** The attempt that produced each batch member's output; committed together with its claim. */
   private readonly attempts = new Map<string, AttemptRecord>();
 
@@ -136,6 +138,7 @@ export class RunSession {
     if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume, concurrent });
     // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
     let leadSpace: AgentWorkspace | undefined;
+    let recut = false;
     if (concurrent && resume) {
       leadSpace = existingAgentWorkspace(project, runId, project.lead);
       if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
@@ -143,6 +146,7 @@ export class RunSession {
         // A reopened run whose branch you already merged starts on a fresh branch from HEAD (never when work would be lost).
         const r = recutLeadWorkspace(project, runId, project.lead, leadSpace, resume.result_branch?.head);
         leadSpace = r.ws;
+        recut = r.recut;
         if (r.recut) say(`  ${project.lead}'s branch was already merged: a fresh branch ${leadSpace.branch} was cut from HEAD ${leadSpace.base.slice(0, 8)}`);
       }
     }
@@ -227,6 +231,7 @@ export class RunSession {
     }
     saveState();
     this.leadSpace = leadSpace;
+    this.recut = recut;
 
     this.opts = opts;
     this.prRunner = opts.pr ?? realRunner;
@@ -683,6 +688,8 @@ export class RunSession {
     if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 
+    const existingUrl = this.recut ? undefined : state.pr_url;
+    if (this.recut && state.pr_url) this.note(`The earlier pull request ${state.pr_url} belongs to the merged branch; a new one is opened for the follow-up work.`);
     const result = openPullRequest({
       // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
       cwd: toplevel(project.dir),
@@ -691,11 +698,11 @@ export class RunSession {
       body: prBody(this.doneMessage?.body ?? ""),
       bodyFile: path.join(runDir, "pr-body.md"),
       run: this.prRunner,
-      existingUrl: state.pr_url,
+      existingUrl,
     });
     log("pull-request", { ...result });
     if (result.status === "opened") {
-      say(`  pull request ${state.pr_url ? "updated" : "opened"}: ${result.url}`);
+      say(`  pull request ${existingUrl ? "updated" : "opened"}: ${result.url}`);
       state.pr_url = result.url;
     } else {
       this.note(`The pull request could not be opened (${result.step}: ${result.reason}). The branch ${rb.branch} is kept.${result.manual.length ? ` To finish by hand:\n${result.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
