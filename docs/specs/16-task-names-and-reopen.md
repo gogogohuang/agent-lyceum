@@ -30,7 +30,7 @@
 - 09：`resume --answer` 不變；重開與「回答問題」是兩條不同路徑，互斥（waiting 的 run 先回答）。
 - 12：延續「收掉子指令、少記指令」的方向。
 - 14：`pr_url` 已存在時的行為見決議 10。
-- 17：重開後 run 級共享 memory 照舊保留。
+- 17：重開時 lead 的交接 `shared/MEMORY.md` 放進各 agent 的 prompt。
 
 ## 16.4 影響的檔案
 
