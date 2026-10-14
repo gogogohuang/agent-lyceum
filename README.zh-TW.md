@@ -145,10 +145,10 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 
 已完成（`done`）的 run 可以用追加要求重開：`agent-lyceum resume [run] "<追加要求>"`（或 `--task-file f`）。lead 會把這段文字當成新的 `task` 收到，run 沿用同一個 run 目錄、任務記憶、session 與 lead 的 worktree 繼續。
 
-- **哪些 run：** 只有已完成的 run 能重開。仍在執行的 run 會拒絕；尚未完成的 run 若帶文字也會拒絕（先不帶文字 resume 它）。不帶文字時行為不變：已完成的 run 只印出結果。沒指定 run 時，候選是目前沒在執行的 run，由新到舊：剛好一個就用它，沒有就報錯，有多個就列出（在終端機可用編號或名稱選；非互動環境則報錯並列出候選）。只有一個參數時，只有在它不可能是 run 參照（含空白，或含 `A-Z a-z 0-9 . _ -` 以外的字元）才會被當成追加要求；單一個詞的追加要求要寫成 `resume <run> "<text>"` 或用 `--task-file`。
+- **哪些 run：** 只有已完成的 run 能重開。仍在執行的 run 會拒絕；尚未完成的 run 若帶文字也會拒絕（先不帶文字 resume 它）。不帶文字時行為不變：已完成的 run 只印出結果。沒指定 run 時，候選是已完成的 run，由新到舊：剛好一個就用它，沒有就報錯，有多個就列出（在終端機可用編號或名稱選；非互動環境則報錯並列出候選）。只有一個參數時，只有在它不可能是 run 參照（含空白，或含 run 名稱不能用的字元）才會被當成追加要求；單一個詞的追加要求要寫成 `resume <run> "<text>"` 或用 `--task-file`。
 - **保留什麼：** 追加要求存成 `runs/<run-id>/followups/<n>.md`。每份 `done` 報告保留為 `done-<n>.md`，`result.md` 永遠是最新一份。`state.json` 新增 `name`、`reopened`、`round_floor`（都是選填，舊的 run 照樣能讀）。未解決的 blocked integration 會保留；每段重開的 done 規範提醒重新計算。
 - **輪數上限：** `max_rounds` 從重開時起算：`rounds` 持續累加，上限是重開當下的輪數加 `max_rounds`。
-- **lead 的 branch**（lead 有 worktree 的 run）：若該 branch 已合併進你的 `HEAD`，且 lead 的 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名，`agent-lyceum/<run-id>/<lead>`）會從你目前的 `HEAD` 重新切出，並印一行說明。否則沿用原本的 worktree 與 branch。若已記錄 PR（`pr_url`）且 branch 沒有重切，新的 `open_pr: true` 只會 push（「pull request updated」）；若 branch 重切了，已記錄的 `pr_url` 會被清掉（舊網址留在 run 的 notes），要求時再開一個新的 PR。agent-lyceum 仍然從不合併。
+- **lead 的 branch**（lead 有 worktree 的 run）：若該 branch 已合併進你的 `HEAD`，且 lead 的 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名，`agent-lyceum/<run-id>/<lead>`）會從你目前的 `HEAD` 重新切出，並印一行說明。否則沿用原本的 worktree 與 branch。若已記錄 PR（`pr_url`）且 branch 沒有重切，新的 `open_pr: true` 只會 push（「pull request updated」），而且只在該 PR 仍開啟時；若它已被合併（含 squash merge）或關閉，就改開一個新的 PR；若 branch 重切了，已記錄的 `pr_url` 會被清掉（舊網址留在 run 的 notes），要求時再開一個新的 PR。agent-lyceum 仍然從不合併。
 
 ### 開 PR
 

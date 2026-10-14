@@ -707,7 +707,9 @@ export class RunSession {
     });
     log("pull-request", { ...result });
     if (result.status === "opened") {
-      say(`  pull request ${existingUrl ? "updated" : "opened"}: ${result.url}`);
+      say(`  pull request ${result.updated ? "updated" : "opened"}: ${result.url}`);
+      if (existingUrl && !result.updated && !state.notes?.some((n) => n.includes(existingUrl)))
+        this.note(`The earlier pull request ${existingUrl} was no longer open; a new one was opened for the follow-up work.`);
       state.pr_url = result.url;
     } else {
       this.note(`The pull request could not be opened (${result.step}: ${result.reason}). The branch ${rb.branch} is kept.${result.manual.length ? ` To finish by hand:\n${result.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);

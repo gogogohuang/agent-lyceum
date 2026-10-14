@@ -225,11 +225,12 @@ describe("reopening a concurrent run", () => {
     expect(git(env.repo, "log", "--format=%s", `${summary.resultBranch!.head}..${BRANCH}`)).toMatch(/lead's work/);
   });
 
-  const reopenWithPr = async (merged: boolean, again = true) => {
+  const reopenWithPr = async (merged: boolean, again = true, prState = "OPEN") => {
     const calls: string[][] = [];
     let created = 0;
     const ok: CommandRunner = (cmd, args) => {
       calls.push([cmd, ...args]);
+      if (cmd === "gh" && args[1] === "view") return { ok: true, out: `${prState}\n` };
       return cmd === "gh" ? { ok: true, out: `https://x/pull/${++created + 2}\n` } : { ok: true, out: args[0] === "symbolic-ref" ? "origin/main" : "" };
     };
     env = makeEnv();
@@ -266,11 +267,19 @@ describe("reopening a concurrent run", () => {
 
   it("a reopened run that already has a PR only pushes when the lead asks for one again", async () => {
     const { s, calls, lines, runDir } = await reopenWithPr(false);
-    expect(calls.map((c) => c[0])).toEqual(["git"]);
-    expect(calls[0]!.slice(0, 3)).toEqual(["git", "push", "-u"]);
-    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/3" });
+    expect(calls.map((c) => `${c[0]} ${c[1]} ${c[2]}`)).toEqual(["gh pr view", "git push -u"]);
+    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/3", updated: true });
     expect(lines.join("\n")).toContain("pull request updated: https://x/pull/3");
     expect(loadRunState(runDir).pr_url).toBe("https://x/pull/3");
+  });
+
+  it("after a squash merge (branch not recut) the recorded PR is merged: a new one is opened and the old url is noted", async () => {
+    const { s, calls, runDir } = await reopenWithPr(false, true, "MERGED");
+    expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(["gh pr", "git symbolic-ref", "git push", "gh pr"]);
+    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/4" });
+    const st = loadRunState(runDir);
+    expect(st.pr_url).toBe("https://x/pull/4");
+    expect(st.notes?.join("\n")).toMatch(/https:\/\/x\/pull\/3 was no longer open/);
   });
 
   it("after a recut the old PR belongs to the merged branch: a new one is opened and the old url is noted", async () => {
