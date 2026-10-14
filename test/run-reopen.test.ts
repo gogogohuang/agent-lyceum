@@ -202,7 +202,7 @@ describe("reopening a concurrent run", () => {
     expect(git(env.repo, "log", "--format=%s", `${summary.resultBranch!.head}..${BRANCH}`)).toMatch(/lead's work/);
   });
 
-  const reopenWithPr = async (merged: boolean) => {
+  const reopenWithPr = async (merged: boolean, again = true) => {
     const calls: string[][] = [];
     let created = 0;
     const ok: CommandRunner = (cmd, args) => {
@@ -214,8 +214,8 @@ describe("reopening a concurrent run", () => {
     makeConcurrent(env, 2);
     const project = env.project();
     const runDir = path.join(project.paths.runs, "run-1");
-    const ask = (i: WakeInput, body: string) =>
-      write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${body}\n`);
+    const ask = (i: WakeInput, body: string, openPr = true) =>
+      write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\n${openPr ? "open_pr: true\n" : ""}---\n\n${body}\n`);
     await runTeam({
       project,
       task: prepareTask({ text: "go", cwd: env.root, runDir }),
@@ -235,10 +235,10 @@ describe("reopening a concurrent run", () => {
     const lines: string[] = [];
     const s = await reopen(project, runDir, async (i) => {
       write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
-      ask(i, FULL_DONE);
+      ask(i, FULL_DONE, again);
       return OK;
     }, ok, (l) => lines.push(l));
-    return { s, calls, lines, runDir };
+    return { s, calls, lines, runDir, project, ok };
   };
 
   it("a reopened run that already has a PR only pushes when the lead asks for one again", async () => {
@@ -258,5 +258,23 @@ describe("reopening a concurrent run", () => {
     expect(st.pr_url).toBe("https://x/pull/4");
     expect(st.notes?.join("\n")).toContain("https://x/pull/3");
     expect(st.notes?.join("\n")).toMatch(/merged branch/);
+  });
+
+  it("a recut run that opens no PR keeps no pr_url, so a later reopen on the unmerged branch opens a new PR", async () => {
+    const { runDir, project, ok, calls } = await reopenWithPr(true, false);
+    const st = loadRunState(runDir);
+    expect(st.pr_url).toBeUndefined();
+    expect(st.notes?.filter((n) => n.includes("https://x/pull/3"))).toHaveLength(1);
+    expect(st.notes?.join("\n")).toMatch(/merged branch/);
+    calls.length = 0;
+    const lines: string[] = [];
+    const s = await reopen(project, runDir, async (i) => {
+      write(path.join(i.workspace!.dir, "src/web/three.txt"), "three\n");
+      write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${FULL_DONE}\n`);
+      return OK;
+    }, ok, (l) => lines.push(l));
+    expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+    expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/4" });
+    expect(lines.join("\n")).not.toContain("updated");
   });
 });

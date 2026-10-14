@@ -111,8 +111,6 @@ export class RunSession {
   private readonly refused = new Set<string>();
   /** Concurrent runs: the lead's own git worktree for the whole run. */
   private readonly leadSpace: AgentWorkspace | undefined;
-  /** The lead's branch was recut when this run was reopened: a pull request recorded earlier belongs to the merged branch. */
-  private readonly recut: boolean;
   /** The attempt that produced each batch member's output; committed together with its claim. */
   private readonly attempts = new Map<string, AttemptRecord>();
 
@@ -182,6 +180,11 @@ export class RunSession {
         state.max_rounds = roundLimit(state, cfg.max_rounds);
         state.result_branch = undefined;
         state.done_rejections = 0;
+        if (recut && resume.pr_url) {
+          // The recorded pull request is the merged branch's: it must not be mistaken for the new segment's.
+          state.notes = [...(resume.notes ?? []), `The earlier pull request ${resume.pr_url} belongs to the merged branch; a new one is opened for the follow-up work.`];
+          state.pr_url = undefined;
+        }
       }
     } else {
       const t = taskMessageBody(task!);
@@ -231,7 +234,6 @@ export class RunSession {
     }
     saveState();
     this.leadSpace = leadSpace;
-    this.recut = recut;
 
     this.opts = opts;
     this.prRunner = opts.pr ?? realRunner;
@@ -688,8 +690,7 @@ export class RunSession {
     if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 
-    const existingUrl = this.recut ? undefined : state.pr_url;
-    if (this.recut && state.pr_url) this.note(`The earlier pull request ${state.pr_url} belongs to the merged branch; a new one is opened for the follow-up work.`);
+    const existingUrl = state.pr_url;
     const result = openPullRequest({
       // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
       cwd: toplevel(project.dir),
