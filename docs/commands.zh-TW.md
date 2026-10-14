@@ -31,9 +31,7 @@
 
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。
-- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。lead 也會把追加要求會用到的交接筆記寫進 `task-memory/<run-id>/_shared/`；重開後每個 agent 的 prompt 都會帶它的索引。
-
-見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
+- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。
@@ -75,7 +73,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 選項：
 
 - `run`：要接續的 run：完整 id、名稱，或兩者之一的唯一前綴（預設是最新一個尚未結束且未在執行的 run）。前綴有歧義時會列出候選並以 `1` 結束；空字串會被拒絕。
-- `"追加要求"` 或 `--task-file f`：用追加要求重開已完成（`done`）的 run。lead 會把它當成新的 `task` 收到，run 沿用它的任務記憶與 worktree 繼續；見下方。文字與 `--task-file` 擇一，不能同時給。
+- `"追加要求"` 或 `--task-file f`：用追加要求重開已完成（`done`）的 run。lead 會把它當成新的 `task` 收到，run 沿用它的任務記憶與 worktree 繼續；見下方。文字與 `--task-file` 擇一，不能同時給。重開後，每個 agent 的 prompt 都會帶 lead 的交接筆記索引（`task-memory/<run-id>/_shared/MEMORY.md`）。
 - `-p name`：專案。
 - `--answer`：先回答 run 正在等待的問題，見 [回答問題](#回答問題)。
 - `--no-edit`：搭配 `--answer`，不開編輯器。

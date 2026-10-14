@@ -31,9 +31,7 @@ Options:
 
 - `"task"`: the task as text. Give this *or* `--task-file`, not both.
 - `--task-file f`: read the task from a file.
-- `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. The lead also leaves handoff notes for the follow-up in `task-memory/<run-id>/_shared/`; every agent's prompt then carries their index.
-
-See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
+- `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
 - `-p name`: the project (default: inferred from the current directory).
 - `--assume-defaults`: when a question has a suggested value, use it instead of pausing. Questions without a suggestion still pause.
 - `--agent a`: give the task to that one member of the project, and wake nobody else. See below.
@@ -75,7 +73,7 @@ Continue an interrupted or failed run, or reopen a finished one with a follow-up
 Options:
 
 - `run`: the run to continue: its full id, its name, or a unique prefix of either (default: the newest run that is neither done nor running). An ambiguous prefix lists the candidates and exits `1`; an empty one is refused.
-- `"follow-up"` or `--task-file f`: reopen a finished (`done`) run with a follow-up request. The lead gets it as a new `task` and the run goes on with its task memory and worktree; see below. Give the text or `--task-file`, not both.
+- `"follow-up"` or `--task-file f`: reopen a finished (`done`) run with a follow-up request. The lead gets it as a new `task` and the run goes on with its task memory and worktree; see below. Give the text or `--task-file`, not both. After the reopen, every agent's prompt carries the index of the lead's handoff notes (`task-memory/<run-id>/_shared/MEMORY.md`).
 - `-p name`: the project.
 - `--answer`: first answer the questions the run is waiting on; see [Answering questions](#answering-questions).
 - `--no-edit`: with `--answer`, do not open the editor.

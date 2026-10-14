@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +7,7 @@ import { codexWritableRoots } from "../src/adapters/codex.js";
 import { ProtectedGuard } from "../src/guard.js";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam } from "../src/dispatcher.js";
-import { enforcementFor, outboxDir, sharedDir, sharedIndex, writePolicy } from "../src/policy.js";
+import { commonFile, enforcementFor, outboxDir, sharedDir, sharedIndex, writePolicy } from "../src/policy.js";
 import { HANDOFF_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
 import { soloProject } from "../src/solo.js";
 import { prepareTask } from "../src/task.js";
@@ -200,7 +201,10 @@ describe("a reopened run starts from the handoff notes", () => {
       return OK;
     });
     expect(summary.endReason).toBe("done");
-    expect((loadRunState(runDir).notes ?? []).some((n) => n.includes("shared-not-updated"))).toBe(true);
+    const noted = (loadRunState(runDir).notes ?? []).filter((n) => n.includes("shared-not-updated"));
+    expect(noted).toHaveLength(1);
+    expect(noted[0]).toContain("did not write handoff notes");
+    expect(noted[0]).toContain("will start without handoff notes");
 
     let seen = "";
     const second = await runTeam({
@@ -237,5 +241,114 @@ describe("a reopened run starts from the handoff notes", () => {
     });
     expect(second.endReason).toBe("done");
     expect(fs.existsSync(path.join(project.paths.taskMemory, "run-1", "_shared"))).toBe(true);
+  });
+});
+
+describe("the shared-not-updated note", () => {
+  const notesOf = (runDir: string) => (loadRunState(runDir).notes ?? []).filter((n) => n.includes("shared-not-updated"));
+
+  it("is not made by a plain resume of an interrupted run (no baseline for that segment)", async () => {
+    env = makeEnv();
+    const ctl = new AbortController();
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "Build login", cwd: env.root, runDir });
+    const first = await runTeam({
+      project,
+      task,
+      runDir,
+      log: () => {},
+      signal: ctl.signal,
+      invoker: async (i) => {
+        write(path.join(sharedDir(i.project) as string, "MEMORY.md"), "- decided: sessions\n");
+        send(i, "fe-member", "task", "do it");
+        ctl.abort();
+        return OK;
+      },
+    });
+    expect(first.endReason).toBe("cancelled");
+    const second = await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        if (i.agent.name === "lead") send(i, i.agent.name, "done", "result");
+        else send(i, "lead", "reply", "member done");
+        return OK;
+      },
+    });
+    expect(second.endReason).toBe("done");
+    expect(notesOf(runDir)).toEqual([]);
+  });
+
+  it("says a follow-up will see untouched notes as they are", async () => {
+    env = makeEnv();
+    const { project, runDir } = await firstSegment(leadWritesNotes);
+    await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "More please" },
+      invoker: async (i) => {
+        send(i, i.agent.name, "done", "second result");
+        return OK;
+      },
+    });
+    const noted = notesOf(runDir);
+    expect(noted).toHaveLength(1);
+    expect(noted[0]).toContain("did not change the handoff notes");
+    expect(noted[0]).toContain("will see them as they are");
+  });
+});
+
+describe("the capped reads never hang or throw", () => {
+  it("a directory, a FIFO or a missing file at the index or COMMON.md is treated as empty", () => {
+    env = makeEnv();
+    const p = bound();
+    const idx = sharedIndex(p) as string;
+    fs.rmSync(idx, { force: true });
+    fs.mkdirSync(idx, { recursive: true });
+    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+
+    fs.rmSync(idx, { recursive: true });
+    if (process.platform !== "win32") {
+      execFileSync("mkfifo", [idx]);
+      expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+      fs.rmSync(idx);
+    }
+
+    const common = path.join(env.root, "COMMON.dir");
+    fs.mkdirSync(common);
+    fs.mkdirSync(path.dirname(commonFile(p)), { recursive: true });
+    fs.rmSync(commonFile(p), { force: true });
+    fs.symlinkSync(common, commonFile(p));
+    expect(buildUserPrompt(p, p.agents.lead, [], 1)).toContain("# Shared team context (COMMON.md)");
+  });
+
+  it("a file through a symlink still reads, and a big one is cut at the limit", () => {
+    env = makeEnv();
+    const p = bound();
+    const idx = sharedIndex(p) as string;
+    const real = path.join(env.root, "real.md");
+    write(real, "y".repeat(HANDOFF_LIMIT * 3));
+    fs.mkdirSync(path.dirname(idx), { recursive: true });
+    fs.rmSync(idx, { force: true });
+    fs.symlinkSync(real, idx);
+    const out = buildUserPrompt(p, p.agents.lead, [], 1, true);
+    expect(out).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+    expect(out.length).toBeLessThan(HANDOFF_LIMIT * 2);
+  });
+});
+
+describe("enforcement notes", () => {
+  it("a non-lead Claude agent without the OS sandbox is told Bash can write _shared", () => {
+    env = makeEnv();
+    const p = bound();
+    const m = enforcementFor(p, p.agents["fe-member"]);
+    // The sandbox probe depends on the platform; the note must be there exactly when the level is not OS-enforced.
+    expect(m.notes.some((n) => n.includes("Bash can write _shared"))).toBe(m.shared !== "os");
+    expect(enforcementFor(p, p.agents.lead).notes.some((n) => n.includes("Bash can write _shared"))).toBe(false);
   });
 });

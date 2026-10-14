@@ -178,6 +178,7 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
     const lvl: Level = os ? "os" : "tool-rules";
     e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : lvl, repoInstructions: lvl, owns: parallel ? "tool-rules" : "n/a" };
     if (!os) notes.push("OS sandbox unavailable (Windows, or Linux without bubblewrap): Bash can bypass Edit rules.");
+    if (!isLeadAgent && !os) notes.push("Without the OS sandbox Bash can write _shared; only the handoff index (_shared/MEMORY.md) is checked after each wake-up.");
   } else {
     const lvl: Level = os ? "os" : "prompt-only";
     e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : os ? "os" : "post-hoc", repoInstructions: "post-hoc", owns: parallel ? "prompt-only" : "n/a" };

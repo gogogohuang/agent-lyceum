@@ -13,7 +13,7 @@ import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
 import { outboxDir, ownsDirs, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
-import { atomicWrite } from "./fs-util.js";
+import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, roundLimit, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
@@ -31,14 +31,13 @@ export const MAX_DONE_REJECTIONS = 2;
 /** How many times a malformed `ask` goes back to its sender before the lead is told instead. */
 export const MAX_ASK_REJECTIONS = 2;
 
+/** How much of the handoff index is compared; the prompts show far less. */
+const INDEX_COMPARE_LIMIT = 1024 * 1024;
+
 /** The text of a file, "" when it is missing, undefined when there is no such file for this run (no handoff folder). */
 function readIndex(file: string | undefined): string | undefined {
   if (!file) return undefined;
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
+  return readFileCapped(file, INDEX_COMPARE_LIMIT)?.text ?? "";
 }
 
 /** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
@@ -266,7 +265,8 @@ export class RunSession {
     this.log = log;
     this.guard = guard;
     this.state = state;
-    this.sharedAtStart = readIndex(sharedIndex(project));
+    // Only a segment that starts here has a baseline: a fresh run or a follow-up reopen. A plain resume continues one begun by an earlier process.
+    this.sharedAtStart = !resume || opts.followup ? readIndex(sharedIndex(project)) : undefined;
   }
 
 
@@ -575,8 +575,13 @@ export class RunSession {
     }
     if (route.done) {
       const handoffIdx = sharedIndex(project);
-      if (handoffIdx && this.sharedAtStart !== undefined && readIndex(handoffIdx) === this.sharedAtStart) {
-        this.note(`shared-not-updated: the lead did not update the handoff notes (${handoffIdx}) before done, so a follow-up on this run will start without them.`);
+      const nowShared = handoffIdx && this.sharedAtStart !== undefined ? readIndex(handoffIdx) : undefined;
+      if (nowShared !== undefined && nowShared === this.sharedAtStart) {
+        this.note(
+          nowShared.trim()
+            ? `shared-not-updated: the lead did not change the handoff notes (${handoffIdx}) in this segment; a follow-up will see them as they are.`
+            : `shared-not-updated: the lead did not write handoff notes (${handoffIdx}) in this segment, so a follow-up will start without handoff notes.`,
+        );
       }
       this.doneMessage = { subject: route.done.subject, body: route.done.body };
       this.openPrRequested = route.done.meta.open_pr === true;

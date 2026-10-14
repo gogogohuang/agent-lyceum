@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { readFileCapped } from "./fs-util.js";
 import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
@@ -17,12 +18,7 @@ export const HANDOFF_LIMIT = COMMON_LIMIT;
 export const LEAD_BATCH_LIMIT = 5;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
-function readCapped(file: string, limit: number): { text: string; truncated: boolean } | undefined {
-  if (!fs.existsSync(file)) return undefined;
-  const buf = fs.readFileSync(file);
-  if (buf.length <= limit) return { text: buf.toString("utf8"), truncated: false };
-  return { text: buf.subarray(0, limit).toString("utf8"), truncated: true };
-}
+const readCapped = readFileCapped;
 
 /** A PR only needs to say agent-lyceum opened it; no agent or role names. */
 const PR_ATTRIBUTION_RULE =
