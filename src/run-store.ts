@@ -236,12 +236,14 @@ export function outcomeOf(s: Pick<RunState, "outcome" | "end_reason">): { outcom
   return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : s.end_reason === "waiting" ? "waiting" : "partial", verified: false };
 }
 
+const NAME_MAX = 30;
+
 export function slugify(text: string): string {
   const s = text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 30)
+    .slice(0, NAME_MAX)
     .replace(/-+$/g, "");
   return s || "task";
 }
@@ -249,8 +251,16 @@ export function slugify(text: string): string {
 /** `base`, or `base-2`, `base-3` … the first that is not in `taken`. */
 export function uniqueName(base: string, taken: string[]): string {
   if (!taken.includes(base)) return base;
-  for (let n = 2; ; n++) if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`;
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`;
+    // The result stays within the 30 characters of a slug: trim the base, then any "-" the trim leaves at its end.
+    const candidate = `${base.slice(0, Math.max(1, NAME_MAX - suffix.length)).replace(/-+$/g, "")}${suffix}`;
+    if (!taken.includes(candidate)) return candidate;
+  }
 }
+
+/** How a run is named in output: `name (run_id)`, or just the id for a run without a name. */
+export const runLabel = (r: { name?: string; run_id: string }): string => (r.name ? `${r.name} (${r.run_id})` : r.run_id);
 
 export type RunRef = { dir: string; state: RunState };
 export type Resolved = { ok: true; run: RunRef } | { ok: false; reason: "none" | "ambiguous"; candidates: RunRef[] };

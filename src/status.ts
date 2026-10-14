@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, runLabel, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
@@ -35,9 +35,9 @@ export function latestUnfinishedRun(project: ResolvedProject): { dir: string; st
   return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !runIsAlive(r.state, project)));
 }
 
-/** Runs that could be continued or reopened: not running now. Newest first. */
+/** Runs a follow-up text can reopen: the finished ones (end_reason "done"). Newest first. */
 export function reopenCandidates(project: ResolvedProject): { dir: string; state: RunState }[] {
-  return listRuns(project, Infinity).filter((r) => r.state.end_reason || !runIsAlive(r.state, project));
+  return listRuns(project, Infinity).filter((r) => r.state.end_reason === "done");
 }
 
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
@@ -375,7 +375,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   const s = run;
   const live = s.live;
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, reportLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
     `${L("任務：")}${taskText(s)}`,
   ];
 
@@ -411,7 +411,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
 /** What a run is doing / did, one line per wake. */
 function describeRun(s: RunReport, now: number, c: Paint, limit = Infinity): string[] {
   const lines = [
-    `${c.bold("執行 " + s.run_id)}  [${stateColor(c, reportLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
     `  任務：${taskText(s)}`,
   ];
   const steps = stepsLine(s.steps, c);

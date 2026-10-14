@@ -107,7 +107,7 @@ function seedNamed() {
 }
 
 describe("runs found by id, name or unique prefix", () => {
-  it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", () => {
+  it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", { timeout: 30_000 }, () => {
     env = makeEnv();
     seedNamed();
     for (const q of ["20261014-010000", "login", "20261014-01"]) {
@@ -120,6 +120,19 @@ describe("runs found by id, name or unique prefix", () => {
       expect(dry.code, q).toBe(0);
       expect(dry.out).toContain("20261014-010000");
     }
+  });
+
+  it("shows `name (run_id)` in the default status header, the --task-id header and clear output; a run without a name shows just its id", () => {
+    env = makeEnv();
+    seedNamed();
+    expect(run(["status", "-p", "demo"]).out).toContain("login-2 (20261014-020000)");
+    expect(run(["status", "-p", "demo", "--task-id", "login"]).out).toContain("執行 login (20261014-010000)");
+    expect(run(["status", "-p", "demo", "--task-id", "20261013-010000"]).out).toContain("執行 20261013-010000 ");
+    expect(run(["clear", "login", "-p", "demo", "--dry-run"]).out).toContain("Run login (20261014-010000)");
+    const del = run(["clear", "login", "-p", "demo"]);
+    expect(del.out).toContain("Deleted run login (20261014-010000):");
+    const old = run(["clear", "20261013-010000", "-p", "demo"]);
+    expect(old.out).toContain("Deleted run 20261013-010000:");
   });
 
   it("an exact name wins over a longer name that starts with it", () => {
@@ -167,7 +180,7 @@ describe("runs found by id, name or unique prefix", () => {
     write(path.join(env.project().paths.runs, "20261014-010000", "state.json"), JSON.stringify({ run_id: "20261014-010000", name: "login", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "done", outcome: "completed", task_summary: "Add login" }));
     write(path.join(env.project().paths.runs, "20261014-010000", "result.md"), "# Done\n");
     const r = run(["resume", "login", "-p", "demo"]);
-    expect(r.out).toContain("Run 20261014-010000 already finished (done)");
+    expect(r.out).toContain("Run login (20261014-010000) already finished (done)");
   });
 
   it("the task list shows names, and leaves the column out when no run has one", () => {

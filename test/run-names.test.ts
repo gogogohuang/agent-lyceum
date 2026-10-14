@@ -21,6 +21,16 @@ describe("uniqueName", () => {
     expect(uniqueName("login", ["login"])).toBe("login-2");
     expect(uniqueName("login", ["login", "login-2"])).toBe("login-3");
   });
+  it("never exceeds 30 characters, even with a suffix", () => {
+    const base = slugify("a".repeat(50));
+    expect(base).toHaveLength(30);
+    const two = uniqueName(base, [base]);
+    expect(two.length).toBeLessThanOrEqual(30);
+    expect(two.endsWith("-2")).toBe(true);
+    const dashed = `${"a".repeat(27)}-bb`; // trimming the base must not leave a trailing "-"
+    expect(uniqueName(dashed, [dashed]).length).toBeLessThanOrEqual(30);
+    expect(uniqueName(dashed, [dashed])).not.toMatch(/--/);
+  });
 });
 
 describe("resolveRun", () => {

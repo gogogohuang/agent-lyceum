@@ -10,9 +10,9 @@ import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
-import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, slugify, uniqueName, type RunRef } from "./run-store.js";
+import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { exitCodeForOutcome } from "./schema.js";
-import { absPath, assertName, projectPaths, resolveHome } from "./paths.js";
+import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile, taskMessageBody } from "./task.js";
@@ -160,14 +160,14 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
 }
 
 function printRun(summary: RunSummary, runDir: string): void {
-  console.log(`\nRun ${summary.name ?? summary.runId} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
+  console.log(`\nRun ${runLabel({ name: summary.name, run_id: summary.runId })} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
   if (summary.resultBranch?.files) {
     console.log(`\nThe work is on branch ${summary.resultBranch.branch} (${summary.resultBranch.files} file(s)); your working tree was not touched.\nBring it in with: git merge ${summary.resultBranch.branch}${summary.resultBranch.patch ? `\n(or apply the patch: git apply ${summary.resultBranch.patch})` : ""}`);
   }
   if (summary.pr) {
-    if (summary.pr.status === "opened") console.log(`\nPull request opened: ${summary.pr.url}`);
+    if (summary.pr.status === "opened") console.log(`\nPull request ${summary.pr.updated ? "updated" : "opened"}: ${summary.pr.url}`);
     else if (summary.pr.status === "skipped") console.log(`\nA pull request was asked for but not opened: ${summary.pr.reason}`);
     else console.log(`\nThe pull request could not be opened (${summary.pr.step}: ${summary.pr.reason}).${summary.pr.manual.length ? ` To finish by hand:\n${summary.pr.manual.map((m) => `  ${m}`).join("\n")}` : ""}`);
   }
@@ -191,8 +191,8 @@ async function continueRun(pr: ResolvedProject, dir: string, runId: string, foll
   try {
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
     const state = loadRunState(dir);
-    if (followup) console.log(`Reopening run ${state.name ?? state.run_id} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
-    else console.log(`Resuming run ${state.run_id} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)}: ${state.task_summary}`);
+    if (followup) console.log(`Reopening run ${runLabel(state)} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
+    else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)}: ${state.task_summary}`);
     // Read the state again under the lock: another process may have changed it while we were checking.
     return await runTeam({ project: pr, resume: state, runDir: dir, signal: cancel.signal, followup });
   } finally {
@@ -296,7 +296,7 @@ async function pickReopenRun(pr: ResolvedProject): Promise<RunRef> {
   const cands = reopenCandidates(pr);
   if (cands.length === 0) return fail('No run to continue. Start one with: agent-lyceum run "<task>"');
   if (cands.length === 1) return cands[0]!;
-  const label = (c: RunRef) => `${c.state.name ?? c.state.run_id}  [${c.state.end_reason ?? "interrupted"}]  ${firstLine(c.state.task_summary)}`;
+  const label = (c: RunRef) => `${runLabel(c.state)}  [${c.state.end_reason ?? "interrupted"}]  ${firstLine(c.state.task_summary)}`;
   if (!interactive()) {
     return fail(`Several runs could take this follow-up:\n${cands.map((c) => `  ${c.state.name ? `${c.state.name}  ` : ""}${c.state.run_id}  [${c.state.end_reason ?? "interrupted"}]  ${firstLine(c.state.task_summary)}`).join("\n")}\nName one: agent-lyceum resume <name> "..."`);
   }
@@ -336,10 +336,10 @@ program
         if (textArg !== undefined) fail("Give the follow-up either as text or with --task-file, not both.");
         text = readTaskFile(path.resolve(process.cwd(), opts.taskFile));
       } else if (query !== undefined && textArg === undefined) {
-        // One argument: a run if it names one. It is follow-up text only if it cannot be a run reference (whitespace or a character outside [A-Za-z0-9._-]);
+        // One argument: a run if it names one. It is follow-up text only if it cannot be a run reference (it has whitespace or a character a run name cannot contain);
         // a mistyped run name must not silently become the task. An ambiguous match is still an error.
         const r = query.trim() ? resolveRun(listRuns(pr, Infinity), query) : undefined;
-        if (r && !r.ok && r.reason === "none" && /[^A-Za-z0-9._-]/.test(query)) {
+        if (r && !r.ok && r.reason === "none" && !NAME_RE.test(query)) {
           text = query;
           query = undefined;
         }
@@ -358,22 +358,22 @@ program
       const { dir, state } = found!;
       // A solo run needs only its own agent's runtime, as when it started.
       await preflight(state.solo_agent ? onlyAgent(soloProject(pr, state.solo_agent), state.solo_agent) : pr);
-      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${state.run_id} is still running (pid ${state.pid}).`);
+      if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${runLabel(state)} is still running (pid ${state.pid}).`);
       const reopen = text !== undefined;
       if (reopen && state.end_reason !== "done")
-        fail(`Run ${state.name ?? state.run_id} is not finished (${state.end_reason ?? "interrupted"}); resume it without text first, then follow up.`);
+        fail(`Run ${runLabel(state)} is not finished (${state.end_reason ?? "interrupted"}); resume it without text first, then follow up.`);
       if (!reopen && state.end_reason === "done") {
         const result = path.join(dir, RESULT_FILE);
-        if (!fs.existsSync(result)) fail(`Run ${state.run_id} already finished (done); nothing to resume.`);
+        if (!fs.existsSync(result)) fail(`Run ${runLabel(state)} already finished (done); nothing to resume.`);
         const o = outcomeOf(state)!;
-        console.log(`Run ${state.run_id} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+        console.log(`Run ${runLabel(state)} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
         process.exit(exitCodeForOutcome(o.outcome));
       }
       // A reopen recalculates the round limit from where the run stands.
       if (!reopen && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
-        fail(`Run ${state.run_id} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml first.`);
+        fail(`Run ${runLabel(state)} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml first.`);
 
-      if (opts.answer && state.end_reason !== "waiting") fail(`Run ${state.run_id} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
+      if (opts.answer && state.end_reason !== "waiting") fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
       if (state.end_reason === "waiting") {
         if (opts.answer && opts.edit) openInEditor(prepareAnswers(dir, {}).path);
         const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
@@ -458,9 +458,11 @@ program
       if (opts.force) fail("--force only goes with --lock.");
       if (!runId) fail("Give the run id to clear (see `agent-lyceum status --task-list`), or use --lock.");
       const pr = loadProject(opts.project);
-      const full = findRun(pr, runId).state.run_id;
+      const target = findRun(pr, runId).state;
+      const full = target.run_id;
+      const label = runLabel(target);
       const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
-        console.log(`Run ${plan.summary}`);
+        console.log(`Run ${label}${plan.summary.slice(full.length)}`);
         for (const i of plan.items) console.log(`  ${opts.dryRun ? "would delete" : "delete      "}  ${i.label}`);
         for (const k of plan.keep) console.log(`  kept          worktree of ${k.agent}: ${k.path} (branch ${k.branch})${k.files.length ? `, holding ${k.files.join(", ")}` : ""}`);
       };
@@ -485,7 +487,7 @@ program
           for (const f of report.failed) console.error(`FAILED  ${f.item.label}: ${f.error}`);
           fail("Cleanup stopped at the first failure; fix it and repeat the same command to finish.");
         }
-        console.log(`Deleted run ${full}: ${plan.summary.slice(full.length + 2)}`);
+        console.log(`Deleted run ${label}: ${plan.summary.slice(full.length + 2)}`);
       } finally {
         lease.release();
       }

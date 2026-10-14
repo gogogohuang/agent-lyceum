@@ -48,7 +48,7 @@ describe("resume [run] [text]", { timeout: 90_000 }, () => {
     const [id] = runDirs();
     const r = sh(["resume", "Add rate limit\nand more"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Reopening run add-login (follow-up 1): Add rate limit");
+    expect(r.out).toContain(`Reopening run add-login (${id}) (follow-up 1): Add rate limit`);
     expect(r.out).not.toContain("and more\n");
     expect(fs.readFileSync(path.join(dirOf(id!), "followups", "1.md"), "utf8")).toContain("Add rate limit");
     expect(loadRunState(dirOf(id!)).reopened).toHaveLength(1);
@@ -96,6 +96,29 @@ describe("resume [run] [text]", { timeout: 90_000 }, () => {
     const r = sh(["resume", "加上限流"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("(follow-up 1): 加上限流");
+  });
+
+  it("a lone argument with a dot cannot be a run name, so it is follow-up text; a plain unknown word is still not found", () => {
+    const sh = setup([leadDone("first"), leadDone("second")]);
+    sh(["run", "Add login"]);
+    const r = sh(["resume", "v1.2"]);
+    expect(r.err).not.toContain("Invalid run name");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("(follow-up 1): v1.2");
+    expect(sh(["resume", "nope"]).err).toMatch(/not found/);
+  });
+
+  it("with text and no run, only finished runs are candidates: a cancelled run beside a done one is not offered", () => {
+    const sh = setup([leadDone("first"), leadDone("second")]);
+    sh(["run", "Add login"]);
+    const [id] = runDirs();
+    cloneRun(id!, "20300101-000000", "cancelled-one");
+    const cs = JSON.parse(fs.readFileSync(path.join(dirOf("20300101-000000"), "state.json"), "utf8"));
+    write(path.join(dirOf("20300101-000000"), "state.json"), JSON.stringify({ ...cs, end_reason: "cancelled" }));
+    const r = sh(["resume", "do more"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Reopening run add-login");
+    expect(fs.existsSync(path.join(dirOf("20300101-000000"), "followups"))).toBe(false);
   });
 
   it("several candidates and no TTY: lists them, suggests resume <name>, exits 1 and reopens nothing", () => {

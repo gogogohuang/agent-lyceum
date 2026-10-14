@@ -237,7 +237,7 @@ describe("run names", () => {
     const t = setup({ calls: [done, done, done] });
     const first = t.sync(["run", "Login with session\n\nmore", "-p", "demo"]);
     expect(first.code).toBe(0);
-    expect(first.out).toMatch(/Run login-with-session ended/);
+    expect(first.out).toMatch(/Run login-with-session \(\S+\) ended/);
     expect(t.sync(["run", "Login with session", "-p", "demo"]).code).toBe(0);
     expect(t.sync(["run", "x", "--name", "my-task", "-p", "demo"]).code).toBe(0);
     expect(names(t)).toEqual(["my-task", "login-with-session-2", "login-with-session"]);
