@@ -35,6 +35,11 @@ export function latestUnfinishedRun(project: ResolvedProject): { dir: string; st
   return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !runIsAlive(r.state, project)));
 }
 
+/** Runs that could be continued or reopened: not running now. Newest first. */
+export function reopenCandidates(project: ResolvedProject): { dir: string; state: RunState }[] {
+  return listRuns(project, Infinity).filter((r) => r.state.end_reason || !runIsAlive(r.state, project));
+}
+
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
   const root = project.paths.runs;
   if (!fs.existsSync(root)) return [];

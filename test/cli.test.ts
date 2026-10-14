@@ -154,7 +154,8 @@ describe("runs found by id, name or unique prefix", () => {
     env = makeEnv();
     seedNamed();
     expect(run(["clear", "nope", "-p", "demo", "--dry-run"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
-    expect(run(["resume", "nope", "-p", "demo"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
+    // For resume a lone unknown word is a follow-up text, not a run name (see resume-followup-cli.test.ts); a name with its text is checked.
+    expect(run(["resume", "nope", "do it", "-p", "demo"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
     const empty = run(["status", "-p", "demo", "--task-id", ""]);
     expect(empty.code).toBe(1);
     expect(empty.err).toMatch(/run id or name/);
