@@ -53,6 +53,19 @@ describe("status: active now", () => {
   });
 });
 
+describe("status: which run is shown", () => {
+  it("shows a resumed older run that is still running above a newer finished one", () => {
+    env = makeEnv();
+    const runs = env.project().paths.runs;
+    const base = { rounds: 1, max_rounds: 10, last_wake: {}, wakes: [] };
+    write(path.join(runs, "20260101-000000", "state.json"), JSON.stringify({ ...base, run_id: "20260101-000000", pid: process.pid }));
+    write(path.join(runs, "20260102-000000", "state.json"), JSON.stringify({ ...base, run_id: "20260102-000000", pid: 2 ** 22 + 12345, end_reason: "done", outcome: "completed" }));
+    const run = buildStatusReport(env.project()).run;
+    expect(run?.run_id).toBe("20260101-000000");
+    expect(run?.state).toBe("running");
+  });
+});
+
 describe("status: progress, next, flow", () => {
   it("shows checklist progress and the next step", () => {
     env = makeEnv();

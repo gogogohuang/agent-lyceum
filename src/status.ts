@@ -10,6 +10,12 @@ import { listUnread } from "./mailbox.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { inspectRunLock, lockHolderAlive } from "./project-lock.js";
 
+/** The run to show: the newest one still running (a resumed run keeps its old id, so newer runs may sit above it), else the newest run. */
+export function currentRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
+  const running = listRuns(project, Infinity).find((r) => !r.state.end_reason && runIsAlive(r.state, project));
+  return running ?? latestRun(project);
+}
+
 export function latestRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
   const root = project.paths.runs;
   if (!fs.existsSync(root)) return undefined;
@@ -312,14 +318,14 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
 
 const projectInfo = (p: ResolvedProject) => ({ name: p.name, dir: p.dir, lead: p.lead });
 
-/** The status of a project: its agents and one run (the newest, or the one named by `runId`). */
+/** The status of a project: its agents and one run (the newest running one, else the newest, or the one named by `runId`). */
 export function buildStatusReport(base: ResolvedProject, runId?: string): StatusReport {
   let run: { dir: string; state: RunState } | undefined;
   if (runId) {
     const dir = path.join(base.paths.runs, runId);
     if (!fs.existsSync(path.join(dir, "state.json"))) throw new Error(`Run "${runId}" not found in ${base.paths.runs}. List ids with: agent-lyceum status --task-list`);
     run = { dir, state: loadRunState(dir) };
-  } else run = latestRun(base);
+  } else run = currentRun(base);
   // Mail is per run: count the unread mail of the run being shown.
   const project = run ? bindRunProject(base, run.dir, run.state.mail_layout) : base;
   const report = run ? buildRunReport(run, base) : undefined;
