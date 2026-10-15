@@ -71,6 +71,8 @@ export function parseAskBody(body: string): { ok: true; questions: NewQuestion[]
     const text = textOf(first(q.inner, "text"));
     if (!text) return { ok: false, error: `question "${id}" needs a non-empty <text>` };
     const options = tags(first(q.inner, "options")?.inner ?? "", "option").map((o) => textOf(o)).filter(Boolean);
+    const bare = options.find((o) => /^\(?[A-Za-z0-9]{1,2}[:.)：]?$/.test(o));
+    if (bare) return { ok: false, error: `option "${bare}" of question "${id}" is only a label; write the full content of each option (what it does), e.g. "A: squash into two commits ..."` };
     const sug = first(q.inner, "suggested");
     const suggested = sug && textOf(sug) ? { value: textOf(sug), ...(sug.attrs.reason ? { reason: sug.attrs.reason } : {}) } : undefined;
     if (suggested && options.length && !options.includes(suggested.value)) return { ok: false, error: `the suggested value of question "${id}" must be one of its options` };
@@ -163,9 +165,9 @@ export function resolveOptionLetters(r: AskReply): AskReply {
   return {
     ...r,
     questions: r.questions.map((q) => {
-      const raw = q.answer?.value.trim().match(/^([A-Za-z]|\d{1,2})[:.)]?$/)?.[1]?.toLowerCase();
+      const raw = q.answer?.value.trim().match(/^([A-Za-z]|\d{1,2})[:.)：]?$/)?.[1]?.toLowerCase();
       if (q.delivered || !raw || !q.options?.length || !q.answer) return q;
-      const hits = q.options.filter((o) => o.toLowerCase().match(/^([a-z])[:.)]/)?.[1] === raw);
+      const hits = q.options.filter((o) => o.toLowerCase().match(/^([a-z])[:.)：]/)?.[1] === raw);
       const byPosition = /^\d+$/.test(raw) ? Number(raw) - 1 : raw.charCodeAt(0) - 97;
       const pick = hits.length ? (hits.length === 1 ? hits[0] : undefined) : q.options[byPosition];
       return pick ? { ...q, answer: { ...q.answer, value: pick } } : q;

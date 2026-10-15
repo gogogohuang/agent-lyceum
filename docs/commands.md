@@ -110,7 +110,7 @@ Answer the questions a waiting run asked. An agent asks with a `type: ask` mail 
 
 You only fill in the `<answer>` tags:
 
-- a question with `<options>`: pick one by its letter or number (`a`, `2`) or write it out, or type any text of your own (`other:` is optional);
+- a question with `<options>`: pick one by its letter or number (`a`, `2`) or write it out, or type any text of your own (`other:` is optional). A short reply such as `local` is fine: answers are never limited to the options. Agents must write each option as its full content; an option that is only a label (`A`, `b)`) is rejected when the agent asks;
 - a question without options: write any non-empty text.
 
 Options:
