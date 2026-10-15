@@ -186,6 +186,23 @@ Exit 1 on configuration errors or when something the team needs is explicitly un
 
 **`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`, `owns`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
+## demo
+
+**Usage:** `demo [--dir path] [--runtime claude-code|codex] [--setup-only] [-y]`
+
+Try agent-lyceum without setting anything up. It builds a throwaway sandbox (a tiny git repo whose `npm test` fails because `slugify()` is not written, plus its own agent-lyceum home with a registered project), then runs the real `run` on it: the lead hands the work to `fe-member`, and `qa-member` checks it. Your own home, projects and repos are never touched.
+
+It makes real `claude` / `codex` calls, so it spends a little of your quota (a few minutes). It asks before starting unless you pass `-y`.
+
+Options:
+
+- `--dir path`: the sandbox directory, which must be new or empty (default: a new folder in the system temp dir).
+- `--runtime r`: `claude-code` or `codex` for all three agents (default: whichever CLI is on your PATH, `claude` first).
+- `--setup-only`: build the sandbox, write `task.md` and print the commands, but run no agents.
+- `-y`: do not ask before running real agents.
+
+When it ends it prints how to look around (`status`, `git log --stat` in the sandbox repo) and how to delete the sandbox. The exit code is the one `run` returned, see [Exit codes](#exit-codes).
+
 ## tidy
 
 **Usage:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <timestamp> -p name --agent a [--layer project|global]`

@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
+import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
@@ -12,7 +13,7 @@ import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { failureGuide } from "./run-outcome.js";
-import { exitCodeForOutcome } from "./schema.js";
+import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
 import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
@@ -21,6 +22,7 @@ import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { onlyAgent, soloProject } from "./solo.js";
+import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 
 const program = new Command();
 program
@@ -712,11 +714,62 @@ program
     }
   });
 
+program
+  .command("demo")
+  .summary("Try a 3-agent team on a tiny sample repo (real agents, a few minutes)")
+  .description(
+    "Build a throwaway sandbox (a tiny git repo with one failing test, plus its own agent-lyceum home), then run a lead, a frontend member and a QA member on it until `npm test` passes.\n\nIt uses real `claude` / `codex` calls, so it spends a little of your quota. Nothing outside the sandbox directory is touched; your own home and repos are not used.",
+  )
+  .option("--dir <path>", "the sandbox directory, must be empty or new (default: a new folder in the system temp dir)")
+  .option("--runtime <runtime>", `${RUNTIMES.join(" | ")} (default: whichever CLI is on your PATH)`)
+  .option("--setup-only", "build the sandbox and print the commands, but run no agents")
+  .option("-y, --yes", "do not ask before running real agents")
+  .action(async (opts: { dir?: string; runtime?: string; setupOnly?: boolean; yes?: boolean }) => {
+    try {
+      let runtime = opts.runtime as Runtime | undefined;
+      if (runtime && !RUNTIMES.includes(runtime)) fail(`Unknown runtime "${runtime}". Use one of: ${RUNTIMES.join(", ")}.`);
+      runtime ??= detectRuntime();
+      if (!runtime) {
+        if (!opts.setupOnly) fail("Neither `claude` nor `codex` was found on your PATH (and logged in). Install one, or use --setup-only to just look at the sandbox.");
+        runtime = "claude-code";
+      }
+      if (!opts.setupOnly && !opts.yes && interactive()) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const ans = (await rl.question(`This runs a 3-agent team with real ${runtime} calls on a sample repo (a few minutes, a small amount of quota). Continue? [Y/n] `)).trim().toLowerCase();
+        rl.close();
+        if (ans === "n" || ans === "no") fail("Aborted.");
+      }
+      const demo = prepareDemo(opts.dir ?? defaultDemoDir(), runtime);
+      const h = demo.home;
+      console.log(`Sandbox: ${demo.dir}  (runtime: ${runtime})\nRepo with one failing test: ${demo.repo}\n`);
+      const next = [
+        `agent-lyceum --home ${h} status -p ${DEMO_PROJECT}              # agents, mail, runs`,
+        `git -C ${demo.repo} log --oneline --stat                        # what the team changed`,
+        `rm -rf ${demo.dir}                                              # clean up when done`,
+      ];
+      if (opts.setupOnly) {
+        fs.writeFileSync(path.join(demo.dir, "task.md"), `${DEMO_TASK}\n`);
+        console.log(`Run the team yourself:\n  agent-lyceum --home ${h} run -p ${DEMO_PROJECT} --task-file ${path.join(demo.dir, "task.md")}\n\nThen:\n${next.map((l) => `  ${l}`).join("\n")}`);
+        return;
+      }
+      console.log(`Task for the lead:\n${DEMO_TASK.split("\n").map((l) => `  | ${l}`).join("\n")}\n`);
+      // The real `run`, in a child: the demo shows exactly what a normal run does (progress, Ctrl-C, exit codes).
+      const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1]!, "--home", h, "run", DEMO_TASK, "-p", DEMO_PROJECT, "--name", "demo-slugify"], { stdio: "inherit", cwd: demo.repo });
+      const code = r.status ?? 1;
+      console.log(code === 0 ? "\nDone. See what happened:" : `\nThe run ended with exit code ${code} (see docs/commands.md#exit-codes). Look around:`);
+      console.log(next.map((l) => `  ${l}`).join("\n"));
+      process.exit(code);
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
 // `--help` lists the commands in three layers.
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["doctor", "status"],
   "Run:": ["run", "resume", "clear", "call", "tidy"],
+  "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);
 
