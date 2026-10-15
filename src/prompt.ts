@@ -167,7 +167,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       ? [
           "",
           "## Asking the user",
-          "You may ask the human user with `type: ask` (no `to` needed). The run then pauses until they answer, so ask only when the answer changes what you do next and you cannot work it out from the code, the memory or the task. Ask everything you need in ONE batch (at most 10 questions); prefer questions with `<options>` and a `<suggested>` value (with a `reason`) so the user can answer quickly. The body is exactly this:",
+          "You may ask the human user with `type: ask` (no `to` needed). The run then pauses until they answer, so ask only when the answer changes what you do next and you cannot work it out from the code, the memory or the task. Ask everything you need in ONE batch (at most 10 questions); prefer questions with `<options>` and a `<suggested>` value (with a `reason`) so the user can answer quickly. Write each option as its full content (what it does and what follows from it), never a bare letter or short code like A or b); the user must be able to choose without re-reading the question. The `<suggested>` value must repeat one option's text exactly. The body is exactly this:",
           "",
           "```",
           "<ask>",

@@ -60,7 +60,8 @@ describe("parseAskBody", () => {
     ["a question without text", `<ask><question id="a"></question></ask>`, /text/],
     ["a duplicate id", `<ask><question id="a"><text>x</text></question><question id="a"><text>y</text></question></ask>`, /duplicate/i],
     ["zero questions", `<ask></ask>`, /at least one/i],
-    ["a suggested value that is not an option", `<ask><question id="a"><text>x</text><options><option>p</option></options><suggested>z</suggested></question></ask>`, /suggested/],
+    ["an option that is only a letter", `<ask><question id="a"><text>x</text><options><option>A</option><option>B</option></options></question></ask>`, /only a label/],
+    ["a suggested value that is not an option", `<ask><question id="a"><text>x</text><options><option>pick p</option></options><suggested>z</suggested></question></ask>`, /suggested/],
   ])("rejects %s", (_name, body, why) => {
     const r = parseAskBody(body);
     expect(r.ok).toBe(false);
