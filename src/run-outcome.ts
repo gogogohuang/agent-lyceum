@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { DoneContract } from "./format.js";
 import type { EndReason } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
@@ -25,12 +26,18 @@ export function resolveDoneOutcome(
 }
 
 /** How a run turned out, from why it stopped (`done` carries the lead's own verdict). */
-export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; note?: string }): { outcome: RunOutcome; note?: string } {
+export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; note?: string }, failure?: { agent: string; error?: string; attempts: number }): { outcome: RunOutcome; note?: string } {
   switch (endReason) {
     case "done":
       return { outcome: done?.outcome ?? "partial", note: done?.note };
     case "lead_failed":
-      return { outcome: "failed", note: "The lead's wake-up failed." };
+    case "agent_failed":
+      return {
+        outcome: "failed",
+        note: failure
+          ? `${failure.agent} failed ${failure.attempts} time(s) in a row (${failure.error ?? "unknown error"}), so the run stopped. The message it was handling is still unread.`
+          : "The lead's wake-up failed.",
+      };
     case "waiting":
       return { outcome: "waiting", note: "Waiting for your answers. Fill in ask-reply.md or run `agent-lyceum resume <run-id> --answer`, then continue with `agent-lyceum resume`." };
     case "cancelled":
@@ -40,4 +47,18 @@ export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; n
     case "max_rounds":
       return { outcome: "partial", note: "Stopped at the round limit before the lead sent done." };
   }
+}
+
+/** What to tell the user when an agent kept failing and the run stopped: where to look, what to fix, how to go on. */
+export function failureGuide(project: string, run: string, f: { agent: string; error?: string; attempts: number }, runDir: string): string {
+  return [
+    "",
+    `${f.agent} was called ${f.attempts} time(s) and failed every time (${f.error ?? "unknown error"}). The run stopped; nothing was lost: the message ${f.agent} was handling is still unread and the work done so far is kept.`,
+    "To fix it:",
+    `  1. Read why it failed: ${path.join(runDir, "log.jsonl")} (event "wake"), and the full output of each attempt in ${path.join(runDir, "mail", "attempts")}`,
+    `  2. Fix the cause: the ${f.agent} CLI (installed, logged in, model name), a timeout (dispatcher.wake_timeout_sec), or its AGENT.md / the message it keeps failing on. Check with: agent-lyceum doctor -p ${project}`,
+    "To go on:",
+    `  agent-lyceum resume ${run} -p ${project}      (the same message is handled again; the task is not re-sent)`,
+    `  Or give up on it: agent-lyceum clear ${run} -p ${project}`,
+  ].join("\n");
 }

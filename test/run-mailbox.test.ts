@@ -71,7 +71,7 @@ describe("run-scoped mailboxes", () => {
       if (i.agent.name === "lead") send(i.project, "lead", "fe-member", "job", "task");
       return OK;
     };
-    env.editProjectYaml((t) => t.replace("max_rounds: 30", "max_rounds: 1"));
+    env.editProjectYaml((t) => t.replace("max_rounds: 0 ", "max_rounds: 1 "));
     const s = await runTeam({ project: env.project(), task, runDir, invoker, log: () => {} });
     expect(s.endReason).toBe("max_rounds");
     return runDir;
@@ -86,7 +86,7 @@ describe("run-scoped mailboxes", () => {
     expect(env.project().paths.inboxRoot).not.toContain("run-a");
     expect(listUnread(env.project(), "fe-member")).toHaveLength(0); // nothing leaked into the shared inbox
 
-    env.editProjectYaml((t) => t.replace("max_rounds: 1", "max_rounds: 10"));
+    env.editProjectYaml((t) => t.replace("max_rounds: 1 ", "max_rounds: 10 "));
     const seen: string[] = [];
     const s = await runTeam({
       project: env.project(),

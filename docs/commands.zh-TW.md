@@ -220,7 +220,7 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 本身失敗也算）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 或其他 agent 一直失敗而使 run 停止也算：修正原因後用 `resume` 繼續）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
 
 ## 選擇專案
 

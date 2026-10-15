@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { missingSections } from "../src/format.js";
 import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
+import { bindRunProject } from "../src/run-store.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -45,6 +46,84 @@ describe("mailbox routing", () => {
     expect(note.meta.type).toBe("failure");
     expect(note.meta.from).toBe("dispatcher");
     expect(fs.existsSync(path.join(outboxDir(p, "fe-member"), "rejected", "x.md"))).toBe(true);
+  });
+
+  describe("duplicate content", () => {
+    const TEXT = "## Changes\nAdded the login page and its tests\n## Verification\nnpm test passed\n## Open items\nNone\n## Risks\nNone";
+    const setup = () => {
+      env = makeEnv();
+      const p = env.project();
+      ensureProjectDirs(p);
+      return p;
+    };
+
+    it("does not send the same text to the same agent again, and tells the sender why", () => {
+      const p = setup();
+      send(p, "fe-member", "a.md", "to: lead\ntype: reply\nsubject: first", TEXT);
+      expect(routeOutboxes(p).delivered).toHaveLength(1);
+      send(p, "fe-member", "b.md", "to: lead\ntype: reply\nsubject: second try", `${TEXT.replace(/\n/g, "\n\n")}  `); // only whitespace differs
+      const r = routeOutboxes(p);
+      expect(r.delivered).toEqual([]);
+      expect(r.rejected).toHaveLength(1);
+      expect(r.rejected[0]?.reason).toMatch(/duplicate.*to "lead" it repeats mail .*first/);
+      expect(listUnread(p, "lead").filter((m) => m.meta.type === "reply")).toHaveLength(1);
+      const note = listUnread(p, "fe-member").find((m) => m.meta.type === "failure");
+      expect(note?.body).toMatch(/Do not send it again/);
+      expect(fs.existsSync(path.join(outboxDir(p, "fe-member"), "rejected", "b.md"))).toBe(true);
+    });
+
+    it("still finds it after the recipient has read the first one", () => {
+      const p = setup();
+      send(p, "fe-member", "a.md", "to: lead\ntype: reply\nsubject: first", TEXT);
+      routeOutboxes(p);
+      markRead(unreadFiles(p, "lead"));
+      send(p, "fe-member", "b.md", "to: lead\ntype: reply\nsubject: first", TEXT);
+      expect(routeOutboxes(p).rejected).toHaveLength(1);
+    });
+
+    it("is not a duplicate when the text, the type, the reply target, the sender or the recipient differs, or the text is tiny", () => {
+      const p = setup();
+      send(p, "lead", "a.md", "to: fe-member\ntype: task\nsubject: t1", TEXT);
+      routeOutboxes(p);
+      send(p, "lead", "b.md", "to: fe-member\ntype: task\nsubject: t2", `${TEXT}\nand one more thing`); // other text
+      send(p, "lead", "c.md", "to: fe-member\ntype: reply\nsubject: t3", TEXT); // other type
+      send(p, "lead", "d.md", "to: qa-member\ntype: task\nsubject: t4", TEXT); // other recipient
+      send(p, "lead", "e.md", "to: fe-member\ntype: task\nsubject: t5\nreply_to: x1", TEXT); // other reply target
+      send(p, "qa-member", "f.md", "to: lead\ntype: task\nsubject: t6", TEXT); // other sender
+      send(p, "lead", "g.md", "to: fe-member\ntype: reply\nsubject: ok", "ok");
+      send(p, "lead", "h.md", "to: fe-member\ntype: reply\nsubject: ok2", "ok");
+      const r = routeOutboxes(p);
+      expect(r.rejected).toEqual([]);
+      expect(r.delivered).toHaveLength(7);
+    });
+
+    it("sends to the other recipients and names the repeated one when only some targets are duplicates", () => {
+      const p = setup();
+      send(p, "lead", "a.md", "to: fe-member\ntype: task\nsubject: t1", TEXT);
+      routeOutboxes(p);
+      send(p, "lead", "b.md", "to: [fe-member, qa-member]\ntype: task\nsubject: t1", TEXT);
+      const r = routeOutboxes(p);
+      expect(r.delivered.map((d) => d.to)).toEqual(["qa-member"]);
+      expect(r.rejected[0]?.reason).toMatch(/to "fe-member" it repeats/);
+      expect(listUnread(p, "lead").find((m) => m.meta.type === "failure")?.body).toMatch(/was delivered, except that to "fe-member"/);
+    });
+
+    it("running the pass again after a crash does not mistake mail it already delivered for a repeat", () => {
+      const base = setup();
+      const p = bindRunProject(base, path.join(base.paths.runs, "run-a"), "run");
+      ensureProjectDirs(p);
+      send(p, "fe-member", "a.md", "to: lead\ntype: reply\nsubject: first", TEXT);
+      const file = path.join(outboxDir(p, "fe-member"), "a.md");
+      const original = { text: fs.readFileSync(file, "utf8"), mtime: fs.statSync(file).mtime };
+      const first = routeOutboxes(p);
+      expect(first.delivered).toHaveLength(1);
+      // the very same outbox file comes back, as if the crash happened before it was moved
+      fs.writeFileSync(file, original.text);
+      fs.utimesSync(file, original.mtime, original.mtime);
+      const again = routeOutboxes(p);
+      expect(again.rejected).toEqual([]);
+      expect(listUnread(p, "lead")).toHaveLength(1);
+    });
   });
 
   it("lets the lead message anyone and only the lead send done", () => {

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, blockLines, blocks, layout, leadLink, padCenter, paneWidth } from './graph'
+import { bar, blockLines, blocks, layout, leadLink, padCenter, paneWidth, pointSections } from './graph'
 import type { Report, Run } from '../types'
 
 const NOW = Date.parse('2026-01-01T00:01:05Z')
@@ -31,7 +31,7 @@ test('blocks put the lead first and carry what each agent is doing', () => {
   expect(lead.handling[0]!.head).toBe('來自 fe 的 reply：UI done')
   const qa = bs[2]!
   expect(qa.dot).toBe('queued')
-  expect(qa.queued[0]!.sections).toEqual([{ label: '目標', lines: ['為登入頁寫測試'] }])
+  expect(qa.queued[0]!.sections).toEqual([{ label: '目標', lines: ['為登入頁寫測試', '第二行'] }, { label: '驗收', lines: ['x'] }])
   expect(bs[1]!.wakes).toBe(1)
   expect(bs[1]!.tokens).toBe(1200)
 })
@@ -112,7 +112,7 @@ test('blockLines tell what the agent is doing and what it received', () => {
     wakes: [{ round: 1, agent: 'lead', ok: true, duration_ms: 1, output_tokens: 12300, sent: [{ to: 'fe', type: 'task', subject: 's' }] }],
   })
   const lead = blocks(report(r), NOW)[0]!
-  expect(blockLines(lead).map(l => l.text)).toEqual([
+  expect(blockLines(lead, true).map(l => l.text)).toEqual([
     '● lead ★ · claude-code',
     '進行中 #3 1m05s',
     '來自 fe 的 reply：UI done',
@@ -130,11 +130,43 @@ test('an idle block with nothing to say is short', () => {
   expect(blockLines(fe).map(l => l.text)).toEqual(['○ fe · codex', '閒置', '喚醒 0 次 · 0 tok', '→ lead'])
 })
 
-test('queued mail is compact: head plus the first line of the first section', () => {
-  const r = run({ queue: [{ agent: 'qa', from: 'lead', type: 'task', subject: 'write tests', digest: [{ label: '目標', lines: ['為登入頁寫測試', '第二行'] }] }] })
+test('collapsed, a mail shows its point, not the start of its text', () => {
+  const r = run({
+    active: { lead: { since: '2026-01-01T00:00:00Z', round: 3, handling: [{ from: 'fe', type: 'reply', subject: 'UI done', digest: [
+      { label: '變更', lines: ['新增 login.tsx', '改 auth.ts'] }, { label: '驗證', lines: ['tsc 通過'] },
+      { label: '待辦', lines: ['尚未接真實 API'] }, { label: '風險', lines: ['None'] },
+    ] }] } },
+  })
+  const lead = blocks(report(r), NOW)[0]!
+  expect(blockLines(lead).map(l => l.text)).toEqual([
+    '● lead ★ · claude-code',
+    '進行中 #3 1m05s',
+    '來自 fe 的 reply：UI done',
+    '  變更  新增 login.tsx',
+    '  待辦  尚未接真實 API',
+    '喚醒 0 次 · 0 tok',
+    '→ fe, qa',
+  ])
+  expect(blockLines(lead, true).map(l => l.text)).toContain('  驗證  tsc 通過')
+})
+
+test('the point of a mail depends on its type; a missing point section falls back to the first', () => {
+  const sec = (label: string, ...lines: string[]) => ({ label, lines })
+  const view = (type: string, sections: ReturnType<typeof sec>[]) => ({ head: 'h', type, sections })
+  expect(pointSections(view('task', [sec('驗收', 'a'), sec('目標', 'g1', 'g2')]))).toEqual([sec('目標', 'g1')])
+  expect(pointSections(view('done', [sec('結果', 'ok'), sec('未完成', '未接 API', '未做 e2e')]))).toEqual([sec('結果', 'ok'), sec('未完成', '未接 API')])
+  expect(pointSections(view('done', [sec('結果', 'ok'), sec('未完成', 'None')]))).toEqual([sec('結果', 'ok')])
+  expect(pointSections(view('failure', [sec('訊息', 'boom', 'more')]))).toEqual([sec('訊息', 'boom')])
+  expect(pointSections(view('task', []))).toEqual([])
+})
+
+test('queued mail shows its point collapsed and everything expanded', () => {
+  const r = run({ queue: [{ agent: 'qa', from: 'lead', type: 'task', subject: 'write tests', digest: [{ label: '目標', lines: ['為登入頁寫測試', '第二行'] }, { label: '驗收', lines: ['x'] }] }] })
   const qa = blocks(report(r), NOW).find(b => b.name === 'qa')!
   expect(blockLines(qa).map(l => l.text)).toContain('  排隊：來自 lead 的 task：write tests')
   expect(blockLines(qa).map(l => l.text)).toContain('    目標  為登入頁寫測試')
+  expect(blockLines(qa).map(l => l.text)).not.toContain('    驗收  x')
+  expect(blockLines(qa, true).map(l => l.text)).toContain('    驗收  x')
 })
 
 test('bar, padCenter and paneWidth', () => {

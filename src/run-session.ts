@@ -16,7 +16,7 @@ import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, roundLimit, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
+import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
@@ -63,6 +63,10 @@ export interface RunSummary {
   resultBranch?: ResultBranch;
   /** The lead asked for a pull request: what became of it. */
   pr?: PrOutcome;
+  /** The project's name, for the commands printed after the run. */
+  project: string;
+  /** The run stopped because this agent kept failing. */
+  failure?: { agent: string; error?: string; attempts: number };
 }
 
 export interface RunOptions {
@@ -109,6 +113,7 @@ export class RunSession {
   private pendingDoneFile: string | undefined;
   private doneOutcome: RunOutcome | undefined;
   private doneNote: string | undefined;
+  private failure: { agent: string; error?: string; attempts: number } | undefined;
   private doneVerification: string | undefined;
   /** The accepted `done` carried `open_pr: true` (only the lead can send `done`). */
   private openPrRequested = false;
@@ -172,7 +177,7 @@ export class RunSession {
 
     let state: RunState;
     if (resume) {
-      state = { ...resume, max_rounds: roundLimit(resume, cfg.max_rounds), pid: process.pid, ended_at: undefined, end_reason: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
+      state = { ...resume, max_rounds: roundLimit(resume, cfg.max_rounds), pid: process.pid, ended_at: undefined, end_reason: undefined, failure: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
       // A wake that was running when the process died never finished; keep it in the history as interrupted.
       for (const [agent, a] of Object.entries(resume.active ?? {})) {
         state.wakes.push({
@@ -336,7 +341,7 @@ export class RunSession {
   }
 
 
-  private async wake(agent: ResolvedAgent): Promise<{ ok: boolean; cancelled?: boolean }> {
+  private async wake(agent: ResolvedAgent): Promise<{ ok: boolean; cancelled?: boolean; error?: string; attempts?: number }> {
     const { invoke, say, cfg, runDir, project, log, state, claims, attempts, noSessionNoted, opts } = this;
     const queue = listUnread(project, agent.name);
     if (queue.length === 0) return { ok: true };
@@ -358,14 +363,16 @@ export class RunSession {
     };
     let result: WakeResult | undefined;
     for (let attempt = 0; attempt <= cfg.retry; attempt++) {
-      if (state.rounds >= state.max_rounds) {
-        result = { ok: false, text: "", exitCode: null, timedOut: false, error: "round limit reached" };
-        break;
+      if (state.max_rounds > 0 && state.rounds >= state.max_rounds) {
+        // The round limit (when one is set) ends the run; this message stays unread for the resume.
+        abandonClaim(runDir, claim.id);
+        claims.delete(agent.name);
+        return { ok: false, cancelled: true };
       }
       const round = ++state.rounds;
       const started = Date.now();
       const att = beginAttempt(runDir, claim.id);
-      say(`[round ${state.rounds}/${state.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
+      say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
       // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
@@ -433,15 +440,10 @@ export class RunSession {
     }
     if (result?.ok) markOutputReady(runDir, claim.id);
     if (!result?.ok) {
-      if (agent.name === project.lead) return { ok: false };
-      deliverOnce(project, this.journal(), `wakefail:${claim.id}`, {
-        from: "dispatcher",
-        to: project.lead,
-        type: "failure",
-        subject: `${agent.name} failed`,
-        body: `Agent "${agent.name}" could not handle message(s) "${unread.map((m) => m.meta.subject).join('", "')}".\n\nError: ${result?.error ?? "unknown"}\n\nDecide whether to retry, reassign, or adjust the plan.`,
-      });
-      return { ok: false };
+      // The agent failed every time it was called: the run stops here (see settle) and its message stays unread for the resume.
+      abandonClaim(runDir, claim.id);
+      claims.delete(agent.name);
+      return { ok: false, error: result?.error, attempts: cfg.retry + 1 };
     }
     return { ok: true };
   }
@@ -503,7 +505,7 @@ export class RunSession {
 
 
   /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
-  private settle(batch: ResolvedAgent[], results: { ok: boolean; cancelled?: boolean }[]): void {
+  private settle(batch: ResolvedAgent[], results: { ok: boolean; cancelled?: boolean; error?: string; attempts?: number }[]): void {
     const { say, runDir, project, log, state, guard, claims, attempts } = this;
     const violations = guard.check(batch);
     for (const v of violations) {
@@ -607,10 +609,12 @@ export class RunSession {
       this.endReason = "waiting";
       return;
     }
-    const leadIdx = batch.findIndex((a) => a.name === project.lead);
-    const leadResult = leadIdx >= 0 ? results[leadIdx] : undefined;
-    if (leadResult && !leadResult.ok && !leadResult.cancelled) {
-      this.endReason = "lead_failed";
+    const failedIdx = results.findIndex((r) => !r.ok && !r.cancelled);
+    if (failedIdx >= 0) {
+      const failed = must(batch[failedIdx], "failed agent");
+      this.failure = { agent: failed.name, error: results[failedIdx]?.error, attempts: results[failedIdx]?.attempts ?? this.cfg.retry + 1 };
+      state.failure = this.failure;
+      this.endReason = failed.name === project.lead ? "lead_failed" : "agent_failed";
       return;
     }
   }
@@ -807,7 +811,7 @@ export class RunSession {
         this.endReason = "idle";
         break;
       }
-      if (state.rounds >= state.max_rounds) {
+      if (state.max_rounds > 0 && state.rounds >= state.max_rounds) {
         this.endReason = "max_rounds";
         break;
       }
@@ -846,7 +850,7 @@ export class RunSession {
     }
 
     const endReason = must(this.endReason, "end reason");
-    const { outcome, note: outcomeNote } = endOutcome(endReason, endReason === "done" ? { outcome: this.doneOutcome ?? "partial", note: this.doneNote } : undefined);
+    const { outcome, note: outcomeNote } = endOutcome(endReason, endReason === "done" ? { outcome: this.doneOutcome ?? "partial", note: this.doneNote } : undefined, this.failure);
     state.end_reason = endReason;
     state.outcome = outcome;
     state.outcome_note = outcomeNote;
@@ -864,6 +868,6 @@ export class RunSession {
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr };
+    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr, project: project.name, failure: this.failure };
   }
 }

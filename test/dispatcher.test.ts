@@ -100,7 +100,7 @@ describe("dispatcher", () => {
 
   it("stops at max_rounds", async () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace("max_rounds: 30", "max_rounds: 4"));
+    env.editProjectYaml((t) => t.replace("max_rounds: 0 ", "max_rounds: 4 "));
     const s = await run(async (i) => {
       mail(i, i.agent.name === "lead" ? "fe-member" : "lead", "ping");
       return OK;
@@ -109,28 +109,22 @@ describe("dispatcher", () => {
     expect(s.rounds).toBe(4);
   });
 
-  it("retries once, then tells the lead when a teammate keeps failing", async () => {
+  it("calls a failing teammate again twice, then stops the run instead of telling the lead", async () => {
     env = makeEnv();
     let feCalls = 0;
-    let leadPrompt = "";
     let leadCalls = 0;
     const s = await run(async (i) => {
       if (i.agent.name === "lead") {
         leadCalls++;
-        if (leadCalls === 1) mail(i, "fe-member", "work", "task");
-        else {
-          leadPrompt = i.userPrompt;
-          mail(i, "lead", "giving up", "done");
-        }
+        mail(i, "fe-member", "work", "task");
         return OK;
       }
       feCalls++;
       return { ...OK, ok: false, exitCode: 1, error: "exploded" };
     });
-    expect(feCalls).toBe(2); // 1 try + 1 retry
-    expect(leadPrompt).toContain("fe-member failed");
-    expect(leadPrompt).toContain("exploded");
-    expect(s.endReason).toBe("done");
+    expect(feCalls).toBe(3); // 1 try + 2 retries
+    expect(leadCalls).toBe(1); // the lead is not asked to deal with it
+    expect(s.endReason).toBe("agent_failed");
     expect(s.rounds).toBe(4);
   });
 
@@ -138,7 +132,7 @@ describe("dispatcher", () => {
     env = makeEnv();
     const s = await run(async () => ({ ...OK, ok: false, exitCode: 1, error: "no auth" }));
     expect(s.endReason).toBe("lead_failed");
-    expect(s.rounds).toBe(2); // try + retry
+    expect(s.rounds).toBe(3); // try + 2 retries
   });
 
   it("ends as idle when nobody has mail left and no done was sent", async () => {

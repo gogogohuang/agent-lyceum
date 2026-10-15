@@ -9,15 +9,15 @@ const toneProps = (t?: Tone) =>
 
 /**
  * One bordered block per agent; between the lead and each member a glyph shows who may write to whom (yellow = the latest hand-off).
- * A block whose agent is working wraps its text instead of cutting it, and a working member has a full-width row.
+ * Collapsed, a mail shows its point only (and wraps rather than cuts it); `expanded` shows all of it. A working member has a full-width row.
  */
-export function graphView({ Box, Text }: Ui, report: Report, now: number, width: number) {
+export function graphView({ Box, Text }: Ui, report: Report, now: number, width: number, expanded: boolean) {
   const bs = blocks(report, now)
   const lay = layout(bs, width)
   const card = (b: Block, w: number) => (
     <Box flexDirection="column" borderStyle="round" borderColor={b.dot === 'active' ? 'green' : b.dot === 'failed' ? 'red' : undefined} width={w} paddingX={1}>
-      {blockLines(b).map(l => (
-        <Text wrap={b.dot === 'active' ? 'wrap' : 'truncate-end'} {...toneProps(l.tone)}>
+      {blockLines(b, expanded).map(l => (
+        <Text wrap={b.dot === 'active' || !expanded ? 'wrap' : 'truncate-end'} {...toneProps(l.tone)}>
           {l.text}
         </Text>
       ))}

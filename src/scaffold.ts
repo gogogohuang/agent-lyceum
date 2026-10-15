@@ -94,12 +94,12 @@ dir: ${repo}            # the repo the agents work in (the tool never writes con
 team:
   lead: lead
 dispatcher:
-  max_rounds: 30        # stop after this many agent wake-ups
+  max_rounds: 0         # 0 = no limit on wake-ups; set a number to stop a run after that many
   max_parallel: 1       # >1 needs non-overlapping "owns" for every non-lead agent, and a git repo
   max_concurrent_runs: 1  # >1 lets several runs of this project be active at once, each in its own git worktree (needs a git repo); every run's work stays on its own branch
   workspace_mode: auto  # auto = a git worktree per non-lead agent when max_parallel > 1; shared | worktree to force
   wake_timeout_sec: 600
-  retry: 1
+  retry: 2              # an agent that fails is called again up to this many times; if it still fails the run stops (resume it after fixing the cause)
   log_max_bytes: 8388608  # log.jsonl is renamed to log.1.jsonl past this size; 0 = never
   strict: false         # true = refuse to start unless context protection is OS-enforced
 agents:

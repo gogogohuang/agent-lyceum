@@ -13,6 +13,9 @@ const tab = atom({ plugin: 'status-monitor', key: 'tab' } as const, '')
 /** 'graph' draws one block per agent; 'text' is the plain list. `v` switches. */
 const view = atom({ plugin: 'status-monitor', key: 'view' } as const, 'graph' as 'graph' | 'text')
 
+/** Collapsed (false) shows each mail's point and the current step only; `e` expands everything. */
+const expanded = atom({ plugin: 'status-monitor', key: 'expanded' } as const, false)
+
 type Target = { key: string; status: string[] }
 
 const last = new Map<string, Report>()
@@ -72,7 +75,7 @@ export const register: Register = (on, options) => {
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
-    return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, v switches graph/text, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
+    return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, v switches graph/text, e expands or collapses the details, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -80,6 +83,7 @@ export const register: Register = (on, options) => {
     const snap = await read($, snapshot)
     const now = await $.clock.now()
     const mode = await read($, view)
+    const open = await read($, expanded)
     const width = paneWidth(e.props.bodyColumns)
 
     const section = (t: Target) => {
@@ -113,12 +117,12 @@ export const register: Register = (on, options) => {
               {progress(run)}
             </Text>
             {run.current_step && <Text>目前：{run.current_step}</Text>}
-            {(run.steps ?? []).map(s => (
+            {(open ? (run.steps ?? []) : []).map(s => (
               <Text dimColor={s.done}>
                 {s.done ? '[x]' : '[ ]'} {s.text}
               </Text>
             ))}
-            {mode === 'graph' ? graphView($.ui.resolve(e), report, now, width) : (
+            {mode === 'graph' ? graphView($.ui.resolve(e), report, now, width, open) : (
               <Box flexDirection="column">
                 {Object.entries(run.active).map(([name, w]) => (
                   <Box flexDirection="column">
@@ -204,6 +208,7 @@ export const register: Register = (on, options) => {
         <Box>
           <Text bold>agent-lyceum </Text>
           <Button key="close" label="關閉 (x)" hotkey="x" role="dismiss" variant="primary" onPress={() => $.ui.close({ id: PANE })} />
+          <Button key="expand" label={open ? '收合 (e)' : '展開 (e)'} hotkey="e" variant="secondary" onPress={() => update($, expanded, x => !x)} />
           <Button key="view" label={mode === 'graph' ? '文字版 (v)' : '圖形版 (v)'} hotkey="v" variant="secondary" onPress={() => update($, view, m => (m === 'graph' ? 'text' : 'graph'))} />
         </Box>
         <Box>

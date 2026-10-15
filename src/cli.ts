@@ -10,7 +10,8 @@ import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
-import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
+import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
+import { failureGuide } from "./run-outcome.js";
 import { exitCodeForOutcome } from "./schema.js";
 import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
@@ -162,6 +163,7 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
 function printRun(summary: RunSummary, runDir: string): void {
   console.log(`\nRun ${runLabel({ name: summary.name, run_id: summary.runId })} ended: ${summary.endReason}, outcome: ${summary.outcome}, after ${summary.rounds} round(s). Logs: ${path.join(runDir, "log.jsonl")}`);
   if (summary.outcomeNote) console.log(`Note: ${summary.outcomeNote}`);
+  if (summary.failure) console.log(failureGuide(summary.project, summary.name ?? summary.runId, summary.failure, runDir));
   if (summary.verification) console.log(`Verification (as reported by the lead, not checked by agent-lyceum): ${summary.verification}`);
   if (summary.resultBranch?.files) {
     console.log(`\nThe work is on branch ${summary.resultBranch.branch} (${summary.resultBranch.files} file(s)); your working tree was not touched.\nBring it in with: git merge ${summary.resultBranch.branch}${summary.resultBranch.patch ? `\n(or apply the patch: git apply ${summary.resultBranch.patch})` : ""}`);
@@ -192,7 +194,7 @@ async function continueRun(pr: ResolvedProject, dir: string, runId: string, foll
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
     const state = loadRunState(dir);
     if (followup) console.log(`Reopening run ${runLabel(state)} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
-    else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)}: ${state.task_summary}`);
+    else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${roundsLabel(state.rounds, roundLimit(state, pr.dispatcher.max_rounds))}: ${state.task_summary}`);
     // Read the state again under the lock: another process may have changed it while we were checking.
     return await runTeam({ project: pr, resume: state, runDir: dir, signal: cancel.signal, followup });
   } finally {
@@ -370,8 +372,8 @@ program
         process.exit(exitCodeForOutcome(o.outcome));
       }
       // A reopen recalculates the round limit from where the run stands.
-      if (!reopen && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
-        fail(`Run ${runLabel(state)} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml first.`);
+      if (!reopen && roundLimit(state, pr.dispatcher.max_rounds) > 0 && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
+        fail(`Run ${runLabel(state)} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml (or set it to 0 for no limit) first.`);
 
       if (opts.answer && state.end_reason !== "waiting") fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
       if (state.end_reason === "waiting") {

@@ -11,7 +11,7 @@ import type { ResultBranch } from "./worktree.js";
 export const STATE_FILE = "state.json";
 export const STATE_SCHEMA_VERSION = 2;
 
-export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "cancelled" | "waiting";
+export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "agent_failed" | "cancelled" | "waiting";
 export type MailLayout = "run" | "legacy";
 
 export interface WakeTopic {
@@ -100,6 +100,8 @@ export interface RunState {
   active: Record<string, ActiveWake>;
   /** Finished wakes, oldest first. */
   wakes: WakeRecord[];
+  /** Set when the run stopped because an agent kept failing: who, the last error, how many times it was called. */
+  failure?: { agent: string; error?: string; attempts: number };
   /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps` (after a reopen, added to `step_base`). */
   steps?: Step[];
   /** The checklist as it stood at the last reopen: the follow-up's steps are shown after it, and its open steps do not hold up the follow-up's done. */
@@ -131,7 +133,7 @@ const WireState = z
     ended_at: z.string().optional(),
     rounds: nonNeg.optional(),
     max_rounds: nonNeg.optional(),
-    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed", "cancelled", "waiting"]).optional(),
+    end_reason: z.enum(["done", "idle", "max_rounds", "lead_failed", "agent_failed", "cancelled", "waiting"]).optional(),
     outcome: z.enum(["completed", "partial", "blocked", "failed", "waiting", "cancelled"]).optional(),
     outcome_note: z.string().optional(),
     verification: z.string().optional(),
@@ -147,6 +149,7 @@ const WireState = z
     wakes: z.array(z.any()).optional(),
     solo_agent: z.string().optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
+    failure: z.object({ agent: z.string(), error: z.string().optional(), attempts: z.number() }).optional(),
     step_base: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     name: z.string().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),
@@ -236,7 +239,7 @@ export function bindRunProject(project: ResolvedProject, runDir: string, layout:
 export function outcomeOf(s: Pick<RunState, "outcome" | "end_reason">): { outcome: RunOutcome; verified: boolean } | undefined {
   if (s.outcome) return { outcome: s.outcome, verified: true };
   if (!s.end_reason) return undefined;
-  return { outcome: s.end_reason === "lead_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : s.end_reason === "waiting" ? "waiting" : "partial", verified: false };
+  return { outcome: s.end_reason === "lead_failed" || s.end_reason === "agent_failed" ? "failed" : s.end_reason === "cancelled" ? "cancelled" : s.end_reason === "waiting" ? "waiting" : "partial", verified: false };
 }
 
 const NAME_MAX = 30;
@@ -277,4 +280,8 @@ export function resolveRun(runs: RunRef[], query: string): Resolved {
   return { ok: false, reason: pool.length ? "ambiguous" : "none", candidates: pool };
 }
 
-export const roundLimit = (state: Pick<RunState, "round_floor">, maxRounds: number): number => (state.round_floor ?? 0) + maxRounds;
+/** The round the run stops at; 0 (`dispatcher.max_rounds: 0`) means there is no limit. */
+export const roundLimit = (state: Pick<RunState, "round_floor">, maxRounds: number): number => (maxRounds > 0 ? (state.round_floor ?? 0) + maxRounds : 0);
+
+/** `rounds`, or `rounds/limit` when the run has a limit. */
+export const roundsLabel = (rounds: number, limit: number): string => (limit > 0 ? `${rounds}/${limit}` : String(rounds));

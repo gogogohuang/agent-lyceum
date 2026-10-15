@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, runLabel, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
@@ -191,7 +191,10 @@ export interface RunReport {
   started_at: string;
   ended_at?: string;
   rounds: number;
+  /** 0 = no limit. */
   max_rounds: number;
+  /** Set when an agent kept failing and the run stopped: `resume` after fixing the cause. */
+  failure?: { agent: string; error?: string; attempts: number };
   output_tokens: number;
   task_source: "text" | "file";
   task_path?: string;
@@ -295,6 +298,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     ended_at: s.ended_at,
     rounds: s.rounds,
     max_rounds: s.max_rounds,
+    ...(s.failure ? { failure: s.failure } : {}),
     output_tokens: s.output_tokens,
     task_source: s.task_source,
     task_path: s.task_path,
@@ -381,12 +385,12 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   const s = run;
   const live = s.live;
   const lines = [
-    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  第 ${s.rounds}/${s.max_rounds} 輪`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  第 ${roundsLabel(s.rounds, s.max_rounds)} 輪`,
     `${L("任務：")}${taskText(s)}`,
   ];
 
   const steps = stepsLine(s.steps, c, s.end_reason === "done");
-  lines.push(`${L("進度：")}${steps ?? `無清單；已用 ${s.rounds}/${s.max_rounds} 輪（lead 可在信中加入 "## Steps" 清單）`}`);
+  lines.push(`${L("進度：")}${steps ?? `無清單；已用 ${roundsLabel(s.rounds, s.max_rounds)} 輪（lead 可在信中加入 "## Steps" 清單）`}`);
 
   const active = Object.entries(s.active ?? {});
   if (active.length) {
@@ -409,6 +413,12 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   }
   const lastWake = (s.wakes ?? []).at(-1);
   if (lastWake) lines.push(`${L("上一次：")}#${lastWake.round} ${c.cyan(lastWake.agent)} ${okText(c, lastWake.ok)} → ${sentText(lastWake.sent)}`);
+  if (s.failure) {
+    lines.push(
+      `${L("需要處理：")}${c.red(`${s.failure.agent} 呼叫 ${s.failure.attempts} 次都失敗`)}（${clip(s.failure.error ?? "未知錯誤", 80)}）`,
+      c.dim(`          查 log 找原因並修正後，執行 agent-lyceum resume ${s.run_id} 從同一封信繼續（或 agent-lyceum clear ${s.run_id} 放棄）`),
+    );
+  }
   if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum resume ${s.run_id} --answer`));
   lines.push(`${L("流程：")}${flowLine(s, c)}`);
   return lines;
@@ -417,7 +427,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
 /** What a run is doing / did, one line per wake. */
 function describeRun(s: RunReport, now: number, c: Paint, limit = Infinity): string[] {
   const lines = [
-    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${s.rounds}/${s.max_rounds}  輸出 tokens ${tokens(s.output_tokens)}`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${roundsLabel(s.rounds, s.max_rounds)}  輸出 tokens ${tokens(s.output_tokens)}`,
     `  任務：${taskText(s)}`,
   ];
   const steps = stepsLine(s.steps, c);
@@ -491,7 +501,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
       ...(named ? [s.name ?? ""] : []),
       s.run_id,
       reportLabel(s),
-      `${s.rounds}/${s.max_rounds}`,
+      roundsLabel(s.rounds, s.max_rounds),
       s.steps?.length ? (s.current_step ? clip(s.current_step, 30) : "全部完成") : "-",
       clip(taskText(s), 60),
     ]);

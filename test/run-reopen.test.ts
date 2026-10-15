@@ -87,7 +87,7 @@ describe("reopening a done run", () => {
 
   it("counts the round limit from the reopen, so a run that used all its rounds can be reopened", async () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace("max_rounds: 30", "max_rounds: 2"));
+    env.editProjectYaml((t) => t.replace("max_rounds: 0 ", "max_rounds: 2 "));
     // segment 1: the lead's first attempt fails (round 1), the retry reports done (round 2): both rounds used
     let n = 0;
     const { project, runDir, summary } = await first(async (i) => {
@@ -130,6 +130,7 @@ describe("reopening a done run", () => {
 
   it("a new run's limit is the configured one, and a plain resume keeps the reopen's floor", async () => {
     env = makeEnv();
+    env.editProjectYaml((t) => t.replace("max_rounds: 0 ", "max_rounds: 30 "));
     const { project, runDir } = await first(leadDone("first result"));
     const cfgMax = project.dispatcher.max_rounds;
     expect(loadRunState(runDir).max_rounds).toBe(cfgMax);
