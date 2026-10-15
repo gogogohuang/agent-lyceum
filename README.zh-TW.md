@@ -4,13 +4,25 @@
 
 [English](README.md) | **繁體中文**
 
-在你的 repo 上執行一個由多個 **agent**（Claude Code 和／或 Codex）組成的團隊。agent 之間透過檔案信箱溝通，各自有人設（`AGENT.md`）與長期記憶。agent 只能寫自己的記憶與寄件匣（outbox），不能改其他 agent 的 context，也不能改自己的人設。
+把任務交給一個 **agent 團隊**（Claude Code 和／或 Codex），而不是塞給單一個負荷過重的 session。lead 拆分工作，前端、reviewer、PM 等專長角色在你的 repo 裡各做各的，lead 回報 done 即結束。
+
+## 為什麼用它
+
+- **角色不會跑掉。** 每個 agent 有自己的人設（`AGENT.md`）與長期記憶，reviewer 會一直做 review，不會漸漸變成在寫程式。
+- **agent 改不了規則。** agent 只能寫自己的記憶與寄件匣（outbox），不能改其他 agent 的 context，也不能改自己的人設；能做到的地方由 OS 沙箱強制，而不只靠 prompt。見 [Write scope](docs/write-scope.zh-TW.md)。
+- **混用 runtime。** Claude Code 與 Codex agent 可在同一個團隊，並各自限制可寫的路徑。
+- **沒有黑箱。** agent 透過純檔案信箱溝通，每則訊息、決策與記憶都是你能讀、能 grep、能 diff 的檔案；dispatcher 不會替你 merge。
+
+**不適合**小而單次的修改：單一 Claude Code 或 Codex session 更快更省。任務大到值得拆分、review 或平行執行時，再用團隊。
 
 ## 快速開始
 
 需求：Node 20+，以及 `PATH` 中有 `claude` 和／或 `codex`（已登入）。支援 macOS 與 Linux（Linux 需要 `bwrap` 才有 OS 沙箱）；Windows 只會顯示警告。
 
 ```bash
+npx agent-lyceum demo                       # 3 個 agent 在拋棄式沙箱裡修好一個失敗的測試（真實呼叫）
+
+# 用在你自己的 repo：
 npx agent-lyceum init                       # 建立 home 與全域 agent 庫
 npx agent-lyceum project add web --dir ~/code/web-app
 npx agent-lyceum doctor --project web       # 檢查設定並顯示各項防護等級
@@ -41,6 +53,7 @@ npx agent-lyceum status
 | `resume` | 繼續中斷的 run，或用追加需求重開已完成的 run。 [詳細](docs/commands.zh-TW.md#resume) |
 | `clear` | 刪除 run，或移除殘留的鎖。 [詳細](docs/commands.zh-TW.md#clear) |
 | `call <agent>` | 在任何專案之外單獨呼叫一個全域 agent。 [詳細](docs/commands.zh-TW.md#call) |
+| `demo` | 在拋棄式範例 repo 上試跑 3 個 agent 的團隊。 [詳細](docs/commands.zh-TW.md#demo) |
 | `tidy` | 讓 agent 整理自己的記憶（只封存，不刪除）。 [詳細](docs/commands.zh-TW.md#tidy) |
 
 `agent-lyceum <指令> --help` 會印出完整選項。Ctrl-C 可乾淨取消；腳本可依[結束碼](docs/commands.zh-TW.md#退出碼)判斷 run 的結果。

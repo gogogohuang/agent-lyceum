@@ -4,13 +4,25 @@
 
 **English** | [繁體中文](README.zh-TW.md)
 
-Run a **team of agents** (Claude Code and/or Codex) on your repo. They talk through file mailboxes, and each has its own persona (`AGENT.md`) and long-term memory. An agent can only write its own memory and outbox, never other agents' context or its own persona.
+Give a task to a **team of agents** (Claude Code and/or Codex) instead of one overloaded session. A lead splits the work, specialists such as a frontend dev, a reviewer or a PM do their part in your repo, and the run ends when the lead says it is done.
+
+## Why
+
+- **Roles that stay in role.** Each agent has its own persona (`AGENT.md`) and long-term memory, so a reviewer keeps reviewing instead of drifting into writing code.
+- **Agents can't rewrite the rules.** An agent can only write its own memory and outbox. It can't touch other agents' context or its own persona, and this is enforced by the OS sandbox where possible, not just by a prompt. See [Write scope](docs/write-scope.md).
+- **Mix runtimes.** Claude Code and Codex agents work in the same team, and each can be limited to the paths it owns.
+- **Nothing hidden.** Agents talk through plain-file mailboxes, so every message, decision and memory is a file you can read, grep and diff. The dispatcher never merges for you.
+
+**Not a fit** for small, one-shot edits: a single Claude Code or Codex session is faster and cheaper. Use a team when the task is big enough to split, review or run in parallel.
 
 ## Quick start
 
 Requires Node 20+, plus `claude` and/or `codex` on your `PATH` (logged in). macOS and Linux (Linux needs `bwrap` for OS sandboxing); Windows only gets warnings.
 
 ```bash
+npx agent-lyceum demo                       # 3 agents fix a failing test in a throwaway sandbox (real calls)
+
+# on your own repo:
 npx agent-lyceum init                       # create the home + global agent library
 npx agent-lyceum project add web --dir ~/code/web-app
 npx agent-lyceum doctor --project web       # check config, show enforcement levels
@@ -41,6 +53,7 @@ Its own data (config, mailboxes, logs, memory, worktrees) lives in `~/agent-lyce
 | `resume` | Continue an interrupted run, or reopen a finished one with a follow-up. [details](docs/commands.md#resume) |
 | `clear` | Delete a run, or remove a stale lock. [details](docs/commands.md#clear) |
 | `call <agent>` | Ask one global agent on its own, outside any project. [details](docs/commands.md#call) |
+| `demo` | Try a 3-agent team on a throwaway sample repo. [details](docs/commands.md#demo) |
 | `tidy` | Have agents tidy their own memory (archives, never deletes). [details](docs/commands.md#tidy) |
 
 `agent-lyceum <command> --help` prints the full options. Ctrl-C cancels cleanly; [exit codes](docs/commands.md#exit-codes) tell scripts how a run ended.

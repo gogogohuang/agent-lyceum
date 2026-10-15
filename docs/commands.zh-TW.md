@@ -186,6 +186,23 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 **`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
+## demo
+
+**用法:** `demo [--dir path] [--runtime claude-code|codex] [--setup-only] [-y]`
+
+不用任何設定就能試用 agent-lyceum。它會建立一個拋棄式沙箱（一個很小的 git repo，`npm test` 因為 `slugify()` 還沒寫而失敗，加上自己專屬的 agent-lyceum home 和一個已註冊的專案），然後在上面執行真正的 `run`：lead 把工作交給 `fe-member`，再由 `qa-member` 驗證。你自己的 home、專案與 repo 完全不會被動到。
+
+它會真的呼叫 `claude` / `codex`，所以會花掉一點額度（幾分鐘）。除非加 `-y`，開始前會先問你。
+
+選項：
+
+- `--dir path`：沙箱目錄，必須是新的或空的（預設：系統暫存目錄下的新資料夾）。
+- `--runtime r`：三個 agent 都用 `claude-code` 或 `codex`（預設：PATH 上有哪個就用哪個，優先 `claude`）。
+- `--setup-only`：只建立沙箱、寫出 `task.md` 並印出指令，不執行任何 agent。
+- `-y`：執行真實 agent 前不詢問。
+
+結束時會印出怎麼查看結果（`status`、沙箱 repo 內的 `git log --stat`）以及怎麼刪掉沙箱。退出碼就是 `run` 回傳的那個，見[退出碼](#退出碼)。
+
 ## tidy
 
 **用法:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <時間戳> -p name --agent a [--layer project|global]`
