@@ -3,7 +3,7 @@ import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { DispatcherSettings } from "./schema.js";
-import { briefOf, digestOf, doneContract, parseSteps, type DoneContract } from "./format.js";
+import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
@@ -191,6 +191,8 @@ export class RunSession {
         state.max_rounds = roundLimit(state, cfg.max_rounds);
         state.result_branch = undefined;
         state.done_rejections = 0;
+        // The progress so far stays shown: the follow-up's own steps are added after it.
+        state.step_base = resume.steps;
         if (recut && resume.pr_url) {
           // The recorded pull request is the merged branch's: it must not be mistaken for the new segment's.
           state.notes = [...(resume.notes ?? []), `The earlier pull request ${resume.pr_url} belongs to the merged branch; a new one is opened for the follow-up work.`];
@@ -239,7 +241,7 @@ export class RunSession {
           to: project.lead,
           type: "task",
           subject: opts.followup.text.split("\n").find((l) => l.trim())?.slice(0, 80) ?? "Follow-up",
-          body: `## Goal\n${opts.followup.text.trimEnd()}\n\n## Acceptance criteria\nAs stated in the goal; the earlier result still holds unless the goal changes it.\n\n## Scope\nThis run's earlier work and files.\n\n## Upstream\nThe previous final report is in \`${path.join(runDir, `done-${n}.md`)}\`; the original task is in \`${path.join(runDir, "task.md")}\`.${handoffLine}\n`,
+          body: `## Goal\n${opts.followup.text.trimEnd()}\n\n## Acceptance criteria\nAs stated in the goal; the earlier result still holds unless the goal changes it.\n\n## Scope\nThis run's earlier work and files.\n\n## Upstream\nThe previous final report is in \`${path.join(runDir, `done-${n}.md`)}\`; the original task is in \`${path.join(runDir, "task.md")}\`.${handoffLine}\n${state.step_base?.length ? "\n## Progress\nThe earlier checklist stays in the progress; your `## Steps` lists only this follow-up's steps, which are shown after it.\n" : ""}`,
         });
         log("reopen", { n });
       }
@@ -526,7 +528,9 @@ export class RunSession {
     // A done that breaks the completion contract goes back to the lead (a limited number of times).
     let contract: DoneContract | undefined;
     if (route.done) {
-      contract = doneContract(route.done.meta, route.done.body, state.steps);
+      // Steps from before the last reopen were judged by the earlier done; only this segment's must be ticked.
+      const earlier = new Set((state.step_base ?? []).map((x) => x.text));
+      contract = doneContract(route.done.meta, route.done.body, state.steps?.filter((x) => !earlier.has(x.text)));
       if (contract.missing.length && (state.done_rejections ?? 0) < MAX_DONE_REJECTIONS) {
         state.done_rejections = (state.done_rejections ?? 0) + 1;
         const list = contract.missing.map((m) => `- ${m}`).join("\n");
@@ -555,7 +559,7 @@ export class RunSession {
     };
     for (const d of route.delivered) handedOff(d.from, { to: d.to, type: d.type, subject: d.subject });
     if (route.done) handedOff(route.done.from, { to: "(done)", type: "done", subject: route.done.subject });
-    if (route.steps) state.steps = route.steps;
+    if (route.steps) state.steps = mergeSteps(state.step_base, route.steps);
     this.saveState();
     // Output is routed: only now is the input these wake-ups handled consumed.
     for (const a of batch) {

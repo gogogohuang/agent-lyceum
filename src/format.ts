@@ -43,6 +43,14 @@ export function parseSteps(body: string, section = true): Step[] {
   }));
 }
 
+/** `base` in its order, with a step the `latest` list re-lists taking its tick from there, then the rest of `latest`. */
+export function mergeSteps(base: Step[] | undefined, latest: Step[]): Step[] {
+  if (!base?.length) return latest;
+  const tick = new Map(latest.map((x) => [x.text, x.done]));
+  const known = new Set(base.map((x) => x.text));
+  return [...base.map((x) => ({ text: x.text, done: tick.get(x.text) ?? x.done })), ...latest.filter((x) => !known.has(x.text))];
+}
+
 /** One line saying what a message is about: the first line under Changes/Goal, else its first prose line. */
 export function briefOf(body: string): string | undefined {
   const lines = body.split(/\r?\n/);
