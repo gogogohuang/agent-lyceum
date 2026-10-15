@@ -31,7 +31,7 @@
 
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。
-- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
+- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。
@@ -44,9 +44,9 @@
 - `--assume-defaults` 沒有作用；
 - 名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
 
-`dispatcher.max_concurrent_runs > 1` 時，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch；見 [README](../README.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
+`dispatcher.max_concurrent_runs > 1` 時，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch；見 [一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
 
-如果 lead 的 done 要求開 PR（`open_pr: true`），且 run 在自己的 branch 上完成，run 會開 PR；見 [README](../README.zh-TW.md#開-pr) 的「開 PR」。
+如果 lead 的 done 要求開 PR（`open_pr: true`），且 run 在自己的 branch 上完成，run 會開 PR；見 [一次執行如何運作](how-it-works.zh-TW.md#開-pr) 的「開 PR」。
 
 ## call
 
@@ -86,7 +86,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - 追加要求存成 `runs/<run-id>/followups/<n>.md`；每份 `done` 報告保留為 `done-<n>.md`，`result.md` 是最新一份。輪數上限從重開時起算（`rounds` 持續累加；上限是重開當下的輪數加 `max_rounds`）。每段重開的 done 規範提醒重新計算；未解決的 blocked integration 會保留。
 - lead 有 worktree 時：若 lead 的 branch 已合併進你的 `HEAD`，且 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名）會從目前的 `HEAD` 重新切出並印一行說明；否則沿用原本的。已記錄 PR 且沒有重切時，新的 `open_pr: true` 只會 push（「pull request updated」），而且只在該 PR 仍開啟時（若已被合併，含 squash merge，或已關閉，就改開新的）；重切後，已記錄的 `pr_url` 會被清掉（留在 run 的 notes），要求時再開新的 PR。agent-lyceum 從不合併。
 
-見 [README](../README.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
+見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
 
 ## 回答問題
 

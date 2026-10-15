@@ -5,6 +5,11 @@ import path from 'node:path'
 const PAIRS = [
   ['README.md', 'README.zh-TW.md'],
   ['docs/commands.md', 'docs/commands.zh-TW.md'],
+  ['docs/configuration.md', 'docs/configuration.zh-TW.md'],
+  ['docs/how-it-works.md', 'docs/how-it-works.zh-TW.md'],
+  ['docs/monitor.md', 'docs/monitor.zh-TW.md'],
+  ['docs/web-access.md', 'docs/web-access.zh-TW.md'],
+  ['docs/write-scope.md', 'docs/write-scope.zh-TW.md'],
 ]
 const LINKED = [...PAIRS.flat(), 'docs/upgrading-run-v2.md']
 const errors = []

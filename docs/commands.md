@@ -31,7 +31,7 @@ Options:
 
 - `"task"`: the task as text. Give this *or* `--task-file`, not both.
 - `--task-file f`: read the task from a file.
-- `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
+- `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. See "Continuing a finished run" in [How a run works](how-it-works.md#continuing-a-finished-run).
 - `-p name`: the project (default: inferred from the current directory).
 - `--assume-defaults`: when a question has a suggested value, use it instead of pausing. Questions without a suggestion still pause.
 - `--agent a`: give the task to that one member of the project, and wake nobody else. See below.
@@ -44,9 +44,9 @@ With `--agent`:
 - `--assume-defaults` has no effect;
 - a name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
 
-With `dispatcher.max_concurrent_runs > 1` the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge; see "Several runs at once" in the [README](../README.md#several-runs-at-once).
+With `dispatcher.max_concurrent_runs > 1` the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge; see "Several runs at once" in [How a run works](how-it-works.md#several-runs-at-once).
 
-If the lead's done asks for a pull request (`open_pr: true`) and the run completes on its own branch, the run opens it; see "Opening a pull request" in the [README](../README.md#opening-a-pull-request).
+If the lead's done asks for a pull request (`open_pr: true`) and the run completes on its own branch, the run opens it; see "Opening a pull request" in [How a run works](how-it-works.md#opening-a-pull-request).
 
 ## call
 
@@ -86,7 +86,7 @@ Options:
 - The follow-up is saved as `runs/<run-id>/followups/<n>.md`; each `done` report is kept as `done-<n>.md` and `result.md` is the latest. The round limit counts from the reopen (`rounds` keeps accumulating; the limit is the rounds at reopen plus `max_rounds`). Each reopened segment gets fresh done-contract reminders; unresolved blocked integrations are kept.
 - With a lead worktree: if the lead branch was already merged into your `HEAD` and the worktree is clean and untouched since the run ended, the worktree and branch (same name) are re-cut from the current `HEAD` and a line says so; otherwise the same ones continue. With a recorded pull request and no re-cut, a new `open_pr: true` only pushes ("pull request updated") while that pull request is still open (if it was merged, a squash merge included, or closed, a new one is opened); after a re-cut the recorded `pr_url` is cleared (kept in the run's notes) and a new pull request is opened when asked. agent-lyceum never merges.
 
-See "Continuing a finished run" in the [README](../README.md#continuing-a-finished-run).
+See "Continuing a finished run" in [How a run works](how-it-works.md#continuing-a-finished-run).
 
 ## Answering questions
 
