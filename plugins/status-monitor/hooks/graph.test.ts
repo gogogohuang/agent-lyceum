@@ -87,6 +87,18 @@ test('layout: wide puts the lead on top and wraps members; narrow stacks everyth
   expect(many.rows.map(r => r.length)).toEqual([1, 3, 1])
 })
 
+test('layout: a working member gets a full-width row of its own, right under the lead', () => {
+  const r = run({ active: { qa: { since: '2026-01-01T00:00:00Z', round: 2, handling: [{ from: 'lead', type: 'task', subject: 'x'.repeat(60) }] } } })
+  const bs = blocks(report(r), NOW)
+  const lay = layout(bs, 90)
+  expect(lay.rows.map(r => r.map(b => b.name))).toEqual([['lead'], ['qa'], ['fe']])
+  expect(lay.widths).toEqual([90, 90, 90])
+  expect(bs.find(b => b.name === 'qa')!.handling[0]!.head).toContain('x'.repeat(60))
+  const two = layout(blocks(report(run({ active: { qa: { since: '2026-01-01T00:00:00Z' }, fe: { since: '2026-01-01T00:00:00Z' } } })), NOW), 90)
+  expect(two.rows.map(r => r.length)).toEqual([1, 1, 1])
+  expect(layout(bs, 62).widths).toEqual([62, 62, 62])
+})
+
 test('leadLink shows the direction between the lead and a member', () => {
   const bs = blocks(report(run()), NOW)
   expect(leadLink(bs, bs.find(b => b.name === 'fe')!)).toEqual({ glyph: '↕', hot: false })

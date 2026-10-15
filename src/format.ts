@@ -148,22 +148,22 @@ const DIGEST_SECTIONS: Record<string, { name: string; label: string }[]> = {
   ],
 };
 
-function digestLine(l: string): string {
+function digestLine(l: string, maxChars = DIGEST_MAX_CHARS): string {
   const t = l
     .trim()
     .replace(/^[-*]\s+(\[[ xX]\]\s+)?/, "")
     .replace(/\*\*|`/g, "")
     .trim();
-  return t.length > DIGEST_MAX_CHARS ? `${t.slice(0, DIGEST_MAX_CHARS - 1)}…` : t;
+  return t.length > maxChars ? `${t.slice(0, maxChars - 1)}…` : t;
 }
 
-/** Readable lines of a block of text: markdown marks gone, empty / heading / warning / `None` lines dropped, at most 3 lines. */
-function digestLines(text: string): string[] {
+/** Readable lines of a block of text: markdown marks gone, empty / heading / warning / `None` lines dropped, at most 3 lines (`full`: all of them, uncut). */
+function digestLines(text: string, full = false): string[] {
   const lines = text
     .split(/\r?\n/)
-    .map(digestLine)
+    .map((l) => digestLine(l, full ? Infinity : DIGEST_MAX_CHARS))
     .filter((l) => l !== "" && !/^#+\s/.test(l) && !l.startsWith("[agent-lyceum]") && !/^none\.?$/i.test(l));
-  if (lines.length <= DIGEST_MAX_LINES) return lines;
+  if (full || lines.length <= DIGEST_MAX_LINES) return lines;
   const last = lines[DIGEST_MAX_LINES - 1] ?? "";
   const cut = last.endsWith("…") ? last : `${last.slice(0, last.length >= DIGEST_MAX_CHARS ? DIGEST_MAX_CHARS - 1 : last.length)}…`;
   return [...lines.slice(0, DIGEST_MAX_LINES - 1), cut];
@@ -173,32 +173,33 @@ function digestLines(text: string): string[] {
  * What a message is about, as short readable sections for the status panel: by type, the lines under the
  * sections that matter (task: Goal, Acceptance criteria; reply: Changes, Verification, Open items, Risks;
  * done: Result, Not done; ask: each question; failure: the first paragraph). With none of those, the one-line brief.
+ * `full` keeps every line of every section uncut (for the one message an agent is working on right now).
  * Never throws: a body it cannot read gives [].
  */
-export function digestOf(type: string, body: string): DigestSection[] {
+export function digestOf(type: string, body: string, full = false): DigestSection[] {
   try {
     const out: DigestSection[] = [];
     if (type === "ask") {
       for (const m of body.matchAll(/<question\b[^>]*?\bid="([^"]*)"[^>]*>[\s\S]*?<text>([\s\S]*?)<\/text>/g)) {
-        const lines = digestLines(m[2] ?? "");
+        const lines = digestLines(m[2] ?? "", full);
         if (lines.length) out.push({ label: m[1] ?? "問題", lines });
       }
     } else if (type === "failure") {
       const first = body
         .split(/\n[ \t]*\n/)
-        .map(digestLines)
+        .map((t) => digestLines(t, full))
         .find((l) => l.length);
       if (first) out.push({ label: "訊息", lines: first });
     } else {
       for (const s of DIGEST_SECTIONS[type] ?? []) {
         const text = sectionText(body, s.name);
-        const lines = text === undefined ? [] : digestLines(text);
+        const lines = text === undefined ? [] : digestLines(text, full);
         if (lines.length) out.push({ label: s.label, lines });
       }
     }
     if (out.length) return out;
     const brief = briefOf(body);
-    return brief ? [{ label: "摘要", lines: [digestLine(brief)] }] : [];
+    return brief ? [{ label: "摘要", lines: [digestLine(brief, full ? Infinity : DIGEST_MAX_CHARS)] }] : [];
   } catch {
     return [];
   }

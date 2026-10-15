@@ -29,9 +29,9 @@ export const MIN_BLOCK = 30
 /** The pane's width when it is opened (see register.tsx). */
 const OPEN_WIDTH = 56
 
-/** One message as a head line plus its readable sections (digest, else brief, else nothing); `compact` keeps one line. */
-export function mailView(m: MailLike, compact = false): MailView {
-  const head = `來自 ${m.from} 的 ${m.type}：${clip(m.subject, 40)}`
+/** One message as a head line plus its readable sections (digest, else brief, else nothing); `compact` keeps one line, `full` keeps the whole subject. */
+export function mailView(m: MailLike, compact = false, full = false): MailView {
+  const head = `來自 ${m.from} 的 ${m.type}：${full ? m.subject : clip(m.subject, 40)}`
   const all: DigestSection[] = m.digest?.length ? m.digest : m.brief ? [{ label: '摘要', lines: [m.brief] }] : []
   return { head, sections: compact ? all.slice(0, 1).map(s => ({ label: s.label, lines: s.lines.slice(0, 1) })) : all }
 }
@@ -62,7 +62,7 @@ export function blocks(report: Report, now: number): Block[] {
       lead: a.lead,
       dot,
       working: act ? { round: act.round, elapsed: elapsed(act.since, now) } : undefined,
-      handling: (act?.handling ?? []).map(m => mailView(m)),
+      handling: (act?.handling ?? []).map(m => mailView(m, false, true)),
       queued,
       targets: (a.can_message ?? []).map(name => ({ name, hot: edge?.from === a.name && edge.to === name })),
       wakes: st?.wakes ?? 0,
@@ -73,17 +73,27 @@ export function blocks(report: Report, now: number): Block[] {
   return [...all.filter(b => b.lead), ...all.filter(b => !b.lead)]
 }
 
-export type Layout = { narrow: boolean; memberWidth: number; rows: Block[][] }
+/** `widths[i]` is the width of every block in `rows[i]`. */
+export type Layout = { narrow: boolean; memberWidth: number; rows: Block[][]; widths: number[] }
 
-/** Rows of blocks: the lead alone on top, members below in as many columns as fit. */
+/**
+ * Rows of blocks: the lead alone on top; then each member that is working right now on a row of its own,
+ * full width, so its mail has room; then the other members in as many columns as fit.
+ */
 export function layout(bs: Block[], width: number): Layout {
-  if (width < NARROW) return { narrow: true, memberWidth: width, rows: bs.map(b => [b]) }
+  if (width < NARROW) return { narrow: true, memberWidth: width, rows: bs.map(b => [b]), widths: bs.map(() => width) }
   const lead = bs.filter(b => b.lead)
-  const rest = bs.filter(b => !b.lead)
+  const working = bs.filter(b => !b.lead && b.dot === 'active')
+  const rest = bs.filter(b => !b.lead && b.dot !== 'active')
   const cols = Math.max(1, Math.min(rest.length || 1, Math.floor(width / MIN_BLOCK)))
-  const rows: Block[][] = lead.length ? [lead] : []
-  for (let i = 0; i < rest.length; i += cols) rows.push(rest.slice(i, i + cols))
-  return { narrow: false, memberWidth: Math.floor(width / cols), rows }
+  const memberWidth = Math.floor(width / cols)
+  const rows: Block[][] = [...lead.map(b => [b]), ...working.map(b => [b])]
+  const widths = rows.map(() => width)
+  for (let i = 0; i < rest.length; i += cols) {
+    rows.push(rest.slice(i, i + cols))
+    widths.push(memberWidth)
+  }
+  return { narrow: false, memberWidth, rows, widths }
 }
 
 /** The glyph between the lead and a member: who may write to whom; hot when it is the latest hand-off. */

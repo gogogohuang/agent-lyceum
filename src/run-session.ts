@@ -366,7 +366,9 @@ export class RunSession {
       say(`[round ${state.rounds}/${state.max_rounds}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
       const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
       const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
-      state.active[agent.name] = { round, since: new Date(started).toISOString(), handling };
+      // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
+      const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
+      state.active[agent.name] = { round, since: new Date(started).toISOString(), handling: activeHandling };
       this.saveState();
       result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
         ok: false,

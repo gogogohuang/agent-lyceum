@@ -87,4 +87,14 @@ describe("digestOf", () => {
   it("skips the dispatcher's format warning", () => {
     expect(digestOf("task", "[agent-lyceum] Format warning: x\n\n## Goal\nShip it")).toEqual([{ label: "目標", lines: ["Ship it"] }]);
   });
+
+  it("full keeps every line of a section, uncut", () => {
+    const long = "字".repeat(100);
+    const body = `## Goal\n${long}\n\n## Acceptance criteria\n- a\n- b\n- c\n- d\n- e`;
+    expect(digestOf("task", body, true)).toEqual([
+      { label: "目標", lines: [long] },
+      { label: "驗收", lines: ["a", "b", "c", "d", "e"] },
+    ]);
+    expect(digestOf("task", body)[1]?.lines).toHaveLength(3);
+  });
 });
