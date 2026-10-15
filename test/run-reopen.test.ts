@@ -162,6 +162,69 @@ describe("reopening a done run", () => {
     expect(st.done_rejections ?? 0).toBe(0);
     expect(st.blocked_integrations).toEqual(blocked);
   });
+
+  it("keeps the earlier steps in the progress and adds the follow-up's steps after them", async () => {
+    env = makeEnv();
+    const steps = (...s: string[]) => `\n\n## Steps\n${s.join("\n")}\n`;
+    const { project, runDir } = await first(async (i) => {
+      send(i, i.agent.name, "done", "first", FULL_DONE + steps("- [x] login form", "- [x] session"));
+      return OK;
+    });
+    let seen = "";
+    await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "Also add rate limiting" },
+      invoker: async (i) => {
+        seen = i.userPrompt;
+        send(i, i.agent.name, "done", "second", FULL_DONE + steps("- [x] rate limiter", "- [x] tests"));
+        return OK;
+      },
+    });
+    expect(seen).toContain("only this follow-up's steps");
+    const st = loadRunState(runDir);
+    expect(st.end_reason).toBe("done");
+    expect(st.steps).toEqual([
+      { text: "login form", done: true },
+      { text: "session", done: true },
+      { text: "rate limiter", done: true },
+      { text: "tests", done: true },
+    ]);
+  });
+
+  it("an earlier step left open does not block the follow-up's completed done, and a re-listed step is not doubled", async () => {
+    env = makeEnv();
+    const steps = (...s: string[]) => `\n\n## Steps\n${s.join("\n")}\n`;
+    const { project, runDir } = await first(async (i) => {
+      write(
+        path.join(outboxDir(i.project, i.agent.name), "d.md"),
+        `---\nto: ${i.agent.name}\ntype: done\nsubject: first\noutcome: partial\n---\n\n## Result\nhalf\n\n## Not done\ndocs${steps("- [x] login form", "- [ ] docs")}`,
+      );
+      return OK;
+    });
+    expect(loadRunState(runDir).end_reason).toBe("done");
+    let rejected = false;
+    await runTeam({
+      project,
+      resume: loadRunState(runDir),
+      runDir,
+      log: () => {},
+      followup: { text: "Rate limiting" },
+      invoker: async (i) => {
+        if (i.userPrompt.includes("was not accepted")) rejected = true;
+        send(i, i.agent.name, "done", "second", FULL_DONE + steps("- [x] login form", "- [x] rate limiter"));
+        return OK;
+      },
+    });
+    expect(rejected).toBe(false);
+    expect(loadRunState(runDir).steps).toEqual([
+      { text: "login form", done: true },
+      { text: "docs", done: false },
+      { text: "rate limiter", done: true },
+    ]);
+  });
 });
 
 describe("reopening a concurrent run", () => {

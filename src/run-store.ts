@@ -100,8 +100,10 @@ export interface RunState {
   active: Record<string, ActiveWake>;
   /** Finished wakes, oldest first. */
   wakes: WakeRecord[];
-  /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps`. */
+  /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps` (after a reopen, added to `step_base`). */
   steps?: Step[];
+  /** The checklist as it stood at the last reopen: the follow-up's steps are shown after it, and its open steps do not hold up the follow-up's done. */
+  step_base?: Step[];
   /** Readable name; lets `resume`, `clear` and `status` find the run without its id. Absent on runs from older versions. */
   name?: string;
   /** One entry per time a finished run was reopened with a follow-up. */
@@ -145,6 +147,7 @@ const WireState = z
     wakes: z.array(z.any()).optional(),
     solo_agent: z.string().optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
+    step_base: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     name: z.string().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),
     round_floor: nonNeg.optional(),
