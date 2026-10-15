@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { endOutcome, resolveDoneOutcome } from "../src/run-outcome.js";
+import { endOutcome, resolveDoneOutcome, failureGuide } from "../src/run-outcome.js";
 
 describe("resolveDoneOutcome", () => {
   it("accepts a done that meets the contract with the outcome the lead declared", () => {
@@ -39,9 +39,24 @@ describe("endOutcome", () => {
 
   it("maps every other end reason", () => {
     expect(endOutcome("lead_failed")).toEqual({ outcome: "failed", note: "The lead's wake-up failed." });
+    expect(endOutcome("agent_failed", undefined, { agent: "fe-member", error: "boom", attempts: 3 })).toEqual({
+      outcome: "failed",
+      note: "fe-member failed 3 time(s) in a row (boom), so the run stopped. The message it was handling is still unread.",
+    });
     expect(endOutcome("cancelled").outcome).toBe("cancelled");
     expect(endOutcome("cancelled").note).toContain("agent-lyceum resume");
     expect(endOutcome("idle")).toEqual({ outcome: "partial", note: "All mailboxes were empty but the lead never sent a done message." });
     expect(endOutcome("max_rounds")).toEqual({ outcome: "partial", note: "Stopped at the round limit before the lead sent done." });
+  });
+});
+
+describe("failureGuide", () => {
+  it("says who failed, where to look, and how to fix and go on", () => {
+    const g = failureGuide("web", "login", { agent: "fe-member", error: "boom", attempts: 3 }, "/runs/r1");
+    expect(g).toContain("fe-member was called 3 time(s) and failed every time (boom)");
+    expect(g).toContain("/runs/r1/log.jsonl");
+    expect(g).toContain("agent-lyceum doctor -p web");
+    expect(g).toContain("agent-lyceum resume login -p web");
+    expect(g).toContain("agent-lyceum clear login -p web");
   });
 });

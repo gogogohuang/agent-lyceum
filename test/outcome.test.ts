@@ -104,7 +104,7 @@ describe("run outcome", () => {
 
   it("is partial at the round limit", async () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace("max_rounds: 30", "max_rounds: 2"));
+    env.editProjectYaml((t) => t.replace("max_rounds: 0 ", "max_rounds: 2 "));
     const project = env.project();
     const runDir = path.join(project.paths.runs, "run-a");
     const s = await runTeam({ project, task: prepareTask({ text: "go", cwd: env.root, runDir }), runDir, log: () => {}, invoker: async (i) => {

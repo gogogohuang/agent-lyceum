@@ -96,7 +96,7 @@ describe("resolved configuration with sources", () => {
   it("says where each value came from: project file, global library, a default, or inferred from the model", () => {
     env = makeEnv();
     env.editProjectYaml((t) =>
-      t.replace("max_rounds: 30", "max_rounds: 12").replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    model: gpt-5\n    can_message: [lead, qa-member]"),
+      t.replace("max_rounds: 0 ", "max_rounds: 12 ").replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    model: gpt-5\n    can_message: [lead, qa-member]"),
     );
     const projectFile = path.join(env.home, "projects/demo/project.yaml");
     const globalFile = path.join(env.home, "team.yaml");

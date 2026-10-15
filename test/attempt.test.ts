@@ -67,20 +67,58 @@ describe("attempts", () => {
     expect(notes.join("\n")).toMatch(/fe-member.*attempt 1 failed.*side effects/i);
   });
 
-  it("does not route any output of an agent whose every attempt failed, and tells the lead", async () => {
+  it("stops the run when an agent fails on every call (the first and 2 more), routes none of its output, and keeps its message unread", async () => {
+    let feCalls = 0;
     const { s, runDir, bound } = await start(async (i) => {
-      if (i.agent.name === "lead" && !i.userPrompt.includes("fe-member failed")) send(i.project, "lead", "fe-member", "job", "task");
-      else if (i.agent.name === "lead") send(i.project, "lead", "lead", "gave up", "done");
+      if (i.agent.name === "lead") send(i.project, "lead", "fe-member", "job", "task");
       else {
-        send(i.project, "fe-member", "lead", `junk from ${i.sessionId ?? "attempt"} ${Math.random()}`);
-        return FAIL;
+        feCalls++;
+        send(i.project, "fe-member", "lead", `junk ${Math.random()}`);
+        return { ...FAIL, error: "boom" };
       }
       return OK;
     });
-    expect(s.endReason).toBe("done");
+    expect(feCalls).toBe(3);
+    expect(s.endReason).toBe("agent_failed");
+    expect(s.outcome).toBe("failed");
+    expect(s.failure).toEqual({ agent: "fe-member", error: "boom", attempts: 3 });
+    expect(s.outcomeNote).toMatch(/fe-member failed 3 time\(s\).*boom/);
     expect(allMail(bound, "lead").some((m) => m.startsWith("junk"))).toBe(false);
-    expect(allMail(bound, "lead").some((m) => m.includes("fe-member failed"))).toBe(true);
+    expect(listUnread(bound, "fe-member").map((m) => m.meta.subject)).toEqual(["job"]);
     expect(attemptsOf(runDir).filter((a) => a.agent === "fe-member").every((a) => a.status === "failed")).toBe(true);
+    expect(loadRunState(runDir).failure?.agent).toBe("fe-member");
+  });
+
+  it("resuming a run stopped by a failing agent handles the same message again and clears the failure", async () => {
+    let fail = true;
+    const invoker: Invoker = async (i) => {
+      if (i.agent.name === "lead") {
+        if (i.userPrompt.includes("fe ok")) send(i.project, "lead", "lead", "all done", "done");
+        else send(i.project, "lead", "fe-member", "job", "task");
+        return OK;
+      }
+      if (fail) return { ...FAIL, error: "boom" };
+      send(i.project, "fe-member", "lead", "fe ok");
+      return OK;
+    };
+    const { s, runDir } = await start(invoker);
+    expect(s.endReason).toBe("agent_failed");
+    fail = false;
+    const again = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, invoker, log: () => {} });
+    expect(again.endReason).toBe("done");
+    expect(again.failure).toBeUndefined();
+    expect(loadRunState(runDir).failure).toBeUndefined();
+  });
+
+  it("has no round limit unless one is configured", async () => {
+    let n = 0;
+    const { s } = await start(async (i) => {
+      if (i.agent.name === "lead") send(i.project, "lead", ++n > 20 ? "lead" : "fe-member", `step ${n}`, n > 20 ? "done" : "task");
+      else send(i.project, "fe-member", "lead", `back ${n}`);
+      return OK;
+    });
+    expect(s.rounds).toBeGreaterThan(30);
+    expect(s.endReason).toBe("done");
   });
 
   it("on resume, sets aside what an interrupted attempt left, redoes the message, and warns about side effects", async () => {

@@ -220,7 +220,7 @@ agent-lyceum checks the result: every file that existed before must still be in 
 
 ## Exit codes
 
-**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds` without a done); `1` for `failed` (also when the lead itself failed); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call).
+**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds`, if you set one, without a done); `1` for `failed` (also when the lead or another agent kept failing and the run stopped: continue with `resume` after fixing the cause); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call).
 
 ## Choosing the project
 

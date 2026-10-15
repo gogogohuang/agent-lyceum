@@ -153,6 +153,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     isLead
       ? "Each wake-up handles one message, except that several `reply`/`failure` messages waiting together are handed to you in one wake-up: weigh them together, then decide the next step once."
       : "Each wake-up handles one message. Do the work it asks, then send the replies that are needed, then stop.",
+    "Mail that repeats an earlier mail of yours to the same agent (same type, same text) is not sent again; you are told, and should wait for the answer or ask for something different instead of resending.",
     "",
     "## Message format",
     "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",

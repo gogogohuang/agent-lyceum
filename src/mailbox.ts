@@ -216,6 +216,34 @@ export function rejectDone(file: string): void {
   fs.renameSync(file, dest);
 }
 
+/** A body with whitespace collapsed and the dispatcher's own format warning removed, so the same text compares equal. */
+function sameText(body: string): string {
+  return body.replace(/^\[agent-lyceum\][^\n]*(\n|$)\s*/, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * An earlier mail from `from` to `to` with the same type, the same reply target and the same text (unread or already read):
+ * sending it again changes nothing and is how two agents end up in a loop. Texts too short to mean anything are never duplicates.
+ */
+function earlierDuplicate(project: ResolvedProject, from: string, to: string, type: string, replyTo: string | undefined, body: string): Message | undefined {
+  const text = sameText(body);
+  if (text.length < 20) return undefined;
+  const dir = inboxDir(project, to);
+  for (const d of [dir, path.join(dir, "read")]) {
+    if (!fs.existsSync(d)) continue;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (!e.isFile() || !e.name.endsWith(".md") || e.name.startsWith(".")) continue;
+      try {
+        const m = readMessage(path.join(d, e.name));
+        if (m.meta.from === from && m.meta.type === type && (m.meta.reply_to ?? "") === (replyTo ?? "") && sameText(m.body) === text) return m;
+      } catch {
+        /* an unreadable file is not a duplicate of anything */
+      }
+    }
+  }
+  return undefined;
+}
+
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. Safe to run again after a crash. */
 export function routeOutboxes(project: ResolvedProject): RouteResult {
   const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [] };
@@ -305,6 +333,33 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
 
       const replyTo = d.reply_to ? String(d.reply_to) : undefined;
       const thread = d.thread ? String(d.thread) : undefined;
+      // Mail whose delivery was already planned (a replay after a crash) is not a repeat of itself.
+      const repeats = new Map<string, Message>();
+      for (const to of targets) {
+        if (journal?.get(source, to)) continue;
+        const earlier = earlierDuplicate(project, sender.name, to, type, replyTo, parsed.body);
+        if (earlier) repeats.set(to, earlier);
+      }
+      const repeatNote = (): string =>
+        [...repeats]
+          .map(([to, m]) => `to "${to}" it repeats mail ${m.meta.id} ("${m.meta.subject}", ${m.meta.created}) with the same content`)
+          .join("; ");
+      const REPEAT_HELP =
+        "Do not send it again: if that mail has not been answered yet, wait for the reply; if you need something different, change what you ask for; if the work is finished, the lead sends `done`.";
+      if (repeats.size === targets.length) {
+        reject(`it is a duplicate: ${repeatNote()}, so it was not sent again. ${REPEAT_HELP}`);
+        continue;
+      }
+      if (repeats.size) {
+        deliverOnce(project, journal, `dup:${source}`, {
+          from: "dispatcher",
+          to: sender.name,
+          type: "failure",
+          subject: `Part of ${path.basename(file)} was not sent`,
+          body: `Your outbox message \`${path.basename(file)}\` was delivered, except that ${repeatNote()}. ${REPEAT_HELP}`,
+        });
+        res.rejected.push({ from: sender.name, file, reason: `duplicate: ${repeatNote()}` });
+      }
       const missing = missingSections(type, parsed.body);
       const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
       if (sender.name === project.lead) {
@@ -312,6 +367,7 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         if (st.length) res.steps = st;
       }
       for (const to of targets) {
+        if (repeats.has(to)) continue;
         const { msg, fresh } = deliverOnce(project, journal, source, { from: sender.name, to, type, subject, body, thread, reply_to: replyTo });
         if (!fresh) continue;
         res.delivered.push({ from: sender.name, to, id: msg.meta.id, file: msg.file, type, subject });
