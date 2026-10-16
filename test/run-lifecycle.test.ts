@@ -138,7 +138,42 @@ describe("a run from start to clear", () => {
     }
   }, 60_000);
 
-  it("clear of a finished run goes ahead while another run is active (limit 1), but not while that run itself is", () => {
+  it("resuming a legacy shared run is refused while another legacy shared run is active", async () => {
+    const t = setup({ calls: [{ agent: "lead", sleep: true }, { agent: "lead", sleep: true }] }, { git: false });
+    env.editProjectYaml((x) => x.replace("dispatcher:\n", "dispatcher:\n  max_concurrent_runs: 2\n"));
+    const ids: string[] = [];
+    for (const name of ["first", "second"]) {
+      fs.rmSync(t.marker, { force: true });
+      const r = t.start(["run", `task ${name}`, "-p", "demo", "--name", name]);
+      await until(() => fs.existsSync(t.marker));
+      r.child.kill("SIGINT");
+      expect(await r.done).toBe(130);
+    }
+    const runs = env.project().paths.runs;
+    for (const id of fs.readdirSync(runs)) {
+      const file = path.join(runs, id, "state.json");
+      const old = JSON.parse(fs.readFileSync(file, "utf8"));
+      delete old.lead_workspace;
+      old.workspace_mode = "shared"; // as an old binary wrote it
+      fs.writeFileSync(file, JSON.stringify(old));
+      ids.push(id);
+    }
+    expect(ids).toHaveLength(2);
+    const first = ids.find((id) => JSON.parse(fs.readFileSync(path.join(runs, id, "state.json"), "utf8")).task_summary.includes("first"))!;
+    const second = ids.find((id) => id !== first)!;
+    const lease = acquireProjectLock(env.project().paths.root, first, { checkout: true }); // the first is resuming
+    try {
+      fs.rmSync(t.marker, { force: true });
+      const r = t.sync(["resume", second, "-p", "demo"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(new RegExp(`${first}[\\s\\S]*only one can be active`));
+      expect(fs.existsSync(t.marker)).toBe(false); // no agent was woken
+    } finally {
+      lease.release();
+    }
+  }, 60_000);
+
+  it("clear of a finished run goes ahead while another run is active, but not while that run itself is", () => {
     const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
     expect(t.sync(["run", "x", "-p", "demo"]).code).toBe(0);
     const id: string = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;

@@ -549,6 +549,41 @@ describe("dispatcher integration", () => {
     expect(loadRunState(runDir).blocked_integrations?.map((b) => b.agent)).toEqual(["fe-member"]);
   });
 
+  it("a same-file conflict refuses the later member and keeps its branch", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    let leadCalls = 0;
+    let leadPrompt = "";
+    let leadDir = "";
+    const { summary, runDir } = await start(async (i) => {
+      if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
+        if (++leadCalls === 1) {
+          mail(i.project, "lead", "fe-member", "job", "task");
+          mail(i.project, "lead", "qa-member", "job", "task");
+        } else {
+          leadPrompt = i.userPrompt;
+          mail(i.project, "lead", "lead", "bye", "done");
+        }
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/a.txt"), `${i.agent.name} version\n`);
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
+      return OK;
+    });
+    const blocked = loadRunState(runDir).blocked_integrations ?? [];
+    expect(blocked).toHaveLength(1);
+    const later = blocked[0]!.agent;
+    const first = later === "fe-member" ? "qa-member" : "fe-member";
+    expect(fs.readFileSync(path.join(leadDir, "src/web/a.txt"), "utf8")).toBe(`${first} version\n`); // the later change is not applied
+    expect(git(env.repo, "show", `agent-lyceum/run-1/${later}:src/web/a.txt`)).toBe(`${later} version`); // its branch keeps it
+    expect(fs.existsSync(path.join(env.project().paths.root, "worktrees", "run-1", later))).toBe(true);
+    expect(leadPrompt.match(/'s changes could not be brought into the repo/g)).toHaveLength(1); // one failure mail
+    expect(leadPrompt).toContain("src/web/a.txt");
+    expect(leadPrompt).toContain(`agent-lyceum/run-1/${later}`);
+    expect(summary.outcome).toBe("blocked");
+  });
+
   it("survives a crash right after a member's files were brought in: resume neither loses nor re-applies them", async () => {
     env = makeEnv();
     initGitRepo(env.repo);

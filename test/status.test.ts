@@ -285,3 +285,21 @@ describe("several runs at once", () => {
     l2.release();
   });
 });
+
+describe("status --json shape", () => {
+  const TOP = ["agents", "project", "run", "schema_version"];
+  const RUN = ["active", "blocked_integrations", "current_step", "dir", "last_wake", "live", "mail_layout", "max_rounds", "notes", "outcome_verified", "output_tokens", "queue", "result_head", "rounds", "run_id", "started_at", "state", "task_source", "task_summary", "wakes", "workspace_mode"];
+  for (const mode of ["worktree", "shared"] as const) {
+    it(`keeps the same key sets for a ${mode === "worktree" ? "isolated" : "shared"} run`, () => {
+      env = makeEnv();
+      const p = env.project();
+      const id = "20261007T000001000Z-aaaa";
+      const dir = path.join(p.paths.runs, id);
+      fs.mkdirSync(dir, { recursive: true });
+      saveRunState(dir, { ...newRunState({ run_id: id, project: "demo", max_rounds: 5, task_summary: id, pid: 999_999 }), workspace_mode: mode, lead_workspace: mode === "worktree" });
+      const report = JSON.parse(JSON.stringify(buildStatusReport(p)));
+      expect(Object.keys(report).sort()).toEqual(TOP);
+      expect(Object.keys(report.run).sort()).toEqual(RUN);
+    });
+  }
+});
