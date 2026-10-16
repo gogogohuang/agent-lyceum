@@ -22,19 +22,37 @@ const last = new Map<string, Report>()
 const polling = new Set<string>()
 let several = false
 
+async function fetchReport($: EngineInterface, args: string[]): Promise<Report> {
+  const res = await $.process.run(args, { timeoutMs: 15000 })
+  if (res.exitCode !== 0) throw new Error(res.stderr.trim().split('\n')[0] || `exit ${res.exitCode}`)
+  return JSON.parse(res.stdout) as Report
+}
+
 async function poll($: EngineInterface, t: Target) {
   if (polling.has(t.key)) return
   polling.add(t.key)
   try {
-    const res = await $.process.run(t.status, { timeoutMs: 15000 })
-    if (res.exitCode !== 0) throw new Error(res.stderr.trim().split('\n')[0] || `exit ${res.exitCode}`)
-    const report = JSON.parse(res.stdout) as Report
-    const note = tagToast(transition(last.get(t.key) ?? null, report), report.project.name, several)
-    if (note) $.ui.toast(note)
-    last.set(t.key, report)
-    await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, error: null } }))
+    // `status --json` shows one run (the newest running). Concurrent runs need one report each: list the tasks, then fetch every running one.
+    const report = await fetchReport($, t.status)
+    const list = JSON.parse((await $.process.run([...t.status, '--task-list'], { timeoutMs: 15000 })).stdout) as { runs: { run_id: string; state: string }[] }
+    const tracked = [...last.keys()].filter(k => k.startsWith(`${t.key}|`)).map(k => k.slice(t.key.length + 1))
+    const ids = new Set([...list.runs.filter(r => r.state === 'running').map(r => r.run_id), ...tracked])
+    const runs: Record<string, Report> = {}
+    for (const id of ids) {
+      const r = await fetchReport($, [...t.status, '--task-id', id])
+      const key = `${t.key}|${id}`
+      const note = tagToast(transition(last.get(key) ?? null, r), r.project.name, several)
+      if (note) $.ui.toast(note)
+      if (r.run?.state === 'running') {
+        last.set(key, r)
+        runs[id] = r
+      } else {
+        last.delete(key) // finished: toast once, then stop tracking
+      }
+    }
+    await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, runs, error: null } }))
   } catch (err) {
-    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, error: err instanceof Error ? err.message : String(err) } }))
+    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, runs: s[t.key]?.runs, error: err instanceof Error ? err.message : String(err) } }))
   } finally {
     polling.delete(t.key)
   }
@@ -86,8 +104,9 @@ export const register: Register = (on, options) => {
     const open = await read($, expanded)
     const width = paneWidth(e.props.bodyColumns)
 
-    const section = (t: Target) => {
-      const { report, error } = snap[t.key] ?? { report: null, error: null }
+    const section = (t: Target, shown?: Report) => {
+      const { report: base, error } = snap[t.key] ?? { report: null, error: null }
+      const report = shown ?? base
       if (!report) return <Text dimColor>{t.key ? `${t.key}：` : ''}{error ? `無法取得狀態：${error}` : '讀取中…'}</Text>
       const run = report.run
       return (
@@ -188,12 +207,14 @@ export const register: Register = (on, options) => {
 
     // One tab per running task, newest first. Finished and interrupted runs are not listed.
     const tabs = newestFirst(
-      targets.flatMap(t => {
-        const run = snap[t.key]?.report?.run
-        if (run?.state !== 'running') return []
-        const label = t.key || snap[t.key]?.report?.project.name || '目前'
-        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${label}：` : ''}${clip(run.task_summary, 12)}`, body: () => section(t) }]
-      }),
+      targets.flatMap(t =>
+        Object.values(snap[t.key]?.runs ?? {}).flatMap(r => {
+          const run = r.run
+          if (run?.state !== 'running') return []
+          const label = t.key || r.project.name || '目前'
+          return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${label}：` : ''}${clip(run.task_summary, 12)}`, body: () => section(t, r) }]
+        }),
+      ),
       x => x.startedAt,
     )
     const wanted = await read($, tab)
