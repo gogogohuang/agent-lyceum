@@ -11,6 +11,7 @@ import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
+import { planWorkspace } from "./worktree.js";
 import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { failureGuide } from "./run-outcome.js";
 import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
@@ -130,9 +131,9 @@ function findRun(pr: ResolvedProject, query: string): RunRef {
 }
 
 /** Take the lock of one run, or exit with the reason. `checkout`: the run works in the project checkout, so only one may be active. `exclusive`: it needs the whole project (memory tidy). */
-function takeLock(pr: ResolvedProject, runId: string, opts: { checkout?: boolean; exclusive?: boolean } = {}): ProjectLease {
+function takeLock(pr: ResolvedProject, runId: string, opts: { checkout?: boolean; exclusive?: boolean; reason?: string } = {}): ProjectLease {
   try {
-    return acquireProjectLock(pr.paths.root, runId, { checkout: opts.checkout, exclusive: opts.exclusive });
+    return acquireProjectLock(pr.paths.root, runId, { checkout: opts.checkout, exclusive: opts.exclusive, dir: pr.dir, reason: opts.reason });
   } catch (e) {
     return fail((e as Error).message);
   }
@@ -190,15 +191,17 @@ const firstLine = (t: string): string => t.trim().split("\n")[0]!.trim();
 
 /** Take the lock and continue a run; the lock is released when it stops (also when it stops because it waits for answers). */
 async function continueRun(pr: ResolvedProject, dir: string, runId: string, followup?: { text: string }): Promise<RunSummary> {
-  const lease = takeLock(pr, runId, { checkout: pr.dispatcher.max_concurrent_runs <= 1 });
+  const state = loadRunState(dir);
+  // Where the run works is decided (from its state) before the lock is taken, and handed to the session as is.
+  const plan = planWorkspace(pr, state);
+  const lease = takeLock(pr, runId, { checkout: !plan.leadWorktree, reason: "it was started without its own worktree" });
   const cancel = cancelOnSignals();
   try {
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
-    const state = loadRunState(dir);
     if (followup) console.log(`Reopening run ${runLabel(state)} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
     else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${roundsLabel(state.rounds, roundLimit(state, pr.dispatcher.max_rounds))}: ${state.task_summary}`);
     // Read the state again under the lock: another process may have changed it while we were checking.
-    return await runTeam({ project: pr, resume: state, runDir: dir, signal: cancel.signal, followup });
+    return await runTeam({ project: pr, resume: state, plan, runDir: dir, signal: cancel.signal, followup });
   } finally {
     cancel.dispose();
     lease.release();
@@ -276,7 +279,8 @@ program
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
-      const lease = takeLock(pr, runId, { checkout: pr.dispatcher.max_concurrent_runs <= 1 });
+      const plan = planWorkspace(pr);
+      const lease = takeLock(pr, runId, { checkout: !plan.leadWorktree, reason: plan.reason });
       let summary: RunSummary;
       const cancel = cancelOnSignals();
       try {
@@ -284,7 +288,7 @@ program
         console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
         const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
-        summary = await runTeam({ project: pr, name, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
+        summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();

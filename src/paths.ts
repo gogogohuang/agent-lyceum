@@ -75,14 +75,3 @@ export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
-
-/** Directory part of a glob that precedes the first wildcard segment. */
-export function globStaticPrefix(glob: string): string {
-  const segs = glob.split("/");
-  const out: string[] = [];
-  for (const s of segs) {
-    if (/[*?[\]{}]/.test(s)) break;
-    out.push(s);
-  }
-  return out.join("/");
-}

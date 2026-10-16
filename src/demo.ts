@@ -92,7 +92,6 @@ export function prepareDemo(dir: string, runtime: Runtime): DemoSetup {
   yaml = yaml.replace("max_rounds: 0 ", "max_rounds: 20");
   // One runtime for the whole team, and the roles scoped to the sample repo.
   for (const agent of ["lead", "fe-member", "qa-member"]) yaml = yaml.replace(`  ${agent}:\n`, `  ${agent}:\n    runtime: ${runtime}\n`);
-  yaml = yaml.replace('# owns: ["src/web/**"]', 'owns: ["src/**"]').replace('# owns: ["tests/**"]', 'owns: ["test/**"]');
   fs.writeFileSync(cfg, yaml);
   return { dir: root, home, repo };
 }

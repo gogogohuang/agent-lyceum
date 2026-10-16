@@ -85,7 +85,7 @@ export interface RunState {
   snapshots?: number;
   /** Concurrent runs: where the lead's work ended up (`git merge <branch>`). Set when the run ends. */
   result_branch?: ResultBranch;
-  /** Set when the run started with the lead in its own worktree (max_concurrent_runs > 1 then); its resumes keep that, whatever the config says later. */
+  /** Set when the run started with the lead in its own worktree (isolation mode); its resumes keep that, whatever the config says later. */
   lead_workspace?: true;
   /** The pull request the dispatcher opened for this run (when the lead asked for one and it worked). */
   pr_url?: string;

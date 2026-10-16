@@ -57,7 +57,6 @@ export function resolveCallAgent(home: string, name: string): ResolvedAgent {
     canMessage: [],
     canAskUser: false,
     canEditAgentMd: false,
-    owns: [],
   };
 }
 
@@ -79,7 +78,7 @@ export function callProject(home: string, agent: ResolvedAgent, dir: string, cal
     name: CALL_PROJECT,
     dir,
     lead: agent.name,
-    dispatcher: { ...DISPATCHER_DEFAULTS, max_parallel: 1, workspace_mode: "shared" },
+    dispatcher: DISPATCHER_DEFAULTS,
     agents: { [agent.name]: agent },
     paths,
     solo: "call",

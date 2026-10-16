@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
-import { git, initGitRepo, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeEnv, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -15,10 +15,9 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 /** The whole tool, as a user runs it: the real CLI on the real dispatcher, with a scripted stand-in for `claude`. */
-function setup(script: object) {
+function setup(script: object, opts: { git?: boolean } = {}) {
   env = makeEnv();
-  initGitRepo(env.repo);
-  makeParallel(env);
+  if (opts.git !== false) initGitRepo(env.repo);
   const bin = path.join(env.root, "bin");
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
@@ -122,7 +121,7 @@ describe("a run from start to clear", () => {
   }, 120_000);
 
   it("refuses to start a checkout run while another checkout run holds the lock", () => {
-    const t = setup({ calls: [] });
+    const t = setup({ calls: [] }, { git: false }); // not a git repo: the run would work in the checkout
     const lease = acquireProjectLock(env.project().paths.root, "other-run", { checkout: true });
     try {
       const r = t.sync(["run", "x", "-p", "demo"]);

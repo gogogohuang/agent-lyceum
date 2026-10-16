@@ -101,20 +101,6 @@ describe("Claude Code adapter", () => {
     expect(s.disableAllHooks).toBe(true);
   });
 
-  it("restricts repo edits to owned globs when running in parallel", () => {
-    env = makeEnv();
-    env.editProjectYaml((t) =>
-      t
-        .replace("max_parallel: 1", "max_parallel: 2")
-        .replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]')
-        .replace('    # owns: ["tests/**"]', '    owns: ["tests/**"]'),
-    );
-    const p = env.project();
-    const s = buildClaudeSettings(p, p.agents["fe-member"]) as unknown as ClaudeSettingsView;
-    expect(s.permissions.allow).toContain(`Edit(/${env.repo}/src/web/**)`);
-    expect(s.permissions.allow).not.toContain(`Edit(/${env.repo}/**)`);
-  });
-
   it("passes the prompt on stdin and system prompt via file, with add-dir for context paths", () => {
     env = makeEnv();
     const inv = buildClaudeInvocation(input(env, "fe-member", { sessionId: "sess-1" }));

@@ -35,9 +35,7 @@ describe("soloProject", () => {
     expect(p.lead).toBe("fe-member");
     expect(Object.keys(p.agents)).toEqual(["lead", "fe-member", "qa-member"]);
     const a = p.agents["fe-member"]!;
-    expect([a.canMessage, a.canAskUser, a.canEditAgentMd, a.owns]).toEqual([[], false, false, []]);
-    expect(p.dispatcher.max_parallel).toBe(1);
-    expect(p.dispatcher.workspace_mode).toBe("shared");
+    expect([a.canMessage, a.canAskUser, a.canEditAgentMd]).toEqual([[], false, false]);
   });
 
   it("does not change the project it was given", () => {

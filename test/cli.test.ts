@@ -207,7 +207,7 @@ describe("doctor --resolved", () => {
     const r = run(["doctor", "--resolved", "-p", "demo"]);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/agents\.lead\.runtime\s*=\s*claude-code\s+team\.yaml/);
-    expect(r.out).toMatch(/dispatcher\.max_parallel\s*=\s*1\s+projects\/demo\/project\.yaml/);
+    expect(r.out).toMatch(/dispatcher\.retry\s*=\s*2\s+projects\/demo\/project\.yaml/);
   });
 
   it("--json is machine readable", () => {

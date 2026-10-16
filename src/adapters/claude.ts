@@ -28,11 +28,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
   // Web tools are opt-in: `search` is the lighter one (snippets only), `fetch` also pulls whole pages into the agent's context.
   if (agent.allowWeb === "search" || agent.allowWeb === "fetch") allow.push("WebSearch");
   if (agent.allowWeb === "fetch") allow.push("WebFetch");
-  if (pol.restrictRepoToOwns) {
-    for (const g of pol.owns) allow.push(rule("Edit", path.join(repo, g)));
-  } else {
-    allow.push(rule("Edit", `${repo}/**`));
-  }
+  allow.push(rule("Edit", `${repo}/**`));
   for (const d of pol.allowDirs) allow.push(rule("Edit", `${d}/**`));
   for (const f of pol.allowFiles) allow.push(rule("Edit", f));
 

@@ -9,7 +9,7 @@ import { commonFile, outboxDir } from "../src/policy.js";
 import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
+import { collectAgentChanges, integrateAgentChanges, planWorkspace, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
 import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
 import { PR_FOOTER, type CommandRunner } from "../src/open-pr.js";
 import type { ResolvedProject } from "../src/config.js";
@@ -34,20 +34,6 @@ function setup() {
 }
 const collect = (w: AgentWorkspace, owns: string[]) => collectAgentChanges(w, owns);
 
-describe("globMatch", () => {
-  it("handles **, *, ? and braces like the owns globs in project.yaml", () => {
-    expect(globMatch("src/web/**", "src/web/a/b/c.ts")).toBe(true);
-    expect(globMatch("src/web/**", "src/web")).toBe(false);
-    expect(globMatch("src/web/**", "src/webx/a.ts")).toBe(false);
-    expect(globMatch("src/*.ts", "src/a.ts")).toBe(true);
-    expect(globMatch("src/*.ts", "src/a/b.ts")).toBe(false);
-    expect(globMatch("**/*.md", "docs/x/y.md")).toBe(true);
-    expect(globMatch("**/*.md", "y.md")).toBe(true);
-    expect(globMatch("src/{web,api}/**", "src/api/x")).toBe(true);
-    expect(globMatch("a?c", "abc")).toBe(true);
-  });
-});
-
 describe("collectAgentChanges", () => {
   it("commits what the agent did in its worktree and lists the files", () => {
     const { ws } = setup();
@@ -65,21 +51,6 @@ describe("collectAgentChanges", () => {
   it("reports no changes for an untouched worktree", () => {
     const { ws } = setup();
     expect(collect(ws("fe-member"), FE_OWNS)).toMatchObject({ files: [], violations: [] });
-  });
-
-  it("flags edits outside owns, in any form: modify, add, delete and rename", () => {
-    const { ws } = setup();
-    const fe = ws("fe-member");
-    write(path.join(fe.dir, "tests/t.txt"), "sneaky\n"); // modify outside
-    write(path.join(fe.dir, "docs/new.md"), "x\n"); // add outside
-    git(fe.root, "mv", "src/web/b.txt", "tests/b-moved.txt"); // rename out of owns
-    const v = collect(fe, FE_OWNS).violations.join("\n");
-    expect(v).toContain("tests/t.txt");
-    expect(v).toContain("docs/new.md");
-    expect(v).toContain("tests/b-moved.txt");
-    const fe2 = ws("qa-member");
-    fs.rmSync(path.join(fe2.dir, "src/web/a.txt")); // delete outside qa's owns
-    expect(collect(fe2, QA_OWNS).violations.join("\n")).toContain("src/web/a.txt");
   });
 
   it("flags the repo's protected instruction files", () => {
@@ -324,6 +295,7 @@ describe("dispatcher integration", () => {
     // Run B starts (its guard takes its baseline); its only agent is a member that may not edit COMMON.md.
     const b = new RunSession({
       project,
+      plan: planWorkspace(project),
       task: prepareTask({ text: "task b", cwd: env.root, runDir: runDirB }),
       runDir: runDirB,
       soloAgent: "fe-member",
