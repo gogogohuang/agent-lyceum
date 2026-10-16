@@ -2,7 +2,7 @@
 // writes the last message to <file> and prints JSON events.
 //
 // FAKE_FAIL=<kind>[:<times>]   fail like the real CLI does for that error kind (rate_limit | quota | network | auth | unknown | crash | timeout):
-//                              the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>), then calls succeed; no <times> = always fail.
+//                              the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>, required with <times>), then calls succeed; no <times> = always fail.
 // FAKE_SCRIPT=<file.json>      { "calls": [ { fail?, result? } ... ] }: call N (counted in <file>.count) does what entry N says.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -14,7 +14,7 @@ if (args[0] === "--version") {
 }
 fs.readFileSync(0, "utf8");
 
-// kind -> message of the final `turn.failed` event. auth and network are real captured output; the others follow the documented text.
+// kind -> message of the final `turn.failed` event. auth is real captured output; the others follow the documented text. For network, the `error` event is the observed retry message; the final `turn.failed` text is composed, not captured.
 const FAILURES = {
   auth: "unexpected status 401 Unauthorized: Incorrect API key provided: sk-bogus. You can find your API key at https://platform.openai.com/account/api-keys., url: https://api.openai.com/v1/responses, auth error: 401, auth error code: invalid_api_key",
   network: "Reconnecting... waiting for network (Connection failed: error sending request)",
@@ -51,6 +51,10 @@ const succeed = (text = "ok") => {
 
 const [failKind, failTimes] = (process.env.FAKE_FAIL ?? "").split(":");
 let failing = Boolean(failKind);
+if (failing && failTimes && !process.env.FAKE_FAIL_COUNT) {
+  console.error("fake codex: FAKE_FAIL=<kind>:<times> needs FAKE_FAIL_COUNT=<file> to count calls");
+  process.exit(2);
+}
 if (failing && failTimes && process.env.FAKE_FAIL_COUNT) {
   const countFile = process.env.FAKE_FAIL_COUNT;
   const seen = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;

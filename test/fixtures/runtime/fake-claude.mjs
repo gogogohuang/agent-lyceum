@@ -5,7 +5,7 @@
 //                                        call N of the whole run (counted in <file>.count) does what entry N says.
 // moveAbs: [{ from, to }]   rename files by absolute path; "{ARCHIVE}" in any path/content is the "Archive directory:" line of a memory-tidy prompt
 // FAKE_FAIL=<kind>[:<times>]             fail like the real CLI does for that error kind (rate_limit | quota | network | auth | unknown | crash | timeout):
-//                                        the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>), then calls behave as below; no <times> = always fail.
+//                                        the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>, required with <times>), then calls behave as below; no <times> = always fail.
 //                                        A script entry can say `fail: "<kind>"` instead (it is counted by the script itself).
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
 import { spawn } from "node:child_process";
@@ -63,6 +63,10 @@ const finish = (text = "ok") => process.stdout.write(JSON.stringify({ result: te
 
 const [failKind, failTimes] = (process.env.FAKE_FAIL ?? "").split(":");
 let failing = Boolean(failKind);
+if (failing && failTimes && !process.env.FAKE_FAIL_COUNT) {
+  console.error("fake claude: FAKE_FAIL=<kind>:<times> needs FAKE_FAIL_COUNT=<file> to count calls");
+  process.exit(2);
+}
 if (failing && failTimes && process.env.FAKE_FAIL_COUNT) {
   const countFile = process.env.FAKE_FAIL_COUNT;
   const seen = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;

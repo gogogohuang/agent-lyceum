@@ -107,7 +107,7 @@ const CLAUDE_RULES: Rule[] = [
   // documented: `5-hour limit reached ∙ resets 3pm`, API 400 `Credit balance is too low`
   { kind: "quota", re: /\b(5-hour|weekly|usage) limit reached\b|credit balance is too low/i },
   // documented: API 429 `rate_limit_error`, 529 `overloaded_error`
-  { kind: "rate_limit", re: /\bHTTP (429|529)\b|rate.?limit|overloaded/i },
+  { kind: "rate_limit", re: /\bHTTP (429|529)\b|rate_limit_error|rate limit (reached|exceeded)|overloaded_error|^api error: overloaded/im },
   // observed: `API Error: Connection refused — ... (ECONNREFUSED)`; documented: the other Node error codes
   { kind: "network", re: /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up/i },
   // documented: a native crash prints one of these (a signal kill has no exit code, see `isSignalKill`)
@@ -123,10 +123,15 @@ function classifyWith(rules: Rule[], code: number | null, text: string): ErrorKi
   return isSignalKill(code) ? "crash" : "unknown"; // never default to crash: a wrong guess would switch models for nothing
 }
 
-/** The text the rules read: the result message, stderr, and the HTTP status the CLI reports as `api_error_status`. With no result (no JSON came out), stdout itself. */
+/**
+ * The text the rules read: the result message (only when it is an error message: pass `result` for an `is_error` run), stderr, and the HTTP status
+ * the CLI reports as `api_error_status`. With no `result` and no JSON in stdout (nothing parsable came out), stdout itself.
+ */
 export function classifyClaudeError(out: { code: number | null; stdout: string; stderr: string; result?: string }): ErrorKind {
   const status = /"api_error_status":\s*(\d{3})/.exec(out.stdout)?.[1];
-  return classifyWith(CLAUDE_RULES, out.code, [out.result ?? out.stdout, out.stderr, status ? `HTTP ${status}` : ""].join("\n"));
+  const j = extractClaudeResult(out.stdout);
+  const message = out.result ?? (j ? (j.is_error ? String(j.result ?? "") : "") : out.stdout);
+  return classifyWith(CLAUDE_RULES, out.code, [message, out.stderr, status ? `HTTP ${status}` : ""].join("\n"));
 }
 
 function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: string, code: number | null): Parsed {
@@ -138,7 +143,7 @@ function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: st
     sessionId: j.session_id,
     outputTokens: j.usage?.output_tokens,
     error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
-    kind: ok ? undefined : classifyClaudeError({ code, stdout, stderr, result: j.result === undefined ? undefined : String(j.result) }),
+    kind: ok ? undefined : classifyClaudeError({ code, stdout, stderr, result: j.is_error && j.result !== undefined ? String(j.result) : undefined }),
   };
 }
 

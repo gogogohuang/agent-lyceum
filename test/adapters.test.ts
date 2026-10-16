@@ -279,6 +279,8 @@ describe("classifyClaudeError", () => {
     ["rate_limit: overloaded", "rate_limit", claudeJson(529, "API Error: Overloaded"), "documented"],
     ["network: ECONNREFUSED", "network", claudeJson(null, "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)"), "observed"],
     ["network: ENOTFOUND", "network", claudeJson(null, "API Error: getaddrinfo ENOTFOUND api.anthropic.com"), "documented"],
+    ["network: socket hang up", "network", claudeJson(null, "API Error: socket hang up"), "documented"],
+    ["crash: heap out of memory", "crash", claudeJson(null, "FATAL ERROR: JavaScript heap out of memory"), "documented"],
   ];
   it.each(cases)("%s => %s (%s sample)", (_rule, kind, stdout) => {
     const j = JSON.parse(stdout) as { result: string };
@@ -293,6 +295,18 @@ describe("classifyClaudeError", () => {
     expect(classifyClaudeError({ code: 3, stdout: "", stderr: "" })).toBe("unknown");
     expect(classifyClaudeError({ code: 1, stdout: claudeJson(null, "I could not finish the task"), stderr: "", result: "I could not finish the task" })).toBe("unknown");
   });
+  it("reads result only from an is_error run: a normal answer mentioning rate limits is not a rate_limit", () => {
+    const answer = '{"is_error":false,"result":"I added a rate limit (429) and an Invalid API key check","session_id":"s"}';
+    expect(classifyClaudeError({ code: 1, stdout: answer, stderr: "" })).toBe("unknown");
+    const err = '{"is_error":true,"result":"5-hour limit reached ∙ resets 3pm","session_id":"s"}';
+    expect(classifyClaudeError({ code: 0, stdout: err, stderr: "" })).toBe("quota");
+    const c = buildClaudeInvocation({ ...input((env = makeEnv()), "lead", { runtime: "claude-code" }) });
+    expect(c.parse({ stdout: answer, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
+    expect(c.parse({ stdout: err, stderr: "", code: 0 })).toMatchObject({ ok: false, kind: "quota" });
+  });
+  it("a bare number or word is not enough: rules want a status-like context", () => {
+    expect(classifyClaudeError({ code: 1, stdout: "", stderr: "retried 429 times, rate limiting is on, overloaded machine" })).toBe("unknown");
+  });
   it("the first matching rule wins (a 5-hour limit is quota, not rate_limit)", () => {
     expect(classifyClaudeError({ code: 1, stdout: "", stderr: "5-hour limit reached ∙ rate limit" })).toBe("quota");
   });
@@ -306,12 +320,21 @@ describe("classifyCodexError", () => {
     ["quota: usage limit", "quota", "You've hit your usage limit. Upgrade to Pro or try again later.", "documented"],
     ["rate_limit: 429", "rate_limit", "exceeded retry limit, last status: 429 Too Many Requests", "documented"],
     ["rate_limit: rate_limit_exceeded", "rate_limit", "Rate limit reached for gpt-5 (rate_limit_exceeded)", "documented"],
-    ["network: waiting for network", "network", "Reconnecting... waiting for network (Connection failed: error sending request)", "observed"],
+    ["network: waiting for network", "network", "Reconnecting... waiting for network (Connection failed: error sending request)", "observed as a retry event only; final-failure sample documented"],
+    ["crash: panicked at", "crash", "thread 'main' panicked at core/src/lib.rs:10:5", "documented"],
     ["network: ENOTFOUND", "network", "dns error: failed to lookup address (ENOTFOUND api.openai.com)", "documented"],
   ];
   it.each(cases)("%s => %s (%s sample)", (_rule, kind, text) => {
     expect(classifyCodexError({ code: 1, stdout: "", stderr: text })).toBe(kind);
     expect(classifyCodexError({ code: 1, stdout: JSON.stringify({ type: "turn.failed", error: { message: text } }), stderr: "" })).toBe(kind);
+  });
+  it("reads only error channels: command output or messages in stdout never classify a failure", () => {
+    const stdout = '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"429 rate limit unauthorized codex login"}}';
+    expect(classifyCodexError({ code: 1, stdout, stderr: "" })).toBe("unknown");
+    expect(classifyCodexError({ code: 1, stdout, stderr: "unexpected status 429 Too Many Requests" })).toBe("rate_limit");
+  });
+  it("a bare number or word is not enough: rules want a status-like context", () => {
+    expect(classifyCodexError({ code: 1, stdout: "", stderr: "line 401 of the unauthorized.ts file, 429 items, rate limiting" })).toBe("unknown");
   });
   it("crash: killed by a signal; documented, not observed", () => {
     expect(classifyCodexError({ code: null, stdout: "", stderr: "" })).toBe("crash");
@@ -392,6 +415,11 @@ describe("fake runtimes: FAKE_FAIL", () => {
       expect([run(fixture, env).status, run(fixture, env).status]).toEqual([1, 1]);
       expect(run(fixture, env).status).toBe(0);
       expect(run(fixture, env).status).toBe(0);
+    });
+    it("FAKE_FAIL=<kind>:<n> without FAKE_FAIL_COUNT refuses loudly", () => {
+      const r = run(fixture, { FAKE_FAIL: "rate_limit:2" });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/FAKE_FAIL_COUNT/);
     });
     it("FAKE_FAIL without a count fails every call", () => {
       expect(run(fixture, { FAKE_FAIL: "auth" }).status).toBe(1);

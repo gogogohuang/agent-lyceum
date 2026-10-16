@@ -115,10 +115,11 @@ const CODEX_RULES: Rule[] = [
   // documented: `You exceeded your current quota` / `insufficient_quota`, ChatGPT plans: `You've hit your usage limit`
   { kind: "quota", re: /insufficient_quota|exceeded your current quota|hit your usage limit/i },
   // documented: `exceeded retry limit, last status: 429 Too Many Requests`, `rate_limit_exceeded`
-  { kind: "rate_limit", re: /\b429\b|too many requests|rate.?limit/i },
+  { kind: "rate_limit", re: /\bstatus:? 429\b|\b429 too many requests|rate_limit_exceeded|rate limit reached/i },
   // observed: `unexpected status 401 Unauthorized: Incorrect API key provided ... invalid_api_key`; documented: `Not logged in`
-  { kind: "auth", re: /\b401\b|unauthorized|invalid_api_key|incorrect api key|not logged in|codex login/i },
-  // observed: `Reconnecting... waiting for network (Connection failed: error sending request)`; documented: DNS / Node error codes
+  { kind: "auth", re: /\bstatus:? 401\b|\b401 unauthorized|invalid_api_key|incorrect api key|not logged in|codex login/i },
+  // `Reconnecting... waiting for network (Connection failed: error sending request)` is observed as a retry event only (a real codex with a dead
+  // network never ends by itself: the runner times it out); a final-failure sample is documented-not-observed, as are DNS / Node error codes
   { kind: "network", re: /waiting for network|error sending request|dns error|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i },
   { kind: "crash", re: /segmentation fault|panicked at/i },
 ];
@@ -138,7 +139,8 @@ function failureMessage(stdout: string): string | undefined {
 }
 
 export function classifyCodexError(out: { code: number | null; stdout: string; stderr: string; result?: string }): ErrorKind {
-  const text = out.result ?? failureMessage(out.stdout) ?? `${out.stderr}\n${out.stdout}`;
+  // Only error channels are read: the final turn.failed message, else stderr. stdout also carries command output and the agent's own words.
+  const text = out.result ?? failureMessage(out.stdout) ?? out.stderr;
   const hit = CODEX_RULES.find((r) => r.re.test(text));
   if (hit) return hit.kind;
   return out.code === null ? "crash" : "unknown"; // killed by a signal; otherwise never guess crash
@@ -152,5 +154,6 @@ function finishCodex(lastFile: string, sessionId: string | undefined, outputToke
     /* no last message */
   }
   const ok = code === 0;
+  // `error` is the last 500 chars of stderr||stdout; `kind` comes from the classifier's own, narrower source preference
   return { ok, text, sessionId, outputTokens, error: ok ? undefined : (stderr || stdout || `exit code ${code}`).slice(-500), kind: ok ? undefined : classifyCodexError({ code, stdout, stderr }) };
 }
