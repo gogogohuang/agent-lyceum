@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ResolvedProject } from "./config.js";
 import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
-import type { RunOutcome } from "./schema.js";
+import { ERROR_KINDS, RUNTIMES, type ErrorKind, type Runtime, type RunOutcome } from "./schema.js";
 import type { ResultBranch } from "./worktree.js";
 
 export const STATE_FILE = "state.json";
@@ -47,6 +47,29 @@ export interface WakeRecord {
   /** Mail this wake handed to others; `to` is "(done)" for the lead's final message. */
   sent?: SentTopic[];
   error?: string;
+  /** With a fallback chain only: the runtime and model this call ran on. */
+  runtime?: Runtime;
+  model?: string;
+  /** With a fallback chain only: the `runtime/model` this call replaced (set on a backup's calls). */
+  fallback_from?: string;
+  /** With a fallback chain only: why the call failed. */
+  kind?: ErrorKind;
+}
+
+/** A model given up on during a wake with a fallback chain, for `failure.tried`. */
+export interface TriedModel {
+  runtime: Runtime;
+  model?: string;
+  kind?: ErrorKind;
+  error?: string;
+}
+
+/** The run stopped because an agent kept failing: who, the last error, how many times it was called; `tried` only with a fallback chain. */
+export interface RunFailure {
+  agent: string;
+  error?: string;
+  attempts: number;
+  tried?: TriedModel[];
 }
 
 export interface RunState {
@@ -91,7 +114,8 @@ export interface RunState {
   pr_url?: string;
   sessions: Record<string, string>;
   output_tokens: number;
-  last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
+  /** `runtime`/`model` only for agents with a fallback chain. */
+  last_wake: Record<string, { at: string; ok: boolean; error?: string; runtime?: Runtime; model?: string }>;
   /** Process running this dispatcher, so a monitor can tell "running" from "interrupted". */
   pid: number;
   /** One line describing the run's task. */
@@ -101,7 +125,9 @@ export interface RunState {
   /** Finished wakes, oldest first. */
   wakes: WakeRecord[];
   /** Set when the run stopped because an agent kept failing: who, the last error, how many times it was called. */
-  failure?: { agent: string; error?: string; attempts: number };
+  failure?: RunFailure;
+  /** Models cooling down after `rate_limit`/`quota` (`<runtime>/<model>` → until when); absent until one is. */
+  cooldowns?: Record<string, { until: string; kind: ErrorKind }>;
   /** Checklist progress: seeded from the task, then replaced by the lead's latest `## Steps` (after a reopen, added to `step_base`). */
   steps?: Step[];
   /** The checklist as it stood at the last reopen: the follow-up's steps are shown after it, and its open steps do not hold up the follow-up's done. */
@@ -149,7 +175,15 @@ const WireState = z
     wakes: z.array(z.any()).optional(),
     solo_agent: z.string().optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
-    failure: z.object({ agent: z.string(), error: z.string().optional(), attempts: z.number() }).optional(),
+    failure: z
+      .object({
+        agent: z.string(),
+        error: z.string().optional(),
+        attempts: z.number(),
+        tried: z.array(z.object({ runtime: z.enum(RUNTIMES), model: z.string().optional(), kind: z.enum(ERROR_KINDS).optional(), error: z.string().optional() })).optional(),
+      })
+      .optional(),
+    cooldowns: z.record(z.string(), z.object({ until: z.string(), kind: z.enum(ERROR_KINDS) })).optional(),
     step_base: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     name: z.string().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),

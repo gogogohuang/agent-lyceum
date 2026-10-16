@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type RunFailure, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
@@ -194,7 +194,7 @@ export interface RunReport {
   /** 0 = no limit. */
   max_rounds: number;
   /** Set when an agent kept failing and the run stopped: `resume` after fixing the cause. */
-  failure?: { agent: string; error?: string; attempts: number };
+  failure?: RunFailure;
   output_tokens: number;
   task_source: "text" | "file";
   task_path?: string;
