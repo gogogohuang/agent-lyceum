@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { acquireProjectLock as acquireOld } from "./fixtures/lock-v0.17.3.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -28,8 +29,8 @@ afterEach(() => {
 });
 
 /** Start a child that takes the lock and holds it for `holdMs`; resolves with its first output line. */
-function startHolder(root: string, runId: string, holdMs: number, max = 1) {
-  const child = spawn(tsx, [holder, root, runId, String(holdMs), String(max)], { stdio: ["ignore", "pipe", "pipe"] });
+function startHolder(root: string, runId: string, holdMs: number, kind = "checkout") {
+  const child = spawn(tsx, [holder, root, runId, String(holdMs), kind], { stdio: ["ignore", "pipe", "pipe"] });
   const first = new Promise<string>((resolve) => {
     let buf = "";
     child.stdout.on("data", (b) => {
@@ -43,7 +44,7 @@ function startHolder(root: string, runId: string, holdMs: number, max = 1) {
 }
 
 describe("run locks", () => {
-  it("lets exactly one of two processes start when only one run may be active", async () => {
+  it("lets exactly one of two processes start when both need the checkout", async () => {
     const root = tmp();
     const a = startHolder(root, "run-a", 1500);
     const b = startHolder(root, "run-b", 1500);
@@ -54,14 +55,13 @@ describe("run locks", () => {
     expect(listRunLocks(root)).toEqual([]);
   }, 20_000);
 
-  it("lets two processes run at the same time when two runs may be active, and never a third", async () => {
+  it("lets any number of worktree processes run at the same time", async () => {
     const root = tmp();
-    const a = startHolder(root, "run-a", 2000, 2);
-    const b = startHolder(root, "run-b", 2000, 2);
-    const c = startHolder(root, "run-c", 2000, 2);
+    const a = startHolder(root, "run-a", 2000, "worktree");
+    const b = startHolder(root, "run-b", 2000, "worktree");
+    const c = startHolder(root, "run-c", 2000, "worktree");
     const results = (await Promise.all([a.first, b.first, c.first])).sort();
-    expect(results.filter((r) => r === "ACQUIRED")).toHaveLength(2);
-    expect(results.filter((r) => r.startsWith("DENIED"))).toHaveLength(1);
+    expect(results.filter((r) => r === "ACQUIRED")).toHaveLength(3);
     await Promise.all([a.exited, b.exited, c.exited]);
     expect(listRunLocks(root)).toEqual([]);
   }, 30_000);
@@ -77,31 +77,19 @@ describe("run locks", () => {
     l2.release();
   });
 
-  it("lets two different runs hold a lock when the limit is 2, and refuses a third naming the runs in the way", () => {
-    const root = tmp();
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
-    expect(listRunLocks(root).map((l) => l.run_id).sort()).toEqual(["run-a", "run-b"]);
-    expect(() => acquireProjectLock(root, "run-c", { maxConcurrent: 2 })).toThrow(/run-a.*run-b.*max_concurrent_runs/s);
-    expect(fs.existsSync(runLockFile(root, "run-c"))).toBe(false);
-    a.release();
-    acquireProjectLock(root, "run-c", { maxConcurrent: 2 }).release();
-    b.release();
-  });
-
   it("refuses the same run twice, however high the limit, and names the holder", () => {
     const root = tmp();
-    const l = acquireProjectLock(root, "run-1", { maxConcurrent: 5 });
-    expect(() => acquireProjectLock(root, "run-1", { maxConcurrent: 5 })).toThrow(/run-1.*still running/s);
+    const l = acquireProjectLock(root, "run-1", { checkout: false });
+    expect(() => acquireProjectLock(root, "run-1", { checkout: false })).toThrow(/run-1.*still running/s);
     l.release();
   });
 
-  it("allows only one run by default and names the one in the way", () => {
+  it("allows only one checkout run and names the one in the way", () => {
     const root = tmp();
-    const l = acquireProjectLock(root, "run-1");
-    expect(() => acquireProjectLock(root, "run-2")).toThrow(/run-1/);
+    const l = acquireProjectLock(root, "run-1", { checkout: true });
+    expect(() => acquireProjectLock(root, "run-2", { checkout: true })).toThrow(/run-1/);
     l.release();
-    acquireProjectLock(root, "run-2").release();
+    acquireProjectLock(root, "run-2", { checkout: true }).release();
   });
 
   it("does not count locks whose process is gone", () => {
@@ -115,8 +103,8 @@ describe("run locks", () => {
     const root = tmp();
     writeLock(path.join(root, LOCK_FILE), { run_id: "old-run" });
     expect(inspectRunLock(root, "old-run")?.run_id).toBe("old-run");
-    expect(() => acquireProjectLock(root, "new")).toThrow(/old-run/);
-    const l = acquireProjectLock(root, "new", { maxConcurrent: 2 });
+    expect(() => acquireProjectLock(root, "new", { checkout: true })).toThrow(/old-run/);
+    const l = acquireProjectLock(root, "new", { checkout: false });
     expect(listRunLocks(root).map((x) => x.run_id).sort()).toEqual(["new", "old-run"]);
     l.release();
   });
@@ -188,8 +176,8 @@ describe("run locks", () => {
 
   it("force-unlock by run id removes only that run's lock", () => {
     const root = tmp();
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    const a = acquireProjectLock(root, "run-a", { checkout: false });
+    const b = acquireProjectLock(root, "run-b", { checkout: false });
     expect(forceUnlock(root, "run-a")?.run_id).toBe("run-a");
     expect(listRunLocks(root).map((l) => l.run_id)).toEqual(["run-b"]);
     a.release();
@@ -207,20 +195,20 @@ describe("run locks", () => {
 
   it("an exclusive lock needs the project to be idle, and keeps every other lock out while held", () => {
     const root = tmp();
-    const run = acquireProjectLock(root, "run-a", { maxConcurrent: 3 });
-    expect(() => acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true })).toThrow(/run-a/);
+    const run = acquireProjectLock(root, "run-a", { checkout: false });
+    expect(() => acquireProjectLock(root, "tidy-1", { exclusive: true })).toThrow(/run-a/);
     run.release();
-    const tidy = acquireProjectLock(root, "tidy-1", { maxConcurrent: 3, exclusive: true });
+    const tidy = acquireProjectLock(root, "tidy-1", { exclusive: true });
     expect(inspectRunLock(root, "tidy-1")?.exclusive).toBe(true);
-    expect(() => acquireProjectLock(root, "run-b", { maxConcurrent: 3 })).toThrow(/tidy-1/);
+    expect(() => acquireProjectLock(root, "run-b", { checkout: false })).toThrow(/tidy-1/);
     tidy.release();
-    acquireProjectLock(root, "run-b", { maxConcurrent: 3 }).release();
+    acquireProjectLock(root, "run-b", { checkout: false }).release();
   });
 
   it("an exclusive lock whose process is gone does not block anyone", () => {
     const root = tmp();
     writeLock(runLockFile(root, "tidy-dead"), { run_id: "tidy-dead", pid: deadPid(), exclusive: true });
-    acquireProjectLock(root, "run-a", { maxConcurrent: 2 }).release();
+    acquireProjectLock(root, "run-a", { checkout: false }).release();
   });
 
   it("rejects a run id that is not a plain name", () => {
@@ -275,5 +263,89 @@ describe("pid start time", () => {
     const wrong = now.startsWith("proc:") ? "proc:1" : "Mon Jan  1 00:00:00 2001";
     const info: LockInfo = { token: "t", hostname: "h", pid: process.pid, pid_started: wrong, run_id: "r", acquired_at: "", heartbeat_at: "" };
     expect(lockHolderAlive(info)).toBe(false);
+  });
+});
+
+describe("lock kinds", () => {
+  it("a checkout lock is written with exclusive and checkout", () => {
+    const root = tmp();
+    const l = acquireProjectLock(root, "c", { checkout: true });
+    expect(inspectRunLock(root, "c")).toMatchObject({ exclusive: true, checkout: true });
+    const w = acquireProjectLock(root, "w", { checkout: false });
+    expect(inspectRunLock(root, "w")?.checkout).toBe(false);
+    expect(inspectRunLock(root, "w")?.exclusive).toBeUndefined();
+    expect(lockKind(l.info)).toBe("checkout");
+    expect(lockKind(w.info)).toBe("worktree");
+    expect(lockKind({ exclusive: true })).toBe("whole");
+    expect(lockKind({})).toBe("checkout");
+    l.release();
+    w.release();
+  });
+
+  it("two checkout runs: the second is refused, in either order", () => {
+    const root = tmp();
+    const a = acquireProjectLock(root, "a", { checkout: true });
+    expect(() => acquireProjectLock(root, "b", { checkout: true, dir: "/repo", reason: "not a git repository" })).toThrow(/Run a .*working directly in \/repo.*not a git repository.*only one can be active/s);
+    a.release();
+    const b = acquireProjectLock(root, "b", { checkout: true });
+    expect(() => acquireProjectLock(root, "a", { checkout: true })).toThrow(/Run b/);
+    b.release();
+  });
+
+  it("worktree runs run beside each other and beside one checkout run", () => {
+    const root = tmp();
+    const w1 = acquireProjectLock(root, "w1", { checkout: false });
+    const w2 = acquireProjectLock(root, "w2", { checkout: false });
+    const c = acquireProjectLock(root, "c", { checkout: true });
+    expect(listRunLocks(root)).toHaveLength(3);
+    for (const l of [w1, w2, c]) l.release();
+  });
+
+  it("a checkout run is refused by an old run lock without checkout and by lock.json", () => {
+    const root = tmp();
+    writeLock(runLockFile(root, "old"), { run_id: "old" });
+    expect(() => acquireProjectLock(root, "c", { checkout: true })).toThrow(/Run old/);
+    acquireProjectLock(root, "w", { checkout: false }).release();
+    fs.rmSync(runLockFile(root, "old"));
+    writeLock(path.join(root, LOCK_FILE), { run_id: "legacy" });
+    expect(() => acquireProjectLock(root, "c", { checkout: true })).toThrow(/Run legacy/);
+  });
+
+  it("tidy is refused while a checkout run is active, and a checkout run is refused while tidy is active", () => {
+    const root = tmp();
+    const c = acquireProjectLock(root, "c", { checkout: true });
+    expect(() => acquireProjectLock(root, "tidy", { exclusive: true })).toThrow(/needs the project to itself.*c \(pid/s);
+    c.release();
+    const t = acquireProjectLock(root, "tidy", { exclusive: true });
+    expect(() => acquireProjectLock(root, "c", { checkout: true })).toThrow(/tidy.*needs the project to itself/s);
+    expect(() => acquireProjectLock(root, "w", { checkout: false })).toThrow(/tidy/);
+    t.release();
+  });
+
+  it("clear's lock is admitted beside a checkout run", () => {
+    const root = tmp();
+    const c = acquireProjectLock(root, "c", { checkout: true });
+    acquireProjectLock(root, "clear-x", { checkout: false }).release();
+    c.release();
+  });
+
+  it("an old binary cannot admit a second checkout run (mixed versions)", () => {
+    const root = tmp();
+    const a = acquireProjectLock(root, "A", { checkout: true });
+    expect(() => acquireOld(root, "B", { maxConcurrent: 2 })).toThrow(/needs the project to itself/);
+    expect(fs.existsSync(runLockFile(root, "B"))).toBe(false);
+    a.release();
+    const b = acquireOld(root, "B", { maxConcurrent: 2 });
+    expect(() => acquireProjectLock(root, "A", { checkout: true })).toThrow(/Run B .*working directly/s);
+    b.release();
+  });
+
+  it("an old binary still admits two legacy shared runs beside only worktree locks (known limitation)", () => {
+    const root = tmp();
+    const w = acquireProjectLock(root, "W", { checkout: false });
+    const o1 = acquireOld(root, "O1", { maxConcurrent: 3 });
+    const o2 = acquireOld(root, "O2", { maxConcurrent: 3 });
+    expect(listRunLocks(root)).toHaveLength(3);
+    for (const l of [w, o1, o2]) l.release();
   });
 });

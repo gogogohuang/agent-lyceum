@@ -105,7 +105,7 @@ describe("tidy → tidy --undo", { timeout: 60_000 }, () => {
       makeConcurrent(e, 2);
       return e;
     });
-    const lease = acquireProjectLock(env.project().paths.root, "other", { maxConcurrent: 2 });
+    const lease = acquireProjectLock(env.project().paths.root, "other", { checkout: false });
     try {
       const r = t.sync(["tidy", "-p", "demo", "--agent", "lead"]);
       expect(r.code).not.toBe(0);
@@ -124,7 +124,7 @@ describe("tidy → tidy --undo", { timeout: 60_000 }, () => {
     setup(() => ({ calls: [] }));
     const tidy = acquireProjectLock(env.project().paths.root, "tidy-x", { exclusive: true });
     try {
-      expect(() => acquireProjectLock(env.project().paths.root, "r", { maxConcurrent: 2 })).toThrow(/tidy-x/);
+      expect(() => acquireProjectLock(env.project().paths.root, "r", { checkout: false })).toThrow(/tidy-x/);
     } finally {
       tidy.release();
     }

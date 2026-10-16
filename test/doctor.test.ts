@@ -113,8 +113,8 @@ describe("diagnoseProject", () => {
     makeConcurrent(env, 2);
     write(path.join(env.repo, "dirty.txt"), "x\n");
     const p = env.project();
-    const a = acquireProjectLock(p.paths.root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(p.paths.root, "run-b", { maxConcurrent: 2 });
+    const a = acquireProjectLock(p.paths.root, "run-a", { checkout: false });
+    const b = acquireProjectLock(p.paths.root, "run-b", { checkout: false });
     const { bin } = fakeBin(env.root);
     const report = await diagnoseProject(p, { env: envWith(bin, "full") });
     const msgs = report.checks.map((c) => `${c.level}:${c.message}`).join("\n");

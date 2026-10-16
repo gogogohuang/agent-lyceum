@@ -273,8 +273,8 @@ describe("several runs at once", () => {
     mk("20261007T000001000Z-aaaa");
     mk("20261007T000002000Z-bbbb");
     mk("20261007T000003000Z-cccc");
-    const l1 = acquireProjectLock(p.paths.root, "20261007T000001000Z-aaaa", { maxConcurrent: 2 });
-    const l2 = acquireProjectLock(p.paths.root, "20261007T000002000Z-bbbb", { maxConcurrent: 2 });
+    const l1 = acquireProjectLock(p.paths.root, "20261007T000001000Z-aaaa", { checkout: false });
+    const l2 = acquireProjectLock(p.paths.root, "20261007T000002000Z-bbbb", { checkout: false });
     const states = Object.fromEntries(buildTaskListReport(p).runs.map((r) => [r.run_id, r.state]));
     expect(states).toEqual({
       "20261007T000001000Z-aaaa": "running",

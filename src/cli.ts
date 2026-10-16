@@ -129,10 +129,10 @@ function findRun(pr: ResolvedProject, query: string): RunRef {
   return fail(`"${query}" matches several runs:\n${list}\nGive more of the name or id.`);
 }
 
-/** Take the lock of one run, or exit with the reason. `ignoreLimit`: the caller does not start a run (e.g. `clear`). `exclusive`: it needs the whole project (memory tidy). */
-function takeLock(pr: ResolvedProject, runId: string, opts: { ignoreLimit?: boolean; exclusive?: boolean } = {}): ProjectLease {
+/** Take the lock of one run, or exit with the reason. `checkout`: the run works in the project checkout, so only one may be active. `exclusive`: it needs the whole project (memory tidy). */
+function takeLock(pr: ResolvedProject, runId: string, opts: { checkout?: boolean; exclusive?: boolean } = {}): ProjectLease {
   try {
-    return acquireProjectLock(pr.paths.root, runId, { maxConcurrent: opts.ignoreLimit ? Number.MAX_SAFE_INTEGER : pr.dispatcher.max_concurrent_runs, exclusive: opts.exclusive });
+    return acquireProjectLock(pr.paths.root, runId, { checkout: opts.checkout, exclusive: opts.exclusive });
   } catch (e) {
     return fail((e as Error).message);
   }
@@ -190,7 +190,7 @@ const firstLine = (t: string): string => t.trim().split("\n")[0]!.trim();
 
 /** Take the lock and continue a run; the lock is released when it stops (also when it stops because it waits for answers). */
 async function continueRun(pr: ResolvedProject, dir: string, runId: string, followup?: { text: string }): Promise<RunSummary> {
-  const lease = takeLock(pr, runId);
+  const lease = takeLock(pr, runId, { checkout: pr.dispatcher.max_concurrent_runs <= 1 });
   const cancel = cancelOnSignals();
   try {
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
@@ -276,7 +276,7 @@ program
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
-      const lease = takeLock(pr, runId);
+      const lease = takeLock(pr, runId, { checkout: pr.dispatcher.max_concurrent_runs <= 1 });
       let summary: RunSummary;
       const cancel = cancelOnSignals();
       try {
@@ -481,7 +481,7 @@ program
         if (plan.refusals.length) refuse(plan);
         return;
       }
-      const lease = takeLock(pr, full, { ignoreLimit: true });
+      const lease = takeLock(pr, full, { checkout: false });
       try {
         const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees });
         if (plan.refusals.length) refuse(plan);

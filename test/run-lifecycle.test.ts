@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
-import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -121,40 +121,16 @@ describe("a run from start to clear", () => {
     expect(git(env.repo, "branch", "--list", `agent-lyceum/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
   }, 120_000);
 
-  it("refuses to start a second run while another holds the lock and max_concurrent_runs is 1", () => {
+  it("refuses to start a checkout run while another checkout run holds the lock", () => {
     const t = setup({ calls: [] });
-    const lease = acquireProjectLock(env.project().paths.root, "other-run");
+    const lease = acquireProjectLock(env.project().paths.root, "other-run", { checkout: true });
     try {
       const r = t.sync(["run", "x", "-p", "demo"]);
       expect(r.code).toBe(1);
       expect(r.err).toMatch(/other-run/);
-      expect(r.err).toMatch(/max_concurrent_runs/);
+      expect(r.err).toMatch(/only one can be active/);
     } finally {
       lease.release();
-    }
-  }, 60_000);
-
-  it("with max_concurrent_runs: 2 a second run is admitted next to an active one, a third is refused", () => {
-    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
-    makeConcurrent(env, 2);
-    const root = env.project().paths.root;
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
-    try {
-      const second = t.sync(["run", "x", "-p", "demo"]);
-      expect(second.err).not.toMatch(/At most/);
-      expect(second.code).toBe(0);
-      const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
-      try {
-        const third = t.sync(["run", "y", "-p", "demo"]);
-        expect(third.code).toBe(1);
-        expect(third.err).toMatch(/run-a/);
-        expect(third.err).toMatch(/run-b/);
-        expect(third.err).toMatch(/max_concurrent_runs: 2/);
-      } finally {
-        b.release();
-      }
-    } finally {
-      a.release();
     }
   }, 60_000);
 
@@ -188,8 +164,8 @@ describe("a run from start to clear", () => {
   it("clear --lock names the lock, needs --force, and with several locks insists on a run id", () => {
     const t = setup({ calls: [] });
     const root = env.project().paths.root;
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    const a = acquireProjectLock(root, "run-a", { checkout: false });
+    const b = acquireProjectLock(root, "run-b", { checkout: false });
     try {
       const many = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
       expect(many.code).toBe(1);
