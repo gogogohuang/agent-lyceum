@@ -300,7 +300,8 @@ describe("classifyClaudeError", () => {
     expect(classifyClaudeError({ code: 1, stdout: answer, stderr: "" })).toBe("unknown");
     const err = '{"is_error":true,"result":"5-hour limit reached ∙ resets 3pm","session_id":"s"}';
     expect(classifyClaudeError({ code: 0, stdout: err, stderr: "" })).toBe("quota");
-    const c = buildClaudeInvocation({ ...input((env = makeEnv()), "lead", { runtime: "claude-code" }) });
+    env = makeEnv();
+    const c = buildClaudeInvocation({ ...input(env, "lead", { runtime: "claude-code" }) });
     expect(c.parse({ stdout: answer, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
     expect(c.parse({ stdout: err, stderr: "", code: 0 })).toMatchObject({ ok: false, kind: "quota" });
   });
