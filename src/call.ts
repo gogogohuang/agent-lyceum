@@ -3,6 +3,7 @@ import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
+import { candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
 import { ProtectedGuard } from "./guard.js";
 import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
@@ -25,6 +26,8 @@ export interface CallOptions {
   invoker?: Invoker;
   signal?: AbortSignal;
   say?: (line: string) => void;
+  /** Only used with a fallback chain, to wait out a cooldown; tests pass one that does not wait. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export interface CallResult {
@@ -35,6 +38,8 @@ export interface CallResult {
   /** The agent's final reply (empty when the call failed). */
   text: string;
   error?: string;
+  /** With a fallback chain: each model that failed, in order. */
+  tried?: Tried[];
   /** Protected files the agent changed and agent-lyceum put back. */
   reverted: string[];
 }
@@ -161,23 +166,43 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
 
     say(`Calling ${agent.name} in ${dir} (call ${callId})`);
     const invoke = o.invoker ?? realInvoker;
-    const result: WakeResult = await invoke({
-      project,
-      agent,
-      workDir: callDir,
-      systemPrompt: buildSoloSystemPrompt(project, agent),
-      userPrompt: buildCallUserPrompt(agent, o.task),
-      timeoutSec: project.dispatcher.wake_timeout_sec,
+    const all = candidatesFor(agent);
+    const chain = all.length > 1;
+    // A call is a single shot: no retries on one model, and cooldowns that live only as long as it does.
+    const outcome = await runWithFallback<WakeResult>({
+      candidates: all,
+      legacy: !chain,
+      retry: 0,
+      cooldowns: new Cooldowns(),
+      cooldownSec: project.dispatcher.fallback_cooldown_sec,
       signal: o.signal,
-      logDir: path.join(callDir, "log"),
-    }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+      sleep: o.sleep,
+      onSwitch: (_from, to, kind) => {
+        if (o.signal?.aborted) return;
+        say(`  ${agent.name} falling back to ${to.model ? `${to.runtime}/${to.model}` : to.runtime} (${kind ?? "unknown error"})`);
+      },
+      invoke: (c) =>
+        invoke({
+          project,
+          agent: c.primary ? agent : { ...agent, runtime: c.runtime, model: c.model, effort: c.effort },
+          workDir: callDir,
+          systemPrompt: buildSoloSystemPrompt(project, agent),
+          userPrompt: buildCallUserPrompt(agent, o.task),
+          timeoutSec: project.dispatcher.wake_timeout_sec,
+          signal: o.signal,
+          logDir: path.join(callDir, "log"),
+        }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message })),
+    });
+    const result = must(outcome.result, "the call's result");
+    const tried = chain ? outcome.tried : undefined;
 
     const reverted = guard.check([agent]).map((v) => v.file);
     for (const f of reverted) say(`warn   ${agent.name} changed ${f}; it was put back.`);
     const cancelled = !!result.cancelled;
     const error = result.ok ? undefined : cancelled ? "cancelled" : (result.error ?? (result.timedOut ? "timed out" : "failed"));
-    atomicWrite(path.join(callDir, "result.md"), result.ok ? `${result.text.trimEnd()}\n` : `# Call ${cancelled ? "cancelled" : "failed"}\n\n${error}\n`);
-    return { callId, callDir, ok: result.ok, cancelled, text: result.ok ? result.text : "", error, reverted };
+    const triedList = !result.ok && !cancelled && tried?.length ? `\nTried:\n${tried.map((t) => `- ${t.model ? `${t.runtime}/${t.model}` : t.runtime} (${t.kind ?? "unknown"}): ${t.error ?? "failed"}`).join("\n")}\n` : "";
+    atomicWrite(path.join(callDir, "result.md"), result.ok ? `${result.text.trimEnd()}\n` : `# Call ${cancelled ? "cancelled" : "failed"}\n\n${error}\n${triedList}`);
+    return { callId, callDir, ok: result.ok, cancelled, text: result.ok ? result.text : "", error, ...(tried ? { tried } : {}), reverted };
   } finally {
     lease.release();
   }

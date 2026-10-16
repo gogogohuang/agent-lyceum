@@ -159,6 +159,110 @@ describe("callAgent", () => {
   });
 });
 
+describe("callAgent with a fallback chain", () => {
+  const chain = (...entries: string[]) => {
+    const f = path.join(env.home, "team.yaml");
+    fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace("  fe-member:", `  fe-member:\n    fallback: [${entries.join(", ")}]`));
+  };
+  const fail = (kind: WakeResult["kind"], error = `${kind} error`): WakeResult => ({ ok: false, text: "", exitCode: 1, timedOut: false, error, kind });
+  const noSleep = async () => {};
+  const run = (invoker: Invoker, over: Partial<Parameters<typeof callAgent>[0]> = {}) => callAgent(opts(invoker, { sleep: noSleep, ...over }));
+
+  it("switches to the backup on rate_limit and writes a normal result.md", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }");
+    const seen: Array<{ model?: string; runtime?: string }> = [];
+    const said: string[] = [];
+    const r = await run(async (i) => {
+      seen.push({ runtime: i.agent.runtime, model: i.agent.model });
+      return seen.length === 1 ? fail("rate_limit") : reply("from backup");
+    }, { say: (l) => said.push(l) });
+    expect(r).toMatchObject({ ok: true, text: "from backup" });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toEqual({ runtime: "claude-code", model: "haiku" });
+    expect(fs.readFileSync(path.join(r.callDir, "result.md"), "utf8")).toBe("from backup\n");
+    expect(said).toContain("  fe-member falling back to claude-code/haiku (rate_limit)");
+  });
+
+  it("switches on a timeout without retrying the same model", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }");
+    const models: Array<string | undefined> = [];
+    const r = await run(async (i) => {
+      models.push(i.agent.model);
+      return models.length === 1 ? fail("timeout") : reply("ok");
+    });
+    expect(r.ok).toBe(true);
+    expect(models).toHaveLength(2);
+    expect(models[1]).toBe("haiku");
+  });
+
+  it("does not switch on auth or unknown", async () => {
+    for (const kind of ["auth", "unknown"] as const) {
+      env = makeEnv();
+      chain("{ model: haiku }");
+      let calls = 0;
+      const r = await run(async () => {
+        calls++;
+        return fail(kind, "nope");
+      });
+      expect(calls).toBe(1);
+      expect(r).toMatchObject({ ok: false, error: "nope" });
+      env.cleanup();
+    }
+  });
+
+  it("lists every tried model in result.md when all fail, and keeps the last error", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }");
+    let n = 0;
+    const r = await run(async () => fail(++n === 1 ? "rate_limit" : "timeout", `err${n}`));
+    expect(r).toMatchObject({ ok: false, error: "err2" });
+    const md = fs.readFileSync(path.join(r.callDir, "result.md"), "utf8");
+    expect(md.startsWith("# Call failed\n\nerr2\n")).toBe(true);
+    expect(md).toMatch(/claude-code.*rate_limit.*err1/);
+    expect(md).toMatch(/claude-code\/haiku.*timeout.*err2/);
+    expect(md.indexOf("err1")).toBeLessThan(md.lastIndexOf("err2"));
+  });
+
+  it("is unchanged without a chain: one invocation, the exact failure text", async () => {
+    env = makeEnv();
+    let calls = 0;
+    const said: string[] = [];
+    const r = await run(async () => {
+      calls++;
+      return fail("rate_limit", "boom");
+    }, { say: (l) => said.push(l) });
+    expect(calls).toBe(1);
+    expect(fs.readFileSync(path.join(r.callDir, "result.md"), "utf8")).toBe("# Call failed\n\nboom\n");
+    expect(said.filter((l) => /falling back/.test(l))).toEqual([]);
+  });
+
+  it("turns a thrown invoker into a failed attempt and still switches nothing on unknown", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }");
+    const r = await run(async () => {
+      throw new Error("kaboom");
+    });
+    expect(r).toMatchObject({ ok: false, error: "kaboom" });
+  });
+
+  it("stops on cancel without switching", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }");
+    const ac = new AbortController();
+    let calls = 0;
+    const r = await run((i) => new Promise((resolve) => {
+      calls++;
+      setTimeout(() => ac.abort(), 10);
+      i.signal!.addEventListener("abort", () => resolve(CANCELLED));
+    }), { signal: ac.signal });
+    expect(calls).toBe(1);
+    expect(r).toMatchObject({ ok: false, cancelled: true });
+    expect(fs.readFileSync(path.join(r.callDir, "result.md"), "utf8")).toMatch(/^# Call cancelled/);
+  });
+});
+
 describe("one call per agent at a time", () => {
   it("rejects a second call to the same agent while the first runs, and allows another agent", async () => {
     env = makeEnv();
