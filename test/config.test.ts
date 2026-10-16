@@ -201,3 +201,66 @@ describe("removed settings", () => {
     expect(() => env.project()).toThrow(ConfigError);
   });
 });
+
+describe("fallback resolution", () => {
+  const withProject = (agentLine: string, dispatcherLine = "") => (t: string) => {
+    let out = t;
+    if (dispatcherLine) out = out.replace(/dispatcher:[^\n]*\n/, `dispatcher:\n  fallback: ${dispatcherLine}\n`);
+    return out.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n${agentLine}    can_message: [lead]`);
+  };
+
+  it("is empty with source default when nothing is configured", () => {
+    env = makeEnv();
+    const fe = env.project().agents["fe-member"];
+    expect(fe.fallback).toEqual([]);
+    expect(fe.sources.fallback).toBe("default");
+    expect(env.project().dispatcher.fallback_cooldown_sec).toBe(300);
+  });
+
+  it("uses dispatcher.fallback for agents that set none, and fills runtime from the model", () => {
+    env = makeEnv();
+    env.editProjectYaml(withProject("", "[{ model: sonnet }, { runtime: codex, model: gpt-5, effort: high }]"));
+    const fe = env.project().agents["fe-member"];
+    expect(fe.fallback).toEqual([
+      { runtime: "claude-code", model: "sonnet" },
+      { runtime: "codex", model: "gpt-5", effort: "high" },
+    ]);
+    expect(fe.sources.fallback).toBe("project");
+  });
+
+  it("lets an agent's fallback replace dispatcher.fallback, and [] turns it off", () => {
+    env = makeEnv();
+    env.editProjectYaml(withProject("    fallback: [{ model: haiku }]\n", "[{ model: sonnet }]"));
+    expect(env.project().agents["fe-member"].fallback).toEqual([{ runtime: "claude-code", model: "haiku" }]);
+    expect(env.project().agents["qa-member"].fallback).toEqual([{ runtime: "claude-code", model: "sonnet" }]);
+    env.editProjectYaml((t) => t.replace("    fallback: [{ model: haiku }]\n", "    fallback: []\n"));
+    expect(env.project().agents["fe-member"].fallback).toEqual([]);
+  });
+
+  it("lets the project agent's fallback override the global one", () => {
+    env = makeEnv();
+    fs.appendFileSync(path.join(env.home, "team.yaml"), "");
+    const g = fs.readFileSync(path.join(env.home, "team.yaml"), "utf8").replace("  fe-member:", "  fe-member:\n    fallback: [{ model: haiku }]");
+    fs.writeFileSync(path.join(env.home, "team.yaml"), g);
+    const fe = () => env.project().agents["fe-member"];
+    expect(fe().fallback).toEqual([{ runtime: "claude-code", model: "haiku" }]);
+    expect(fe().sources.fallback).toBe("global");
+    env.editProjectYaml(withProject("    fallback: [{ runtime: codex, model: gpt-5 }]\n"));
+    expect(fe().fallback).toEqual([{ runtime: "codex", model: "gpt-5" }]);
+    expect(fe().sources.fallback).toBe("project");
+  });
+
+  it("keeps the agent's runtime when the model does not reveal one", () => {
+    env = makeEnv();
+    env.editProjectYaml(withProject("    runtime: codex\n    fallback: [{ model: my-custom-model }, { effort: high }]\n"));
+    const fe = env.project().agents["fe-member"];
+    expect(fe.fallback[0]).toEqual({ runtime: "codex", model: "my-custom-model" });
+  });
+
+  it("reports the source of fallback in resolveProjectWithSources", () => {
+    env = makeEnv();
+    env.editProjectYaml(withProject("", "[{ model: sonnet }]"));
+    const { sources } = resolveProjectWithSources(env.home, "demo");
+    expect(sources["agents.fe-member.fallback"]).toEqual({ file: path.join(env.home, "projects/demo/project.yaml"), key: "dispatcher.fallback" });
+  });
+});

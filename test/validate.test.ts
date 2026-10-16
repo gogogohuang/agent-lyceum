@@ -103,3 +103,48 @@ describe("validate", () => {
     expect(res.issues.map((i) => i.message).join("\n")).toMatch(/model "gpt-5" looks like a codex model/);
   });
 });
+
+describe("validate fallback", () => {
+  const setFallback = (env: TestEnv, line: string) =>
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n    fallback: ${line}\n    can_message: [lead]`));
+
+  it("accepts a sound chain", () => {
+    env = makeEnv();
+    setFallback(env, "[{ model: haiku }, { runtime: codex, model: gpt-5, effort: high }]");
+    expect(errors(env)).toEqual([]);
+  });
+
+  it("rejects an entry with neither model nor runtime", () => {
+    env = makeEnv();
+    setFallback(env, "[{ effort: high }]");
+    expect(errors(env).join("\n")).toMatch(/agent fe-member: fallback #1 needs a model or a runtime/);
+  });
+
+  it("rejects an effort the entry's runtime does not accept", () => {
+    env = makeEnv();
+    setFallback(env, "[{ runtime: codex, model: gpt-5, effort: max }]");
+    expect(errors(env).join("\n")).toMatch(/fallback codex\/gpt-5: effort "max" is not supported by codex/);
+  });
+
+  it("rejects an entry identical to the primary runtime and model", () => {
+    env = makeEnv();
+    const fe = env.project().agents["fe-member"];
+    setFallback(env, `[{ runtime: ${fe.runtime}, model: ${fe.model ?? "sonnet"} }]`);
+    if (!fe.model) env.editProjectYaml((t) => t.replace("    fallback:", "    model: sonnet\n    fallback:"));
+    expect(errors(env).join("\n")).toMatch(/fallback .* is the same as the primary/);
+  });
+
+  it("rejects a fallback runtime that cannot enforce the agent's web level", async () => {
+    const { RUNTIME_CAPS } = await import("../src/schema.js");
+    env = makeEnv();
+    setFallback(env, "[{ runtime: codex, model: gpt-5 }]");
+    env.editProjectYaml((t) => t.replace("    fallback:", "    allow_web: search\n    fallback:"));
+    const saved = RUNTIME_CAPS.codex.webLevels;
+    RUNTIME_CAPS.codex.webLevels = ["none"];
+    try {
+      expect(errors(env).join("\n")).toMatch(/agent fe-member: fallback codex\/gpt-5 cannot enforce allow_web: search/);
+    } finally {
+      RUNTIME_CAPS.codex.webLevels = saved;
+    }
+  });
+});

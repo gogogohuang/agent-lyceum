@@ -18,6 +18,8 @@ import {
   type AgentPartialT,
   type DispatcherSettings,
   type Effort,
+  type FallbackEntry,
+  type FallbackEntryPartialT,
   inferRuntime,
   type Runtime,
   type WebLevel,
@@ -41,6 +43,10 @@ export interface ResolvedAgent {
   canAskUser: boolean;
   /** Web access for this agent; undefined = not configured, so the runtime keeps its own default. */
   allowWeb?: WebLevel;
+  /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
+  fallback: FallbackEntry[];
+  /** Entries of the chain that could not be resolved (left out of `fallback`); `validate` reports them. */
+  fallbackInvalid: { index: number; reason: "empty" | "no-runtime" }[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
 }
@@ -116,7 +122,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
   const paths = projectPaths(home, name);
   const hp = homePaths(home);
   const lead = p.team.lead;
-  const { max_parallel: _mp, max_concurrent_runs: _mc, workspace_mode: _wm, ...liveDispatcher } = p.dispatcher;
+  const { max_parallel: _mp, max_concurrent_runs: _mc, workspace_mode: _wm, fallback: dispatcherFallback, ...liveDispatcher } = p.dispatcher;
   const dispatcher: DispatcherSettings = { ...DISPATCHER_DEFAULTS, ...stripUndef(liveDispatcher) };
 
   const agents: Record<string, ResolvedAgent> = {};
@@ -188,6 +194,19 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       }
     }
 
+    // Precedence: the agent's own chain (project > global), then dispatcher.fallback, then none. `[]` is a real value: no fallback.
+    let rawFallback = pick("fallback");
+    if (rawFallback === undefined) {
+      if (dispatcherFallback !== undefined) {
+        rawFallback = dispatcherFallback;
+        sources.fallback = "project";
+      } else {
+        rawFallback = [];
+        sources.fallback = "default";
+      }
+    }
+    const { entries: fallback, invalid: fallbackInvalid } = resolveFallback(rawFallback, runtime);
+
     const isLead = agentName === lead;
     const resume = pick("resume");
     const canMessage = pick("can_message");
@@ -215,6 +234,8 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canEditAgentMd: canEdit ?? isLead,
       canAskUser: canAsk ?? isLead,
       allowWeb,
+      fallback,
+      fallbackInvalid,
       sources,
     };
   }
@@ -229,6 +250,25 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     paths,
     ignoredSettings: collectIgnored(hp.globalConfig, g, paths.config, p),
   };
+}
+
+/** Fill each entry's runtime: `inferRuntime(model)`, else the agent's own. Entries with nothing to go on are set aside, not guessed. */
+function resolveFallback(raw: FallbackEntryPartialT[], agentRuntime: Runtime | undefined): { entries: FallbackEntry[]; invalid: ResolvedAgent["fallbackInvalid"] } {
+  const entries: FallbackEntry[] = [];
+  const invalid: ResolvedAgent["fallbackInvalid"] = [];
+  for (const [index, e] of raw.entries()) {
+    if (e.runtime === undefined && !e.model) {
+      invalid.push({ index, reason: "empty" });
+      continue;
+    }
+    const runtime = e.runtime ?? inferRuntime(e.model) ?? agentRuntime;
+    if (!runtime) {
+      invalid.push({ index, reason: "no-runtime" });
+      continue;
+    }
+    entries.push({ runtime, model: e.model ?? "", ...(e.effort ? { effort: e.effort } : {}) });
+  }
+  return { entries, invalid };
 }
 
 /** The removed keys present in the global and project files, by full path, per file (empty files omitted). */
@@ -286,7 +326,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback"] as const;
 
 /** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
 export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
@@ -317,6 +357,8 @@ export function resolveProjectWithSources(home: string, name: string): { project
       })();
       // A project-level AGENT.md found by convention is not a setting in project.yaml.
       else if (f === "agent_md" && src === "project" && raw.agents[a.name]?.agent_md === undefined) sources[`agents.${a.name}.${f}`] = { default: true };
+      // A chain inherited from dispatcher.fallback lives under that key, not under the agent.
+      else if (f === "fallback" && src === "project" && raw.agents[a.name]?.fallback === undefined) sources[`agents.${a.name}.${f}`] = { file: projectFile, key: "dispatcher.fallback" };
       else sources[`agents.${a.name}.${f}`] = at(src, f);
     }
   }
@@ -340,6 +382,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
+    v[`${p}.fallback`] = a.fallback;
   }
   return v;
 }

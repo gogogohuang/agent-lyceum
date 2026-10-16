@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import type { ResolvedProject } from "./config.js";
+import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, type AgentEnforcement } from "./policy.js";
 import { isInside } from "./paths.js";
-import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
+import { inferRuntime, RUNTIME_CAPS, RUNTIME_EFFORTS } from "./schema.js";
 import { must } from "./assert.js";
 
 export interface Issue {
@@ -37,6 +37,7 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
+    validateFallback(a, err);
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {
@@ -82,6 +83,28 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   }
 
   return { issues, enforcement, ok: !issues.some((i) => i.level === "error") };
+}
+
+/** Load-time (fail closed) checks of one agent's fallback chain: well-formed, not a no-op, and able to keep the agent's restrictions. */
+function validateFallback(a: ResolvedAgent, err: (message: string) => void): void {
+  for (const bad of a.fallbackInvalid) {
+    err(
+      bad.reason === "empty"
+        ? `agent ${a.name}: fallback #${bad.index + 1} needs a model or a runtime.`
+        : `agent ${a.name}: fallback #${bad.index + 1} has no recognizable runtime (set runtime, or use a recognizable model).`,
+    );
+  }
+  for (const f of a.fallback) {
+    const label = `${f.runtime}/${f.model || "(default model)"}`;
+    if (f.effort && !RUNTIME_EFFORTS[f.runtime].includes(f.effort)) {
+      err(`agent ${a.name}: fallback ${label}: effort "${f.effort}" is not supported by ${f.runtime} (use ${RUNTIME_EFFORTS[f.runtime].join(", ")}).`);
+    }
+    if (f.runtime === a.runtime && f.model === (a.model ?? "")) err(`agent ${a.name}: fallback ${label} is the same as the primary runtime and model.`);
+    const caps = RUNTIME_CAPS[f.runtime];
+    if (a.allowWeb && !caps.webLevels.includes(a.allowWeb)) err(`agent ${a.name}: fallback ${label} cannot enforce allow_web: ${a.allowWeb}`);
+    if (!a.canAskUser && !caps.canAskUser) err(`agent ${a.name}: fallback ${label} cannot enforce can_ask_user: false`);
+    if (!caps.worktree) err(`agent ${a.name}: fallback ${label} cannot enforce worktree isolation`);
+  }
 }
 
 export function formatEnforcement(list: AgentEnforcement[]): string {
