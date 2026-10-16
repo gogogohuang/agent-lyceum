@@ -187,7 +187,7 @@ describe("diagnoseProject", () => {
       expect(r.runtimes.map((c) => c.runtime).sort()).toEqual(["claude-code", "codex"]);
     });
 
-    it("errors when the fallback CLI is missing, naming the agents it backs up", async () => {
+    it("warns (never errors) when the fallback CLI is missing, naming the agents it backs up", async () => {
       env = makeEnv();
       const { bin } = fakeBin(env.root);
       fs.rmSync(path.join(bin, "codex"));
@@ -195,10 +195,11 @@ describe("diagnoseProject", () => {
       p.agents.lead!.fallback = [{ runtime: "codex", model: "gpt-5" }];
       p.agents["fe-member"]!.fallback = [{ runtime: "codex", model: "gpt-4" }];
       const r = await diagnoseProject(p, { env: envWith(bin, "full") });
-      expect(r.ok).toBe(false);
-      const e = r.checks.filter((c) => c.level === "error");
-      expect(e).toHaveLength(1);
-      expect(e[0]!.message).toMatch(/codex.*not found.*fallback for (lead, fe-member|fe-member, lead)/);
+      expect(r.ok).toBe(true);
+      expect(r.checks.filter((c) => c.level === "error")).toEqual([]);
+      const w = r.checks.filter((c) => c.level === "warn" && c.subject === "codex");
+      expect(w).toHaveLength(1);
+      expect(w[0]!.message).toMatch(/codex not found on PATH \(it is a fallback for (lead, fe-member|fe-member, lead)\)/);
     });
 
     it("does not change anything for a project without a chain", async () => {
@@ -234,6 +235,20 @@ describe("preflightRuntimes", () => {
     const unknown = await preflightRuntimes(env.project(), { env: envWith(bin, "garbled") });
     expect(unknown.errors).toEqual([]);
     expect(unknown.warnings.join("\n")).toMatch(/unknown/i);
+  });
+});
+
+describe("preflightRuntimes with a fallback chain", () => {
+  it("ignores a missing fallback CLI: it neither blocks the run nor gets probed", async () => {
+    env = makeEnv();
+    const { bin, calls } = fakeBin(env.root);
+    fs.rmSync(path.join(bin, "codex"));
+    const p = env.project();
+    for (const a of Object.values(p.agents)) a.runtime = "claude-code";
+    p.agents.lead!.fallback = [{ runtime: "codex", model: "gpt-5" }];
+    const r = await preflightRuntimes(p, { env: envWith(bin, "full") });
+    expect(r).toEqual({ errors: [], warnings: [] });
+    expect(calls().some((c) => c.startsWith("codex"))).toBe(false);
   });
 });
 

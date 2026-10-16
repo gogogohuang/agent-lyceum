@@ -335,12 +335,20 @@ function fallbackView(a: ResolvedProject["agents"][string], state: RunState | un
   const lw = state?.last_wake[a.name];
   const ran = lw?.runtime ? lw : undefined;
   const model = ran ? ran.model : a.model;
-  const last = [...(state?.wakes ?? [])].reverse().find((w) => w.agent === a.name);
+  const mine = (state?.wakes ?? []).filter((w) => w.agent === a.name);
+  const last = mine.at(-1);
   let fallback: AgentReport["fallback"];
   if (last?.fallback_from) {
     // The reason is on the failed wake just before: the nearest earlier wake of this agent that has a kind.
-    const before = (state?.wakes ?? []).slice(0, (state?.wakes ?? []).lastIndexOf(last)).reverse().find((w) => w.agent === a.name && w.kind);
-    fallback = { from: last.fallback_from, kind: before?.kind ?? "unknown" };
+    let kind: string = "unknown";
+    for (let i = mine.length - 2; i >= 0; i--) {
+      const k = mine[i]!.kind;
+      if (k) {
+        kind = k;
+        break;
+      }
+    }
+    fallback = { from: last.fallback_from, kind };
   }
   const keys = new Set(candidatesFor(a).map((c) => c.key));
   const cooldowns = Object.entries(state?.cooldowns ?? {})

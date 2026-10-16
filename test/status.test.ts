@@ -343,6 +343,26 @@ describe("status: fallback", () => {
     expect(out).toContain("lead 冷卻中：claude-code 剩 2m00s");
   });
 
+  it("back on the primary after a backup wake: no fallback shown", () => {
+    env = makeEnv();
+    const back = { round: 2, agent: "lead", at: "2026-01-01T00:00:55Z", duration_ms: 1, ok: true, handling: [], runtime: "claude-code" };
+    writeRun(env, { ...chainRun, last_wake: { lead: { at: "2026-01-01T00:00:55Z", ok: true, runtime: "claude-code" } }, wakes: [...chainRun.wakes, back] });
+    const r = buildStatusReport(withChain(), undefined, NOW);
+    expect(r.agents.find((a) => a.name === "lead")!.fallback).toBeUndefined();
+    expect(formatStatusReport(r, NOW)).not.toContain("備援中");
+  });
+
+  it("a chain agent that never woke: configured runtime/model, no fallback", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid });
+    const p = withChain();
+    p.agents.lead!.model = "primary-m";
+    const lead = buildStatusReport(p, undefined, NOW).agents.find((a) => a.name === "lead")!;
+    expect(lead.runtime).toBe("claude-code");
+    expect(lead.model).toBe("primary-m");
+    expect(lead.fallback).toBeUndefined();
+  });
+
   it("without a chain: agent keys and the text are exactly what they were", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, last_wake: { lead: { at: "2026-01-01T00:00:50Z", ok: true } } });

@@ -114,14 +114,12 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
   for (const c of caps) {
     const cmd = BINARY[c.runtime];
     const users = Object.values(project.agents).filter((a) => a.runtime === c.runtime);
-    const backups = Object.values(project.agents).filter((a) => a.runtime !== c.runtime && a.fallback.some((f) => f.runtime === c.runtime));
     if (c.binary === "missing") {
-      const forBackup = backups.length ? `${users.length ? "; also" : "it is"} a fallback for ${backups.map((a) => a.name).join(", ")}` : "";
-      checks.push({
-        level: "error",
-        subject: c.runtime,
-        message: users.length ? `${cmd} not found on PATH (needed by ${users.map((a) => a.name).join(", ")}${forBackup}).` : `${cmd} not found on PATH (${forBackup}).`,
-      });
+      if (!users.length) {
+        // Only a fallback chain uses it: a backup that is not installed must not stop a run that works until the primary fails.
+        const backups = Object.values(project.agents).filter((a) => a.fallback.some((f) => f.runtime === c.runtime));
+        checks.push({ level: "warn", subject: c.runtime, message: `${cmd} not found on PATH (it is a fallback for ${backups.map((a) => a.name).join(", ")}).` });
+      } else checks.push({ level: "error", subject: c.runtime, message: `${cmd} not found on PATH (needed by ${users.map((a) => a.name).join(", ")}).` });
       continue;
     }
     checks.push({ level: "ok", subject: c.runtime, message: `${cmd} ${c.version ?? "(version unknown)"}` });
@@ -138,12 +136,13 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
   return checks;
 }
 
-const runtimesUsed = (project: ResolvedProject): Runtime[] => [
-  ...new Set(Object.values(project.agents).flatMap((a) => [a.runtime, ...a.fallback.map((f) => f.runtime)]).filter((r): r is Runtime => !!r)),
+/** Runtimes of the agents themselves; with `withFallback`, also those that only a fallback chain uses. */
+const runtimesUsed = (project: ResolvedProject, withFallback: boolean): Runtime[] => [
+  ...new Set(Object.values(project.agents).flatMap((a) => [a.runtime, ...(withFallback ? a.fallback.map((f) => f.runtime) : [])]).filter((r): r is Runtime => !!r)),
 ];
 
-export async function probeProjectRuntimes(project: ResolvedProject, opts: ProbeOptions = {}): Promise<RuntimeCapabilities[]> {
-  return Promise.all(runtimesUsed(project).map((r) => probeRuntime(r, opts)));
+export async function probeProjectRuntimes(project: ResolvedProject, opts: ProbeOptions = {}, withFallback = false): Promise<RuntimeCapabilities[]> {
+  return Promise.all(runtimesUsed(project, withFallback).map((r) => probeRuntime(r, opts)));
 }
 
 /** Before a run starts: what is explicitly unsupported (refuse) and what is merely unknown (warn). */
@@ -210,7 +209,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
 
   for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
 
-  const runtimes = await probeProjectRuntimes(project, opts);
+  const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));
   checks.push({ level: "info", subject: "login", message: "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on." });
   return { project: project.name, ok: !checks.some((c) => c.level === "error"), checks, runtimes };
