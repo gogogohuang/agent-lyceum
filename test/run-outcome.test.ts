@@ -55,7 +55,7 @@ describe("failureGuide", () => {
     const g = failureGuide("web", "login", { agent: "fe-member", error: "boom", attempts: 3 }, "/runs/r1");
     expect(g).toContain("fe-member was called 3 time(s) and failed every time (boom)");
     expect(g).toContain("/runs/r1/log.jsonl");
-    expect(g).toContain("agent-lyceum doctor -p web");
+    expect(g).toContain("agent-lyceum status --check -p web");
     expect(g).toContain("agent-lyceum resume login -p web");
     expect(g).toContain("agent-lyceum clear login -p web");
   });

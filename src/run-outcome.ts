@@ -56,7 +56,7 @@ export function failureGuide(project: string, run: string, f: { agent: string; e
     `${f.agent} was called ${f.attempts} time(s) and failed every time (${f.error ?? "unknown error"}). The run stopped; nothing was lost: the message ${f.agent} was handling is still unread and the work done so far is kept.`,
     "To fix it:",
     `  1. Read why it failed: ${path.join(runDir, "log.jsonl")} (event "wake"), and the full output of each attempt in ${path.join(runDir, "mail", "attempts")}`,
-    `  2. Fix the cause: the ${f.agent} CLI (installed, logged in, model name), a timeout (dispatcher.wake_timeout_sec), or its AGENT.md / the message it keeps failing on. Check with: agent-lyceum doctor -p ${project}`,
+    `  2. Fix the cause: the ${f.agent} CLI (installed, logged in, model name), a timeout (dispatcher.wake_timeout_sec), or its AGENT.md / the message it keeps failing on. Check with: agent-lyceum status --check -p ${project}`,
     "To go on:",
     `  agent-lyceum resume ${run} -p ${project}      (the same message is handled again; the task is not re-sent)`,
     `  Or give up on it: agent-lyceum clear ${run} -p ${project}`,

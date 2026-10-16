@@ -201,10 +201,10 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
   });
 });
 
-describe("doctor --resolved", () => {
+describe("status --resolved", () => {
   it("lists every effective value with where it came from", () => {
     env = makeEnv();
-    const r = run(["doctor", "--resolved", "-p", "demo"]);
+    const r = run(["status", "--resolved", "-p", "demo"]);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/agents\.lead\.runtime\s*=\s*claude-code\s+team\.yaml/);
     expect(r.out).toMatch(/dispatcher\.max_parallel\s*=\s*1\s+projects\/demo\/project\.yaml/);
@@ -212,7 +212,7 @@ describe("doctor --resolved", () => {
 
   it("--json is machine readable", () => {
     env = makeEnv();
-    const r = run(["doctor", "--resolved", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
+    const r = run(["status", "--resolved", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
     const j = JSON.parse(r.out);
     expect(r.out).not.toMatch(ANSI);
     expect(j.schema_version).toBe(1);
@@ -222,20 +222,59 @@ describe("doctor --resolved", () => {
 
   it("fails on stderr for an unknown project", () => {
     env = makeEnv();
-    const r = run(["doctor", "--resolved", "-p", "ghost", "--json"]);
+    const r = run(["status", "--resolved", "-p", "ghost", "--json"]);
     expect(r.code).not.toBe(0);
     expect(r.out).toBe("");
   });
 });
 
-describe("doctor --json", () => {
+describe("status --check --json", () => {
   it("prints JSON only", () => {
     env = makeEnv();
-    const r = run(["doctor", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
+    const r = run(["status", "--check", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
     expect(r.out).not.toMatch(ANSI);
     const j = JSON.parse(r.out);
     expect(j.schema_version).toBe(1);
     expect(Array.isArray(j.checks)).toBe(true);
+  });
+});
+
+describe("status mode flags (18.5.2)", () => {
+  const ONE = "Use only one of --check, --resolved, --task-list, --task-id, --monitor.";
+  it("two or more mode flags are refused", () => {
+    env = makeEnv();
+    for (const args of [["--check", "--resolved"], ["--check", "--task-list"], ["--resolved", "--task-id", "x"], ["--task-list", "--task-id", "x"], ["--monitor", "--check"], ["--monitor", "--task-list"]]) {
+      const r = run(["status", "-p", "demo", ...args]);
+      expect(r.code, args.join(" ")).toBe(1);
+      expect(r.err, args.join(" ")).toContain(ONE);
+      expect(r.out).toBe("");
+    }
+  });
+
+  it("--task-file needs --check; --json cannot go with --monitor", () => {
+    env = makeEnv();
+    const a = run(["status", "-p", "demo", "--task-file", "x.md"]);
+    expect(a.code).toBe(1);
+    expect(a.err).toContain("--task-file only goes with --check (it checks a task file).");
+    const b = run(["status", "-p", "demo", "--monitor", "--json"]);
+    expect(b.code).toBe(1);
+    expect(b.err).toContain("--json cannot be combined with --monitor.");
+  });
+
+  it("--check exits with the report's ok; a missing task file is an error", () => {
+    env = makeEnv();
+    const j = run(["status", "--check", "-p", "demo", "--json"]);
+    expect(j.code).toBe(JSON.parse(j.out).ok ? 0 : 1);
+    const bad = run(["status", "--check", "-p", "demo", "--task-file", path.join(env.root, "nope.md"), "--json"]);
+    expect(bad.code).toBe(1);
+    const rep = JSON.parse(bad.out);
+    expect(rep.ok).toBe(false);
+    expect(rep.checks.some((c: { subject: string; level: string }) => c.subject === "task" && c.level === "error")).toBe(true);
+  });
+
+  it("the doctor command is gone", () => {
+    env = makeEnv();
+    expect(run(["doctor"]).code).toBe(1);
   });
 });
 

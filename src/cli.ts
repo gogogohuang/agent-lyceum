@@ -93,7 +93,7 @@ project
   .action((name: string, opts: { dir: string }) => {
     try {
       const r = addProject(home(), name, opts.dir);
-      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-lyceum doctor --project ${name}`);
+      console.log(`Project "${name}" created: ${r.config}\nEdit it, then run: agent-lyceum status --check -p ${name}`);
     } catch (e) {
       fail((e as Error).message);
     }
@@ -115,7 +115,7 @@ project
 async function preflight(pr: ResolvedProject): Promise<void> {
   const r = await preflightRuntimes(pr);
   for (const w of r.warnings) console.error(`warn   ${w}`);
-  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-lyceum doctor\`).`);
+  if (r.errors.length) fail(`${r.errors.map((e) => `ERROR  ${e}`).join("\n")}\nFix the above (see \`agent-lyceum status --check\`).`);
 }
 
 /** The run a user typed: full id, name or unique prefix. Exits with the candidates when it is unknown or ambiguous. */
@@ -248,7 +248,7 @@ async function startNewRun(task: string | undefined, opts: { project?: string; t
   const pr = loadProject(opts.project);
   const res = validateProject(pr);
   for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-  if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+  if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum status --check`).");
   let checked = pr;
   if (opts.agent) {
     assertName("agent", opts.agent);
@@ -360,6 +360,7 @@ program
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
   .action(async (a: string | undefined, b: string | undefined, opts: RunOpts) => {
     try {
+      if (a !== undefined && b === undefined && !opts.taskFile && !a.trim()) fail("The task is empty.");
       if (!opts.edit && !opts.answer) fail("--no-edit only goes with --answer.");
       if (opts.taskFile && a !== undefined && b !== undefined) fail("Give the follow-up either as text or with --task-file, not both.");
 
@@ -380,7 +381,7 @@ program
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum status --check`).");
 
       let found: RunRef | undefined;
       if (a !== undefined) {
@@ -447,7 +448,7 @@ function unlockProject(pr: ResolvedProject, runId: string | undefined, force: bo
     return;
   }
   const info = inspectRunLock(root, target);
-  if (!info) fail(`Run "${target}" holds no readable lock. List the locks with: agent-lyceum doctor`);
+  if (!info) fail(`Run "${target}" holds no readable lock. List the locks with: agent-lyceum status --check`);
   console.log(`Lock held for run ${info!.run_id} by pid ${info!.pid} on ${info!.hostname}, last heartbeat ${info!.heartbeat_at}${lockHolderAlive(info!) ? " (that process is still alive)" : " (that process is gone)"}.`);
   if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
   forceUnlock(root, target);
@@ -517,41 +518,24 @@ program
     }
   });
 
-program
-  .command("doctor")
-  .summary("Check the setup without running any agent")
-  .description("Check the setup without running any agent. It checks:\n  - configuration and enforcement levels\n  - git\n  - the project lock\n  - what each runtime CLI supports (read from its --version and --help)\n\nWith --resolved it checks nothing and instead prints:\n  - every effective setting\n  - where each one came from")
-  .option("-p, --project <name>")
-  .option("--task-file <path>", "also check a task file")
-  .option("--resolved", "print the merged settings (global library, project file, defaults) and their sources; runs no other check")
-  .option("--json", "print the report as JSON")
-  .action(async (opts: { project?: string; taskFile?: string; resolved?: boolean; json?: boolean }) => {
+/** `status --check`: the old doctor checks, plus an optional task file. */
+async function runCheck(opts: { project?: string; taskFile?: string; json?: boolean }): Promise<never> {
+  const pr = loadProject(opts.project);
+  const report = await diagnoseProject(pr);
+  if (opts.taskFile) {
     try {
-      if (opts.resolved) {
-        printResolved(opts.project, !!opts.json);
-        return;
-      }
-      const pr = loadProject(opts.project);
-      const report = await diagnoseProject(pr);
-      let taskError: string | undefined;
-      if (opts.taskFile) {
-        try {
-          readTaskFile(absPath(opts.taskFile, process.cwd()));
-        } catch (e) {
-          taskError = (e as Error).message;
-          report.checks.push({ level: "error", subject: "task", message: taskError });
-          report.ok = false;
-        }
-      }
-      if (opts.json) console.log(JSON.stringify({ schema_version: 1, ...report }, null, 2));
-      else console.log(`${formatEnforcement(validateProject(pr).enforcement)}\n\n${formatDoctor(report)}`);
-      process.exit(report.ok ? 0 : 1);
+      readTaskFile(absPath(opts.taskFile, process.cwd()));
     } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+      report.checks.push({ level: "error", subject: "task", message: (e as Error).message });
+      report.ok = false;
     }
-  });
+  }
+  if (opts.json) console.log(JSON.stringify({ schema_version: 1, ...report }, null, 2));
+  else console.log(`${formatEnforcement(validateProject(pr).enforcement)}\n\n${formatDoctor(report)}`);
+  process.exit(report.ok ? 0 : 1);
+}
 
-/** `doctor --resolved`: every effective setting with the file and key it came from. */
+/** `status --resolved`: every effective setting with the file and key it came from. */
 function printResolved(projectName: string | undefined, json: boolean): void {
   const h = home();
   const pr = loadProject(projectName);
@@ -649,7 +633,7 @@ program
       }
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum status --check`).");
       await preflight(pr);
       const lease = takeLock(pr, `tidy-${tidyStamp()}`, { exclusive: true });
       const cancel = cancelOnSignals();
@@ -689,9 +673,17 @@ program
   .option("--task-id <id>", "show everything about one task (run): every wake and its result")
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
-  .option("--json", "print the report as JSON (no colour); works with --task-list and --task-id")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean }) => {
+  .option("--check", "check the setup without running any agent: configuration, git, the project lock, what each runtime CLI supports")
+  .option("--task-file <path>", "with --check: also check a task file")
+  .option("--resolved", "print the merged settings (global library, project file, defaults) and their sources; runs no check")
+  .option("--json", "print the report as JSON (no colour); works with every mode except --monitor")
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; check?: boolean; taskFile?: string; resolved?: boolean }) => {
     try {
+      const modes = [opts.check, opts.resolved, opts.taskList !== undefined, opts.taskId !== undefined, opts.monitor].filter(Boolean).length;
+      if (modes > 1) fail("Use only one of --check, --resolved, --task-list, --task-id, --monitor.");
+      if (opts.taskFile && !opts.check) fail("--task-file only goes with --check (it checks a task file).");
+      if (opts.check) return await runCheck(opts);
+      if (opts.resolved) return printResolved(opts.project, !!opts.json);
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
       if (opts.json) {
         if (opts.monitor) fail("--json cannot be combined with --monitor.");
@@ -784,7 +776,7 @@ program
 // `--help` lists the commands in three layers.
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
-  "Diagnose:": ["doctor", "status"],
+  "Diagnose:": ["status"],
   "Run:": ["run", "clear", "call", "tidy"],
   "Try it:": ["demo"],
 };

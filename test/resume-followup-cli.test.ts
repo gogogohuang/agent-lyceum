@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,21 +26,34 @@ function setup(calls: object[]) {
   const scriptFile = path.join(env.root, "script.json");
   fs.writeFileSync(scriptFile, JSON.stringify({ calls }));
   const vars = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_SCRIPT: scriptFile };
-  return (args: string[]) => {
+  const sh = (args: string[]) => {
     const r = spawnSync(tsx, [cli, "--home", env.home, ...args, "-p", "demo"], { encoding: "utf8", env: vars, stdio: ["ignore", "pipe", "pipe"] });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
+  /** A refused command must not prompt or read stdin: stdin is a pipe that is never closed, so a read would hang until the timeout. */
+  sh.probe = (args: string[]) =>
+    new Promise<{ code: number | null; out: string; err: string; timedOut: boolean }>((resolve) => {
+      const c = spawn(tsx, [cli, "--home", env.home, ...args, "-p", "demo"], { env: vars, stdio: ["pipe", "pipe", "pipe"] });
+      let out = "";
+      let err = "";
+      let timedOut = false;
+      c.stdout.on("data", (d) => (out += d));
+      c.stderr.on("data", (d) => (err += d));
+      const t = setTimeout(() => {
+        timedOut = true;
+        c.kill("SIGKILL");
+      }, 20_000);
+      c.on("close", (code) => {
+        clearTimeout(t);
+        resolve({ code, out, err, timedOut });
+      });
+    });
+  sh.calls = () => (fs.existsSync(`${scriptFile}.count`) ? Number(fs.readFileSync(`${scriptFile}.count`, "utf8")) : 0);
+  return sh;
 }
 
 const runDirs = () => fs.readdirSync(env.project().paths.runs).sort();
 const dirOf = (id: string) => path.join(env.project().paths.runs, id);
-
-/** A second finished run: a copy of `from` under an older id, with its own name. */
-function cloneRun(from: string, id: string, name: string) {
-  fs.cpSync(dirOf(from), dirOf(id), { recursive: true });
-  const st = JSON.parse(fs.readFileSync(path.join(dirOf(id), "state.json"), "utf8"));
-  write(path.join(dirOf(id), "state.json"), JSON.stringify({ ...st, run_id: id, name }));
-}
 
 /** Every file under the runs dir with its bytes, to prove a refused command changed nothing. */
 function snapshot(): string {
@@ -136,23 +149,31 @@ describe("run [run] [text] (continue and reopen)", { timeout: 90_000 }, () => {
     expect(runDirs()).toHaveLength(1);
   });
 
-  it("a prefix of one run is refused with the copy-ready command: no runtime call, run dir unchanged, no lock", () => {
+  it("a prefix of one run is refused with the copy-ready command: no runtime call, no stdin read, files unchanged, no new run, no lock", async () => {
     const sh = setup([]);
-    write(path.join(dirOf("20261014-010000"), "state.json"), state("20261014-010000", "fix-login-mobile", { end_reason: "cancelled" }));
+    const dir = dirOf("20261014-010000");
+    write(path.join(dir, "state.json"), state("20261014-010000", "fix-login-mobile", { end_reason: "agent_failed", outcome: "failed" }));
+    write(path.join(dir, "log.jsonl"), '{"event":"x"}\n');
+    write(path.join(dir, "mail", "inbox", "lead", "m1.md"), "---\nto: lead\n---\nhello\n");
     const before = snapshot();
+    const dirsBefore = runDirs();
     const cases: [string[], string][] = [
       [["run", "fix-login"], "agent-lyceum run fix-login-mobile -p demo"],
       [["run", "fix-login", "--answer", "--no-edit"], "agent-lyceum run fix-login-mobile --answer --no-edit -p demo"],
+      [["run", "fix-login", "--answer"], "agent-lyceum run fix-login-mobile --answer -p demo"],
       [["run", "fix-login", "more please"], 'agent-lyceum run fix-login-mobile "<follow-up>" -p demo'],
       [["run", "fix-login", "--task-file", "f.md"], "agent-lyceum run fix-login-mobile --task-file f.md -p demo"],
     ];
     for (const [args, cmd] of cases) {
-      const r = sh(args);
+      const r = await sh.probe(args);
+      expect(r.timedOut, args.join(" ")).toBe(false);
       expect(r.code, args.join(" ")).toBe(1);
       expect(r.err).toContain('"fix-login" is only the start of run fix-login-mobile (20261014-010000); run needs the exact name or id:');
       expect(r.err).toContain(cmd);
     }
+    expect(sh.calls()).toBe(0);
     expect(snapshot()).toBe(before);
+    expect(runDirs()).toEqual(dirsBefore);
     expect(lockFiles()).toEqual([]);
   });
 
@@ -166,15 +187,20 @@ describe("run [run] [text] (continue and reopen)", { timeout: 90_000 }, () => {
     expect(r.out).toContain("Run fix-login (20261014-010000) already finished");
   });
 
-  it("several runs sharing a prefix: lists them, asks for the exact name or id, changes nothing", () => {
+  it("several runs sharing a prefix: lists them, asks for the exact name or id, changes nothing", async () => {
     const sh = setup([]);
-    write(path.join(dirOf("20261014-010000"), "state.json"), state("20261014-010000", "fix-login-a", { end_reason: "cancelled" }));
-    write(path.join(dirOf("20261014-020000"), "state.json"), state("20261014-020000", "fix-login-b", { end_reason: "cancelled" }));
+    write(path.join(dirOf("20261014-010000"), "state.json"), state("20261014-010000", "fix-login-mobile", { end_reason: "cancelled" }));
+    write(path.join(dirOf("20261014-020000"), "state.json"), state("20261014-020000", "fix-login-web", { end_reason: "cancelled" }));
     const before = snapshot();
-    const r = sh(["run", "fix"]);
+    const dirsBefore = runDirs();
+    const r = await sh.probe(["run", "fix-login"]);
+    expect(r.timedOut).toBe(false);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('"fix" matches several runs only by prefix:');
-    for (const x of ["fix-login-a", "fix-login-b", "20261014-010000", "20261014-020000"]) expect(r.err).toContain(x);
+    expect(sh.calls()).toBe(0);
+    expect(runDirs()).toEqual(dirsBefore);
+    expect(lockFiles()).toEqual([]);
+    expect(r.err).toContain('"fix-login" matches several runs only by prefix:');
+    for (const x of ["fix-login-mobile", "fix-login-web", "20261014-010000", "20261014-020000"]) expect(r.err).toContain(x);
     expect(r.err).toContain("Give the exact name or id: agent-lyceum run <name-or-id>");
     expect(snapshot()).toBe(before);
   });
@@ -182,7 +208,7 @@ describe("run [run] [text] (continue and reopen)", { timeout: 90_000 }, () => {
   it("bare `run` picks the newest run that is not done or running: here the waiting one", () => {
     const sh = setup([]);
     const waiting = { end_reason: "waiting", outcome: "waiting" };
-    write(path.join(dirOf("20261014-010000"), "state.json"), state("20261014-010000", "a", { end_reason: "failed", outcome: "failed" }));
+    write(path.join(dirOf("20261014-010000"), "state.json"), state("20261014-010000", "a", { end_reason: "agent_failed", outcome: "failed" }));
     write(path.join(dirOf("20261014-020000"), "state.json"), state("20261014-020000", "b", waiting));
     writeAskReply(dirOf("20261014-020000"), { status: "answered", askedBy: "lead", round: 1, questions: [{ id: "q1", text: "ok?", asker: "lead", answer: { value: "yes", by: "user" } }] });
     write(path.join(dirOf("20261014-030000"), "state.json"), state("20261014-030000", "c", { pid: process.pid }));
@@ -226,6 +252,18 @@ describe("run [run] [text] (continue and reopen)", { timeout: 90_000 }, () => {
     const r = sh(["run", id!, "again"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain(`Reopening run ${id} (follow-up 1): again`);
+  });
+
+  it("an empty or whitespace-only task fails first: The task is empty.", async () => {
+    const sh = setup([]);
+    for (const t of ["", "   ", "\n\t"]) {
+      const r = await sh.probe(["run", t]);
+      expect(r.code, JSON.stringify(t)).toBe(1);
+      expect(r.err).toContain("The task is empty.");
+    }
+    expect(fs.existsSync(env.project().paths.runs) ? runDirs() : []).toEqual([]);
+    expect(sh.calls()).toBe(0);
+    expect(lockFiles()).toEqual([]);
   });
 
   it("invalid combinations (18.4.5) exit 1 and wake nothing", () => {
