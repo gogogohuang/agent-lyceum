@@ -4,6 +4,9 @@
 // FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, writeLead?, mail?, result? } ... ] }
 //                                        call N of the whole run (counted in <file>.count) does what entry N says.
 // moveAbs: [{ from, to }]   rename files by absolute path; "{ARCHIVE}" in any path/content is the "Archive directory:" line of a memory-tidy prompt
+// FAKE_FAIL=<kind>[:<times>]             fail like the real CLI does for that error kind (rate_limit | quota | network | auth | unknown | crash | timeout):
+//                                        the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>), then calls behave as below; no <times> = always fail.
+//                                        A script entry can say `fail: "<kind>"` instead (it is counted by the script itself).
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -35,9 +38,39 @@ const sendMail = (m) => {
   const body = m.body ?? (m.type === "done" ? FULL : "## Changes\n- done\n\n## Verification\nok\n\n## Open items\nNone\n\n## Risks\nNone\n");
   fs.writeFileSync(path.join(outbox, `m${Date.now()}-${Math.random().toString(16).slice(2)}.md`), `---\n${fm}\n---\n\n${body}\n`);
 };
+// kind -> [exit code, stdout result message, api_error_status, stderr]. auth and network are real captured output; the others follow the documented text.
+const FAILURES = {
+  auth: [1, "Invalid API key · Fix external API key", 401, ""],
+  network: [1, "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)", null, ""],
+  rate_limit: [1, "API Error: Request rejected (429) · rate_limit_error", 429, ""],
+  quota: [1, "5-hour limit reached ∙ resets 3pm", null, ""],
+  unknown: [1, "", null, "fake claude: something unexpected happened"],
+};
+const fail = (kind) => {
+  if (kind === "crash") process.kill(process.pid, "SIGKILL");
+  else if (kind === "timeout") return sleepForever();
+  else if (!FAILURES[kind]) {
+    console.error(`fake claude: unknown FAKE_FAIL kind "${kind}"`);
+    process.exit(2);
+  } else {
+    const [code, result, status, err] = FAILURES[kind];
+    if (err) console.error(err);
+    else process.stdout.write(JSON.stringify({ type: "result", is_error: true, api_error_status: status, result, session_id: "s", usage: { output_tokens: 0 } }));
+    process.exit(code);
+  }
+};
 const finish = (text = "ok") => process.stdout.write(JSON.stringify({ result: text, session_id: "s", usage: { output_tokens: 1 } }));
 
-if (process.env.FAKE_SCRIPT) {
+const [failKind, failTimes] = (process.env.FAKE_FAIL ?? "").split(":");
+let failing = Boolean(failKind);
+if (failing && failTimes && process.env.FAKE_FAIL_COUNT) {
+  const countFile = process.env.FAKE_FAIL_COUNT;
+  const seen = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;
+  fs.writeFileSync(countFile, String(seen + 1));
+  failing = seen < Number(failTimes);
+}
+if (failing) fail(failKind);
+else if (process.env.FAKE_SCRIPT) {
   const file = process.env.FAKE_SCRIPT;
   const countFile = `${file}.count`;
   const n = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;
@@ -51,6 +84,8 @@ if (process.env.FAKE_SCRIPT) {
     console.error(`fake claude: call #${n} is scripted for ${step.agent}, but ${me} was woken`);
     process.exit(1);
   }
+  if (step.fail === "timeout") step.sleep = true; // a hang is what a timeout looks like from outside
+  else if (step.fail) fail(step.fail);
   const archive = /^Archive directory: (.+)$/m.exec(prompt)?.[1] ?? "";
   const sub = (x) => x.replaceAll("{ARCHIVE}", archive);
   for (const m of step.moveAbs ?? []) {

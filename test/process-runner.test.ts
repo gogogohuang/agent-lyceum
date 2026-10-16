@@ -70,6 +70,13 @@ describe("runInvocation", () => {
     const r = await runInvocation({ ...inv("ok"), cmd: "definitely-not-a-real-binary-xyz" }, { timeoutSec: 5, logDir: tmp() });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/not found on PATH/);
+    expect(r.kind).toBe("crash");
+  });
+
+  it("leaves kind unset on success, and takes it from the adapter's parse on a failing exit", async () => {
+    expect((await runInvocation(inv("ok"), { timeoutSec: 20, logDir: tmp() })).kind).toBeUndefined();
+    const r = await runInvocation(inv("fail", undefined, { parse: ({ code }) => ({ ok: false, text: "", error: `exit ${code}`, kind: "unknown" }) }), { timeoutSec: 20, logDir: tmp() });
+    expect(r.kind).toBe("unknown");
   });
 
   it("reports a failing exit with the stderr tail", async () => {
@@ -86,6 +93,7 @@ describe("runInvocation", () => {
     expect(r.timedOut).toBe(true);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/timed out/);
+    expect(r.kind).toBe("timeout");
     const gc = readPid(pidFile);
     await until(() => !alive(gc));
     expect(alive(gc)).toBe(false);
@@ -99,6 +107,7 @@ describe("runInvocation", () => {
     const r = await runInvocation(inv("hang", pidFile), { timeoutSec: 60, signal: ac.signal, logDir: tmp(), killGraceMs: 200, settleWaitMs: 300 });
     expect(Date.now() - t0).toBeLessThan(4000);
     expect(r.cancelled).toBe(true);
+    expect(r.kind).toBeUndefined();
     expect(r.ok).toBe(false);
     const gc = readPid(pidFile);
     await until(() => !alive(gc));

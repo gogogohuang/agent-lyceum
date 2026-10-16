@@ -97,10 +97,12 @@ export function runInvocation(inv: Invocation, opts: RunnerOptions): Promise<Wak
       void Promise.all([endStream(outLog), endStream(errLog)]).then(() => {
         if (spawnError) {
           const hint = (spawnError as NodeJS.ErrnoException).code === "ENOENT" ? ` ("${inv.cmd}" not found on PATH)` : "";
-          return resolve({ ok: false, text: "", exitCode: null, timedOut: false, error: `${spawnError.message}${hint}` });
+          // a missing binary is a crash the chain may route around (the next candidate can be another CLI); other spawn errors stay unclassified
+          const kind = hint ? ("crash" as const) : ("unknown" as const);
+          return resolve({ ok: false, text: "", exitCode: null, timedOut: false, error: `${spawnError.message}${hint}`, kind });
         }
         if (reason === "cancel") return resolve({ ...cancelled, exitCode: exitCode ?? null });
-        if (reason === "timeout") return resolve({ ok: false, text: "", exitCode: exitCode ?? null, timedOut: true, error: `timed out after ${opts.timeoutSec}s` });
+        if (reason === "timeout") return resolve({ ok: false, text: "", exitCode: exitCode ?? null, timedOut: true, error: `timed out after ${opts.timeoutSec}s`, kind: "timeout" });
         const parsed = parser
           ? parser.finish({ code: exitCode ?? null, stdoutTail: stdoutTail.text(), stderrTail: stderrTail.text() })
           : inv.parse({ stdout: fallback.length ? fallback.toString("utf8") : stdoutTail.text(), stderr: stderrTail.text(), code: exitCode ?? null });
