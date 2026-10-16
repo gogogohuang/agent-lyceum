@@ -57,7 +57,7 @@ describe("a run from start to clear", () => {
     first.child.kill("SIGINT");
     expect(await first.done).toBe(130);
     expect(listRunLocks(env.project().paths.root)).toEqual([]);
-    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // nothing reached the repo from the cancelled wake-up
+    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // the repo is never touched; the run works in its own worktrees
 
     // 2. the status of the interrupted run, as JSON
     const mid = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out);
@@ -68,18 +68,23 @@ describe("a run from start to clear", () => {
     const resumed = t.sync(["resume", "-p", "demo"]);
     expect(resumed.code).toBe(0);
     expect(resumed.out).toMatch(/outcome: completed/);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("built properly\n");
-    expect(git(env.repo, "status", "--porcelain")).toBe("?? src/web/feature.txt"); // the user's repo: one new file, nothing staged
+    expect(git(env.repo, "status", "--porcelain")).toBe(""); // the user's repo is untouched
     expect(git(env.repo, "rev-list", "--count", "HEAD")).toBe("1"); // HEAD untouched
 
     const end = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out);
     expect(end.run).toMatchObject({ state: "ended", end_reason: "done", outcome: "completed", outcome_verified: true });
     const id = end.run.run_id;
+    expect(git(env.repo, "show", `agent-lyceum/${id}/lead:src/web/feature.txt`)).toBe("built properly"); // the member's files reached the lead's branch
 
     // 4. clear: preview, then do it
     const dry = t.sync(["clear", id, "-p", "demo", "--dry-run"]);
-    expect(dry.code).toBe(0);
-    expect(dry.out).toMatch(/would delete.*worktree and branch of fe-member/);
+    expect(dry.code).toBe(1); // the lead's branch holds work that is not in the repo yet
+    expect(dry.err + dry.out).toMatch(/lead has work that is not in the repo: src\/web\/feature\.txt/);
+    expect(fs.existsSync(path.join(env.project().paths.runs, id))).toBe(true);
+    git(env.repo, "merge", "--ff-only", `agent-lyceum/${id}/lead`); // the user brings it in
+    const dry2 = t.sync(["clear", id, "-p", "demo", "--dry-run"]);
+    expect(dry2.code).toBe(0);
+    expect(dry2.out).toMatch(/would delete.*worktree and branch of fe-member/);
     expect(fs.existsSync(path.join(env.project().paths.runs, id))).toBe(true);
 
     const cleared = t.sync(["clear", id, "-p", "demo"]);
@@ -98,18 +103,18 @@ describe("a run from start to clear", () => {
         { agent: "lead", mail: [{ to: "lead", type: "done", subject: "all good", outcome: "completed" }] },
       ],
     });
-    // while the member works, someone else edits the same file in the real repo
+    // while the member works, the lead's worktree gets a different edit of the same file
     const script = JSON.parse(fs.readFileSync(t.scriptFile, "utf8"));
-    script.calls[1].writeAbs = { [path.join(env.repo, "src/web/a.txt")]: "someone else's edit\n" };
+    script.calls[1].writeLead = { "src/web/a.txt": "lead's edit\n" };
     fs.writeFileSync(t.scriptFile, JSON.stringify(script));
 
     const r = t.sync(["run", "edit a.txt", "-p", "demo"]);
     expect(r.code).toBe(2);
     expect(r.out).toMatch(/outcome: blocked/);
     expect(r.out).toMatch(/fe-member.*agent-lyceum\//s);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n"); // never overwritten
-
     const id = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
+    const leadFile = path.join(env.project().paths.root, "worktrees", id, "lead", "src/web/a.txt");
+    expect(fs.readFileSync(leadFile, "utf8")).toBe("lead's edit\n"); // never overwritten
     const refused = t.sync(["clear", id, "-p", "demo"]);
     expect(refused.code).toBe(1);
     expect(refused.err).toMatch(/src\/web\/a\.txt/);

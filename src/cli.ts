@@ -191,16 +191,20 @@ const firstLine = (t: string): string => t.trim().split("\n")[0]!.trim();
 
 /** Take the lock and continue a run; the lock is released when it stops (also when it stops because it waits for answers). */
 async function continueRun(pr: ResolvedProject, dir: string, runId: string, followup?: { text: string }): Promise<RunSummary> {
-  const state = loadRunState(dir);
+  const planned = loadRunState(dir);
   // Where the run works is decided (from its state) before the lock is taken, and handed to the session as is.
-  const plan = planWorkspace(pr, state);
+  const plan = planWorkspace(pr, planned);
   const lease = takeLock(pr, runId, { checkout: !plan.leadWorktree, reason: "it was started without its own worktree" });
   const cancel = cancelOnSignals();
   try {
+    // Read the state again under the lock: another process may have changed it while we were checking.
+    const state = loadRunState(dir);
+    if (state.lead_workspace !== planned.lead_workspace || state.workspace_mode !== planned.workspace_mode) {
+      throw new Error(`Run ${runId} changed while it was starting (where it works was ${planned.lead_workspace ? "its own worktree" : planned.workspace_mode ?? "unset"}, now ${state.lead_workspace ? "its own worktree" : state.workspace_mode ?? "unset"}); try again.`);
+    }
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
     if (followup) console.log(`Reopening run ${runLabel(state)} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
     else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${roundsLabel(state.rounds, roundLimit(state, pr.dispatcher.max_rounds))}: ${state.task_summary}`);
-    // Read the state again under the lock: another process may have changed it while we were checking.
     return await runTeam({ project: pr, resume: state, plan, runDir: dir, signal: cancel.signal, followup });
   } finally {
     cancel.dispose();
