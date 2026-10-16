@@ -16,7 +16,7 @@ import { failureGuide } from "./run-outcome.js";
 import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
 import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
-import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
+import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, runIsAlive } from "./status.js";
 import { prepareTask, readTaskFile, taskMessageBody } from "./task.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
@@ -210,7 +210,7 @@ const interactive = (): boolean => !!process.stdin.isTTY && !!process.stdout.isT
 function printWaiting(pr: ResolvedProject, runId: string, file: string, problems: string[]): void {
   console.log(`\nRun ${runId} is waiting for your answers.\n  File: ${file}`);
   for (const p of problems) console.log(`  - ${p}`);
-  console.log(`Answer with: agent-lyceum resume ${runId} --answer -p ${pr.name}   (or edit the file, then: agent-lyceum resume ${runId} -p ${pr.name})`);
+  console.log(`Answer with: agent-lyceum run ${runId} --answer -p ${pr.name}   (or edit the file, then: agent-lyceum run ${runId} -p ${pr.name})`);
 }
 
 /**
@@ -283,52 +283,14 @@ async function startNewRun(task: string | undefined, opts: { project?: string; t
   await driveRun(pr, runDir, summary, !!opts.assumeDefaults);
 }
 
-program
-  .command("run [task]")
-  .summary("Start the dispatcher with a task for the lead")
-  .description('Start the dispatcher: give the task to the lead.\n\nGive the task either way:\n  - "<task>": as text\n  - --task-file <path>: from a file\n\nWho gets it:\n  - by default, the lead\n  - --agent <name>: that one member alone')
-  .option("-p, --project <name>")
-  .option("--task-file <path>", "read the task from a file")
-  .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
-  .option("--name <name>", "name for this run (default: made from the task)")
-  .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }) => {
-    try {
-      await startNewRun(task, opts);
-    } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).message);
-    }
-  });
-
-/** With a follow-up text and no run named: the one finished run to reopen. Several: ask in a terminal, otherwise list them. Never guesses. */
-async function pickReopenRun(pr: ResolvedProject): Promise<RunRef> {
-  const cands = reopenCandidates(pr);
-  if (cands.length === 0) return fail('No run to continue. Start one with: agent-lyceum run "<task>"');
-  if (cands.length === 1) return cands[0]!;
-  const label = (c: RunRef) => `${runLabel(c.state)}  [${c.state.end_reason ?? "interrupted"}]  ${firstLine(c.state.task_summary)}`;
-  if (!interactive()) {
-    return fail(`Several runs could take this follow-up:\n${cands.map((c) => `  ${c.state.name ? `${c.state.name}  ` : ""}${c.state.run_id}  [${c.state.end_reason ?? "interrupted"}]  ${firstLine(c.state.task_summary)}`).join("\n")}\nName one: agent-lyceum resume <name> "..."`);
-  }
-  console.log("Which run should get the follow-up?");
-  for (const [i, c] of cands.entries()) console.log(`  ${i + 1}) ${label(c)}`);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = (await rl.question("Number or name: ")).trim();
-  rl.close();
-  const n = Number(answer);
-  if (Number.isInteger(n) && n >= 1 && n <= cands.length) return cands[n - 1]!;
-  const r = resolveRun(cands, answer);
-  if (r.ok) return r.run;
-  return fail(`"${answer}" is not one of the listed runs.`);
-}
-
-/** `resume <run>`: continue an interrupted (or failed) run, answer a waiting one, or print the result of a done one. */
+/** `run <run>`: continue an interrupted (or failed) run, answer a waiting one, or print the result of a done one. */
 async function continueRun(pr: ResolvedProject, found: RunRef, opts: { answer?: boolean; edit: boolean; assumeDefaults?: boolean }): Promise<void> {
   const { dir, state } = found;
   if (state.end_reason === "done") {
     const result = path.join(dir, RESULT_FILE);
-    if (!fs.existsSync(result)) fail(`Run ${runLabel(state)} already finished (done); nothing to resume.`);
+    if (!fs.existsSync(result)) fail(`Run ${runLabel(state)} already finished (done); nothing to continue (follow up with: agent-lyceum run ${runLabel(state)} "<follow-up>").`);
     const o = outcomeOf(state)!;
-    console.log(`Run ${runLabel(state)} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+    console.log(`Run ${runLabel(state)} already finished (done); nothing to continue (follow up with: agent-lyceum run ${runLabel(state)} "<follow-up>"). Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
     process.exit(exitCodeForOutcome(o.outcome));
   }
   if (roundLimit(state, pr.dispatcher.max_rounds) > 0 && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
@@ -347,60 +309,97 @@ async function continueRun(pr: ResolvedProject, found: RunRef, opts: { answer?: 
   await driveRun(pr, dir, summary, !!opts.assumeDefaults);
 }
 
-/** `resume <run> "<text>"`: reopen a finished run with a follow-up request. */
-async function reopenRun(pr: ResolvedProject, found: RunRef, text: string, opts: { answer?: boolean; assumeDefaults?: boolean }): Promise<void> {
+/** `run <run> "<text>"`: reopen a finished run with a follow-up request. */
+async function reopenRun(pr: ResolvedProject, found: RunRef, text: string, opts: { assumeDefaults?: boolean }): Promise<void> {
   const { dir, state } = found;
-  if (state.end_reason !== "done") fail(`Run ${runLabel(state)} is not finished (${state.end_reason ?? "interrupted"}); resume it without text first, then follow up.`);
+  if (state.end_reason !== "done") fail(`Run ${runLabel(state)} is not finished (${state.end_reason ?? "interrupted"}); continue it first: agent-lyceum run ${runLabel(state)}`);
   // A reopen recalculates the round limit from where the run stands, so there is no round check here.
-  if (opts.answer) fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason}).`);
   const summary = await runUnderLock(pr, dir, state.run_id, { text });
   await driveRun(pr, dir, summary, !!opts.assumeDefaults);
 }
 
+/**
+ * The run a user typed for a command that wakes agents: only its exact id or name counts. A prefix never continues a run;
+ * it exits 1 with the copy-ready command. Prompts nothing, takes no lock, writes nothing.
+ * `suffix`: the rest of the command line for the suggestion (e.g. ` --answer`); `onNone`: the message when nothing matches.
+ */
+function findRunExact(pr: ResolvedProject, query: string, opts: { verb?: string; suffix?: string; onNone?: string } = {}): RunRef {
+  const verb = opts.verb ?? "run";
+  if (!query.trim()) return fail("Give a run id or name (see `agent-lyceum status --task-list`).");
+  assertName("run", query);
+  const runs = listRuns(pr, Infinity);
+  const exact = runs.filter((r) => r.state.run_id === query || r.state.name === query);
+  if (exact.length === 1) return exact[0]!;
+  const list = (cs: RunRef[]) => cs.map((c) => `  ${c.state.name ?? "(no name)"}  ${c.state.run_id}  ${c.state.task_summary}`).join("\n");
+  if (exact.length > 1) return fail(`"${query}" matches several runs:\n${list(exact)}\nGive more of the name or id.`);
+  const r = resolveRun(runs, query);
+  const prefixed = r.ok ? [r.run] : r.candidates;
+  const proj = ` -p ${pr.name}`;
+  if (prefixed.length === 1) {
+    const c = prefixed[0]!;
+    return fail(`"${query}" is only the start of run ${c.state.name ?? c.state.run_id} (${c.state.run_id}); ${verb} needs the exact name or id: agent-lyceum ${verb} ${c.state.name ?? c.state.run_id}${opts.suffix ?? ""}${proj}`);
+  }
+  if (prefixed.length > 1) return fail(`"${query}" matches several runs only by prefix:\n${list(prefixed)}\nGive the exact name or id: agent-lyceum ${verb} <name-or-id>`);
+  return fail(opts.onNone ?? `Run "${query}" not found in ${pr.paths.runs}. List runs with: agent-lyceum status --task-list`);
+}
+
+type RunOpts = { project?: string; taskFile?: string; agent?: string; name?: string; answer?: boolean; edit: boolean; assumeDefaults?: boolean };
+
 program
-  .command("resume [run] [text]")
-  .summary("Continue an interrupted run, or reopen a finished one with a follow-up")
+  .command("run [run] [text]")
+  .summary("Start a run with a task, or continue / reopen one")
   .description(
-    'Continue an interrupted (or failed) run: same run dir, sessions and round count; the task is not re-sent.\nOr reopen a finished run with a follow-up request: the lead gets the text as a new task and the run goes on with its memory and worktree.\n\nUsage:\n  - resume                    the newest run that is not done or running\n  - resume <run>              that run (full id, name or unique prefix); a finished run only prints its result\n  - resume <run> "<text>"     reopen that finished run with the follow-up\n  - resume "<text>"           if the one argument is not a run, it is the follow-up; the run is chosen among the runs that are not running\n                              (the only one, or you pick one in a terminal; without a terminal the candidates are listed and it fails)\n                              a one-word follow-up looks like a run name: use resume <run> "<text>" or --task-file\n  - --task-file <path>        read the follow-up from a file instead of an argument',
+    'Start the dispatcher. What it does depends on the arguments:\n\n  - run "<task>"              a new run: give the task to the lead (text with spaces or punctuation)\n  - run --task-file <path>    a new run, task read from a file\n  - run                       continue the newest run that is not done or running\n  - run <run>                 continue that run (exact id or name); a finished run only prints its result\n  - run <run> "<text>"        reopen that finished run with the follow-up (or: run <run> --task-file <path>)\n  - run [<run>] --answer      the run waits for answers: open ask-reply.md, check it, continue\n\nA single word is a run reference, never a task: write more than one word, add punctuation, or use --task-file for a one-word task.\nA run is matched by its exact id or name; a prefix is refused with the full command to copy.\n\nWho gets a new task:\n  - by default, the lead\n  - --agent <name>: that one member alone',
   )
   .option("-p, --project <name>")
-  .option("--task-file <path>", "read the follow-up text from a file (reopens a finished run)")
-  .option("--answer", "the run is waiting for answers: open ask-reply.md in $EDITOR, check the answers, then continue")
+  .option("--task-file <path>", "read the task (new run) or the follow-up (reopen) from a file")
+  .option("--agent <name>", "new run only: run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
+  .option("--name <name>", "new run only: name for this run (default: made from the task)")
+  .option("--answer", "continue a run that waits for answers: open ask-reply.md in $EDITOR, check the answers, then continue")
   .option("--no-edit", "with --answer: do not open the editor; check the file as it is")
-  .option("--assume-defaults", "if the run waits for answers, use the suggested answer for every unanswered question that has one")
-  .action(async (runArg: string | undefined, textArg: string | undefined, opts: { project?: string; taskFile?: string; answer?: boolean; edit: boolean; assumeDefaults?: boolean }) => {
+  .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
+  .action(async (a: string | undefined, b: string | undefined, opts: RunOpts) => {
     try {
+      if (!opts.edit && !opts.answer) fail("--no-edit only goes with --answer.");
+      if (opts.taskFile && a !== undefined && b !== undefined) fail("Give the follow-up either as text or with --task-file, not both.");
+
+      // 18.4.3: which mode do the arguments mean?
+      type Mode = "new" | "reopen" | "continue";
+      let mode: Mode;
+      if (a !== undefined && (b !== undefined || opts.taskFile)) mode = "reopen";
+      else if (a === undefined) mode = opts.taskFile ? "new" : "continue";
+      else mode = NAME_RE.test(a) ? "continue" : "new";
+
+      if (mode === "new") {
+        if (opts.answer) fail("--answer continues a run that waits for answers: agent-lyceum run <run> --answer");
+        await startNewRun(a, opts);
+        return;
+      }
+      if (mode === "reopen" && opts.answer) fail(`--answer cannot be combined with a follow-up: answer first (run ${a} --answer), then follow up.`);
+
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
 
-      let text = textArg;
-      let query = runArg;
-      if (opts.taskFile) {
-        if (textArg !== undefined) fail("Give the follow-up either as text or with --task-file, not both.");
-        text = readTaskFile(path.resolve(process.cwd(), opts.taskFile));
-      } else if (query !== undefined && textArg === undefined) {
-        // One argument: a run if it names one. It is follow-up text only if it cannot be a run reference (it has whitespace or a character a run name cannot contain);
-        // a mistyped run name must not silently become the task. An ambiguous match is still an error.
-        const r = query.trim() ? resolveRun(listRuns(pr, Infinity), query) : undefined;
-        if (r && !r.ok && r.reason === "none" && !NAME_RE.test(query)) {
-          text = query;
-          query = undefined;
-        }
-      }
-      if (text !== undefined && !text.trim()) fail("The follow-up text is empty.");
-
       let found: RunRef | undefined;
-      if (query !== undefined) {
-        found = findRun(pr, query);
-      } else if (text !== undefined) {
-        found = await pickReopenRun(pr);
+      if (a !== undefined) {
+        const suffix = mode === "reopen" ? (opts.taskFile ? ` --task-file ${opts.taskFile}` : ' "<follow-up>"') : opts.answer ? ` --answer${opts.edit ? "" : " --no-edit"}` : "";
+        const onNone = mode === "continue" ? `"${a}" is not a run of project ${pr.name}, and a one-word task looks like a run name.\nTo start a new task, write more than one word or use --task-file; list runs with: agent-lyceum status --task-list` : undefined;
+        found = findRunExact(pr, a, { suffix, onNone });
       } else {
         found = latestUnfinishedRun(pr);
-        if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
+        if (!found) fail('No unfinished run to continue. Start one with: agent-lyceum run "<task>"');
       }
       const { state } = found!;
+      if (opts.name !== undefined) fail(`--name only names a new run; run ${state.run_id} is already named "${state.name ?? state.run_id}".`);
+      if (opts.agent !== undefined) fail("--agent only starts a new solo run; a continued run keeps the agents it started with.");
+
+      let text: string | undefined;
+      if (mode === "reopen") {
+        text = opts.taskFile ? readTaskFile(path.resolve(process.cwd(), opts.taskFile)) : b;
+        if (!text!.trim()) fail("The follow-up text is empty.");
+      }
       // A solo run needs only its own agent's runtime, as when it started.
       await preflight(state.solo_agent ? onlyAgent(soloProject(pr, state.solo_agent), state.solo_agent) : pr);
       if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${runLabel(state)} is still running (pid ${state.pid}).`);
@@ -421,7 +420,7 @@ function unlockProject(pr: ResolvedProject, runId: string | undefined, force: bo
     console.log(`The lock file of run ${runId} exists but cannot be read.`);
     if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
     forceUnlock(root, runId);
-    console.log(`Lock removed. Resume the run with: agent-lyceum resume ${runId}`);
+    console.log(`Lock removed. Continue the run with: agent-lyceum run ${runId}`);
     return;
   }
   if (!runId && unreadable.length && locks.length + unreadable.length > 1) {
@@ -452,7 +451,7 @@ function unlockProject(pr: ResolvedProject, runId: string | undefined, force: bo
   console.log(`Lock held for run ${info!.run_id} by pid ${info!.pid} on ${info!.hostname}, last heartbeat ${info!.heartbeat_at}${lockHolderAlive(info!) ? " (that process is still alive)" : " (that process is gone)"}.`);
   if (!force) fail("Not removed. Check that no run is active, then repeat with --force.");
   forceUnlock(root, target);
-  console.log(`Lock removed. Resume the run with: agent-lyceum resume ${target}`);
+  console.log(`Lock removed. Continue the run with: agent-lyceum run ${target}`);
 }
 
 program
@@ -786,7 +785,7 @@ program
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["doctor", "status"],
-  "Run:": ["run", "resume", "clear", "call", "tidy"],
+  "Run:": ["run", "clear", "call", "tidy"],
   "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);

@@ -41,11 +41,6 @@ export function latestUnfinishedRun(project: ResolvedProject): { dir: string; st
   return listRuns(project, Infinity).find((r) => r.state.end_reason !== "done" && (r.state.end_reason || !runIsAlive(r.state, project)));
 }
 
-/** Runs a follow-up text can reopen: the finished ones (end_reason "done"). Newest first. */
-export function reopenCandidates(project: ResolvedProject): { dir: string; state: RunState }[] {
-  return listRuns(project, Infinity).filter((r) => r.state.end_reason === "done");
-}
-
 export function listRuns(project: ResolvedProject, limit: number): { dir: string; state: RunState }[] {
   const root = project.paths.runs;
   if (!fs.existsSync(root)) return [];

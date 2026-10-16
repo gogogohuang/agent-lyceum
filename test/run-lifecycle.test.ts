@@ -66,7 +66,7 @@ describe("a run from start to clear", () => {
     expect(mid.run.queue.map((q) => q.agent)).toEqual(["fe-member"]); // its task is still waiting
 
     // 3. resume: the member redoes the task, its files are brought into the repo, the lead finishes
-    const resumed = t.sync(["resume", "-p", "demo"]);
+    const resumed = t.sync(["run", "-p", "demo"]);
     expect(resumed.code).toBe(0);
     expect(resumed.out).toMatch(/outcome: completed/);
     expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("built properly\n");
@@ -125,7 +125,7 @@ describe("a run from start to clear", () => {
     const t = setup({ calls: [] });
     const lease = acquireProjectLock(env.project().paths.root, "other-run");
     try {
-      const r = t.sync(["run", "x", "-p", "demo"]);
+      const r = t.sync(["run", "do x", "-p", "demo"]);
       expect(r.code).toBe(1);
       expect(r.err).toMatch(/other-run/);
       expect(r.err).toMatch(/max_concurrent_runs/);
@@ -140,12 +140,12 @@ describe("a run from start to clear", () => {
     const root = env.project().paths.root;
     const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
     try {
-      const second = t.sync(["run", "x", "-p", "demo"]);
+      const second = t.sync(["run", "do x", "-p", "demo"]);
       expect(second.err).not.toMatch(/At most/);
       expect(second.code).toBe(0);
       const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
       try {
-        const third = t.sync(["run", "y", "-p", "demo"]);
+        const third = t.sync(["run", "do y", "-p", "demo"]);
         expect(third.code).toBe(1);
         expect(third.err).toMatch(/run-a/);
         expect(third.err).toMatch(/run-b/);
@@ -160,7 +160,7 @@ describe("a run from start to clear", () => {
 
   it("clear of a finished run goes ahead while another run is active (limit 1), but not while that run itself is", () => {
     const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
-    expect(t.sync(["run", "x", "-p", "demo"]).code).toBe(0);
+    expect(t.sync(["run", "do x", "-p", "demo"]).code).toBe(0);
     const id: string = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
     const root = env.project().paths.root;
     const runDir = path.join(env.project().paths.runs, id);
@@ -239,13 +239,13 @@ describe("run names", () => {
     expect(first.code).toBe(0);
     expect(first.out).toMatch(/Run login-with-session \(\S+\) ended/);
     expect(t.sync(["run", "Login with session", "-p", "demo"]).code).toBe(0);
-    expect(t.sync(["run", "x", "--name", "my-task", "-p", "demo"]).code).toBe(0);
+    expect(t.sync(["run", "do x", "--name", "my-task", "-p", "demo"]).code).toBe(0);
     expect(names(t)).toEqual(["my-task", "login-with-session-2", "login-with-session"]);
 
-    const dup = t.sync(["run", "x", "--name", "my-task", "-p", "demo"]);
+    const dup = t.sync(["run", "do x", "--name", "my-task", "-p", "demo"]);
     expect(dup.code).toBe(1);
     expect(dup.err).toMatch(/"my-task" already exists/);
-    const bad = t.sync(["run", "x", "--name", "Bad Name", "-p", "demo"]);
+    const bad = t.sync(["run", "do x", "--name", "Bad Name", "-p", "demo"]);
     expect(bad.code).toBe(1);
     expect(bad.err).toMatch(/Invalid run name/);
     expect(names(t)).toHaveLength(3); // the refused runs left nothing behind

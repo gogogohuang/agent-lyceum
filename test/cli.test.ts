@@ -155,7 +155,7 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
   it("an ambiguous prefix lists the candidates (name, id, task) and exits 1; nothing is deleted", () => {
     env = makeEnv();
     seedNamed();
-    for (const args of [["clear", "2026101", "-p", "demo"], ["status", "-p", "demo", "--task-id", "2026101"], ["resume", "2026101", "-p", "demo"]]) {
+    for (const args of [["clear", "2026101", "-p", "demo"], ["status", "-p", "demo", "--task-id", "2026101"], ["run", "2026101", "-p", "demo"]]) {
       const r = run(args);
       expect(r.code, args.join(" ")).toBe(1);
       expect(r.err).toContain("matches several runs");
@@ -168,14 +168,14 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
     env = makeEnv();
     seedNamed();
     expect(run(["clear", "nope", "-p", "demo", "--dry-run"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
-    expect(run(["resume", "nope", "-p", "demo"])).toMatchObject({ code: 1, err: expect.stringMatching(/not found/) });
+    expect(run(["run", "nope", "-p", "demo"])).toMatchObject({ code: 1, err: expect.stringMatching(/is not a run of project demo/) });
     const empty = run(["status", "-p", "demo", "--task-id", ""]);
     expect(empty.code).toBe(1);
     expect(empty.err).toMatch(/run id or name/);
-    expect(run(["resume", "", "-p", "demo"]).code).not.toBe(0);
+    expect(run(["run", "", "-p", "demo"]).code).not.toBe(0);
   });
 
-  it("resume finds a run by name", () => {
+  it("run finds a run by name", () => {
     env = makeEnv();
     seedNamed();
     write(path.join(env.project().paths.runs, "20261014-010000", "state.json"), JSON.stringify({ run_id: "20261014-010000", name: "login", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "done", outcome: "completed", task_summary: "Add login" }));
@@ -184,7 +184,7 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
     const bin = path.join(env.root, "bin");
     fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
-    const r = run(["resume", "login", "-p", "demo"], { PATH: `${bin}:${process.env.PATH}` });
+    const r = run(["run", "login", "-p", "demo"], { PATH: `${bin}:${process.env.PATH}` });
     expect(r.out).toContain("Run login (20261014-010000) already finished (done)");
   });
 

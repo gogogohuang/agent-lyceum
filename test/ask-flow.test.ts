@@ -59,14 +59,14 @@ describe("ask → waiting → answer → completed", { timeout: 60_000 }, () => 
     expect(status.run).toMatchObject({ state: "waiting", end_reason: "waiting", outcome: "waiting" });
     expect(status.run.ask).toMatchObject({ total: 2, unanswered: 2 });
 
-    const early = t.sync(["resume", path.basename(dir), "--answer", "-p", "demo", "--no-edit"]);
+    const early = t.sync(["run", path.basename(dir), "--answer", "-p", "demo", "--no-edit"]);
     expect(early.code).toBe(3);
     expect(early.err + early.out).toMatch(/q1/);
     expect(early.err + early.out).toMatch(/q2/);
-    expect(t.sync(["resume", path.basename(dir), "-p", "demo"]).code).toBe(3); // resume refuses too
+    expect(t.sync(["run", path.basename(dir), "-p", "demo"]).code).toBe(3); // resume refuses too
 
     fillAll(dir, { q1: "jwt", q2: "no" });
-    const done = t.sync(["resume", path.basename(dir), "--answer", "-p", "demo", "--no-edit"]);
+    const done = t.sync(["run", path.basename(dir), "--answer", "-p", "demo", "--no-edit"]);
     expect(done.code).toBe(0);
     expect(done.out).toMatch(/outcome: completed/);
     expect(readAskReply(dir)?.status).toBe("answered");
@@ -77,7 +77,7 @@ describe("ask → waiting → answer → completed", { timeout: 60_000 }, () => 
     t.sync(["run", "build it", "-p", "demo"]);
     const dir = runDirOf();
     fillAll(dir, { q1: "other: oauth", q2: "yes" });
-    expect(t.sync(["resume", "-p", "demo"]).code).toBe(0);
+    expect(t.sync(["run", "-p", "demo"]).code).toBe(0);
   });
 
   it("`answer` without --no-edit opens $EDITOR on the file and validates what it saved", () => {
@@ -86,7 +86,7 @@ describe("ask → waiting → answer → completed", { timeout: 60_000 }, () => 
     const dir = runDirOf();
     const editor = path.join(env.root, "editor.mjs");
     fs.writeFileSync(editor, `import fs from "node:fs";\nconst f = process.argv[2];\nlet t = fs.readFileSync(f, "utf8");\nt = t.replace(/<answer><\\/answer>/g, "<answer>jwt</answer>");\nfs.writeFileSync(f, t);\n`);
-    const r = t.sync(["resume", path.basename(dir), "--answer", "-p", "demo"], { EDITOR: `${process.execPath} ${editor}` });
+    const r = t.sync(["run", path.basename(dir), "--answer", "-p", "demo"], { EDITOR: `${process.execPath} ${editor}` });
     // q1 accepts "jwt"; q2 is open-ended so "jwt" is a valid free answer too
     expect(r.code).toBe(0);
   });
@@ -97,7 +97,7 @@ describe("--assume-defaults", { timeout: 60_000 }, () => {
     const t = setup(SCRIPT);
     t.sync(["run", "build it", "-p", "demo"]);
     const dir = runDirOf();
-    const r = t.sync(["resume", path.basename(dir), "--answer", "-p", "demo", "--no-edit", "--assume-defaults"]);
+    const r = t.sync(["run", path.basename(dir), "--answer", "-p", "demo", "--no-edit", "--assume-defaults"]);
     expect(r.code).toBe(3);
     const file = readAskReply(dir)!;
     expect(file.questions[0]?.answer).toEqual({ value: "session", by: "default" });

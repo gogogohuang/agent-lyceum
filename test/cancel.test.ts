@@ -122,7 +122,7 @@ describe("the CLI on Ctrl-C", () => {
     expect(alive(pids.grandchild)).toBe(false);
     expect(listRunLocks(env.project().paths.root).length > 0).toBe(false);
 
-    const second = cliRun(env.home, bin, ["resume", "-p", "demo"], { FAKE_MODE: "completed" });
+    const second = cliRun(env.home, bin, ["run", "-p", "demo"], { FAKE_MODE: "completed" });
     expect(await exited(second)).toBe(0);
   }, 90_000);
 });

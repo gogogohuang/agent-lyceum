@@ -52,10 +52,10 @@ describe("run --agent", { timeout: 60_000 }, () => {
   it("names the members when the agent is not one of them, and points a global-only agent to `call`", () => {
     const t = setup({ calls: [] });
     addGlobalAgent("pm");
-    const none = t.sync(["run", "x", "--agent", "nobody", "-p", "demo"]);
+    const none = t.sync(["run", "do x", "--agent", "nobody", "-p", "demo"]);
     expect(none.code).toBe(1);
     expect(none.err).toMatch(/lead, fe-member, qa-member/);
-    const pm = t.sync(["run", "x", "--agent", "pm", "-p", "demo"]);
+    const pm = t.sync(["run", "do x", "--agent", "pm", "-p", "demo"]);
     expect(pm.code).toBe(1);
     expect(pm.err).toMatch(/agent-lyceum call pm/);
     expect(fs.existsSync(env.project().paths.runs) ? fs.readdirSync(env.project().paths.runs) : []).toEqual([]);
@@ -63,7 +63,7 @@ describe("run --agent", { timeout: 60_000 }, () => {
 
   it("warns that --assume-defaults has no effect", () => {
     const t = setup({ calls: [{ agent: "fe-member", mail: [{ type: "done", subject: "r", outcome: "completed" }] }] });
-    const r = t.sync(["run", "x", "--agent", "fe-member", "--assume-defaults", "-p", "demo"]);
+    const r = t.sync(["run", "do x", "--agent", "fe-member", "--assume-defaults", "-p", "demo"]);
     expect(r.code).toBe(0);
     expect(r.err).toMatch(/--assume-defaults.*ignored/);
   });
@@ -73,17 +73,17 @@ describe("resume of a solo run", { timeout: 60_000 }, () => {
   it("checks only the solo agent's runtime, not a teammate's that is not installed", () => {
     const t = setup({ calls: [] }, { noCodex: true }); // the fake claude fails: the solo run ends without done and can be resumed
     env.editProjectYaml((y) => y.replace("  qa-member:\n    can_message", "  qa-member:\n    runtime: codex\n    can_message"));
-    const first = t.sync(["run", "x", "--agent", "fe-member", "-p", "demo"]);
+    const first = t.sync(["run", "do x", "--agent", "fe-member", "-p", "demo"]);
     expect(first.err).not.toMatch(/codex not found/);
     const runs = env.project().paths.runs;
     const [id] = fs.readdirSync(runs);
     expect(loadRunState(path.join(runs, id!)).end_reason).not.toBe("done");
-    const r = t.sync(["resume", "-p", "demo"]);
+    const r = t.sync(["run", "-p", "demo"]);
     expect(r.err).not.toMatch(/codex not found/);
     expect(r.err).not.toMatch(/^ERROR/m);
     expect(fs.readdirSync(runs)).toEqual([id]); // the same run, continued
     // A team run still needs every runtime.
-    expect(t.sync(["run", "x", "-p", "demo"]).err).toMatch(/codex not found/);
+    expect(t.sync(["run", "do x", "-p", "demo"]).err).toMatch(/codex not found/);
   });
 });
 
