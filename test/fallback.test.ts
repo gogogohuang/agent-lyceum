@@ -3,6 +3,7 @@ import type { ResolvedAgent } from "../src/config.js";
 import {
   backoffMs,
   type Candidate,
+  agentForCandidate,
   candidatesFor,
   Cooldowns,
   defaultSleep,
@@ -31,6 +32,57 @@ describe("candidatesFor", () => {
   });
   it("is only the primary without a chain", () => {
     expect(candidatesFor(agentWith()).map((c) => c.key)).toEqual(["claude-code/opus"]);
+  });
+  it("drops entries equal to the primary or to an earlier entry (a shared dispatcher.fallback chain)", () => {
+    const a = { ...agentWith([{ runtime: "claude-code", model: "opus" }, { runtime: "claude-code", model: "haiku" }]), fallbackShared: true } as ResolvedAgent;
+    expect(candidatesFor(a).map((c) => c.key)).toEqual(["claude-code/opus", "claude-code/haiku"]);
+    const b = { ...agentWith(), model: "sonnet", fallback: [{ runtime: "claude-code", model: "sonnet" }, { runtime: "claude-code", model: "haiku" }] } as ResolvedAgent;
+    expect(candidatesFor(b).map((c) => c.key)).toEqual(["claude-code/sonnet", "claude-code/haiku"]);
+  });
+  it("compares models trimmed and case-blind, with an empty model the same as none", () => {
+    const a = {
+      ...agentWith([
+        { runtime: "claude-code", model: " Opus " },
+        { runtime: "codex", model: "" },
+        { runtime: "codex", model: "GPT-5" },
+        { runtime: "codex", model: "gpt-5 " },
+        { runtime: "codex", model: "" },
+      ]),
+    } as ResolvedAgent;
+    const cs = candidatesFor(a);
+    expect(cs.map((c) => c.key)).toEqual(["claude-code/opus", "codex/", "codex/gpt-5"]);
+    expect(cs.map((c) => c.primary)).toEqual([true, false, false]);
+    const none = { ...agentWith([{ runtime: "claude-code", model: "" }, { runtime: "codex", model: "" }]), model: undefined } as ResolvedAgent;
+    expect(candidatesFor(none).map((c) => c.key)).toEqual(["claude-code/", "codex/"]);
+  });
+  it("is only the primary when every entry repeats it", () => {
+    expect(candidatesFor(agentWith([{ runtime: "claude-code", model: "OPUS" }])).map((c) => c.key)).toEqual(["claude-code/opus"]);
+  });
+});
+
+describe("agentForCandidate", () => {
+  const as = (runtime: "claude-code" | "codex", allowWeb?: "none" | "search" | "fetch") =>
+    ({ ...agentWith(), runtime, allowWeb, model: "m", effort: "high" }) as ResolvedAgent;
+  const cand = (runtime: "claude-code" | "codex", primary = false) => ({ runtime, model: "b", effort: "low" as const, primary, key: `${runtime}/b` });
+  it("returns the agent itself for the primary", () => {
+    const a = as("claude-code");
+    expect(agentForCandidate(a, cand("claude-code", true))).toBe(a);
+  });
+  it("swaps runtime, model and effort for a backup", () => {
+    expect(agentForCandidate(as("claude-code"), cand("claude-code"))).toMatchObject({ runtime: "claude-code", model: "b", effort: "low", allowWeb: undefined });
+  });
+  it("inherits a set allow_web on any runtime", () => {
+    for (const level of ["none", "search", "fetch"] as const) {
+      expect(agentForCandidate(as("claude-code", level), cand("codex")).allowWeb).toBe(level);
+      expect(agentForCandidate(as("codex", level), cand("claude-code")).allowWeb).toBe(level);
+    }
+  });
+  it("turns web off for a codex backup of a claude-code agent with allow_web unset", () => {
+    expect(agentForCandidate(as("claude-code"), cand("codex")).allowWeb).toBe("none");
+  });
+  it("keeps allow_web unset for a backup of a codex agent with it unset", () => {
+    expect(agentForCandidate(as("codex"), cand("claude-code")).allowWeb).toBeUndefined();
+    expect(agentForCandidate(as("codex"), cand("codex")).allowWeb).toBeUndefined();
   });
 });
 

@@ -12,20 +12,38 @@ export interface Candidate {
   key: string;
 }
 
-const keyOf = (runtime: Runtime, model: string | undefined) => `${runtime}/${model ?? ""}`;
+/** `<runtime>/<model>`, the model trimmed and lowercased (no model = ""), so entries naming the same model share one key. */
+const keyOf = (runtime: Runtime, model: string | undefined) => `${runtime}/${(model ?? "").trim().toLowerCase()}`;
 
-/** The primary model followed by the agent's fallback chain, in order. */
+/**
+ * The primary model followed by the agent's fallback chain, in order. An entry with the same key as the primary or as an
+ * earlier entry is dropped: a chain shared through `dispatcher.fallback` may list the agent's own primary (spec 20.12).
+ */
 export function candidatesFor(agent: ResolvedAgent): Candidate[] {
   // `validate` refuses an agent without a runtime before anything is woken.
   const runtime = agent.runtime as Runtime;
   const primary: Candidate = { runtime, model: agent.model, effort: agent.effort, primary: true, key: keyOf(runtime, agent.model) };
-  return [
-    primary,
-    ...agent.fallback.map((f) => {
-      const model = f.model || undefined;
-      return { runtime: f.runtime, model, effort: f.effort, primary: false, key: keyOf(f.runtime, model) };
-    }),
-  ];
+  const out = [primary];
+  const seen = new Set([primary.key]);
+  for (const f of agent.fallback) {
+    const model = f.model || undefined;
+    const key = keyOf(f.runtime, model);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ runtime: f.runtime, model, effort: f.effort, primary: false, key });
+  }
+  return out;
+}
+
+/**
+ * The agent as it runs on candidate `c`: itself for the primary; for a backup, the same agent on the backup's runtime, model
+ * and effort, at the primary's effective web level (spec 20.12). A set `allow_web` carries over. Unset, claude-code has no web
+ * tools while codex keeps its own default, which may search: a codex backup of such an agent gets `none`.
+ */
+export function agentForCandidate(agent: ResolvedAgent, c: Candidate): ResolvedAgent {
+  if (c.primary) return agent;
+  const allowWeb = agent.allowWeb ?? (agent.runtime === "claude-code" && c.runtime === "codex" ? "none" : undefined);
+  return { ...agent, runtime: c.runtime, model: c.model, effort: c.effort, allowWeb };
 }
 
 /** Models that failed with `rate_limit`/`quota`, and until when (epoch ms) wakes skip them. Shared by a run, kept in `state.json`. */

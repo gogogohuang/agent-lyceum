@@ -367,7 +367,7 @@ describe("status: fallback", () => {
     env = makeEnv();
     writeRun(env, { pid: process.pid, last_wake: { lead: { at: "2026-01-01T00:00:50Z", ok: true } } });
     const r = buildStatusReport(env.project(), undefined, NOW);
-    for (const a of JSON.parse(JSON.stringify(r.agents)) as Record<string, unknown>[]) expect(Object.keys(a).sort()).toEqual(["can_message", "lead", "name", "runtime", "unread"].concat(a["last_wake"] ? ["last_wake"] : []).sort());
+    for (const a of JSON.parse(JSON.stringify(r.agents)) as Record<string, unknown>[]) expect(Object.keys(a).sort()).toEqual(["can_message", "lead", "name", "runtime", "unread"].concat(a.last_wake ? ["last_wake"] : []).sort());
     const out = formatStatusReport(r, NOW);
     expect(out).not.toMatch(/fallback|備援|冷卻/);
   });

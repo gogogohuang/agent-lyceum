@@ -3,7 +3,7 @@ import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
-import { candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
+import { agentForCandidate, type Candidate, candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
 import { ProtectedGuard } from "./guard.js";
 import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
@@ -168,6 +168,8 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     const invoke = o.invoker ?? realInvoker;
     const all = candidatesFor(agent);
     const chain = all.length > 1;
+    // The primary logs to log/ as always; each backup to a directory of its own, so its run does not overwrite the primary's logs.
+    const logDirFor = (c: Candidate) => (c.primary ? path.join(callDir, "log") : path.join(callDir, "log", `fallback-${all.indexOf(c)}`));
     // A call is a single shot: no retries on one model, and cooldowns that live only as long as it does.
     const outcome = await runWithFallback<WakeResult>({
       candidates: all,
@@ -184,13 +186,13 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
       invoke: (c) =>
         invoke({
           project,
-          agent: c.primary ? agent : { ...agent, runtime: c.runtime, model: c.model, effort: c.effort },
+          agent: agentForCandidate(agent, c),
           workDir: callDir,
           systemPrompt: buildSoloSystemPrompt(project, agent),
           userPrompt: buildCallUserPrompt(agent, o.task),
           timeoutSec: project.dispatcher.wake_timeout_sec,
           signal: o.signal,
-          logDir: path.join(callDir, "log"),
+          logDir: logDirFor(c),
         }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message })),
     });
     const result = must(outcome.result, "the call's result");

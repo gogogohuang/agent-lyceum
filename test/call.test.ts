@@ -5,6 +5,7 @@ import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "../src/call.js";
 import { ConfigError } from "../src/config.js";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
+import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { listRunLocks } from "../src/project-lock.js";
 import { writePolicy } from "../src/policy.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
@@ -182,6 +183,42 @@ describe("callAgent with a fallback chain", () => {
     expect(seen[1]).toEqual({ runtime: "claude-code", model: "haiku" });
     expect(fs.readFileSync(path.join(r.callDir, "result.md"), "utf8")).toBe("from backup\n");
     expect(said).toContain("  fe-member falling back to claude-code/haiku (rate_limit)");
+  });
+
+  it("runs a codex backup of a claude-code agent with allow_web unset with web search disabled", async () => {
+    env = makeEnv();
+    chain("{ runtime: codex, model: gpt-5 }");
+    const args: string[][] = [];
+    const r = await run(async (i) => {
+      if (i.agent.runtime !== "codex") return fail("rate_limit");
+      args.push(buildCodexInvocation(i).args);
+      return reply("from codex");
+    });
+    expect(r.ok).toBe(true);
+    expect(args).toHaveLength(1);
+    expect(args[0]).toContain('web_search="disabled"');
+  });
+
+  it("gives each backup its own log directory, keeping the primary's log/ as it was", async () => {
+    env = makeEnv();
+    chain("{ model: haiku }", "{ model: sonnet }");
+    const dirs: string[] = [];
+    const r = await run(async (i) => {
+      dirs.push(i.logDir!);
+      return dirs.length < 3 ? fail("rate_limit") : reply("ok");
+    });
+    expect(r.ok).toBe(true);
+    expect(dirs).toEqual([path.join(r.callDir, "log"), path.join(r.callDir, "log", "fallback-1"), path.join(r.callDir, "log", "fallback-2")]);
+  });
+
+  it("keeps a single log/ without a chain", async () => {
+    env = makeEnv();
+    const dirs: string[] = [];
+    const r = await run(async (i) => {
+      dirs.push(i.logDir!);
+      return reply("ok");
+    });
+    expect(dirs).toEqual([path.join(r.callDir, "log")]);
   });
 
   it("switches on a timeout without retrying the same model", async () => {

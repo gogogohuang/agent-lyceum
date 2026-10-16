@@ -45,9 +45,9 @@ export interface ResolvedAgent {
   allowWeb?: WebLevel;
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
   fallback: FallbackEntry[];
-  /** Entries of the chain that could not be resolved (left out of `fallback`); `validate` reports them. */
   /** True when the chain came from `dispatcher.fallback` rather than the agent's own setting. */
   fallbackShared: boolean;
+  /** Entries of the chain that could not be resolved (left out of `fallback`); `validate` reports them. */
   fallbackInvalid: { index: number; reason: "empty" | "no-runtime" }[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;

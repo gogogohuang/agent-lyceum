@@ -305,6 +305,13 @@ describe("classifyClaudeError", () => {
     expect(c.parse({ stdout: answer, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
     expect(c.parse({ stdout: err, stderr: "", code: 0 })).toMatchObject({ ok: false, kind: "quota" });
   });
+  it("does not read a structured stdout with no result in it: an array transcript saying rate limit is unknown", () => {
+    const transcript = '[{"type":"system","subtype":"init"},{"type":"assistant","message":{"content":[{"type":"text","text":"Rate limit exceeded on the upstream API; ECONNRESET too"}]}}]';
+    expect(classifyClaudeError({ code: 1, stdout: transcript, stderr: "" })).toBe("unknown");
+    expect(classifyClaudeError({ code: 1, stdout: transcript, stderr: "API Error: 429 rate_limit_error" })).toBe("rate_limit");
+    // Plain-text stdout (no JSON at all) is still read.
+    expect(classifyClaudeError({ code: 1, stdout: "Not logged in · Please run /login", stderr: "" })).toBe("auth");
+  });
   it("a bare number or word is not enough: rules want a status-like context", () => {
     expect(classifyClaudeError({ code: 1, stdout: "", stderr: "retried 429 times, rate limiting is on, overloaded machine" })).toBe("unknown");
   });

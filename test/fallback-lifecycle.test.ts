@@ -9,6 +9,7 @@ import { runTeam } from "../src/dispatcher.js";
 import { listUnread } from "../src/mailbox.js";
 import { mailDir } from "../src/message-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
+import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { failureGuide } from "../src/run-outcome.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import type { ErrorKind, FallbackEntry } from "../src/schema.js";
@@ -47,9 +48,10 @@ function withChains(project: ResolvedProject, chains: Record<string, FallbackEnt
   return project;
 }
 
-async function start(invoker: Invoker, chains: Record<string, FallbackEntry[]>, o: { git?: boolean; models?: Record<string, string> } = {}) {
+async function start(invoker: Invoker, chains: Record<string, FallbackEntry[]>, o: { git?: boolean; models?: Record<string, string>; yaml?: (text: string) => string } = {}) {
   env = makeEnv();
   if (o.git) initGitRepo(env.repo);
+  if (o.yaml) env.editProjectYaml(o.yaml);
   const project = withChains(env.project(), chains, o.models);
   const runDir = path.join(project.paths.runs, "run-a");
   const task = prepareTask({ text: "go", cwd: env.root, runDir });
@@ -95,6 +97,49 @@ describe("fallback in a run", () => {
       ["claude-code", "backup", "claude-code", undefined],
     ]);
     expect(attemptsOf(runDir).map((a) => a.status)).toEqual(["failed", "committed"]);
+  });
+
+  it("(a2) a shared dispatcher.fallback that lists the primary: the primary is called once, the next distinct backup finishes", async () => {
+    const calls: string[] = [];
+    const { s, runDir, lines } = await start(
+      async (i) => {
+        calls.push(who(i));
+        if (i.agent.name !== "lead") return OK;
+        if (i.agent.model !== "haiku") return fail("rate_limit", "API Error: 429");
+        send(i.project, "lead", "lead", "shipped", "done");
+        return OK;
+      },
+      {},
+      {
+        models: { lead: "sonnet" },
+        yaml: (t) => t.replace(/dispatcher:[^\n]*\n/, "dispatcher:\n  fallback: [{ model: sonnet }, { model: haiku }]\n"),
+      },
+    );
+    expect(calls).toEqual(["lead:claude-code/sonnet", "lead:claude-code/haiku"]);
+    expect(s.endReason).toBe("done");
+    expect(lines).toContain("  lead falling back to claude-code/haiku (rate_limit)");
+    const state = loadRunState(runDir);
+    expect(Object.keys(state.cooldowns ?? {})).toEqual(["claude-code/sonnet"]);
+    expect(state.wakes.map((w) => [w.model, w.fallback_from, w.kind])).toEqual([
+      ["sonnet", undefined, "rate_limit"],
+      ["haiku", "claude-code/sonnet", undefined],
+    ]);
+  });
+
+  it("a codex backup of a claude-code agent with allow_web unset runs with web search disabled", async () => {
+    const args: string[][] = [];
+    const { s } = await start(
+      async (i) => {
+        if (i.agent.runtime !== "codex") return fail("rate_limit", "API Error: 429");
+        args.push(buildCodexInvocation(i).args);
+        send(i.project, "lead", "lead", "shipped", "done");
+        return OK;
+      },
+      { lead: [CODEX] },
+    );
+    expect(s.endReason).toBe("done");
+    expect(args).toHaveLength(1);
+    expect(args[0]).toContain('web_search="disabled"');
   });
 
   it("(b) network error: the primary is retried `retry` times with backoff, then the backup takes over", async () => {

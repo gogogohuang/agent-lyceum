@@ -125,12 +125,14 @@ function classifyWith(rules: Rule[], code: number | null, text: string): ErrorKi
 
 /**
  * The text the rules read: the result message (only when it is an error message: pass `result` for an `is_error` run), stderr, and the HTTP status
- * the CLI reports as `api_error_status`. With no `result` and no JSON in stdout (nothing parsable came out), stdout itself.
+ * the CLI reports as `api_error_status`. With no `result` and no result in stdout, stdout itself, but only when it is plain text: structured
+ * output (starting with `{` or `[`) without a result is a transcript, and the agent's own words there must not read as an error.
  */
 export function classifyClaudeError(out: { code: number | null; stdout: string; stderr: string; result?: string }): ErrorKind {
   const status = /"api_error_status":\s*(\d{3})/.exec(out.stdout)?.[1];
   const j = extractClaudeResult(out.stdout);
-  const message = out.result ?? (j ? (j.is_error ? String(j.result ?? "") : "") : out.stdout);
+  const structured = /^[[{]/.test(out.stdout.trimStart());
+  const message = out.result ?? (j ? (j.is_error ? String(j.result ?? "") : "") : structured ? "" : out.stdout);
   return classifyWith(CLAUDE_RULES, out.code, [message, out.stderr, status ? `HTTP ${status}` : ""].join("\n"));
 }
 

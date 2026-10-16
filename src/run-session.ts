@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { candidatesFor, Cooldowns, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
+import { agentForCandidate, candidatesFor, Cooldowns, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
@@ -419,7 +419,7 @@ export class RunSession {
         this.syncCooldowns();
         const attempt = ctx.attempt;
         // A backup runs as the same agent on another runtime/model, in a session of its own.
-        const runAs: ResolvedAgent = c.primary ? agent : { ...agent, runtime: c.runtime, model: c.model, effort: c.effort };
+        const runAs = agentForCandidate(agent, c);
         const sessionKey = c.primary ? agent.name : `${agent.name}@${c.key}`;
         const round = ++state.rounds;
         const started = Date.now();
