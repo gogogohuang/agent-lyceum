@@ -303,3 +303,52 @@ describe("status --json shape", () => {
     });
   }
 });
+
+describe("status: fallback", () => {
+  const FUTURE = "2026-01-01T00:03:00Z"; // 120s after NOW
+  const chainRun = {
+    pid: process.pid,
+    last_wake: { lead: { at: "2026-01-01T00:00:50Z", ok: true, runtime: "claude-code", model: "backup" } },
+    wakes: [
+      { round: 1, agent: "lead", at: "2026-01-01T00:00:40Z", duration_ms: 1000, ok: false, handling: [], runtime: "claude-code", kind: "rate_limit" },
+      { round: 1, agent: "lead", at: "2026-01-01T00:00:50Z", duration_ms: 1000, ok: true, handling: [], runtime: "claude-code", model: "backup", fallback_from: "claude-code" },
+    ],
+    cooldowns: { "claude-code/": { until: FUTURE, kind: "rate_limit" }, "claude-code/old": { until: "2026-01-01T00:00:10Z", kind: "quota" } },
+  };
+  const withChain = () => {
+    const p = env.project();
+    p.agents.lead!.fallback = [{ runtime: "claude-code", model: "backup" }];
+    return p;
+  };
+
+  it("--json: runtime, model, fallback and only the unexpired cooldowns, for the agent with a chain", () => {
+    env = makeEnv();
+    writeRun(env, chainRun);
+    const lead = buildStatusReport(withChain(), undefined, NOW).agents.find((a) => a.name === "lead")!;
+    expect(lead.runtime).toBe("claude-code");
+    expect(lead.model).toBe("backup");
+    expect(lead.fallback).toEqual({ from: "claude-code", kind: "rate_limit" });
+    expect(lead.cooldowns).toEqual([{ model: "claude-code/", kind: "rate_limit", remaining_sec: 120 }]);
+    const other = buildStatusReport(withChain(), undefined, NOW).agents.find((a) => a.name === "fe-member")!;
+    expect(Object.keys(other)).not.toContain("fallback");
+    expect(Object.keys(other)).not.toContain("cooldowns");
+    expect(Object.keys(other)).not.toContain("model");
+  });
+
+  it("text: shows fallback: <kind> with the model, and the cooldown left", () => {
+    env = makeEnv();
+    writeRun(env, chainRun);
+    const out = formatStatusReport(buildStatusReport(withChain(), undefined, NOW), NOW);
+    expect(out).toContain("lead 備援中 fallback: rate_limit (claude-code/backup)");
+    expect(out).toContain("lead 冷卻中：claude-code 剩 2m00s");
+  });
+
+  it("without a chain: agent keys and the text are exactly what they were", () => {
+    env = makeEnv();
+    writeRun(env, { pid: process.pid, last_wake: { lead: { at: "2026-01-01T00:00:50Z", ok: true } } });
+    const r = buildStatusReport(env.project(), undefined, NOW);
+    for (const a of JSON.parse(JSON.stringify(r.agents)) as Record<string, unknown>[]) expect(Object.keys(a).sort()).toEqual(["can_message", "lead", "name", "runtime", "unread"].concat(a["last_wake"] ? ["last_wake"] : []).sort());
+    const out = formatStatusReport(r, NOW);
+    expect(out).not.toMatch(/fallback|備援|冷卻/);
+  });
+});

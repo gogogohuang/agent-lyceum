@@ -167,6 +167,48 @@ describe("diagnoseProject", () => {
     expect(old.checks.find((c) => c.level === "error")?.message).toMatch(/lead.*resume/i);
   });
 
+  describe("fallback chains", () => {
+    const allClaude = () => {
+      const p = env.project();
+      for (const a of Object.values(p.agents)) a.runtime = "claude-code";
+      return p;
+    };
+
+    it("probes a runtime that only a fallback chain uses, once, and reports it as healthy", async () => {
+      env = makeEnv();
+      const { bin, calls } = fakeBin(env.root);
+      const p = allClaude();
+      p.agents.lead!.fallback = [{ runtime: "codex", model: "gpt-5" }];
+      p.agents["fe-member"]!.fallback = [{ runtime: "codex", model: "gpt-4" }];
+      const before = calls().length;
+      const r = await diagnoseProject(p, { env: envWith(bin, "full") });
+      expect(r.ok).toBe(true);
+      expect(calls().slice(before).filter((c) => c.startsWith("codex --version"))).toHaveLength(1);
+      expect(r.runtimes.map((c) => c.runtime).sort()).toEqual(["claude-code", "codex"]);
+    });
+
+    it("errors when the fallback CLI is missing, naming the agents it backs up", async () => {
+      env = makeEnv();
+      const { bin } = fakeBin(env.root);
+      fs.rmSync(path.join(bin, "codex"));
+      const p = allClaude();
+      p.agents.lead!.fallback = [{ runtime: "codex", model: "gpt-5" }];
+      p.agents["fe-member"]!.fallback = [{ runtime: "codex", model: "gpt-4" }];
+      const r = await diagnoseProject(p, { env: envWith(bin, "full") });
+      expect(r.ok).toBe(false);
+      const e = r.checks.filter((c) => c.level === "error");
+      expect(e).toHaveLength(1);
+      expect(e[0]!.message).toMatch(/codex.*not found.*fallback for (lead, fe-member|fe-member, lead)/);
+    });
+
+    it("does not change anything for a project without a chain", async () => {
+      env = makeEnv();
+      const { bin } = fakeBin(env.root);
+      const a = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+      expect(JSON.stringify(a)).not.toMatch(/fallback/i);
+    });
+  });
+
   it("only warns when a capability is unknown, instead of guessing", async () => {
     env = makeEnv();
     const { bin } = fakeBin(env.root);

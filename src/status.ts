@@ -5,6 +5,7 @@ import { RESULT_FILE } from "./dispatcher.js";
 import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type RunFailure, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
+import { candidatesFor } from "./fallback.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
 import { listUnread } from "./mailbox.js";
 import { tidyAdvice } from "./memory-tidy.js";
@@ -225,6 +226,12 @@ export interface AgentReport {
   /** Who this agent may send mail to (`all` expanded, itself left out). */
   can_message: string[];
   last_wake?: { at: string; ok: boolean; error?: string };
+  /** Only for an agent with a fallback chain: the model it last ran on (or its own, before any wake). */
+  model?: string;
+  /** Only when the agent's latest wake ran on a backup: what it replaced and why. */
+  fallback?: { from: string; kind: string };
+  /** Only for an agent with a fallback chain: its models that are cooling down now (`model` is `<runtime>/<model>`). */
+  cooldowns?: { model: string; kind: string; remaining_sec: number }[];
 }
 
 export interface StatusReport {
@@ -322,8 +329,29 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
 
 const projectInfo = (p: ResolvedProject) => ({ name: p.name, dir: p.dir, lead: p.lead });
 
+/** The fallback part of an agent's report: nothing at all for an agent without a chain. */
+function fallbackView(a: ResolvedProject["agents"][string], state: RunState | undefined, now: number): Pick<AgentReport, "runtime" | "model" | "fallback" | "cooldowns"> {
+  if (!a.fallback.length || !a.runtime) return {};
+  const lw = state?.last_wake[a.name];
+  const ran = lw?.runtime ? lw : undefined;
+  const model = ran ? ran.model : a.model;
+  const last = [...(state?.wakes ?? [])].reverse().find((w) => w.agent === a.name);
+  let fallback: AgentReport["fallback"];
+  if (last?.fallback_from) {
+    // The reason is on the failed wake just before: the nearest earlier wake of this agent that has a kind.
+    const before = (state?.wakes ?? []).slice(0, (state?.wakes ?? []).lastIndexOf(last)).reverse().find((w) => w.agent === a.name && w.kind);
+    fallback = { from: last.fallback_from, kind: before?.kind ?? "unknown" };
+  }
+  const keys = new Set(candidatesFor(a).map((c) => c.key));
+  const cooldowns = Object.entries(state?.cooldowns ?? {})
+    .filter(([k]) => keys.has(k))
+    .map(([k, v]) => ({ model: k, kind: v.kind, remaining_sec: Math.ceil((Date.parse(v.until) - now) / 1000) }))
+    .filter((c) => Number.isFinite(c.remaining_sec) && c.remaining_sec > 0);
+  return { runtime: ran?.runtime ?? a.runtime, ...(model ? { model } : {}), ...(fallback ? { fallback } : {}), ...(cooldowns.length ? { cooldowns } : {}) };
+}
+
 /** The status of a project: its agents and one run (the newest running one, else the newest, or the one named by `runId`). */
-export function buildStatusReport(base: ResolvedProject, runId?: string): StatusReport {
+export function buildStatusReport(base: ResolvedProject, runId?: string, now = Date.now()): StatusReport {
   let run: { dir: string; state: RunState } | undefined;
   if (runId) {
     const dir = path.join(base.paths.runs, runId);
@@ -349,6 +377,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string): Status
       unread: listUnread(project, a.name).length,
       can_message: (a.canMessage === "all" ? Object.keys(project.agents) : a.canMessage).filter((n) => n !== a.name),
       last_wake: run?.state.last_wake[a.name],
+      ...fallbackView(a, run?.state, now),
     })),
     run: report,
     ...(advice.length ? { memory_advice: advice } : {}),
@@ -524,6 +553,20 @@ export function formatStatus(base: ResolvedProject, now = Date.now(), color = fa
   return formatStatusReport(buildStatusReport(base), now, color);
 }
 
+const shortSec = (sec: number) => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`);
+/** `runtime/model`, or the runtime alone for its default model (cooldown keys end in `/` then). */
+const modelName = (key: string) => key.replace(/\/$/, "");
+
+/** Agents running on a backup and models cooling down; empty for a run without fallback. */
+function fallbackLines(agents: AgentReport[], c: Paint): string[] {
+  const out: string[] = [];
+  for (const a of agents) {
+    if (a.fallback) out.push(`  ${c.cyan(a.name)} ${c.yellow(`備援中 fallback: ${a.fallback.kind}`)} (${modelName(`${a.runtime ?? "?"}/${a.model ?? ""}`)})`);
+    for (const k of a.cooldowns ?? []) out.push(`  ${c.cyan(a.name)} ${c.yellow(`冷卻中：${modelName(k.model)} 剩 ${shortSec(k.remaining_sec)}`)}（${k.kind}）`);
+  }
+  return out;
+}
+
 export function formatStatusReport(report: StatusReport, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = report.run;
@@ -548,6 +591,8 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   table.splice(1, 0, c.dim(w.map((n) => "-".repeat(n)).join("  ")));
 
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
+  const fb = fallbackLines(report.agents, c);
+  if (fb.length) lines.push("", ...fb);
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");

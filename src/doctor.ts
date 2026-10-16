@@ -114,8 +114,14 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
   for (const c of caps) {
     const cmd = BINARY[c.runtime];
     const users = Object.values(project.agents).filter((a) => a.runtime === c.runtime);
+    const backups = Object.values(project.agents).filter((a) => a.runtime !== c.runtime && a.fallback.some((f) => f.runtime === c.runtime));
     if (c.binary === "missing") {
-      checks.push({ level: "error", subject: c.runtime, message: `${cmd} not found on PATH (needed by ${users.map((a) => a.name).join(", ")}).` });
+      const forBackup = backups.length ? `${users.length ? "; also" : "it is"} a fallback for ${backups.map((a) => a.name).join(", ")}` : "";
+      checks.push({
+        level: "error",
+        subject: c.runtime,
+        message: users.length ? `${cmd} not found on PATH (needed by ${users.map((a) => a.name).join(", ")}${forBackup}).` : `${cmd} not found on PATH (${forBackup}).`,
+      });
       continue;
     }
     checks.push({ level: "ok", subject: c.runtime, message: `${cmd} ${c.version ?? "(version unknown)"}` });
@@ -132,7 +138,9 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
   return checks;
 }
 
-const runtimesUsed = (project: ResolvedProject): Runtime[] => [...new Set(Object.values(project.agents).map((a) => a.runtime).filter((r): r is Runtime => !!r))];
+const runtimesUsed = (project: ResolvedProject): Runtime[] => [
+  ...new Set(Object.values(project.agents).flatMap((a) => [a.runtime, ...a.fallback.map((f) => f.runtime)]).filter((r): r is Runtime => !!r)),
+];
 
 export async function probeProjectRuntimes(project: ResolvedProject, opts: ProbeOptions = {}): Promise<RuntimeCapabilities[]> {
   return Promise.all(runtimesUsed(project).map((r) => probeRuntime(r, opts)));
