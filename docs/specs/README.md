@@ -20,6 +20,7 @@
 | [15](15-worktree-git-isolation.md) | dispatcher 不信任 agent 可寫的 git 狀態 | 高 | 中（簽名改動） | [plan](../plans/2026-10-13-15-worktree-git-isolation.md) |
 | [16](16-task-names-and-reopen.md) | task 名稱與重開已完成的 run | 中 | 中 | [plan](../plans/2026-10-14-16-task-names-and-reopen.md) |
 | [17](17-run-shared-memory.md) | task 接續用的共享 memory | 中 | 中（write guard） | [plan](../plans/2026-10-14-17-run-shared-memory.md) |
+| [18](18-command-consolidation.md) | 合併頂層指令（10 → 6） | 中 | 中（破壞相容） | 見 spec 18.11 |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 

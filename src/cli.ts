@@ -189,7 +189,7 @@ function reportRun(summary: RunSummary, runDir: string): never {
 const firstLine = (t: string): string => t.trim().split("\n")[0]!.trim();
 
 /** Take the lock and continue a run; the lock is released when it stops (also when it stops because it waits for answers). */
-async function continueRun(pr: ResolvedProject, dir: string, runId: string, followup?: { text: string }): Promise<RunSummary> {
+async function runUnderLock(pr: ResolvedProject, dir: string, runId: string, followup?: { text: string }): Promise<RunSummary> {
   const lease = takeLock(pr, runId);
   const cancel = cancelOnSignals();
   try {
@@ -238,9 +238,49 @@ async function driveRun(pr: ResolvedProject, runDir: string, first: RunSummary, 
       printWaiting(pr, summary.runId, prep.path, prep.problems);
       process.exit(3);
     }
-    summary = await continueRun(pr, runDir, summary.runId);
+    summary = await runUnderLock(pr, runDir, summary.runId);
   }
   return reportRun(summary, runDir);
+}
+
+/** `run "<task>"`: start a new run. */
+async function startNewRun(task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }): Promise<void> {
+  const pr = loadProject(opts.project);
+  const res = validateProject(pr);
+  for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+  if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+  let checked = pr;
+  if (opts.agent) {
+    assertName("agent", opts.agent);
+    if (opts.assumeDefaults) console.error("warn   --assume-defaults is ignored with --agent: a solo agent cannot ask questions.");
+    // Fails with the member list (and a hint for a global-only agent) before anything is written.
+    const sp = soloProject(pr, opts.agent, { globalAgents: Object.keys(loadGlobal(home()).agents) });
+    checked = onlyAgent(sp, opts.agent);
+  }
+  await preflight(checked);
+
+  const taken = listRuns(pr, Infinity).flatMap((r) => (r.state.name ? [r.state.name] : []));
+  if (opts.name !== undefined) {
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opts.name) || opts.name.length > 30) fail(`Invalid run name "${opts.name}": use lowercase letters, digits and "-", at most 30 characters.`);
+    if (taken.includes(opts.name)) fail(`A run named "${opts.name}" already exists in project ${pr.name}.`);
+  }
+
+  const runId = newRunId();
+  const runDir = path.join(pr.paths.runs, runId);
+  const lease = takeLock(pr, runId);
+  let summary: RunSummary;
+  const cancel = cancelOnSignals();
+  try {
+    const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
+    console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
+    console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
+    const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
+    summary = await runTeam({ project: pr, name, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
+  } finally {
+    cancel.dispose();
+    lease.release();
+  }
+  await driveRun(pr, runDir, summary, !!opts.assumeDefaults);
 }
 
 program
@@ -254,42 +294,7 @@ program
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
   .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }) => {
     try {
-      const pr = loadProject(opts.project);
-      const res = validateProject(pr);
-      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
-      let checked = pr;
-      if (opts.agent) {
-        assertName("agent", opts.agent);
-        if (opts.assumeDefaults) console.error("warn   --assume-defaults is ignored with --agent: a solo agent cannot ask questions.");
-        // Fails with the member list (and a hint for a global-only agent) before anything is written.
-        const sp = soloProject(pr, opts.agent, { globalAgents: Object.keys(loadGlobal(home()).agents) });
-        checked = onlyAgent(sp, opts.agent);
-      }
-      await preflight(checked);
-
-      const taken = listRuns(pr, Infinity).flatMap((r) => (r.state.name ? [r.state.name] : []));
-      if (opts.name !== undefined) {
-        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opts.name) || opts.name.length > 30) fail(`Invalid run name "${opts.name}": use lowercase letters, digits and "-", at most 30 characters.`);
-        if (taken.includes(opts.name)) fail(`A run named "${opts.name}" already exists in project ${pr.name}.`);
-      }
-
-      const runId = newRunId();
-      const runDir = path.join(pr.paths.runs, runId);
-      const lease = takeLock(pr, runId);
-      let summary: RunSummary;
-      const cancel = cancelOnSignals();
-      try {
-        const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
-        console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
-        console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
-        const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
-        summary = await runTeam({ project: pr, name, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
-      } finally {
-        cancel.dispose();
-        lease.release();
-      }
-      await driveRun(pr, runDir, summary, !!opts.assumeDefaults);
+      await startNewRun(task, opts);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -314,6 +319,42 @@ async function pickReopenRun(pr: ResolvedProject): Promise<RunRef> {
   const r = resolveRun(cands, answer);
   if (r.ok) return r.run;
   return fail(`"${answer}" is not one of the listed runs.`);
+}
+
+/** `resume <run>`: continue an interrupted (or failed) run, answer a waiting one, or print the result of a done one. */
+async function continueRun(pr: ResolvedProject, found: RunRef, opts: { answer?: boolean; edit: boolean; assumeDefaults?: boolean }): Promise<void> {
+  const { dir, state } = found;
+  if (state.end_reason === "done") {
+    const result = path.join(dir, RESULT_FILE);
+    if (!fs.existsSync(result)) fail(`Run ${runLabel(state)} already finished (done); nothing to resume.`);
+    const o = outcomeOf(state)!;
+    console.log(`Run ${runLabel(state)} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
+    process.exit(exitCodeForOutcome(o.outcome));
+  }
+  if (roundLimit(state, pr.dispatcher.max_rounds) > 0 && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
+    fail(`Run ${runLabel(state)} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml (or set it to 0 for no limit) first.`);
+
+  if (opts.answer && state.end_reason !== "waiting") fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
+  if (state.end_reason === "waiting") {
+    if (opts.answer && opts.edit) openInEditor(prepareAnswers(dir, {}).path);
+    const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
+    if (!prep.complete) {
+      printWaiting(pr, state.run_id, prep.path, prep.problems);
+      process.exit(3);
+    }
+  }
+  const summary = await runUnderLock(pr, dir, state.run_id);
+  await driveRun(pr, dir, summary, !!opts.assumeDefaults);
+}
+
+/** `resume <run> "<text>"`: reopen a finished run with a follow-up request. */
+async function reopenRun(pr: ResolvedProject, found: RunRef, text: string, opts: { answer?: boolean; assumeDefaults?: boolean }): Promise<void> {
+  const { dir, state } = found;
+  if (state.end_reason !== "done") fail(`Run ${runLabel(state)} is not finished (${state.end_reason ?? "interrupted"}); resume it without text first, then follow up.`);
+  // A reopen recalculates the round limit from where the run stands, so there is no round check here.
+  if (opts.answer) fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason}).`);
+  const summary = await runUnderLock(pr, dir, state.run_id, { text });
+  await driveRun(pr, dir, summary, !!opts.assumeDefaults);
 }
 
 program
@@ -359,35 +400,12 @@ program
         found = latestUnfinishedRun(pr);
         if (!found) fail("No unfinished run to resume. Start one with: agent-lyceum run \"<task>\"");
       }
-      const { dir, state } = found!;
+      const { state } = found!;
       // A solo run needs only its own agent's runtime, as when it started.
       await preflight(state.solo_agent ? onlyAgent(soloProject(pr, state.solo_agent), state.solo_agent) : pr);
       if (!state.end_reason && runIsAlive(state, pr)) fail(`Run ${runLabel(state)} is still running (pid ${state.pid}).`);
-      const reopen = text !== undefined;
-      if (reopen && state.end_reason !== "done")
-        fail(`Run ${runLabel(state)} is not finished (${state.end_reason ?? "interrupted"}); resume it without text first, then follow up.`);
-      if (!reopen && state.end_reason === "done") {
-        const result = path.join(dir, RESULT_FILE);
-        if (!fs.existsSync(result)) fail(`Run ${runLabel(state)} already finished (done); nothing to resume.`);
-        const o = outcomeOf(state)!;
-        console.log(`Run ${runLabel(state)} already finished (done); nothing to resume. Outcome: ${o.outcome}${o.verified ? "" : " (not verified: this run ended before outcomes were recorded)"}. Result: ${result}\n\n${fs.readFileSync(result, "utf8")}`);
-        process.exit(exitCodeForOutcome(o.outcome));
-      }
-      // A reopen recalculates the round limit from where the run stands.
-      if (!reopen && roundLimit(state, pr.dispatcher.max_rounds) > 0 && state.rounds >= roundLimit(state, pr.dispatcher.max_rounds))
-        fail(`Run ${runLabel(state)} used ${state.rounds}/${roundLimit(state, pr.dispatcher.max_rounds)} rounds; raise dispatcher.max_rounds in project.yaml (or set it to 0 for no limit) first.`);
-
-      if (opts.answer && state.end_reason !== "waiting") fail(`Run ${runLabel(state)} is not waiting for answers (${state.end_reason ?? "not finished"}).`);
-      if (state.end_reason === "waiting") {
-        if (opts.answer && opts.edit) openInEditor(prepareAnswers(dir, {}).path);
-        const prep = prepareAnswers(dir, { assumeDefaults: !!opts.assumeDefaults });
-        if (!prep.complete) {
-          printWaiting(pr, state.run_id, prep.path, prep.problems);
-          process.exit(3);
-        }
-      }
-      const summary = await continueRun(pr, dir, state.run_id, reopen ? { text: text! } : undefined);
-      await driveRun(pr, dir, summary, !!opts.assumeDefaults);
+      if (text !== undefined) await reopenRun(pr, found!, text, opts);
+      else await continueRun(pr, found!, opts);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
