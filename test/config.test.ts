@@ -239,7 +239,6 @@ describe("fallback resolution", () => {
 
   it("lets the project agent's fallback override the global one", () => {
     env = makeEnv();
-    fs.appendFileSync(path.join(env.home, "team.yaml"), "");
     const g = fs.readFileSync(path.join(env.home, "team.yaml"), "utf8").replace("  fe-member:", "  fe-member:\n    fallback: [{ model: haiku }]");
     fs.writeFileSync(path.join(env.home, "team.yaml"), g);
     const fe = () => env.project().agents["fe-member"];
@@ -262,5 +261,16 @@ describe("fallback resolution", () => {
     env.editProjectYaml(withProject("", "[{ model: sonnet }]"));
     const { sources } = resolveProjectWithSources(env.home, "demo");
     expect(sources["agents.fe-member.fallback"]).toEqual({ file: path.join(env.home, "projects/demo/project.yaml"), key: "dispatcher.fallback" });
+  });
+
+  it("leaves doctor --resolved output unchanged without fallback, and adds it only when set", () => {
+    env = makeEnv();
+    const flat = flattenResolved(env.project());
+    expect(Object.keys(flat).filter((k) => k.includes("fallback"))).toEqual([]);
+    env.editProjectYaml(withProject("    fallback: [{ model: haiku }]\n"));
+    const withFb = flattenResolved(env.project());
+    expect(withFb["agents.fe-member.fallback"]).toEqual([{ runtime: "claude-code", model: "haiku" }]);
+    expect(withFb["agents.qa-member.fallback"]).toBeUndefined();
+    expect(withFb["dispatcher.fallback_cooldown_sec"]).toBe(300);
   });
 });

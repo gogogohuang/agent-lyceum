@@ -37,25 +37,6 @@ export interface FallbackEntry {
   effort?: Effort;
 }
 
-/**
- * What each adapter can guarantee, read off `buildClaudeSettings`/`buildCodexInvocation` and `enforcementFor`:
- * - allow_web: claude-code maps none/search/fetch to its WebSearch/WebFetch tools, codex to `web_search` disabled/cached/live.
- * - can_ask_user: mail-level (`mailbox.ts`), no runtime involved.
- * - worktree: the adapter only runs in `repoDirFor(...)`, so both honour a per-agent worktree.
- * - writeScope: best level reachable with the OS sandbox; without it claude-code falls back to tool rules, codex to prompt-only/post-hoc.
- */
-export interface RuntimeCaps {
-  webLevels: WebLevel[];
-  canAskUser: boolean;
-  worktree: boolean;
-  writeScope: "os";
-}
-
-export const RUNTIME_CAPS: Record<Runtime, RuntimeCaps> = {
-  "claude-code": { webLevels: ["none", "search", "fetch"], canAskUser: true, worktree: true, writeScope: "os" },
-  codex: { webLevels: ["none", "search", "fetch"], canAskUser: true, worktree: true, writeScope: "os" },
-};
-
 const Memory = z
   .object({
     global: z.string().optional(),

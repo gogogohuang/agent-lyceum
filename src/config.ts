@@ -46,6 +46,8 @@ export interface ResolvedAgent {
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
   fallback: FallbackEntry[];
   /** Entries of the chain that could not be resolved (left out of `fallback`); `validate` reports them. */
+  /** True when the chain came from `dispatcher.fallback` rather than the agent's own setting. */
+  fallbackShared: boolean;
   fallbackInvalid: { index: number; reason: "empty" | "no-runtime" }[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
@@ -196,7 +198,9 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
 
     // Precedence: the agent's own chain (project > global), then dispatcher.fallback, then none. `[]` is a real value: no fallback.
     let rawFallback = pick("fallback");
+    let fallbackShared = false;
     if (rawFallback === undefined) {
+      fallbackShared = dispatcherFallback !== undefined;
       if (dispatcherFallback !== undefined) {
         rawFallback = dispatcherFallback;
         sources.fallback = "project";
@@ -235,6 +239,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canAskUser: canAsk ?? isLead,
       allowWeb,
       fallback,
+      fallbackShared,
       fallbackInvalid,
       sources,
     };
@@ -338,7 +343,9 @@ export function resolveProjectWithSources(home: string, name: string): { project
     dir: { file: projectFile, key: "dir" },
     "team.lead": { file: projectFile, key: "team.lead" },
   };
+  const anyFallback = Object.values(project.agents).some((a) => a.fallback.length > 0);
   for (const k of Object.keys(DISPATCHER_DEFAULTS) as (keyof DispatcherSettings)[]) {
+    if (k === "fallback_cooldown_sec" && !anyFallback) continue;
     sources[`dispatcher.${k}`] = raw.dispatcher[k] !== undefined ? { file: projectFile, key: `dispatcher.${k}` } : { default: true };
   }
   for (const a of Object.values(project.agents)) {
@@ -351,6 +358,7 @@ export function resolveProjectWithSources(home: string, name: string): { project
     for (const f of AGENT_FIELDS) {
       const src = a.sources[f];
       if (src === undefined) continue; // not set anywhere (e.g. no effort)
+      if (f === "fallback" && a.fallback.length === 0) continue;
       if (src === "model") sources[`agents.${a.name}.${f}`] = (() => {
         const m = at(a.sources.model, "model");
         return "file" in m ? { inferred_from: m } : { default: true };
@@ -368,7 +376,11 @@ export function resolveProjectWithSources(home: string, name: string): { project
 /** Every effective setting under the same keys as `resolveProjectWithSources` reports sources for. */
 export function flattenResolved(project: ResolvedProject): Record<string, unknown> {
   const v: Record<string, unknown> = { dir: project.dir, "team.lead": project.lead };
-  for (const [k, val] of Object.entries(project.dispatcher)) v[`dispatcher.${k}`] = val;
+  const anyFallback = Object.values(project.agents).some((a) => a.fallback.length > 0);
+  for (const [k, val] of Object.entries(project.dispatcher)) {
+    if (k === "fallback_cooldown_sec" && !anyFallback) continue; // keep `doctor --resolved` unchanged without fallback
+    v[`dispatcher.${k}`] = val;
+  }
   for (const a of Object.values(project.agents)) {
     const p = `agents.${a.name}`;
     v[`${p}.runtime`] = a.runtime;
@@ -382,7 +394,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
-    v[`${p}.fallback`] = a.fallback;
+    if (a.fallback.length) v[`${p}.fallback`] = a.fallback;
   }
   return v;
 }

@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { enforcementFor, memoryDirs, type AgentEnforcement } from "./policy.js";
+import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from "./policy.js";
 import { isInside } from "./paths.js";
-import { inferRuntime, RUNTIME_CAPS, RUNTIME_EFFORTS } from "./schema.js";
+import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
 import { must } from "./assert.js";
 
 export interface Issue {
@@ -37,7 +37,7 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
-    validateFallback(a, err);
+    validateFallback(project, a, err);
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {
@@ -85,8 +85,11 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   return { issues, enforcement, ok: !issues.some((i) => i.level === "error") };
 }
 
-/** Load-time (fail closed) checks of one agent's fallback chain: well-formed, not a no-op, and able to keep the agent's restrictions. */
-function validateFallback(a: ResolvedAgent, err: (message: string) => void): void {
+const PARITY_FIELDS = ["memory", "agentMd", "otherContext", "shared", "repoInstructions"] as const;
+const norm = (m: string | undefined) => (m ?? "").trim().toLowerCase();
+
+/** Load-time (fail closed) checks of one agent's fallback chain: well-formed, not a no-op, and no weaker at write-scope than the primary. */
+function validateFallback(project: ResolvedProject, a: ResolvedAgent, err: (message: string) => void): void {
   for (const bad of a.fallbackInvalid) {
     err(
       bad.reason === "empty"
@@ -94,16 +97,26 @@ function validateFallback(a: ResolvedAgent, err: (message: string) => void): voi
         : `agent ${a.name}: fallback #${bad.index + 1} has no recognizable runtime (set runtime, or use a recognizable model).`,
     );
   }
+  const primary = a.runtime ? enforcementFor(project, a) : undefined;
   for (const f of a.fallback) {
     const label = `${f.runtime}/${f.model || "(default model)"}`;
+    if (f.runtime === a.runtime && norm(f.model) === norm(a.model)) {
+      // A chain shared through dispatcher.fallback may already contain this agent's primary: just skip it then.
+      if (!a.fallbackShared) err(`agent ${a.name}: fallback ${label} is the same as the primary runtime and model.`);
+      continue;
+    }
     if (f.effort && !RUNTIME_EFFORTS[f.runtime].includes(f.effort)) {
       err(`agent ${a.name}: fallback ${label}: effort "${f.effort}" is not supported by ${f.runtime} (use ${RUNTIME_EFFORTS[f.runtime].join(", ")}).`);
     }
-    if (f.runtime === a.runtime && f.model === (a.model ?? "")) err(`agent ${a.name}: fallback ${label} is the same as the primary runtime and model.`);
-    const caps = RUNTIME_CAPS[f.runtime];
-    if (a.allowWeb && !caps.webLevels.includes(a.allowWeb)) err(`agent ${a.name}: fallback ${label} cannot enforce allow_web: ${a.allowWeb}`);
-    if (!a.canAskUser && !caps.canAskUser) err(`agent ${a.name}: fallback ${label} cannot enforce can_ask_user: false`);
-    if (!caps.worktree) err(`agent ${a.name}: fallback ${label} cannot enforce worktree isolation`);
+    if (!primary) continue;
+    // `prompt-only` is the one level that is no enforcement at all; everything else (os, tool-rules, post-hoc) still holds the line.
+    const swapped = enforcementFor(project, { ...a, runtime: f.runtime, model: f.model || undefined, effort: f.effort });
+    for (const k of PARITY_FIELDS) {
+      const from: Level = primary[k];
+      const to: Level = swapped[k];
+      if (from === "n/a" || to === "n/a") continue;
+      if (to === "prompt-only" && from !== "prompt-only") err(`agent ${a.name}: fallback ${label} cannot enforce ${k} (${from} -> ${to})`);
+    }
   }
 }
 
