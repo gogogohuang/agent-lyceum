@@ -326,7 +326,7 @@ async function tidyOne(o: TidyOptions, t: MemoryTarget, stamp: string): Promise<
   return { ...base, status: "tidied", archive: stamp, problems: [] };
 }
 
-/** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum tidy`). */
+/** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum clear --tidy-memory`). */
 export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   const say = o.say ?? ((s: string) => console.log(s));
   const targets = targetsFor(o.project, { layer: o.layer, agent: o.agent });

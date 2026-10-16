@@ -39,9 +39,9 @@ export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; n
           : "The lead's wake-up failed.",
       };
     case "waiting":
-      return { outcome: "waiting", note: "Waiting for your answers. Fill in ask-reply.md or run `agent-lyceum resume <run-id> --answer`, then continue with `agent-lyceum resume`." };
+      return { outcome: "waiting", note: "Waiting for your answers. Fill in ask-reply.md or run `agent-lyceum run <run-id> --answer`, then continue with `agent-lyceum run <run-id>`." };
     case "cancelled":
-      return { outcome: "cancelled", note: "Cancelled before the lead finished. Unread mail was kept; continue with `agent-lyceum resume`." };
+      return { outcome: "cancelled", note: "Cancelled before the lead finished. Unread mail was kept; continue with `agent-lyceum run`." };
     case "idle":
       return { outcome: "partial", note: "All mailboxes were empty but the lead never sent a done message." };
     case "max_rounds":

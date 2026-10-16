@@ -44,7 +44,7 @@ describe("endOutcome", () => {
       note: "fe-member failed 3 time(s) in a row (boom), so the run stopped. The message it was handling is still unread.",
     });
     expect(endOutcome("cancelled").outcome).toBe("cancelled");
-    expect(endOutcome("cancelled").note).toContain("agent-lyceum resume");
+    expect(endOutcome("cancelled").note).toContain("agent-lyceum run");
     expect(endOutcome("idle")).toEqual({ outcome: "partial", note: "All mailboxes were empty but the lead never sent a done message." });
     expect(endOutcome("max_rounds")).toEqual({ outcome: "partial", note: "Stopped at the round limit before the lead sent done." });
   });

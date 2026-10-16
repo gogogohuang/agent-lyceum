@@ -139,7 +139,7 @@ describe("diagnoseProject", () => {
     const d = env.project().agents.lead!.memory.project!;
     write(path.join(d, "MEMORY.md"), "- entry\n".repeat(800));
     const r = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
-    expect(r.checks.some((c) => c.level === "info" && c.subject === "memory" && /agent-lyceum tidy -p /.test(c.message))).toBe(true);
+    expect(r.checks.some((c) => c.level === "info" && c.subject === "memory" && /agent-lyceum clear --tidy-memory -p /.test(c.message))).toBe(true);
     expect(r.ok).toBe(true);
     expect(fs.existsSync(path.join(d, ".archive"))).toBe(false);
     expect(fs.existsSync(path.join(env.project().paths.root, "tidy-work"))).toBe(false);

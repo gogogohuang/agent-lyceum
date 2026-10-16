@@ -117,10 +117,23 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
       expect(text.out).toContain("Add login");
       const j = JSON.parse(run(["status", "-p", "demo", "--task-id", q, "--json"]).out);
       expect(j.run).toMatchObject({ run_id: "20261014-010000", name: "login" });
+    }
+    for (const q of ["20261014-010000", "login"]) {
       const dry = run(["clear", q, "-p", "demo", "--dry-run"]);
       expect(dry.code, q).toBe(0);
       expect(dry.out).toContain("20261014-010000");
     }
+  });
+
+  it("clear <prefix> is refused with the copy-ready command; nothing is deleted", () => {
+    env = makeEnv();
+    seedNamed();
+    const r = run(["clear", "20261014-01", "-p", "demo", "--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("agent-lyceum clear login --dry-run -p demo");
+    expect(run(["clear", "20261013-0", "-p", "demo"]).err).toContain("agent-lyceum clear 20261013-010000 -p demo");
+    expect(fs.existsSync(path.join(env.project().paths.runs, "20261014-010000", "state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(env.project().paths.runs, "20261013-010000", "state.json"))).toBe(true);
   });
 
   it("shows `name (run_id)` in the default status header, the --task-id header and clear output; a run without a name shows just its id", () => {

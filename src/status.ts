@@ -188,7 +188,7 @@ export interface RunReport {
   rounds: number;
   /** 0 = no limit. */
   max_rounds: number;
-  /** Set when an agent kept failing and the run stopped: `resume` after fixing the cause. */
+  /** Set when an agent kept failing and the run stopped: `run` after fixing the cause. */
   failure?: { agent: string; error?: string; attempts: number };
   output_tokens: number;
   task_source: "text" | "file";
@@ -227,7 +227,7 @@ export interface StatusReport {
   project: { name: string; dir: string; lead: string };
   agents: AgentReport[];
   run?: RunReport;
-  /** Hints that a `tidy` might help. Only a suggestion; nothing runs it. */
+  /** Hints that a `clear --tidy-memory` might help. Only a suggestion; nothing runs it. */
   memory_advice?: string[];
 }
 
@@ -301,7 +301,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     steps: s.steps,
     current_step: cur?.text ?? null,
     active: s.active,
-    // mail still waiting is what `resume` will pick up, so it is shown for every run that did not finish with a done
+    // mail still waiting is what `run` will pick up, so it is shown for every run that did not finish with a done
     queue: detail && bound && s.end_reason !== "done" ? queueOf(bound) : [],
     wakes: s.wakes,
     notes: s.notes ?? [],
@@ -411,10 +411,10 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   if (s.failure) {
     lines.push(
       `${L("需要處理：")}${c.red(`${s.failure.agent} 呼叫 ${s.failure.attempts} 次都失敗`)}（${clip(s.failure.error ?? "未知錯誤", 80)}）`,
-      c.dim(`          查 log 找原因並修正後，執行 agent-lyceum resume ${s.run_id} 從同一封信繼續（或 agent-lyceum clear ${s.run_id} 放棄）`),
+      c.dim(`          查 log 找原因並修正後，執行 agent-lyceum run ${s.run_id} 從同一封信繼續（或 agent-lyceum clear ${s.run_id} 放棄）`),
     );
   }
-  if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum resume ${s.run_id} --answer`));
+  if (s.ask) lines.push(`${L("等你回答：")}${s.ask.unanswered}/${s.ask.total} 題未答 → ${s.ask.path}`, c.dim(`          填完後執行 agent-lyceum run ${s.run_id} --answer`));
   lines.push(`${L("流程：")}${flowLine(s, c)}`);
   return lines;
 }
@@ -512,7 +512,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
       .trimEnd();
   const table = rows.map(line);
   table.splice(1, 0, c.dim(w.map((n) => "-".repeat(n)).join("  ")));
-  return [head, "", ...table, "", c.dim("接續中斷的任務：agent-lyceum resume <ID> -p " + report.project.name)].join("\n");
+  return [head, "", ...table, "", c.dim("接續中斷的任務：agent-lyceum run <ID> -p " + report.project.name)].join("\n");
 }
 
 export function formatStatus(base: ResolvedProject, now = Date.now(), color = false): string {
@@ -544,6 +544,6 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
 
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}`);
-  if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
+  if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum clear --tidy-memory -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
 }

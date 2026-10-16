@@ -147,7 +147,7 @@ export async function preflightRuntimes(project: ResolvedProject, opts: ProbeOpt
   };
 }
 
-/** Everything `agent-lyceum doctor` reports. Reads configuration and asks the CLIs for `--version`/`--help`; never runs an agent. */
+/** Everything `agent-lyceum status --check` reports. Reads configuration and asks the CLIs for `--version`/`--help`; never runs an agent. */
 export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptions = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const v = validateProject(project);
@@ -197,7 +197,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     checks.push({ level: "warn", subject: "lock", message: `The lock file of run ${id} cannot be read; if no run is active, \`agent-lyceum clear --lock ${id} --force\` clears it.` });
   }
 
-  for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
+  for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum clear --tidy-memory -p ${project.name} --agent ${a.agent} (status --check only suggests; it never tidies).` });
 
   const runtimes = await probeProjectRuntimes(project, opts);
   checks.push(...judgeRuntimes(project, runtimes));

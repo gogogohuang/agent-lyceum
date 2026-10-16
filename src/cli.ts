@@ -455,32 +455,119 @@ function unlockProject(pr: ResolvedProject, runId: string | undefined, force: bo
   console.log(`Lock removed. Continue the run with: agent-lyceum run ${target}`);
 }
 
+/** `clear --tidy-memory`: the modes were already checked by the caller. */
+async function tidyMemoryMode(opts: { project?: string; agent?: string; layer?: string; dryRun?: boolean; undo?: string }): Promise<void> {
+  try {
+      const layer = layerOpt(opts.layer);
+      if (opts.undo !== undefined) {
+        if (opts.dryRun) fail("--undo cannot be combined with --dry-run.");
+        if (!opts.agent) fail("--undo needs --agent <name>: an archive belongs to one agent's memory.");
+        const target = loadProject(opts.project);
+        const undoLease = takeLock(target, `restore-${tidyStamp()}`, { exclusive: true });
+        try {
+          const r = restoreMemory({ project: target, agent: opts.agent, layer, stamp: opts.undo });
+          for (const f of r.restored) console.log(`  restored  ${f}`);
+          for (const s of r.skipped) console.log(`  skipped   ${s.rel}: ${s.reason}`);
+          if (!r.restored.length && !r.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
+        } finally {
+          undoLease.release();
+        }
+        return;
+      }
+      const pr = loadProject(opts.project);
+      if (opts.dryRun) {
+        const dry = await tidyMemory({ project: pr, layer, agent: opts.agent, dryRun: true });
+        if (dry.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or clear --tidy-memory --layer global)." : "Set `memory.global` for an agent."}`);
+        return;
+      }
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum status --check`).");
+      await preflight(pr);
+      const lease = takeLock(pr, `tidy-${tidyStamp()}`, { exclusive: true });
+      const cancel = cancelOnSignals();
+      let results: Awaited<ReturnType<typeof tidyMemory>>;
+      try {
+        results = await tidyMemory({ project: pr, layer, agent: opts.agent, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      if (results.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or clear --tidy-memory --layer global)." : "Set `memory.global` for an agent."}`);
+      for (const r of results) {
+        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")} — undo with: agent-lyceum clear --tidy-memory --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
+        else if (r.status === "skipped") console.log(`  ${r.agent} (${r.layer}): skipped — ${r.problems.join("; ")}`);
+        else if (r.status === "failed") {
+          console.error(`  ${r.agent} (${r.layer}): FAILED, memory restored to how it was`);
+          for (const p of r.problems) console.error(`    - ${p}`);
+        }
+      }
+      process.exit(results.some((r) => r.status === "failed") ? 1 : 0);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+}
+
+type ClearOpts = { project?: string; dryRun?: boolean; keepWorktrees?: boolean; lock?: boolean; force?: boolean; tidyMemory?: boolean; agent?: string; layer?: string; undo?: string };
+
+/** 18.6.2: which mode do the arguments mean? Every conflict is an error before any side effect. */
+function checkClearModes(runId: string | undefined, o: ClearOpts): void {
+  const named = (pairs: [string, unknown][]) => pairs.filter(([, v]) => v !== undefined && v !== false).map(([k]) => k).join(" / ");
+  if (o.tidyMemory) {
+    if (runId !== undefined) fail(`--tidy-memory takes no run: it tidies the agents' long-term memory. To delete run ${runId}: agent-lyceum clear ${runId}`);
+    if (o.lock) fail("Use either --tidy-memory or --lock, not both.");
+    const bad = named([["--force", o.force], ["--keep-worktrees", o.keepWorktrees]]);
+    if (bad) fail(`${bad} do not go with --tidy-memory.`);
+    return;
+  }
+  const mem = named([["--agent", o.agent], ["--layer", o.layer], ["--undo", o.undo]]);
+  if (mem) fail(`${mem} only go with --tidy-memory (memory tidy).`);
+  if (o.lock) {
+    const bad = named([["--dry-run", o.dryRun], ["--keep-worktrees", o.keepWorktrees]]);
+    if (bad) fail(`${bad} do not go with --lock (without --force it only shows the lock).`);
+    return;
+  }
+  if (o.force) fail("--force only goes with --lock.");
+  if (!runId) fail("Give the run to delete (see agent-lyceum status --task-list), or use --lock or --tidy-memory.");
+}
+
 program
   .command("clear [run-id]")
-  .summary("Delete a run by id, or remove a stale run lock")
+  .summary("Delete a run, remove a stale run lock, or tidy agent memory")
   .description(
-    "Delete a task (run) by id: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots.\n\n" +
-      "Long-term (global and project) memory is never touched.\n" +
-      "Refuses while the run is running, or while a worktree holds work that is not in the repo.\n\n" +
-      "With --lock it does something else (the run id is optional):\n" +
-      "  - removes the run lock a crashed run left behind (name the run when several hold a lock)\n" +
-      "  - needs --force to actually remove it",
+    "Three modes (pick one):\n\n" +
+      "  clear <run>           delete a task (run) by exact id or name: its run directory (state, log, result, mailboxes), its task memory and its agent worktrees, branches and snapshots.\n" +
+      "                        Long-term (global and project) memory is never touched. Refuses while the run is running, or while a worktree holds work that is not in the repo.\n" +
+      "  clear --lock [<run>]  remove the run lock a crashed run left behind (name the run when several hold a lock; needs --force)\n" +
+      "  clear --tidy-memory   have agents tidy their own long-term memory (merge, fix, archive; never deletes). Manual only; takes no run.\n" +
+      "                        --undo <stamp> --agent <name> moves one tidy's archived files back (not with --dry-run)",
   )
   .option("-p, --project <name>")
-  .option("--dry-run", "only list what would be deleted and what would be kept")
+  .option("--dry-run", "delete: only list what would be deleted and kept; --tidy-memory: only show the memory sizes, wake nobody")
   .option("--lock", "remove the run lock left behind by a crashed run (give its run id when several runs hold a lock; needs --force)")
   .option("--force", "with --lock: remove the lock even though its owner cannot be confirmed dead")
   .option("--keep-worktrees", "keep the agents' worktrees and branches (and their snapshots), and still clear the run and its task memory")
-  .action((runId: string | undefined, opts: { project?: string; dryRun?: boolean; keepWorktrees?: boolean; lock?: boolean; force?: boolean }) => {
+  .option("--tidy-memory", "have agents tidy their own long-term memory (merge, fix, archive; never deletes)")
+  .option("--agent <name>", "with --tidy-memory: tidy only this agent (default: every agent); required with --undo")
+  .option("--layer <layer>", "with --tidy-memory: project (default) or global; global memory is shared by every project, so it is never tidied unless you ask")
+  .option("--undo <stamp>", "with --tidy-memory: undo the tidy with this timestamp: move its archived files back")
+  .action(async (runId: string | undefined, opts: ClearOpts) => {
     try {
+      checkClearModes(runId, opts);
+      if (opts.tidyMemory) return await tidyMemoryMode(opts);
+      const flags = `${opts.dryRun ? " --dry-run" : ""}${opts.keepWorktrees ? " --keep-worktrees" : ""}${opts.lock ? " --lock" : ""}${opts.force ? " --force" : ""}`;
       if (opts.lock) {
-        if (runId) assertName("run", runId);
-        return unlockProject(loadProject(opts.project), runId, !!opts.force);
+        const pr = loadProject(opts.project);
+        if (!runId) return unlockProject(pr, undefined, !!opts.force);
+        assertName("run", runId);
+        const root = pr.paths.root;
+        // A lock id is matched exactly first (a lock can outlive its run dir, and can be unreadable); only then a run.
+        const lockIds = new Set([...listRunLocks(root).map((l) => l.run_id), ...listUnreadableRunLocks(root)]);
+        if (lockIds.has(runId) || inspectRunLock(root, runId)) return unlockProject(pr, runId, !!opts.force);
+        return unlockProject(pr, findRunExact(pr, runId, { verb: "clear", suffix: flags }).state.run_id, !!opts.force);
       }
-      if (opts.force) fail("--force only goes with --lock.");
-      if (!runId) fail("Give the run id to clear (see `agent-lyceum status --task-list`), or use --lock.");
       const pr = loadProject(opts.project);
-      const target = findRun(pr, runId).state;
+      const target = findRunExact(pr, runId!, { verb: "clear", suffix: flags }).state;
       const full = target.run_id;
       const label = runLabel(target);
       const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
@@ -590,74 +677,6 @@ function layerOpt(v: string | undefined): Layer {
   if (v === "global") return "global";
   return fail(`--layer must be "project" or "global" (task memory is not tidied: \`clear\` deletes it).`);
 }
-
-program
-  .command("tidy")
-  .summary("Have agents tidy their own memory, or undo one tidy")
-  .description(
-    "Have agents tidy their own memory: merge duplicates, fix stale entries, archive what is obsolete (never deletes).\n\n" +
-      "Manual only; nothing triggers it automatically.\n\n" +
-      "With --undo <stamp> it tidies nothing and instead:\n" +
-      "  - moves that tidy's archived files back (never overwrites)\n" +
-      "  - re-adds them to MEMORY.md\n" +
-      "  - needs --agent, and cannot be combined with --dry-run",
-  )
-  .option("-p, --project <name>")
-  .option("--agent <name>", "tidy only this agent (default: every agent); required with --undo")
-  .option("--layer <layer>", "project (default) or global; global memory is shared by every project, so it is never tidied unless you ask")
-  .option("--dry-run", "only show the memory sizes and what changed in the project; wake nobody, change nothing")
-  .option("--undo <stamp>", "undo the tidy with this timestamp: move its archived files back")
-  .action(async (opts: { project?: string; agent?: string; layer?: string; dryRun?: boolean; undo?: string }) => {
-    try {
-      const layer = layerOpt(opts.layer);
-      if (opts.undo !== undefined) {
-        if (opts.dryRun) fail("--undo cannot be combined with --dry-run.");
-        if (!opts.agent) fail("--undo needs --agent <name>: an archive belongs to one agent's memory.");
-        const target = loadProject(opts.project);
-        const undoLease = takeLock(target, `restore-${tidyStamp()}`, { exclusive: true });
-        try {
-          const r = restoreMemory({ project: target, agent: opts.agent, layer, stamp: opts.undo });
-          for (const f of r.restored) console.log(`  restored  ${f}`);
-          for (const s of r.skipped) console.log(`  skipped   ${s.rel}: ${s.reason}`);
-          if (!r.restored.length && !r.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
-        } finally {
-          undoLease.release();
-        }
-        return;
-      }
-      const pr = loadProject(opts.project);
-      if (opts.dryRun) {
-        const dry = await tidyMemory({ project: pr, layer, agent: opts.agent, dryRun: true });
-        if (dry.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or use --layer global)." : "Set `memory.global` for an agent."}`);
-        return;
-      }
-      const res = validateProject(pr);
-      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
-      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum status --check`).");
-      await preflight(pr);
-      const lease = takeLock(pr, `tidy-${tidyStamp()}`, { exclusive: true });
-      const cancel = cancelOnSignals();
-      let results: Awaited<ReturnType<typeof tidyMemory>>;
-      try {
-        results = await tidyMemory({ project: pr, layer, agent: opts.agent, signal: cancel.signal });
-      } finally {
-        cancel.dispose();
-        lease.release();
-      }
-      if (results.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or tidy global memory with --layer global)." : "Set `memory.global` for an agent."}`);
-      for (const r of results) {
-        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")} — undo with: agent-lyceum tidy --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
-        else if (r.status === "skipped") console.log(`  ${r.agent} (${r.layer}): skipped — ${r.problems.join("; ")}`);
-        else if (r.status === "failed") {
-          console.error(`  ${r.agent} (${r.layer}): FAILED, memory restored to how it was`);
-          for (const p of r.problems) console.error(`    - ${p}`);
-        }
-      }
-      process.exit(results.some((r) => r.status === "failed") ? 1 : 0);
-    } catch (e) {
-      fail(e instanceof ConfigError ? e.message : (e as Error).message);
-    }
-  });
 
 function useColor(): boolean {
   if (process.env.NO_COLOR) return false;
@@ -777,7 +796,7 @@ program
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["status"],
-  "Run:": ["run", "clear", "call", "tidy"],
+  "Run:": ["run", "clear", "call"],
   "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);
