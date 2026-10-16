@@ -64,6 +64,8 @@ Only the called agent's own `AGENT.md`, `COMMON.md` and the working directory's 
 
 The agent's final reply is printed on stdout; everything else (progress, the call id) goes to stderr, so the answer can be piped. Each call keeps `task.md`, `log/` and `result.md` in `<home>/calls/<call-id>/` (nothing deletes them). Exit codes: `0` success, `1` failure or timeout (`dispatcher.wake_timeout_sec` default), `130` Ctrl-C. Only one call per agent can run at a time: a second one is refused while the first runs. A call cannot be resumed; call again.
 
+If the agent has a `fallback` chain ([Fallback models](configuration.md#fallback-models)), a call falls back too, with the same kinds of failure as a run, but as a single shot: no retry on the same model, no wait, and its cooldowns end with the call. A failed call lists the models it tried in `result.md`.
+
 ## resume
 
 **Usage:** `resume [run] ["follow-up"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
@@ -139,6 +141,7 @@ Options:
 - `--task-id id`: print everything about one task (every wake, its result, log directory). `id` is a full run id, a name or a unique prefix of either.
 - `--task-list [project]`: list every run of the project with its id, state, rounds and task (feed the id to `resume`).
 - `--json`: print the same report as JSON (`schema_version: 1`, no colour, nothing else on stdout; errors go to stderr with a non-zero exit). It works with `--task-list` and `--task-id`. Text and JSON are made from the same report.
+- For an agent with a `fallback` chain, `--json` also carries `runtime` (the runtime of its latest wake, so it can differ from the configured one), `model`, `fallback` (`{ "from": "<runtime>/<model>", "kind": "rate_limit" }`, only while it runs on a backup) and `cooldowns` (`[{ "model", "kind", "remaining_sec" }]`, the models of its chain that are cooling down; `model` is the raw key, `claude-code/` for a runtime's default model). Agents without a chain have none of these fields. The text report adds a line per agent on a backup and per cooldown. Additive; `schema_version` stays `1`.
 - `--json` also carries, per agent, `can_message` (who it may send mail to; `all` expanded, itself left out), and, for every message in `run.active[*].handling`, `run.queue[*]` and `run.wakes[*].handling`, a `digest`: short sections by message type (`[{ "label": "目標", "lines": ["…"] }]`). Both are additive; `schema_version` stays `1`.
 
 ## clear
@@ -173,6 +176,7 @@ Check the setup without running any agent:
 - git (for parallel runs);
 - whether `gh` and `origin` are available for opening a pull request (when the repo is a git repository with a commit);
 - the project lock;
+- the CLI of every runtime used only by a `fallback` chain: whether it is installed. A missing one is a warning, not an error, and does not stop a run (a run checks the primaries only). Login is not checked;
 - what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`).
 
 Options:

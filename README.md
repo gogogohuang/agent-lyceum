@@ -11,6 +11,7 @@ Give a task to a **team of agents** (Claude Code and/or Codex) instead of one ov
 - **Roles that stay in role.** Each agent has its own persona (`AGENT.md`) and long-term memory, so a reviewer keeps reviewing instead of drifting into writing code.
 - **Agents can't rewrite the rules.** An agent can only write its own memory and outbox. It can't touch other agents' context or its own persona, and this is enforced by the OS sandbox where possible, not just by a prompt. See [Write scope](docs/write-scope.md).
 - **Mix runtimes.** Claude Code and Codex agents work in the same team.
+- **Backup models.** If a model is rate-limited, out of quota or unreachable, a run can switch to a backup model or runtime instead of stopping. See [Configuration](docs/configuration.md#fallback-models).
 - **Nothing hidden.** Agents talk through plain-file mailboxes, so every message, decision and memory is a file you can read, grep and diff. The dispatcher never merges for you.
 
 **Not a fit** for small, one-shot edits: a single Claude Code or Codex session is faster and cheaper. Use a team when the task is big enough to split, review or run in parallel.

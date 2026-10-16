@@ -49,3 +49,23 @@ When your task asks for a pull request, the lead puts `open_pr: true` in the fro
 - A request that cannot be honoured (the run did not complete, no changes, no `gh`, no `origin`, push or `gh` failed) never changes how the run turned out. The run says why it was not opened and keeps the branch; when a push or `gh pr create` failed it also prints the commands to finish by hand.
 - Opening a pull request publishes the lead's branch and report to `origin`. An agent that asks for one (`open_pr: true`) can therefore get anything it can read inside its sandbox onto the remote, so only ask for a pull request in a task when that is acceptable. The push and `gh pr create` run from your main repository, never inside the agent's worktree, because an agent can write that directory.
 - agent-lyceum never merges and does not wait for CI or review. In a git repo with a commit, `doctor` tells you whether `gh` and `origin` are there (it does not check that `gh` is logged in).
+
+## When a wake-up fails
+
+Without a `fallback` chain (see [Fallback models](configuration.md#fallback-models)) a failed wake-up is retried on the same model up to `retry` times, whatever went wrong, and then the run stops. That is unchanged. With a chain, the failure is classified first:
+
+| Kind | What happens |
+|---|---|
+| `rate_limit`, `quota` | No retry: switch to the next model at once, and mark the failed model as cooling down. |
+| `timeout`, `network`, `crash` | Retry on the same model up to `retry` times, then switch. |
+| `auth` | Stop. A login problem is not hidden by changing model. |
+| `unknown` (not recognized) | Retry on the same model `retry` times, then stop. No switch. |
+
+Details:
+
+- **Backoff:** only with a chain, a retry on the same model waits 5 s, then 15 s, then 45 s, at most 60 s. Without a chain there is no wait.
+- **Fresh session:** a switch starts a new session on the backup, with the usual retry notice added to the prompt, and unread mail is delivered again as for any wake-up. Nothing from the failed model's output is passed on. The backup's session is kept under `state.sessions` as `<agent>@<runtime>/<model>`; the primary keeps the plain agent name and is never given the backup's id.
+- **Every wake-up starts at the primary,** unless the primary is cooling down. A model that failed with `rate_limit` or `quota` is skipped for `fallback_cooldown_sec` (default 300 s) by all wake-ups of the run, including parallel ones. The cooldowns are in `state.json`, so `resume` keeps them; a new run starts without any. If every model of the chain is cooling down, the whole chain is tried. Cooldowns are only recorded for agents that have a chain.
+- **A call that switches is announced:** a line `<agent> falling back to <runtime>/<model> (<kind>)` is printed and a note is added to the run, warning that the failed model's side effects were not undone and may have happened.
+- **When every model fails** the run stops as `agent_failed` or `lead_failed`, as before. `failure.tried` lists each model once, with its last failure, and the end message lists them in order and still shows how to `resume`.
+- **Known limit:** Codex on a dead network keeps reconnecting until the wake-up times out, so it ends as `timeout`, not `network`. It is treated like any other timeout, so it is retried and then switched.

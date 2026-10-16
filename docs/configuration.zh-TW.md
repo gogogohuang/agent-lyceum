@@ -33,3 +33,39 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 `doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在，以及記憶資料夾互不重疊。零設定並行變更中移除的設定（見[升級](upgrading-run-v2.md)）仍可載入，只會產生警告。
 
 並行不需要設定：在有 commit 的 git repo 裡，每個 run 與每個 agent 都有自己的 worktree；否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
+
+## 備援模型
+
+模型因暫時性原因持續失敗時，run 可以改用備用模型繼續，而不是直接停下來；見[喚醒失敗時](how-it-works.zh-TW.md#喚醒失敗時)。備用模型是一個有順序的清單 `fallback`，每個項目的欄位如下：
+
+- `model`、`runtime`、`effort`，都是選填，但每個項目至少要有 `model` 或 `runtime`。沒寫 `runtime` 時由 `model` 推斷（規則與 agent 相同），推斷不出來就沿用該 agent 自己的 runtime。只寫 `runtime` 不寫 `model`，表示用該 runtime 的預設模型。`effort` 必須對該項目的 runtime 合法。
+
+寫在哪裡，優先順序由高到低：
+
+1. `project.yaml` 的 `agents.<name>.fallback`；
+2. `team.yaml` 中該 agent 的 `fallback`；
+3. `project.yaml` 的 `dispatcher.fallback`，由沒有自己清單的所有 agent 共用；
+4. 都沒有：該 agent 沒有備用模型。
+
+agent 設成 `fallback: []` 表示不備援，即使有設 `dispatcher.fallback`。`dispatcher.fallback_cooldown_sec`（預設 `300`）是在這次 run 中，遇到 `rate_limit` 或 `quota` 的模型被略過多久。
+
+```yaml
+# project.yaml
+dispatcher:
+  fallback_cooldown_sec: 300
+  fallback:                                   # 所有沒有自己清單的 agent 的備用模型
+    - { model: sonnet }                       # runtime 由 model 推斷：claude-code
+    - { runtime: codex, model: gpt-5, effort: high }
+agents:
+  reviewer: { fallback: [] }                  # 這個 agent 不切換
+  pm:       { fallback: [{ runtime: claude-code, model: haiku }] }
+```
+
+下列情況設定會載入失敗（`doctor` 與 `run` 會回報錯誤）：
+
+- 項目既沒有 `model` 也沒有 `runtime`，或推斷不出 runtime；
+- 項目的 `effort` 不適用於它的 runtime；
+- agent 自己的清單裡，項目與該 agent 自己的 runtime 和 model 都相同。共用的 `dispatcher.fallback` 若剛好含有某個 agent 自己的模型則不算錯誤，該項目對這個 agent 會直接略過；
+- 備用模型的防護比主要模型弱：在記憶、`AGENT.md`、其他 agent 的 context、交接筆記或 repo 的 `CLAUDE.md`／`AGENTS.md` 這幾項，備用模型是 `prompt-only` 而主要模型更強。例如沒有 OS 沙箱時，`claude-code` 退到 tool rules，但 `codex` 備援會是 prompt-only，這個切換會被拒絕。見 [Write scope](write-scope.zh-TW.md)。
+
+只要有任何 agent 設了備援，`doctor --resolved` 就會顯示生效的備援鏈與它的來源。

@@ -1,6 +1,6 @@
 # 20 LLM 備援（failover）
 
-狀態：設計（grilling 共識已確認，待審 spec）。
+狀態：已實作（計畫：docs/plans/2026-10-16-20-llm-fallback.md）。實作與原設計的差異見 20.12。
 
 ## 20.1 問題
 
@@ -134,3 +134,15 @@ agents:
 - adapter 負責人：兩個 adapter 的 `classifyError`、fake runtime 擴充。
 - qa：20.7 測試。
 - docs-writer：20.8，中英成對。
+
+## 20.12 實作時的偏離
+
+以下各點以實際程式為準，取代前文對應的敘述。
+
+1. **retry-after（20.4）：** 這個版本不使用。沒有任何 adapter 提供 retry-after，冷卻一律是 `fallback_cooldown_sec`。
+2. **doctor（20.2 #8、20.3）：** `doctor` 只檢查備援鏈裡的 CLI 是否已安裝，不檢查登入。備用 CLI 不存在時是 doctor 的警告（warning），不擋 run；啟動前的檢查（preflight）只看主要模型。
+3. **write-scope 規則（20.2 #8）：** 只有在備用模型某一項的防護等級是 `prompt-only`、而主要模型的更強（`os`、`tool-rules`、`post-hoc`）時才 fail closed；備用模型為 `os`、`tool-rules`、`post-hoc` 都接受。
+4. **`failure.tried`（20.4）：** 每個模型只列一次，內容是它最後一次的失敗，而不是每次呼叫一筆。
+5. **冷卻（20.4）：** 只有 agent 設了備援鏈時才記錄冷卻；沒有備援鏈的行為與狀態和原本完全相同。
+6. **codex 斷網（20.4）：** codex 在網路不通時會一直重連，直到逾時，所以實際表現為 `timeout`；它的 `network` 分類在實務上幾乎碰不到。
+7. **`state.sessions` 的 key（20.4）：** 主要模型的 key 維持 agent 名稱，備用模型是 `agent@runtime/model`。
