@@ -24,3 +24,5 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
 
 設定變更要等下次啟動 session 才生效。面板若顯示 `無法取得狀態：...`，通常是 `command` 跑不起來（多半是還沒 build `dist/cli.js`），或專案名稱沒有註冊。
+
+**備援標記。** 設有備援鏈的 agent 正在使用備用模型時，它的區塊標題會多一個小小的 `備援中` 標記，其他版面不變。從哪個模型切換、原因，以及冷卻狀態，請看 `agent-lyceum status`。

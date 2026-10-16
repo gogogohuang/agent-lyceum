@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
+import { agentForCandidate, candidatesFor, Cooldowns, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
@@ -15,7 +16,7 @@ import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
+import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type RunFailure, type RunState, type SentTopic, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
@@ -44,6 +45,24 @@ function retryPrompt(prompt: string, error?: string): string {
   return `${prompt}\n\n# Retry notice\nYour previous attempt at this wake-up failed${error ? ` (${error})` : ""} after possibly changing files already. Its mail was discarded. Check the current state of the repository before redoing the work, and send the mail again.`;
 }
 
+/** `runtime/model`, or the runtime alone for its default model. */
+const modelLabel = (c: { runtime: string; model?: string }): string => (c.model ? `${c.runtime}/${c.model}` : c.runtime);
+
+/** Each model given up on once, in order, with its last failure (retries on the same model are one entry). */
+function lastPerModel(tried: Tried[]): TriedModel[] {
+  const out: TriedModel[] = [];
+  for (const t of tried) {
+    const last = out.at(-1);
+    const entry = { runtime: t.runtime, ...(t.model ? { model: t.model } : {}), ...(t.kind ? { kind: t.kind } : {}), ...(t.error ? { error: t.error } : {}) };
+    if (last && last.runtime === t.runtime && last.model === t.model) out[out.length - 1] = entry;
+    else out.push(entry);
+  }
+  return out;
+}
+
+/** How one agent's wake-up ended. */
+type WakeOutcome = { ok: boolean; cancelled?: boolean; error?: string; attempts?: number; tried?: TriedModel[] };
+
 export interface RunSummary {
   runId: string;
   /** The run's name; absent on runs from older versions. */
@@ -65,7 +84,7 @@ export interface RunSummary {
   /** The project's name, for the commands printed after the run. */
   project: string;
   /** The run stopped because this agent kept failing. */
-  failure?: { agent: string; error?: string; attempts: number };
+  failure?: RunFailure;
 }
 
 export interface RunOptions {
@@ -89,6 +108,8 @@ export interface RunOptions {
   /** Stop the run when this fires: running agents are killed, unread mail is kept, the run ends `cancelled` and can be resumed. */
   signal?: AbortSignal;
   log?: (line: string) => void;
+  /** The wait between retries of a model with a fallback chain; tests pass one that does not wait. Default: a timer cut short by `signal`. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 
@@ -114,7 +135,9 @@ export class RunSession {
   private pendingDoneFile: string | undefined;
   private doneOutcome: RunOutcome | undefined;
   private doneNote: string | undefined;
-  private failure: { agent: string; error?: string; attempts: number } | undefined;
+  private failure: RunFailure | undefined;
+  /** Models cooling down after a rate limit or quota error; one table for the run, shared by parallel wake-ups. */
+  private readonly cooldowns: Cooldowns;
   private doneVerification: string | undefined;
   /** The accepted `done` carried `open_pr: true` (only the lead can send `done`). */
   private openPrRequested = false;
@@ -278,6 +301,7 @@ export class RunSession {
     this.log = log;
     this.guard = guard;
     this.state = state;
+    this.cooldowns = Cooldowns.from(state.cooldowns);
     // Only a segment that starts here has a baseline: a fresh run or a follow-up reopen. A plain resume continues one begun by an earlier process.
     this.sharedAtStart = !resume || opts.followup ? readIndex(sharedIndex(project)) : undefined;
   }
@@ -335,8 +359,8 @@ export class RunSession {
   }
 
 
-  private async wake(agent: ResolvedAgent): Promise<{ ok: boolean; cancelled?: boolean; error?: string; attempts?: number }> {
-    const { invoke, say, cfg, runDir, project, log, state, claims, attempts, noSessionNoted, opts } = this;
+  private async wake(agent: ResolvedAgent): Promise<WakeOutcome> {
+    const { invoke, say, cfg, runDir, project, log, state, claims, attempts, noSessionNoted, opts, cooldowns } = this;
     const queue = listUnread(project, agent.name);
     if (queue.length === 0) return { ok: true };
     // Oldest message per wake-up (the lead takes a run of replies at once); the rest stay unread for later wake-ups.
@@ -355,91 +379,152 @@ export class RunSession {
       userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0),
       timeoutSec: cfg.wake_timeout_sec,
     };
-    let result: WakeResult | undefined;
-    for (let attempt = 0; attempt <= cfg.retry; attempt++) {
-      if (state.max_rounds > 0 && state.rounds >= state.max_rounds) {
-        // The round limit (when one is set) ends the run; this message stays unread for the resume.
-        abandonClaim(runDir, claim.id);
-        claims.delete(agent.name);
-        return { ok: false, cancelled: true };
-      }
-      const round = ++state.rounds;
-      const started = Date.now();
-      const att = beginAttempt(runDir, claim.id);
-      say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${agent.runtime})${attempt ? ` — retry ${attempt}` : ""}`);
-      const sessionId = agent.resume ? state.sessions[agent.name] : undefined;
-      const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
-      // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
-      const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
-      state.active[agent.name] = { round, since: new Date(started).toISOString(), handling: activeHandling };
-      this.saveState();
-      result = await invoke({ ...base, signal: opts.signal, logDir: attemptLogDir(runDir, att.id), userPrompt: attempt ? retryPrompt(base.userPrompt, result?.error) : base.userPrompt, sessionId }).catch((e: Error) => ({
-        ok: false,
-        text: "",
-        exitCode: null,
-        timedOut: false,
-        error: e.message,
-      }));
-      if (result.sessionId && agent.resume) state.sessions[agent.name] = result.sessionId;
-      if (result.outputTokens) state.output_tokens += result.outputTokens;
-      delete state.active[agent.name];
-      state.wakes.push({
-        round,
-        agent: agent.name,
-        at: new Date().toISOString(),
-        duration_ms: Date.now() - started,
-        ok: result.ok,
-        output_tokens: result.outputTokens,
-        handling,
-        error: result.error,
-      });
-      state.last_wake[agent.name] = { at: new Date().toISOString(), ok: result.ok, error: result.error };
-      log("wake", {
-        agent: agent.name,
-        runtime: agent.runtime,
-        attempt,
-        ok: result.ok,
-        exit_code: result.exitCode,
-        timed_out: result.timedOut,
-        duration_ms: Date.now() - started,
-        messages: unread.map((m) => m.meta.id),
-        error: result.error,
-      });
-      this.saveState();
-      if (result.ok) {
-        attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
-        if (agent.resume && !result.sessionId && !state.sessions[agent.name] && !noSessionNoted.has(agent.name)) {
-          noSessionNoted.add(agent.name);
-          this.note(`${agent.name} has resume: true but its ${agent.runtime} CLI reported no session id, so every wake-up starts a fresh session.`);
+    // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
+    const all = candidatesFor(agent);
+    const chain = all.length > 1;
+    const candidates = chain ? planAttempts(agent, cooldowns, Date.now()) : all;
+    // The model a backup's calls stand in for: the one switched away from in this wake, or the cooling-down primary it started past.
+    let replaced: Candidate | undefined = candidates[0]?.primary ? undefined : all[0];
+    let calls = 0;
+    let stoppedByCancel = false;
+    const outcome = await runWithFallback<WakeResult>({
+      candidates,
+      legacy: !chain,
+      retry: cfg.retry,
+      cooldowns,
+      cooldownSec: cfg.fallback_cooldown_sec,
+      signal: opts.signal,
+      sleep: opts.sleep,
+      beforeAttempt: (_c, ctx) => {
+        // A cancel that came during the previous call: no new model is tried (without a chain the call still goes ahead, as before).
+        if (chain && ctx.attempt > 0 && opts.signal?.aborted) {
+          stoppedByCancel = true;
+          return "stop";
         }
-        break;
-      }
-      if (result.cancelled) {
-        // Stopped on purpose: not a failure to report. Its output is set aside and its input stays unread for the resume.
+        // The round limit (when one is set) ends the run; this message stays unread for the resume.
+        return state.max_rounds > 0 && state.rounds >= state.max_rounds ? "stop" : undefined;
+      },
+      onSwitch: (from, to, kind) => {
+        replaced = from;
+        this.syncCooldowns();
+        if (opts.signal?.aborted) return;
+        say(`  ${agent.name} falling back to ${modelLabel(to)} (${kind ?? "unknown error"})`);
+        this.note(
+          `${agent.name} fell back from ${modelLabel(from)} to ${modelLabel(to)} (${kind ?? "unknown error"}); the backup starts a fresh session and redoes this wake-up. ` +
+            `Anything the failed attempts already did outside the mailbox (file edits, commands) was not undone: side effects may have happened.`,
+        );
+      },
+      invoke: async (c, ctx) => {
+        calls++;
+        this.syncCooldowns();
+        const attempt = ctx.attempt;
+        // A backup runs as the same agent on another runtime/model, in a session of its own.
+        const runAs = agentForCandidate(agent, c);
+        const sessionKey = c.primary ? agent.name : `${agent.name}@${c.key}`;
+        const round = ++state.rounds;
+        const started = Date.now();
+        const att = beginAttempt(runDir, claim.id);
+        const retryN = chain ? ctx.candidateAttempt : attempt;
+        say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime})${retryN ? ` — retry ${retryN}` : ""}`);
+        const sessionId = agent.resume ? state.sessions[sessionKey] : undefined;
+        const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
+        // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
+        const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
+        state.active[agent.name] = { round, since: new Date(started).toISOString(), handling: activeHandling };
+        this.saveState();
+        const result: WakeResult = await invoke({
+          ...base,
+          agent: runAs,
+          signal: opts.signal,
+          logDir: attemptLogDir(runDir, att.id),
+          userPrompt: attempt ? retryPrompt(base.userPrompt, ctx.previous?.error) : base.userPrompt,
+          sessionId,
+        }).catch((e: Error) => ({
+          ok: false,
+          text: "",
+          exitCode: null,
+          timedOut: false,
+          error: e.message,
+        }));
+        if (result.sessionId && agent.resume) state.sessions[sessionKey] = result.sessionId;
+        if (result.outputTokens) state.output_tokens += result.outputTokens;
+        delete state.active[agent.name];
+        // With a chain only: which model ran, what it replaced, why it failed.
+        const which = chain ? { runtime: c.runtime, model: c.model, fallback_from: c.primary || !replaced ? undefined : modelLabel(replaced), kind: result.kind } : {};
+        state.wakes.push({
+          round,
+          agent: agent.name,
+          at: new Date().toISOString(),
+          duration_ms: Date.now() - started,
+          ok: result.ok,
+          output_tokens: result.outputTokens,
+          handling,
+          error: result.error,
+          ...which,
+        });
+        state.last_wake[agent.name] = { at: new Date().toISOString(), ok: result.ok, error: result.error, ...(chain ? { runtime: c.runtime, model: c.model } : {}) };
+        log("wake", {
+          agent: agent.name,
+          runtime: c.runtime,
+          attempt,
+          ok: result.ok,
+          exit_code: result.exitCode,
+          timed_out: result.timedOut,
+          duration_ms: Date.now() - started,
+          messages: unread.map((m) => m.meta.id),
+          error: result.error,
+          ...(chain ? { model: c.model, fallback_from: which.fallback_from, kind: result.kind } : {}),
+        });
+        this.saveState();
+        if (result.ok) {
+          attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
+          if (agent.resume && !result.sessionId && !state.sessions[sessionKey] && !noSessionNoted.has(agent.name)) {
+            noSessionNoted.add(agent.name);
+            this.note(`${agent.name} has resume: true but its ${c.runtime} CLI reported no session id, so every wake-up starts a fresh session.`);
+          }
+          return result;
+        }
+        if (result.cancelled) {
+          // Stopped on purpose: not a failure to report. Its output is set aside (its input stays unread for the resume, below).
+          const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+          finishAttempt(runDir, att.id, "failed", { error: "cancelled", parked });
+          return result;
+        }
+        // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
         const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
-        finishAttempt(runDir, att.id, "failed", { error: "cancelled", parked });
-        abandonClaim(runDir, claim.id);
-        claims.delete(agent.name);
-        say(`  ${agent.name} stopped (cancelled)`);
-        return { ok: false, cancelled: true };
-      }
-      // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
-      const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
-      finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
-      say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
-      this.note(
-        `${agent.name} attempt ${att.n} failed (${result.error ?? "unknown error"})${parked.length ? `; ${parked.length} output file(s) set aside in ${path.join("mail", "attempts", att.id, "outbox")}` : ""}. ` +
-          `Anything it already did outside its mailbox (file edits, commands) was not undone: side effects may have happened.`,
-      );
+        finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
+        say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
+        this.note(
+          `${agent.name} attempt ${att.n} failed (${result.error ?? "unknown error"})${parked.length ? `; ${parked.length} output file(s) set aside in ${path.join("mail", "attempts", att.id, "outbox")}` : ""}. ` +
+            `Anything it already did outside its mailbox (file edits, commands) was not undone: side effects may have happened.`,
+        );
+        return result;
+      },
+    });
+    if (this.syncCooldowns()) this.saveState();
+    const { result } = outcome;
+    if (result?.ok) {
+      markOutputReady(runDir, claim.id);
+      return { ok: true };
     }
-    if (result?.ok) markOutputReady(runDir, claim.id);
-    if (!result?.ok) {
-      // The agent failed every time it was called: the run stops here (see settle) and its message stays unread for the resume.
-      abandonClaim(runDir, claim.id);
-      claims.delete(agent.name);
-      return { ok: false, error: result?.error, attempts: cfg.retry + 1 };
+    // The input stays unread for the resume: the round limit, or a cancel (during a call or a backoff).
+    abandonClaim(runDir, claim.id);
+    claims.delete(agent.name);
+    if (outcome.stopped === "beforeAttempt" && !stoppedByCancel) return { ok: false, cancelled: true };
+    if (result?.cancelled || outcome.stopped) {
+      say(`  ${agent.name} stopped (cancelled)`);
+      return { ok: false, cancelled: true };
     }
-    return { ok: true };
+    // The agent failed every time it was called: the run stops here (see settle) and its message stays unread for the resume.
+    return { ok: false, error: result?.error, attempts: calls, ...(chain ? { tried: lastPerModel(outcome.tried) } : {}) };
+  }
+
+  /** Copy the shared cooldown table into the state (only once something has cooled down); true when it was. */
+  private syncCooldowns(): boolean {
+    const table = this.cooldowns.toJSON();
+    if (!Object.keys(table).length) return false;
+    this.state.cooldowns = table;
+    return true;
   }
 
 
@@ -499,7 +584,7 @@ export class RunSession {
 
 
   /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
-  private settle(batch: ResolvedAgent[], results: { ok: boolean; cancelled?: boolean; error?: string; attempts?: number }[]): void {
+  private settle(batch: ResolvedAgent[], results: WakeOutcome[]): void {
     const { say, runDir, project, log, state, guard, claims, attempts } = this;
     const violations = guard.check(batch);
     for (const v of violations) {
@@ -606,7 +691,8 @@ export class RunSession {
     const failedIdx = results.findIndex((r) => !r.ok && !r.cancelled);
     if (failedIdx >= 0) {
       const failed = must(batch[failedIdx], "failed agent");
-      this.failure = { agent: failed.name, error: results[failedIdx]?.error, attempts: results[failedIdx]?.attempts ?? this.cfg.retry + 1 };
+      const r = results[failedIdx];
+      this.failure = { agent: failed.name, error: r?.error, attempts: r?.attempts ?? this.cfg.retry + 1, ...(r?.tried ? { tried: r.tried } : {}) };
       state.failure = this.failure;
       this.endReason = failed.name === project.lead ? "lead_failed" : "agent_failed";
       return;

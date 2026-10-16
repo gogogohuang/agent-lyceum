@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import type { ResolvedProject } from "./config.js";
-import { enforcementFor, memoryDirs, type AgentEnforcement } from "./policy.js";
+import type { ResolvedAgent, ResolvedProject } from "./config.js";
+import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from "./policy.js";
 import { isInside } from "./paths.js";
 import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
 import { must } from "./assert.js";
@@ -37,6 +37,7 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
+    validateFallback(project, a, err);
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {
@@ -82,6 +83,41 @@ export function validateProject(project: ResolvedProject): ValidationResult {
   }
 
   return { issues, enforcement, ok: !issues.some((i) => i.level === "error") };
+}
+
+const PARITY_FIELDS = ["memory", "agentMd", "otherContext", "shared", "repoInstructions"] as const;
+const norm = (m: string | undefined) => (m ?? "").trim().toLowerCase();
+
+/** Load-time (fail closed) checks of one agent's fallback chain: well-formed, not a no-op, and no weaker at write-scope than the primary. */
+function validateFallback(project: ResolvedProject, a: ResolvedAgent, err: (message: string) => void): void {
+  for (const bad of a.fallbackInvalid) {
+    err(
+      bad.reason === "empty"
+        ? `agent ${a.name}: fallback #${bad.index + 1} needs a model or a runtime.`
+        : `agent ${a.name}: fallback #${bad.index + 1} has no recognizable runtime (set runtime, or use a recognizable model).`,
+    );
+  }
+  const primary = a.runtime ? enforcementFor(project, a) : undefined;
+  for (const f of a.fallback) {
+    const label = `${f.runtime}/${f.model || "(default model)"}`;
+    if (f.runtime === a.runtime && norm(f.model) === norm(a.model)) {
+      // A chain shared through dispatcher.fallback may already contain this agent's primary: just skip it then.
+      if (!a.fallbackShared) err(`agent ${a.name}: fallback ${label} is the same as the primary runtime and model.`);
+      continue;
+    }
+    if (f.effort && !RUNTIME_EFFORTS[f.runtime].includes(f.effort)) {
+      err(`agent ${a.name}: fallback ${label}: effort "${f.effort}" is not supported by ${f.runtime} (use ${RUNTIME_EFFORTS[f.runtime].join(", ")}).`);
+    }
+    if (!primary) continue;
+    // `prompt-only` is the one level that is no enforcement at all; everything else (os, tool-rules, post-hoc) still holds the line.
+    const swapped = enforcementFor(project, { ...a, runtime: f.runtime, model: f.model || undefined, effort: f.effort });
+    for (const k of PARITY_FIELDS) {
+      const from: Level = primary[k];
+      const to: Level = swapped[k];
+      if (from === "n/a" || to === "n/a") continue;
+      if (to === "prompt-only" && from !== "prompt-only") err(`agent ${a.name}: fallback ${label} cannot enforce ${k} (${from} -> ${to})`);
+    }
+  }
 }
 
 export function formatEnforcement(list: AgentEnforcement[]): string {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { setOsSandboxForTest } from "../src/policy.js";
 import { validateProject } from "../src/validate.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -101,5 +102,81 @@ describe("validate", () => {
     const res = validateProject(env.project());
     expect(res.ok).toBe(true);
     expect(res.issues.map((i) => i.message).join("\n")).toMatch(/model "gpt-5" looks like a codex model/);
+  });
+});
+
+describe("validate fallback", () => {
+  const setFallback = (env: TestEnv, line: string) =>
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n    fallback: ${line}\n    can_message: [lead]`));
+
+  it("accepts a sound chain", () => {
+    env = makeEnv();
+    setFallback(env, "[{ model: haiku }, { runtime: codex, model: gpt-5, effort: high }]");
+    expect(errors(env)).toEqual([]);
+  });
+
+  it("rejects an entry with neither model nor runtime", () => {
+    env = makeEnv();
+    setFallback(env, "[{ effort: high }]");
+    expect(errors(env).join("\n")).toMatch(/agent fe-member: fallback #1 needs a model or a runtime/);
+  });
+
+  it("rejects an effort the entry's runtime does not accept", () => {
+    env = makeEnv();
+    setFallback(env, "[{ runtime: codex, model: gpt-5, effort: max }]");
+    expect(errors(env).join("\n")).toMatch(/fallback codex\/gpt-5: effort "max" is not supported by codex/);
+  });
+
+  it("rejects an agent's own fallback identical to its primary, ignoring case and whitespace", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    runtime: claude-code\n    model: sonnet\n    fallback: [{ runtime: claude-code, model: ' Sonnet ' }]\n    can_message: [lead]"));
+    expect(errors(env).join("\n")).toMatch(/fallback claude-code\/.*Sonnet.* is the same as the primary/);
+  });
+
+  it("silently skips an identical entry when the chain comes from dispatcher.fallback", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) =>
+      t
+        .replace(/dispatcher:[^\n]*\n/, "dispatcher:\n  fallback: [{ model: sonnet }, { model: haiku }]\n")
+        .replace("  fe-member:\n    can_message: [lead]", "  fe-member:\n    runtime: claude-code\n    model: sonnet\n    can_message: [lead]"),
+    );
+    expect(errors(env)).toEqual([]);
+  });
+
+  describe("write-scope parity", () => {
+    afterEach(() => setOsSandboxForTest(undefined));
+    const chain = (env: TestEnv, primary: string, fb: string) =>
+      env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n    runtime: ${primary}\n    model: m1\n    fallback: [{ runtime: ${fb}, model: m2 }]\n    can_message: [lead]`));
+
+    it("accepts claude-code -> codex when the OS sandbox exists", () => {
+      env = makeEnv();
+      setOsSandboxForTest(true);
+      chain(env, "claude-code", "codex");
+      expect(errors(env)).toEqual([]);
+    });
+
+    it("refuses claude-code -> codex without the OS sandbox", () => {
+      env = makeEnv();
+      setOsSandboxForTest(false);
+      chain(env, "claude-code", "codex");
+      expect(errors(env).join("\n")).toMatch(/agent fe-member: fallback codex\/m2 cannot enforce memory \(tool-rules -> prompt-only\)/);
+    });
+
+    it("accepts codex -> claude-code in both environments", () => {
+      env = makeEnv();
+      chain(env, "codex", "claude-code");
+      for (const os of [true, false]) {
+        setOsSandboxForTest(os);
+        expect(errors(env)).toEqual([]);
+      }
+    });
+
+    it("does not treat allow_web or can_ask_user as a parity problem", () => {
+      env = makeEnv();
+      setOsSandboxForTest(true);
+      chain(env, "claude-code", "codex");
+      env.editProjectYaml((t) => t.replace("    fallback:", "    allow_web: fetch\n    can_ask_user: false\n    fallback:"));
+      expect(errors(env)).toEqual([]);
+    });
   });
 });

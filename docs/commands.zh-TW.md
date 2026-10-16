@@ -64,6 +64,8 @@
 
 agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stderr，所以可以直接接管線。每次呼叫會在 `<home>/calls/<call-id>/` 留下 `task.md`、`log/` 與 `result.md`（不會自動刪除）。exit code：`0` 成功、`1` 失敗或逾時（預設 `dispatcher.wake_timeout_sec`）、`130` Ctrl-C。同一個 agent 同時只能有一個 call，第二個會被拒絕。call 不能 resume，要再做就重新呼叫。
 
+agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備援模型)）時，call 也會切換，失敗種類與 run 相同，但只呼叫一次：不在同一個模型上重試、不等待，冷卻也隨這次 call 結束。call 失敗時，`result.md` 會列出試過的模型。
+
 ## resume
 
 **用法:** `resume [run] ["追加要求"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
@@ -140,6 +142,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - `--task-list [project]`：列出專案所有任務（run）的 id、狀態、輪數與任務內容，id 可直接給 `resume` 使用。
 - `--json`：把同一份報告以 JSON 輸出（`schema_version: 1`、無顏色，stdout 只有 JSON；錯誤走 stderr 並以非零 exit code 結束），可搭配 `--task-list`、`--task-id`。文字與 JSON 由同一份報告產生。
 - `--json` 另外在每個 agent 附上 `can_message`（它可以寄信的對象；`all` 已展開、不含自己），並在 `run.active[*].handling`、`run.queue[*]` 與 `run.wakes[*].handling` 的每封信附上 `digest`：依信種整理的短段落（`[{ "label": "目標", "lines": ["…"] }]`）。兩者都只是新增欄位，`schema_version` 仍是 `1`。
+- 對設有 `fallback` 備援鏈的 agent，`--json` 另有 `runtime`（最近一次 wake 用的 runtime，所以可能與設定的不同）、`model`、`fallback`（`{ "from": "<runtime>/<model>", "kind": "rate_limit" }`，只有正在用備用模型時才有）與 `cooldowns`（`[{ "model", "kind", "remaining_sec" }]`，備援鏈中冷卻中的模型；`model` 是原始 key，runtime 的預設模型寫成 `claude-code/`）。沒有備援鏈的 agent 沒有這些欄位。文字報告會為使用備用模型的 agent 與每個冷卻各加一行。都只是新增欄位，`schema_version` 仍是 `1`。
 
 ## clear
 
@@ -173,6 +176,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - git（平行 run 需要）；
 - 是否有 `gh` 與 `origin` 可用來開 PR（repo 是有 commit 的 git repository 時）；
 - 專案鎖；
+- 只被 `fallback` 備援鏈用到的 runtime 的 CLI 是否已安裝：缺少時是警告而非錯誤，也不會擋住 run（run 只檢查主要模型）。不檢查登入；
 - 各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。
 
 選項：

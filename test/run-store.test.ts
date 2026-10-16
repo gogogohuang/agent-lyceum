@@ -101,3 +101,45 @@ describe("waiting runs", () => {
     expect(back.ask_rejections).toEqual({ lead: 1 });
   });
 });
+
+describe("fallback state", () => {
+  it("round-trips cooldowns, the new wake and last_wake fields, and failure.tried", () => {
+    const d = tmp();
+    const s = {
+      ...newRunState({ run_id: "r1" }),
+      cooldowns: { "claude-code/": { until: "2026-10-16T10:05:00.000Z", kind: "rate_limit" as const } },
+      wakes: [{ round: 1, agent: "lead", at: "t", duration_ms: 1, ok: true, handling: [], runtime: "codex" as const, model: "gpt-5", fallback_from: "claude-code", kind: undefined }],
+      last_wake: { lead: { at: "t", ok: true, runtime: "codex" as const, model: "gpt-5" } },
+      failure: { agent: "lead", error: "x", attempts: 2, tried: [{ runtime: "claude-code" as const, kind: "rate_limit" as const, error: "429" }, { runtime: "codex" as const, model: "gpt-5", kind: "network" as const, error: "x" }] },
+    };
+    saveRunState(d, s);
+    const back = loadRunState(d);
+    expect(back.cooldowns).toEqual(s.cooldowns);
+    expect(back.wakes[0]).toMatchObject({ runtime: "codex", model: "gpt-5", fallback_from: "claude-code" });
+    expect(back.last_wake.lead).toEqual({ at: "t", ok: true, runtime: "codex", model: "gpt-5" });
+    expect(back.failure).toEqual(s.failure);
+  });
+
+  it("reads an older state without them", () => {
+    const d = tmp();
+    fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", schema_version: 2, failure: { agent: "lead", attempts: 3 }, wakes: [{ round: 1, agent: "lead", at: "t", duration_ms: 1, ok: false, handling: [] }] }));
+    const s = loadRunState(d);
+    expect(s.cooldowns).toBeUndefined();
+    expect(s.failure).toEqual({ agent: "lead", attempts: 3 });
+    expect(s.wakes[0]!.runtime).toBeUndefined();
+  });
+});
+
+describe("state.cooldowns", () => {
+  it("drops malformed entries instead of failing the whole state", () => {
+    const d = tmp();
+    const good = { until: "2026-01-01T00:00:00.000Z", kind: "rate_limit" };
+    fs.writeFileSync(
+      path.join(d, "state.json"),
+      JSON.stringify({ run_id: "r", cooldowns: { "claude-code/": good, "a/b": { until: 5, kind: "rate_limit" }, "c/d": { until: "x", kind: "nope" }, "e/f": "junk" } }),
+    );
+    expect(loadRunState(d).cooldowns).toEqual({ "claude-code/": good });
+    fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", cooldowns: "garbage" }));
+    expect(loadRunState(d).cooldowns).toBeUndefined();
+  });
+});

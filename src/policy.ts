@@ -159,6 +159,11 @@ function osSandboxAvailable(): boolean {
   return sandboxProbe;
 }
 
+/** Test seam: pretend the OS sandbox is (un)available; `undefined` re-probes the host. */
+export function setOsSandboxForTest(available: boolean | undefined): void {
+  sandboxProbe = available;
+}
+
 export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): AgentEnforcement {
   const pol = writePolicy(project, agent);
   const os = osSandboxAvailable();

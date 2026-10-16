@@ -200,3 +200,15 @@ test('failed takes precedence over queued', () => {
   rep.agents[0]!.last_wake = { at: 't', ok: false }
   expect(blocks(rep, NOW).find(b => b.name === 'fe')!.dot).toBe('failed')
 })
+
+test('a badge marks an agent that is running on a backup, and nothing else changes', () => {
+  const plain = blocks(report(run()), NOW).find(b => b.name === 'fe')!
+  const before = blockLines(plain)
+  const rep = report(run())
+  rep.agents[0]!.fallback = { from: 'codex/gpt-5', kind: 'rate_limit' }
+  const fb = blocks(rep, NOW).find(b => b.name === 'fe')!
+  const lines = blockLines(fb)
+  expect(lines[0]!.text).toBe(before[0]!.text + ' · 備援中')
+  expect(lines.slice(1)).toEqual(before.slice(1))
+  expect(blockLines(plain)).toEqual(before)
+})

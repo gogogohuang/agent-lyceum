@@ -34,7 +34,7 @@ export type Run = {
   blocked_integrations?: unknown[]
   result_head?: unknown[]
 }
-export type Agent = { name: string; lead: boolean; unread: number; runtime?: string; can_message?: string[]; last_wake?: { at: string; ok: boolean } }
+export type Agent = { name: string; lead: boolean; unread: number; runtime?: string; can_message?: string[]; last_wake?: { at: string; ok: boolean }; model?: string; fallback?: { from: string; kind: string }; cooldowns?: { model: string; kind: string; remaining_sec: number }[] }
 export type Report = { project: { name: string; lead: string }; agents: Agent[]; run?: Run }
 export type History = { run_id: string; state: Run['state']; outcome?: string; outcome_verified: boolean; end_reason?: string; rounds: number; max_rounds: number; output_tokens: number; task_summary: string; started_at?: string }
 export type Snapshot = { report: Report | null; /** Every running run of the project, by run id (status --json shows only one). */ runs?: Record<string, Report>; error: string | null; history?: History[] }

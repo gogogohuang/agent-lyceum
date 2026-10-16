@@ -60,3 +60,28 @@ describe("failureGuide", () => {
     expect(g).toContain("agent-lyceum clear login -p web");
   });
 });
+
+describe("failureGuide with a fallback chain", () => {
+  it("lists every model tried, in order, and still says how to go on", () => {
+    const f = {
+      agent: "lead",
+      error: "ENOTFOUND",
+      attempts: 4,
+      tried: [
+        { runtime: "claude-code" as const, kind: "rate_limit" as const, error: "429" },
+        { runtime: "codex" as const, model: "gpt-5", kind: "network" as const, error: "ENOTFOUND" },
+        { runtime: "claude-code" as const, model: "haiku" },
+      ],
+    };
+    const g = failureGuide("web", "login", f, "/runs/r1");
+    expect(g).toContain("lead was called 4 time(s) and failed every time (ENOTFOUND)");
+    expect(g).toContain("Models tried, in order:\n  1. claude-code: rate_limit (429)\n  2. codex/gpt-5: network (ENOTFOUND)\n  3. claude-code/haiku: unknown error");
+    expect(g).toContain("agent-lyceum resume login -p web");
+  });
+
+  it("is unchanged without tried", () => {
+    const f = { agent: "fe-member", error: "boom", attempts: 3 };
+    expect(failureGuide("web", "login", f, "/runs/r1")).not.toContain("Models tried");
+    expect(failureGuide("web", "login", f, "/runs/r1").split("\n")).toHaveLength(8);
+  });
+});
