@@ -44,7 +44,7 @@ With `--agent`:
 - `--assume-defaults` has no effect;
 - a name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
 
-With `dispatcher.max_concurrent_runs > 1` the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge; see "Several runs at once" in [How a run works](how-it-works.md#several-runs-at-once).
+In a git repo with a commit the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge (`git merge <branch>` or `open_pr`); elsewhere it works directly in the folder, one agent at a time. See "Several runs at once" in [How a run works](how-it-works.md#several-runs-at-once).
 
 If the lead's done asks for a pull request (`open_pr: true`) and the run completes on its own branch, the run opens it; see "Opening a pull request" in [How a run works](how-it-works.md#opening-a-pull-request).
 
@@ -153,7 +153,7 @@ Options:
 - `--dry-run`: only print what would be deleted and kept.
 - `--keep-worktrees`: keep the worktrees and their branches, and still clear the rest.
 
-**`clear --lock`** removes the run lock a crashed run left behind. Each active run holds its own lock (up to `dispatcher.max_concurrent_runs` at once). Without `--force` it only shows who holds the lock. Without a run id it acts on the only lock; when several runs hold one it lists them and asks you to name the run. A lock file that cannot be read is cleared too.
+**`clear --lock`** removes the run lock a crashed run left behind. Each active run holds its own lock. Without `--force` it only shows who holds the lock. Without a run id it acts on the only lock; when several runs hold one it lists them and asks you to name the run. A lock file that cannot be read is cleared too.
 
 With `--force`:
 
@@ -171,7 +171,7 @@ Check the setup without running any agent:
 
 - configuration (each agent's enforcement level is printed; the `handoff` column is the protection of the run's handoff notes, `n/a` for the lead because it may write them);
 - git (for parallel runs);
-- whether `gh` and `origin` are available for opening a pull request (when `max_concurrent_runs > 1`);
+- whether `gh` and `origin` are available for opening a pull request (when the repo is a git repository with a commit);
 - the project lock;
 - what each runtime CLI supports, read from its `--version` and `--help` (JSON output, resume, sandbox settings, effort; each is `yes`, `no` or `unknown`).
 
@@ -184,7 +184,7 @@ Options:
 
 Exit 1 on configuration errors or when something the team needs is explicitly unsupported. It does not read credentials: login status is reported as unknown. `run` and `resume` do the same capability check first: they refuse to start on an explicit `no` and warn on `unknown`. A real end-to-end check against the live CLIs (a tiny task) spends tokens and is deliberately manual.
 
-**`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`, `owns`) are replaced, not merged; relative paths are resolved against the file they were written in.
+**`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
 ## demo
 
@@ -222,7 +222,7 @@ Task memory is never tidied (`clear` deletes it). Note that the project template
 
 Each agent is woken once for this, outside any run (no round is used), and may only change its own memory. Retiring is archiving, never deleting: files go to `memory/.archive/<timestamp>/` under the same relative path, together with a `tidy-report.md` (what was merged, what was archived and why, what is still doubtful). The agent is shown the size and age of every memory file, the `MEMORY.md` index, what changed in the project repo (`git log` and `git diff --stat`) since the last tidy, and the paths its memory mentions that no longer exist. `memory/.tidy-state.json` remembers the repo `HEAD` of the last tidy; the first tidy has no baseline and only does the path check.
 
-agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project to itself: `tidy` (and `tidy --undo`) is refused while any run is active, and no run can start while it runs, whatever `max_concurrent_runs` is.
+agent-lyceum checks the result: every file that existed before must still be in place or under this tidy's archive folder, `tidy-report.md` must exist, and the agent's other memory directories must be unchanged. If the wake-up fails or times out, or any check fails, the memory directory is put back exactly as it was, the baseline is not updated and the exit code is `1`. The command needs the project to itself: `tidy` (and `tidy --undo`) is refused while any run is active, and no run can start while it runs.
 
 **`tidy --undo <timestamp>`** undoes one tidy: it moves the files of `memory/.archive/<timestamp>/` back to where they were and adds them to `MEMORY.md` if the index does not mention them. `tidy` prints the timestamp, and the exact undo command, when it finishes.
 
