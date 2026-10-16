@@ -147,6 +147,18 @@ export function newRunId(d = new Date()): string {
 }
 
 const nonNeg = z.number().finite();
+const CooldownEntry = z.object({ until: z.string(), kind: z.enum(ERROR_KINDS) });
+
+/** `state.cooldowns` is advisory: keep the entries that parse and drop the rest, so one bad entry never makes the run unreadable. */
+function lenientCooldowns(raw: unknown): RunState["cooldowns"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: NonNullable<RunState["cooldowns"]> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const e = CooldownEntry.safeParse(v);
+    if (e.success) out[k] = e.data;
+  }
+  return out;
+}
 const WireState = z
   .object({
     schema_version: z.number().int().optional(),
@@ -183,7 +195,7 @@ const WireState = z
         tried: z.array(z.object({ runtime: z.enum(RUNTIMES), model: z.string().optional(), kind: z.enum(ERROR_KINDS).optional(), error: z.string().optional() })).optional(),
       })
       .optional(),
-    cooldowns: z.record(z.string(), z.object({ until: z.string(), kind: z.enum(ERROR_KINDS) })).optional(),
+    cooldowns: z.unknown().transform(lenientCooldowns).optional(),
     step_base: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     name: z.string().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),

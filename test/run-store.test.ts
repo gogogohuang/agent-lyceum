@@ -120,14 +120,26 @@ describe("fallback state", () => {
     expect(back.failure).toEqual(s.failure);
   });
 
-  it("reads an older state without them, and refuses a malformed cooldown table", () => {
+  it("reads an older state without them", () => {
     const d = tmp();
     fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", schema_version: 2, failure: { agent: "lead", attempts: 3 }, wakes: [{ round: 1, agent: "lead", at: "t", duration_ms: 1, ok: false, handling: [] }] }));
     const s = loadRunState(d);
     expect(s.cooldowns).toBeUndefined();
     expect(s.failure).toEqual({ agent: "lead", attempts: 3 });
     expect(s.wakes[0]!.runtime).toBeUndefined();
-    fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", cooldowns: { "claude-code/": { until: 5 } } }));
-    expect(() => loadRunState(d)).toThrow(/cooldowns/);
+  });
+});
+
+describe("state.cooldowns", () => {
+  it("drops malformed entries instead of failing the whole state", () => {
+    const d = tmp();
+    const good = { until: "2026-01-01T00:00:00.000Z", kind: "rate_limit" };
+    fs.writeFileSync(
+      path.join(d, "state.json"),
+      JSON.stringify({ run_id: "r", cooldowns: { "claude-code/": good, "a/b": { until: 5, kind: "rate_limit" }, "c/d": { until: "x", kind: "nope" }, "e/f": "junk" } }),
+    );
+    expect(loadRunState(d).cooldowns).toEqual({ "claude-code/": good });
+    fs.writeFileSync(path.join(d, "state.json"), JSON.stringify({ run_id: "r", cooldowns: "garbage" }));
+    expect(loadRunState(d).cooldowns).toBeUndefined();
   });
 });
