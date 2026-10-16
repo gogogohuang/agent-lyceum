@@ -56,20 +56,11 @@ export function initGitRepo(dir: string, files: Record<string, string> = { "src/
   git(dir, "commit", "-q", "-m", "init");
 }
 
-/** Configure the demo project for parallel runs: 2 parallel, disjoint owns. */
-export function makeParallel(env: TestEnv): void {
-  env.editProjectYaml((t) =>
-    t
-      .replace("max_parallel: 1", "max_parallel: 2")
-      .replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]')
-      .replace('    # owns: ["tests/**"]', '    owns: ["tests/**"]'),
-  );
-}
+/** Parallel agents and concurrent runs need no setting any more: a git repo with a commit gets worktrees. Kept so tests read the same. */
+export function makeParallel(_env: TestEnv): void {}
 
-/** Let the demo project run `n` runs at once (each in its own git worktree). */
-export function makeConcurrent(env: TestEnv, n = 2): void {
-  env.editProjectYaml((t) => t.replace("max_concurrent_runs: 1", `max_concurrent_runs: ${n}`));
-}
+/** See `makeParallel`. */
+export function makeConcurrent(_env: TestEnv, _n = 2): void {}
 
 /** The template gives agents global memory only; this also gives each of them a project memory directory (`agents/<name>/memory`). */
 export function makeMemoryEnv(name = "demo"): TestEnv {

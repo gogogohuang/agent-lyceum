@@ -266,6 +266,35 @@ describe("dispatcher", () => {
     expect(maxActive).toBe(2);
   });
 
+  it("wakes 3 members whose old owns overlapped all at once", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    env.editProjectYaml(
+      (t) =>
+        t
+          .replace("  fe-member:\n", '  fe-member:\n    owns: ["src/**"]\n')
+          .replace("  qa-member:\n    can_message: [lead]\n", `  qa-member:\n    owns: ["src/**"]\n    can_message: [lead]\n  ops-member:\n    runtime: claude-code\n    agent_md: ${path.join(env.home, "agents/qa-member/AGENT.md")}\n    owns: ["src/**"]\n    can_message: [lead]\n`),
+    );
+    const spans: { name: string; start: number; end: number }[] = [];
+    let leadCalls = 0;
+    const s = await run(async (i) => {
+      const start = Date.now();
+      await new Promise((r) => setTimeout(r, 80));
+      if (i.agent.name === "lead") {
+        if (++leadCalls === 1) for (const m of ["fe-member", "qa-member", "ops-member"]) mail(i, m, "a", "task");
+        else mail(i, "lead", "bye", "done");
+      } else mail(i, "lead", "reply");
+      spans.push({ name: i.agent.name, start, end: Date.now() });
+      return OK;
+    });
+    expect(s.endReason).toBe("done");
+    const batch = spans.filter((x) => x.name !== "lead");
+    expect(batch.map((x) => x.name).sort()).toEqual(["fe-member", "ops-member", "qa-member"]);
+    for (const a of batch) for (const b of batch) if (a !== b) expect(a.start).toBeLessThan(b.end);
+    const lead = spans.filter((x) => x.name === "lead");
+    for (const l of lead) for (const m of batch) expect(l.end <= m.start || m.end <= l.start).toBe(true);
+  });
+
   it("hands the lead all waiting replies in one wake-up, but workers get one message at a time", async () => {
     env = makeEnv();
     initGitRepo(env.repo);

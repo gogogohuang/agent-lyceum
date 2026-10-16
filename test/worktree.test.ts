@@ -1,35 +1,55 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
-import { runTeam } from "../src/dispatcher.js";
-import { outboxDir, writePolicy } from "../src/policy.js";
-import { prepareTask } from "../src/task.js";
-import { validateProject } from "../src/validate.js";
-import { assertWorktreeRunnable, collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, resolveWorkspaceMode, snapshotBase, snapshotHead } from "../src/worktree.js";
-import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
-import type { ResolvedProject } from "../src/config.js";
+import { writePolicy } from "../src/policy.js";
+import { collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
+import type { RunState } from "../src/run-store.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
-const settings = (over: Partial<{ max_parallel: number; max_concurrent_runs: number; workspace_mode: "auto" | "shared" | "worktree" }>) => ({
-  max_rounds: 30, max_parallel: 1, max_concurrent_runs: 1, wake_timeout_sec: 600, retry: 1, strict: false, workspace_mode: "auto" as const, log_max_bytes: 0, ...over,
-});
+describe("planWorkspace", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "plan-"));
+  const state = (over: Partial<RunState>) => ({ ...over }) as RunState;
 
-describe("workspace mode", () => {
-  it("uses worktrees for every run when several runs may be active at once", () => {
-    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2 }))).toBe("worktree");
-    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 2, workspace_mode: "auto" }))).toBe("worktree");
-    expect(resolveWorkspaceMode(settings({ max_concurrent_runs: 1 }))).toBe("shared");
+  it("isolates a clean repo with a commit: lead in its own worktree, no reason", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    expect(isolationBlocker(env.repo)).toBeUndefined();
+    expect(planWorkspace(env.project())).toEqual({ mode: "worktree", leadWorktree: true });
   });
 
-  it("uses worktrees when agents can run in parallel, or when asked to", () => {
-    expect(resolveWorkspaceMode(settings({}))).toBe("shared");
-    expect(resolveWorkspaceMode(settings({ max_parallel: 2 }))).toBe("worktree");
-    expect(resolveWorkspaceMode(settings({ workspace_mode: "worktree" }))).toBe("worktree");
-    expect(resolveWorkspaceMode(settings({ workspace_mode: "shared" }))).toBe("shared");
+  it("isolates a repo with uncommitted changes too (they stay out of the run)", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    write(path.join(env.repo, "src/web/a.txt"), "dirty\n");
+    expect(planWorkspace(env.project())).toEqual({ mode: "worktree", leadWorktree: true });
+  });
+
+  it("falls back to shared in a repo without a commit", () => {
+    env = makeEnv();
+    fs.mkdirSync(env.repo, { recursive: true });
+    git(env.repo, "init", "-q", "-b", "main");
+    expect(planWorkspace(env.project())).toEqual({ mode: "shared", leadWorktree: false, reason: "no commit yet" });
+  });
+
+  it("falls back to shared in a folder that is not a git repository", () => {
+    env = makeEnv();
+    expect(planWorkspace(env.project())).toEqual({ mode: "shared", leadWorktree: false, reason: "not a git repository" });
+    expect(isolationBlocker(tmp())).toBe("not a git repository");
+  });
+
+  it("keeps what an old run's state recorded, whatever the repo looks like now", () => {
+    env = makeEnv(); // not a git repository now
+    const p = env.project();
+    expect(planWorkspace(p, state({ lead_workspace: true, workspace_mode: "worktree" }))).toEqual({ mode: "worktree", leadWorktree: true });
+    expect(planWorkspace(p, state({ workspace_mode: "worktree" }))).toEqual({ mode: "worktree", leadWorktree: false });
+    expect(planWorkspace(p, state({ workspace_mode: "shared" }))).toEqual({ mode: "shared", leadWorktree: false });
+    expect(planWorkspace(p, state({}))).toEqual({ mode: "shared", leadWorktree: false });
   });
 });
 
@@ -142,27 +162,6 @@ describe("dirtyPaths", () => {
   });
 });
 
-describe("validate", () => {
-  const errors = (e: TestEnv) => validateProject(e.project()).issues.filter((i) => i.level === "error").map((i) => i.message);
-
-  it("refuses shared workspaces together with parallel agents", () => {
-    env = makeEnv();
-    initGitRepo(env.repo);
-    makeParallel(env);
-    env.editProjectYaml((t) => t.replace("workspace_mode: auto", "workspace_mode: shared"));
-    expect(errors(env).join("\n")).toMatch(/workspace_mode.*shared.*max_parallel/);
-  });
-
-  it("refuses parallel agents in a folder that is not a git repository, but allows a sequential run", () => {
-    env = makeEnv();
-    expect(errors(env)).toEqual([]);
-    makeParallel(env);
-    expect(errors(env).join("\n")).toMatch(/git repository/);
-    initGitRepo(env.repo);
-    expect(errors(env)).toEqual([]);
-  });
-});
-
 describe("adapters in a worktree", () => {
   it("point Claude Code and Codex at the agent's checkout, not the main repo", () => {
     env = makeEnv();
@@ -190,56 +189,6 @@ describe("adapters in a worktree", () => {
   });
 });
 
-describe("dispatcher with worktrees", () => {
-  const OK = { ok: true, text: "", exitCode: 0, timedOut: false };
-  const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply") =>
-    write(path.join(outboxDir(p, from), `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : "body"}\n`);
-
-  async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {
-    const project = env.project();
-    const runDir = path.join(project.paths.runs, "run-1");
-    const task = prepareTask({ text: "go", cwd: env.root, runDir });
-    return runTeam({ project, task, runDir, invoker, log: () => {} });
-  }
-
-  it("runs members in their own checkouts while the lead keeps the main repo", async () => {
-    env = makeEnv();
-    initGitRepo(env.repo);
-    makeParallel(env);
-    const where: Record<string, string | undefined> = {};
-    let leadCalls = 0;
-    const s = await start(async (i) => {
-      where[i.agent.name] = i.workspace?.dir;
-      if (i.agent.name === "lead") {
-        leadCalls++;
-        if (leadCalls === 1) {
-          write(path.join(env.repo, "src/web/from-lead.txt"), "lead\n");
-          mail(i.project, "lead", "fe-member", "a", "task");
-        } else mail(i.project, "lead", "lead", "bye", "done");
-      } else {
-        write(path.join(i.workspace!.dir, "src/web/from-fe.txt"), "fe\n");
-        expect(fs.existsSync(path.join(i.workspace!.dir, "src/web/from-lead.txt"))).toBe(true);
-        mail(i.project, i.agent.name, "lead", "r");
-      }
-      return OK;
-    });
-    expect(s.endReason).toBe("done");
-    expect(where.lead).toBeUndefined();
-    expect(where["fe-member"]).toBe(path.join(env.project().paths.root, "worktrees", "run-1", "fe-member"));
-    expect(fs.readFileSync(path.join(env.repo, "src/web/from-fe.txt"), "utf8")).toBe("fe\n"); // brought into the main repo once fe-member finished
-    expect(fs.existsSync(path.join(where["fe-member"]!, "src/web/from-fe.txt"))).toBe(true);
-  });
-
-  it("refuses to start a parallel run while the repo has uncommitted changes of its own", async () => {
-    env = makeEnv();
-    initGitRepo(env.repo);
-    makeParallel(env);
-    write(path.join(env.repo, "src/web/a.txt"), "my own unfinished edit\n");
-    await expect(start(async () => OK)).rejects.toThrow(/uncommitted.*src\/web\/a\.txt/s);
-    expect(fs.existsSync(path.join(env.project().paths.runs, "run-1", "state.json"))).toBe(false);
-  });
-});
-
 describe("concurrent runs: base and lead workspace", () => {
   function concurrentRepo() {
     env = makeEnv();
@@ -251,8 +200,7 @@ describe("concurrent runs: base and lead workspace", () => {
   it("starts from HEAD even when the working tree has uncommitted changes, and leaves the working tree alone", () => {
     const p = concurrentRepo();
     write(path.join(env.repo, "src/web/a.txt"), "uncommitted edit\n");
-    expect(() => assertWorktreeRunnable(p, { fresh: true, concurrent: true })).not.toThrow();
-    expect(() => assertWorktreeRunnable(p, { fresh: true })).toThrow(/uncommitted/);
+    expect(isolationBlocker(p.dir)).toBeUndefined();
     const ref = snapshotHead(p, "run-1");
     expect(ref).toBe("refs/agent-lyceum/run-1/base-0");
     expect(git(env.repo, "rev-parse", ref)).toBe(git(env.repo, "rev-parse", "HEAD"));
@@ -262,11 +210,10 @@ describe("concurrent runs: base and lead workspace", () => {
     expect(ws.branch).toBe("agent-lyceum/run-1/lead");
   });
 
-  it("refuses a repository without any commit", () => {
+  it("reports a repository without any commit as not isolatable", () => {
     env = makeEnv();
     git(env.repo, "init", "-q", "-b", "main");
-    makeConcurrent(env, 2);
-    expect(() => assertWorktreeRunnable(env.project(), { fresh: true, concurrent: true })).toThrow(/no commit yet/);
+    expect(isolationBlocker(env.repo)).toBe("no commit yet");
   });
 
   it("snapshots the lead's worktree for members and brings a member's files into the lead's worktree, not the repo", () => {

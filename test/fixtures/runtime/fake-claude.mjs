@@ -1,7 +1,7 @@
 // A stand-in for the `claude` CLI.
 //
 // FAKE_MODE=completed | sleep            simple one-shot behaviours (the lead sends a full `done`, or hangs)
-// FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, mail?, result? } ... ] }
+// FAKE_SCRIPT=<file.json>                a script: { "calls": [ { agent, sleep?, writes?, writeAbs?, writeLead?, mail?, result? } ... ] }
 //                                        call N of the whole run (counted in <file>.count) does what entry N says.
 // moveAbs: [{ from, to }]   rename files by absolute path; "{ARCHIVE}" in any path/content is the "Archive directory:" line of a memory-tidy prompt
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
@@ -60,6 +60,12 @@ if (process.env.FAKE_SCRIPT) {
   for (const [rel, content] of Object.entries(step.writes ?? {})) {
     fs.mkdirSync(path.dirname(path.join(process.cwd(), rel)), { recursive: true });
     fs.writeFileSync(path.join(process.cwd(), rel), content);
+  }
+  // `writeLead`: files in the lead's worktree, a sibling of this member's (<home>/worktrees/<run>/lead): a concurrent edit by the lead.
+  for (const [rel, content] of Object.entries(step.writeLead ?? {})) {
+    const to = path.join(process.cwd(), "..", "lead", rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, content);
   }
   for (const [abs, content] of Object.entries(step.writeAbs ?? {})) {
     fs.mkdirSync(path.dirname(sub(abs)), { recursive: true });

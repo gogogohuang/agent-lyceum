@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findProjectForCwd, flattenResolved, resolveProject, resolveProjectWithSources } from "../src/config.js";
+import { ConfigError, findProjectForCwd, flattenResolved, resolveProject, resolveProjectWithSources } from "../src/config.js";
 import { inferRuntime } from "../src/schema.js";
+import { validateProject } from "../src/validate.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -111,20 +112,19 @@ describe("resolved configuration with sources", () => {
 
   it("falls back to defaults for dispatcher fields the project does not set", () => {
     env = makeEnv();
-    env.editProjectYaml((t) => t.replace(/^ {2}workspace_mode:.*\n/m, ""));
-    expect(where(env, "dispatcher.workspace_mode")).toEqual({ default: true });
+    env.editProjectYaml((t) => t.replace(/^ {2}retry:.*\n/m, ""));
+    expect(where(env, "dispatcher.retry")).toEqual({ default: true });
   });
 
   it("project values replace global ones, arrays are replaced rather than merged, and the winner is the one reported", () => {
     env = makeEnv();
     fs.writeFileSync(
       path.join(env.home, "team.yaml"),
-      "agents:\n  lead: { runtime: claude-code }\n  fe-member: { runtime: claude-code, owns: ['a/**', 'b/**'] }\n  qa-member: { runtime: claude-code }\n",
+      "agents:\n  lead: { runtime: claude-code }\n  fe-member: { runtime: claude-code, can_message: [qa-member, lead] }\n  qa-member: { runtime: claude-code }\n",
     );
-    env.editProjectYaml((t) => t.replace('    # owns: ["src/web/**"]', '    owns: ["src/web/**"]'));
     const r = resolveProjectWithSources(env.home, "demo");
-    expect(r.project.agents["fe-member"].owns).toEqual(["src/web/**"]);
-    expect((r.sources["agents.fe-member.owns"] as { file: string }).file).toContain("project.yaml");
+    expect(r.project.agents["fe-member"].canMessage).toEqual(["lead"]);
+    expect((r.sources["agents.fe-member.can_message"] as { file: string }).file).toContain("project.yaml");
   });
 
   it("resolves relative paths against the file they were written in and reports that file", () => {
@@ -143,7 +143,7 @@ describe("resolved configuration with sources", () => {
     const r = resolveProjectWithSources(env.home, "demo");
     const values = flattenResolved(r.project);
     expect(values["agents.lead.runtime"]).toBe("claude-code");
-    expect(values["dispatcher.max_parallel"]).toBe(1);
+    expect(values["dispatcher.retry"]).toBe(2);
     expect(values["team.lead"]).toBe("lead");
     for (const key of Object.keys(r.sources)) expect(key in values).toBe(true);
   });
@@ -163,5 +163,41 @@ describe("can_ask_user", () => {
     const p = env.project();
     expect(p.agents["fe-member"]?.canAskUser).toBe(true);
     expect(flattenResolved(p)["agents.fe-member.can_ask_user"]).toBe(true);
+  });
+});
+
+describe("removed settings", () => {
+  it("ignores removed settings with one warning per file", () => {
+    env = makeEnv();
+    const globalFile = path.join(env.home, "team.yaml");
+    fs.appendFileSync(globalFile, "");
+    fs.writeFileSync(globalFile, fs.readFileSync(globalFile, "utf8").replace("  fe-member:", "  fe-member:\n    owns: ['a/**']"));
+    env.editProjectYaml((t) =>
+      t
+        .replace("  wake_timeout_sec: 600", "  wake_timeout_sec: 600\n  max_parallel: 2\n  max_concurrent_runs: 3\n  workspace_mode: shared")
+        .replace("  fe-member:\n", '  fe-member:\n    owns: ["src/**"]\n'),
+    );
+    const p = env.project();
+    expect(p.dispatcher).not.toHaveProperty("max_parallel");
+    expect(p.dispatcher).not.toHaveProperty("max_concurrent_runs");
+    expect(p.dispatcher).not.toHaveProperty("workspace_mode");
+    expect(p.agents["fe-member"]).not.toHaveProperty("owns");
+    const warns = validateProject({ ...p, dispatcher: { ...p.dispatcher, strict: true } }).issues.filter((i) => /removed setting/.test(i.message));
+    expect(warns.every((w) => w.level === "warn")).toBe(true);
+    expect(warns.map((w) => w.message)).toEqual([
+      `${globalFile}: ignoring removed setting(s) agents.fe-member.owns. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.`,
+      `${p.paths.config}: ignoring removed setting(s) dispatcher.max_parallel, dispatcher.max_concurrent_runs, dispatcher.workspace_mode, agents.fe-member.owns. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.`,
+    ]);
+  });
+
+  it("still rejects an unknown key", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  wake_timeout_sec: 600", "  wake_timeout_sec: 600\n  max_paralel: 2"));
+    expect(() => env.project()).toThrow(ConfigError);
+    env.cleanup();
+    env = makeEnv();
+    const globalFile = path.join(env.home, "team.yaml");
+    fs.writeFileSync(globalFile, fs.readFileSync(globalFile, "utf8").replace("  fe-member:", "  fe-member:\n    foo: 1"));
+    expect(() => env.project()).toThrow(ConfigError);
   });
 });

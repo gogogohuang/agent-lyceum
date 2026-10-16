@@ -12,6 +12,8 @@ import type { AgentWorkspace } from "./worktree.js";
 import {
   DISPATCHER_DEFAULTS,
   GlobalConfig,
+  REMOVED_AGENT_KEYS,
+  REMOVED_DISPATCHER_KEYS,
   ProjectConfig,
   type AgentPartialT,
   type DispatcherSettings,
@@ -39,7 +41,6 @@ export interface ResolvedAgent {
   canAskUser: boolean;
   /** Web access for this agent; undefined = not configured, so the runtime keeps its own default. */
   allowWeb?: WebLevel;
-  owns: string[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
 }
@@ -53,6 +54,8 @@ export interface ResolvedProject {
   dispatcher: DispatcherSettings;
   agents: Record<string, ResolvedAgent>;
   paths: ProjectPaths;
+  /** Removed settings still present in config files (ignored); `validate` warns once per file. */
+  ignoredSettings?: { file: string; keys: string[] }[];
   /** Set once the project is bound to one run (see `bindRunProject`): which run, and where its mail lives. */
   run?: { id: string; dir: string; layout: "run" | "legacy" };
   /** Agents working in their own git worktree instead of `dir` (set by the dispatcher for the wake-ups in progress). */
@@ -113,7 +116,8 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
   const paths = projectPaths(home, name);
   const hp = homePaths(home);
   const lead = p.team.lead;
-  const dispatcher: DispatcherSettings = { ...DISPATCHER_DEFAULTS, ...stripUndef(p.dispatcher) };
+  const { max_parallel: _mp, max_concurrent_runs: _mc, workspace_mode: _wm, ...liveDispatcher } = p.dispatcher;
+  const dispatcher: DispatcherSettings = { ...DISPATCHER_DEFAULTS, ...stripUndef(liveDispatcher) };
 
   const agents: Record<string, ResolvedAgent> = {};
   for (const agentName of Object.keys(p.agents)) {
@@ -190,13 +194,11 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     const canEdit = pick("can_edit_agent_md");
     const canAsk = pick("can_ask_user");
     const allowWeb = pick("allow_web");
-    const owns = pick("owns");
     for (const [k, v] of [
       ["resume", resume],
       ["can_message", canMessage],
       ["can_edit_agent_md", canEdit],
       ["can_ask_user", canAsk],
-      ["owns", owns],
     ] as const) {
       if (v === undefined) sources[k] = "default";
     }
@@ -213,7 +215,6 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canEditAgentMd: canEdit ?? isLead,
       canAskUser: canAsk ?? isLead,
       allowWeb,
-      owns: owns ?? [],
       sources,
     };
   }
@@ -226,7 +227,22 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     dispatcher,
     agents,
     paths,
+    ignoredSettings: collectIgnored(hp.globalConfig, g, paths.config, p),
   };
+}
+
+/** The removed keys present in the global and project files, by full path, per file (empty files omitted). */
+function collectIgnored(globalFile: string, g: ReturnType<typeof loadGlobal>, projectFile: string, p: ReturnType<typeof loadProjectRaw>): { file: string; keys: string[] }[] {
+  const out: { file: string; keys: string[] }[] = [];
+  const scan = (file: string, dispatcher: Record<string, unknown> | undefined, agents: Record<string, Record<string, unknown>>) => {
+    const keys: string[] = [];
+    for (const k of REMOVED_DISPATCHER_KEYS) if (dispatcher?.[k] !== undefined) keys.push(`dispatcher.${k}`);
+    for (const [name, a] of Object.entries(agents)) for (const k of REMOVED_AGENT_KEYS) if (a[k] !== undefined) keys.push(`agents.${name}.${k}`);
+    if (keys.length) out.push({ file, keys });
+  };
+  scan(globalFile, undefined, g.agents);
+  scan(projectFile, p.dispatcher, p.agents);
+  return out;
 }
 
 function stripUndef<T extends object>(o: T): Partial<T> {
@@ -270,7 +286,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "owns"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web"] as const;
 
 /** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
 export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
@@ -324,7 +340,6 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
-    v[`${p}.owns`] = a.owns;
   }
   return v;
 }

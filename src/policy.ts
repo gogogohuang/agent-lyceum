@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
-import { globStaticPrefix } from "./paths.js";
 
 export type Level = "os" | "tool-rules" | "post-hoc" | "prompt-only" | "n/a";
 
@@ -14,7 +13,6 @@ export interface AgentEnforcement {
   otherContext: Level;
   shared: Level;
   repoInstructions: Level;
-  owns: Level;
   /** Absolute paths outside the repo this agent may write. */
   writablePaths: string[];
   notes: string[];
@@ -29,9 +27,6 @@ export interface WritePolicy {
   allowFiles: string[];
   /** Files/dirs that must stay unwritable (checked even inside the repo). */
   deny: string[];
-  /** Repo-relative globs the agent owns (only enforced when max_parallel > 1). */
-  owns: string[];
-  restrictRepoToOwns: boolean;
 }
 
 export function commonFile(project: ResolvedProject): string {
@@ -152,8 +147,6 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     readDirs: shared && !mayWriteShared ? [shared] : [],
     allowFiles,
     deny: [...new Set(deny)],
-    owns: agent.owns,
-    restrictRepoToOwns: project.dispatcher.max_parallel > 1 && agent.owns.length > 0 && !isLead,
   };
 }
 
@@ -170,18 +163,17 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
   const pol = writePolicy(project, agent);
   const os = osSandboxAvailable();
   const notes: string[] = [];
-  const parallel = project.dispatcher.max_parallel > 1;
   const isLeadAgent = agent.name === project.lead;
   let e: Omit<AgentEnforcement, "agent" | "runtime" | "writablePaths" | "notes">;
 
   if (agent.runtime === "claude-code") {
     const lvl: Level = os ? "os" : "tool-rules";
-    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : lvl, repoInstructions: lvl, owns: parallel ? "tool-rules" : "n/a" };
+    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : lvl, repoInstructions: lvl };
     if (!os) notes.push("OS sandbox unavailable (Windows, or Linux without bubblewrap): Bash can bypass Edit rules.");
     if (!isLeadAgent && !os) notes.push("Without the OS sandbox Bash can write _shared; only the handoff index (_shared/MEMORY.md) is checked after each wake-up.");
   } else {
     const lvl: Level = os ? "os" : "prompt-only";
-    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : os ? "os" : "post-hoc", repoInstructions: "post-hoc", owns: parallel ? "prompt-only" : "n/a" };
+    e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : os ? "os" : "post-hoc", repoInstructions: "post-hoc" };
     notes.push("Codex cannot forbid single files inside the repo; CLAUDE.md/AGENTS.md changes are detected and reverted after each wake-up.");
     if (!isLeadAgent && !os) notes.push("Without the OS sandbox only the handoff index (_shared/MEMORY.md) is checked after each wake-up; other files in _shared are not protected.");
     if (agent.canEditAgentMd) notes.push("can_edit_agent_md widens Codex writable roots to whole agent directories.");
@@ -194,11 +186,6 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
     writablePaths: [...pol.allowDirs, ...pol.allowFiles.filter((f) => !f.startsWith(project.dir + path.sep) && !f.startsWith(repoDirFor(project, project.lead) + path.sep))],
     notes,
   };
-}
-
-/** Static directory prefixes (absolute) of an agent's `owns` globs. */
-export function ownsDirs(project: ResolvedProject, agent: ResolvedAgent): string[] {
-  return agent.owns.map((g) => path.join(project.dir, globStaticPrefix(g)));
 }
 
 /** Can `agent` legitimately change this protected file? */

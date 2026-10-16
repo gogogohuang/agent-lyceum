@@ -26,12 +26,22 @@ A lead's `done` mail must carry `outcome: completed|partial|blocked|failed` in i
 
 ### Parallel runs and worktrees
 
-- `max_parallel > 1` now means: each non-lead agent works in its **own git worktree**, and the repo must be a git repository (otherwise run sequentially).
-- A parallel run **refuses to start while your repo has uncommitted changes**. Commit or stash them first. (The lead's own uncommitted changes *during* a run are fine: they are part of the snapshot the members start from.)
-- After a member finishes, its changes are brought into your working tree (not the index, not HEAD). If a file also changed in your repo since the snapshot, if the change breaks `owns`/protected-file/symlink rules, or if `git apply` fails, **nothing is applied**: the work stays on branch `agent-lyceum/<run-id>/<agent>` and in its worktree, `runs/<run-id>/integration/` has a report and a patch, the lead is told, and the run ends `blocked`, never `completed`.
+- This section is superseded: parallel agents are no longer configured. See "Zero-config concurrency" below.
+- Each non-lead agent still works in its own git worktree where a run has worktrees (see [How a run works](how-it-works.md#several-runs-at-once)).
+- After a member finishes, its work stays on its branch `agent-lyceum/<run-id>/<agent>`; if two agents change the same file, the later one's change is refused, its branch is kept and the lead is told.
 - A worktree isolates files only. It cannot isolate side effects on external services, databases or the network.
-- New setting `dispatcher.workspace_mode: auto | shared | worktree`. `shared` cannot be combined with parallel agents.
-- agent-lyceum adds git bookkeeping inside your repository while a parallel run exists (`refs/agent-lyceum/...`, `agent-lyceum/...` branches, worktree entries). `agent-lyceum clear` removes them.
+- How the old settings were removed and replaced: see "Zero-config concurrency" below.
+- While a run with worktrees exists, agent-lyceum adds git bookkeeping inside your repository (`refs/agent-lyceum/...`, `agent-lyceum/...` branches, worktree entries). `agent-lyceum clear` removes them.
+
+### Zero-config concurrency
+
+- **Old keys:** `owns`, `dispatcher.max_parallel`, `dispatcher.max_concurrent_runs` and `dispatcher.workspace_mode` are removed, and so is `--ignore-limit`. Old keys still load but are ignored with a warning: `<file>: ignoring removed setting(s) <keys>. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.` Delete those lines.
+- **Git repo with a commit (default `files` ref storage):** every run works in its own worktree and ends on its own branch (`agent-lyceum/<run>/…`); members with pending mail wake in parallel, with no cap and never alongside the lead; any number of runs can be active. The result is not written into your working tree: use `git merge <branch>` or `open_pr`. The run starts from `HEAD` and does not see your uncommitted edits.
+- **Non-git folder, repo with no commit, repo using reftable:** the run works directly in the folder, one agent at a time, with an info line instead of an error; only one such run can be active.
+- **Conflicts:** if two agents change the same file, the later one's change is refused, its branch is kept and the lead is told. Changes that do not fit together across different files are not detected.
+- **Before upgrading:** stop runs started by the old version.
+- **Mixing old and new binaries:** while a new run works directly in the checkout, binaries ≥ 0.12.0 refuse everything with a message saying the run "needs the project to itself (a memory tidy or restore)"; that is expected, the wording is inexact but safe. Versions < 0.12.0 do not read `locks/` and are not covered.
+- **Known limit:** if the old `max_concurrent_runs` was > 1, two older binaries can still both resume legacy shared runs and write the same checkout; that gap is in the old versions. Keep at most one old shared run during the switch.
 
 ### Recovery: what is and is not promised
 
@@ -77,12 +87,22 @@ lead 的 `done` 信 frontmatter 必須有 `outcome: completed|partial|blocked|fa
 
 ### 平行執行與 worktree
 
-- `max_parallel > 1` 現在表示：每個非 lead 的 agent 在**自己的 git worktree** 工作，而且 repo 必須是 git repository（否則請序列執行）。
-- 平行 run **在你的 repo 有未提交修改時會拒絕啟動**，請先提交或 stash。（run 進行*期間* lead 自己的未提交修改沒問題：它們屬於成員出發用的快照。）
-- 成員完成後，它的變更會被整合進你的工作目錄（不動 index、不動 HEAD）。若同一檔案在快照之後又在你的 repo 被改過、變更違反 `owns`／受保護檔案／symlink 規則，或 `git apply` 失敗，就**一個檔案都不套用**：成果留在 branch `agent-lyceum/<run-id>/<agent>` 與它的 worktree，`runs/<run-id>/integration/` 有報告與 patch，並通知 lead，這個 run 會以 `blocked` 結束，絕不會是 `completed`。
+- 此段已被取代：平行 agent 不再需要設定，見下方「零設定並行」。
+- 在有 worktree 的 run 裡，每個非 lead 的 agent 仍在自己的 git worktree 工作（見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)）。
+- 成員完成後，成果留在它的 branch `agent-lyceum/<run-id>/<agent>`；若兩個 agent 改了同一個檔案，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。
 - worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
-- 新設定 `dispatcher.workspace_mode: auto | shared | worktree`。`shared` 不能與平行 agent 並用。
-- 平行 run 存在期間，agent-lyceum 會在你的 repository 內加入 git 管理資料（`refs/agent-lyceum/...`、`agent-lyceum/...` branch、worktree 登記），`agent-lyceum clear` 會移除。
+- 設定的移除與替代方式見下方「零設定並行」。
+- 有 worktree 的 run 存在期間，agent-lyceum 會在你的 repository 內加入 git 管理資料（`refs/agent-lyceum/...`、`agent-lyceum/...` branch、worktree 登記），`agent-lyceum clear` 會移除。
+
+### 零設定並行
+
+- **舊鍵：** `owns`、`dispatcher.max_parallel`、`dispatcher.max_concurrent_runs`、`dispatcher.workspace_mode` 已移除，`--ignore-limit` 也已移除。舊鍵仍可載入，但會被忽略並警告：`<file>: ignoring removed setting(s) <keys>. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.` 請刪掉這幾行。
+- **有 commit 的 git repo（預設 `files` ref 儲存）：** 每個 run 在自己的 worktree 工作，結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒、沒有上限、絕不與 lead 同時；同時可有任意多個 run。結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`。run 從 `HEAD` 起跑，看不到你未提交的修改。
+- **非 git 資料夾、沒有 commit 的 repo、使用 reftable 的 repo：** run 直接在該資料夾工作、一次一個 agent，並以一行 info 取代錯誤；同時只能有一個這樣的 run。
+- **衝突：** 兩個 agent 改了同一個檔案時，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。不同檔案之間彼此不相容的修改不會被偵測到。
+- **升級前：** 先停掉舊版的 run。
+- **混用新舊版本：** 新版 run 直接在 checkout 工作期間，≥ 0.12.0 的舊 binary 會拒絕一切操作，訊息說它「needs the project to itself (a memory tidy or restore)」；這是預期行為，原因字樣不準但是安全。< 0.12.0 的版本不看 `locks/`，不在保證內。
+- **已知限制：** 若舊設定的 `max_concurrent_runs` > 1，兩個舊 binary 仍可同時續跑舊的共用 run，並同時寫同一個 checkout；這是舊版既有缺口。切換期間舊版的共用 run 至多保留一個。
 
 ### 復原：保證什麼、不保證什麼
 

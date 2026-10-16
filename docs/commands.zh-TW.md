@@ -44,7 +44,7 @@
 - `--assume-defaults` 沒有作用；
 - 名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
 
-`dispatcher.max_concurrent_runs > 1` 時，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch；見 [一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
+在有 commit 的 git repo 裡，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch（`git merge <branch>` 或 `open_pr`）；其他情況直接在該資料夾工作、一次一個 agent。見 [一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
 
 如果 lead 的 done 要求開 PR（`open_pr: true`），且 run 在自己的 branch 上完成，run 會開 PR；見 [一次執行如何運作](how-it-works.zh-TW.md#開-pr) 的「開 PR」。
 
@@ -153,7 +153,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 - `--dry-run`：只列出會刪除與會保留的項目。
 - `--keep-worktrees`：保留 worktree 與 branch，其餘照樣清除。
 
-**`clear --lock`** 移除當機 run 留下的 run 鎖。每個執行中的 run 各持有一把鎖（同時最多 `dispatcher.max_concurrent_runs` 把）。沒有 `--force` 時只顯示鎖的持有者。不帶 run id 時處理唯一的那把鎖；有多個 run 各持有一把時會列出它們，並要求你指定是哪個 run。無法讀取的鎖檔也會一併清除。
+**`clear --lock`** 移除當機 run 留下的 run 鎖。每個執行中的 run 各持有一把鎖。沒有 `--force` 時只顯示鎖的持有者。不帶 run id 時處理唯一的那把鎖；有多個 run 各持有一把時會列出它們，並要求你指定是哪個 run。無法讀取的鎖檔也會一併清除。
 
 加上 `--force`：
 
@@ -171,7 +171,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 - 設定（會印出每個 agent 的防護等級；`handoff` 欄是 run 的交接筆記的防護，lead 因為可寫而顯示 `n/a`）；
 - git（平行 run 需要）；
-- 是否有 `gh` 與 `origin` 可用來開 PR（`max_concurrent_runs > 1` 時）；
+- 是否有 `gh` 與 `origin` 可用來開 PR（repo 是有 commit 的 git repository 時）；
 - 專案鎖；
 - 各 runtime CLI 支援什麼（從 `--version` 與 `--help` 讀取：JSON 輸出、resume、sandbox 設定、effort，每項都是 `yes`、`no` 或 `unknown`）。
 
@@ -184,7 +184,7 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 設定有錯誤，或團隊需要的功能被明確判定不支援時 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。
 
-**`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`、`owns`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
+**`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
 ## demo
 
@@ -222,7 +222,7 @@ task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 
 
 每個 agent 會被喚醒一次來做這件事，不屬於任何 run（不消耗輪數），而且只能改動自己的記憶。淘汰＝封存，不是刪除：檔案會以相同的相對路徑搬到 `memory/.archive/<時間戳>/`，並附上 `tidy-report.md`（合併了什麼、封存了什麼與理由、仍存疑的項目）。agent 會看到每個記憶檔的大小與修改時間、`MEMORY.md` 索引、自上次整理以來 repo 的變化（`git log` 與 `git diff --stat`），以及記憶中提到但已不存在的路徑。`memory/.tidy-state.json` 記錄上次整理時 repo 的 `HEAD`；第一次整理沒有基準，只做路徑檢查。
 
-agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要獨占專案：有任何 run 在執行時，`tidy`（與 `tidy --undo`）會拒絕，執行期間也不能啟動任何 run，與 `max_concurrent_runs` 的值無關。
+agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要獨占專案：有任何 run 在執行時，`tidy`（與 `tidy --undo`）會拒絕，執行期間也不能啟動任何 run。
 
 **`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 

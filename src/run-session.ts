@@ -8,14 +8,13 @@ import { ProtectedGuard } from "./guard.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
-import { isInside } from "./paths.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { outboxDir, ownsDirs, sharedIndex } from "./policy.js";
+import { outboxDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
-import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, resolveWorkspaceMode, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch } from "./worktree.js";
+import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type RunState, type SentTopic } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -79,6 +78,8 @@ export interface RunOptions {
   task?: PreparedTask;
   /** Continue this earlier run (same run dir, sessions and counters) instead of starting a new one. */
   resume?: RunState;
+  /** Where the run's agents work, decided by `planWorkspace` before the run's lock was taken; the session never recomputes it. */
+  plan: WorkspacePlan;
   /** Reopen a done run: this text becomes a new task for the lead. Only with `resume` of a run that ended `done`. */
   followup?: { text: string };
   runDir: string;
@@ -103,7 +104,7 @@ export class RunSession {
   private readonly runDir: string;
   /** The project bound to this run (own memory dirs and mailboxes). */
   private readonly project: ResolvedProject;
-  private readonly wsMode: ReturnType<typeof resolveWorkspaceMode>;
+  private readonly wsMode: WorkspaceMode;
   private readonly log: ReturnType<typeof createRunLog>;
   private readonly guard: ProtectedGuard;
   private readonly state: RunState;
@@ -145,11 +146,12 @@ export class RunSession {
     const layout = resume ? resume.mail_layout : "run";
     // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
     const project = bindRunProject(base, runDir, layout);
-    // Parallel agents work in their own git worktrees; refuse early (before anything is written) when that cannot be done.
-    // Whether the lead has its own worktree is decided when the run starts and kept for its resumes, whatever the config says by then.
-    const concurrent = resume ? resume.lead_workspace === true : cfg.max_concurrent_runs > 1;
-    const wsMode = concurrent ? "worktree" : resolveWorkspaceMode({ ...cfg, max_concurrent_runs: 1 });
-    if (wsMode === "worktree") assertWorktreeRunnable(project, { fresh: !resume, concurrent });
+    // Where agents work was decided before the lock was taken and is kept for the run's resumes. A resumed run that uses worktrees
+    // is refused early (before anything is written) when its repo can no longer give them.
+    const { plan } = opts;
+    const concurrent = plan.leadWorktree;
+    const wsMode = plan.mode;
+    if (resume && wsMode === "worktree") assertWorktreeRunnable(project);
     // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
     let leadSpace: AgentWorkspace | undefined;
     let recut = false;
@@ -173,6 +175,10 @@ export class RunSession {
       const uncommitted = dirtyPaths(project.dir).length;
       say(`  starting from HEAD ${leadSpace.base.slice(0, 8)}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
       log("lead-workspace", { base: leadSpace.base, branch: leadSpace.branch, dir: leadSpace.dir, uncommitted });
+    }
+
+    if (!resume && plan.mode === "shared" && plan.reason) {
+      say(`  agents take turns in ${project.dir} (no separate git worktrees: ${plan.reason}); commit to a git repo to run them in parallel`);
     }
 
     let state: RunState;
@@ -321,23 +327,11 @@ export class RunSession {
 
 
   private pickBatch(pending: ResolvedAgent[]): ResolvedAgent[] {
-    const { cfg, project } = this;
+    const { project } = this;
     const lead = pending.find((a) => a.name === project.lead);
-    if (lead || cfg.max_parallel <= 1) return [must(lead ?? pending[0], "an agent to wake")];
-    const batch: ResolvedAgent[] = [];
-    const taken: string[] = [];
-    for (const a of pending) {
-      if (batch.length >= cfg.max_parallel) break;
-      const mine = ownsDirs(project, a);
-      const clash = mine.some((x) => taken.some((y) => isInside(x, y) || isInside(y, x)));
-      if (clash || mine.length === 0) {
-        if (batch.length === 0) batch.push(a);
-        continue;
-      }
-      batch.push(a);
-      taken.push(...mine);
-    }
-    return batch;
+    if (lead) return [lead];
+    if (this.opts.plan.mode !== "worktree") return [must(pending[0], "an agent to wake")];
+    return pending;
   }
 
 
@@ -458,7 +452,7 @@ export class RunSession {
     let changes: ChangeSet | undefined;
     let r: IntegrationResult;
     try {
-      changes = collectAgentChanges(ws, agent.owns);
+      changes = collectAgentChanges(ws);
       r = integrateAgentChanges(project, changes, this.leadSpace);
     } catch (e) {
       // e.g. a worktree whose git files were tampered with: nothing is applied, and the lead is told like for any blocked integration
@@ -724,7 +718,7 @@ export class RunSession {
       return { status: "skipped", reason };
     };
     if (endReason !== "done" || outcome !== "completed") return skip(`the run did not end completed (${endReason}, outcome ${outcome}).`);
-    if (!this.leadSpace) return skip("this run has no worktree of its own, so there is no branch to push. Set dispatcher.max_concurrent_runs: 2 (or more) in project.yaml.");
+    if (!this.leadSpace) return skip(`this run works directly in ${this.project.dir} (not a git repo with a commit), so there is no branch to push.`);
     if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 

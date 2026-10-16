@@ -16,8 +16,7 @@ export function soloProject(project: ResolvedProject, name: string, hints: { glo
     ...project,
     solo: "run",
     lead: name,
-    dispatcher: { ...project.dispatcher, max_parallel: 1, workspace_mode: "shared" },
-    agents: { ...project.agents, [name]: { ...a, canMessage: [], canAskUser: false, canEditAgentMd: false, owns: [] } },
+    agents: { ...project.agents, [name]: { ...a, canMessage: [], canAskUser: false, canEditAgentMd: false } },
   };
 }
 

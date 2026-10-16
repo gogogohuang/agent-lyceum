@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import type { ResolvedProject } from "./config.js";
-import { enforcementFor, memoryDirs, ownsDirs, type AgentEnforcement } from "./policy.js";
+import { enforcementFor, memoryDirs, type AgentEnforcement } from "./policy.js";
 import { isInside } from "./paths.js";
 import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
-import { isGitRepo, resolveWorkspaceMode } from "./worktree.js";
 import { must } from "./assert.js";
 
 export interface Issue {
@@ -62,37 +61,8 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     }
   }
 
-  // Parallelism requires disjoint `owns`.
-  if (project.dispatcher.max_parallel > 1) {
-    const withOwns = Object.values(project.agents).filter((a) => a.name !== project.lead);
-    for (const a of withOwns) {
-      if (a.owns.length === 0) err(`max_parallel > 1 requires "owns" for agent "${a.name}".`);
-    }
-    for (let i = 0; i < withOwns.length; i++) {
-      for (let j = i + 1; j < withOwns.length; j++) {
-        const ai = must(withOwns[i], "agent");
-        const aj = must(withOwns[j], "agent");
-        for (const x of ownsDirs(project, ai)) {
-          for (const y of ownsDirs(project, aj)) {
-            if (isInside(x, y) || isInside(y, x)) {
-              err(`"owns" overlap: ${ai.name} (${x}) vs ${aj.name} (${y})`);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Parallel agents and concurrent runs each need their own checkout, which needs git.
-  const concurrent = project.dispatcher.max_concurrent_runs > 1;
-  if (concurrent && project.dispatcher.workspace_mode === "shared") {
-    err(`dispatcher.workspace_mode "shared" cannot be combined with max_concurrent_runs > 1: every run needs its own git worktree (use "auto" or "worktree").`);
-  } else if (concurrent && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
-    err(`max_concurrent_runs > 1 needs ${project.dir} to be a git repository (each run works in its own git worktree). Set max_concurrent_runs: 1.`);
-  } else if (project.dispatcher.workspace_mode === "shared" && project.dispatcher.max_parallel > 1) {
-    err(`dispatcher.workspace_mode "shared" cannot be combined with max_parallel > 1: parallel agents need separate git worktrees (use "auto" or "worktree").`);
-  } else if (!concurrent && resolveWorkspaceMode(project.dispatcher) === "worktree" && fs.existsSync(project.dir) && !isGitRepo(project.dir)) {
-    err(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead (max_parallel: 1, workspace_mode: auto or shared).`);
+  for (const ig of project.ignoredSettings ?? []) {
+    warn(`${ig.file}: ignoring removed setting(s) ${ig.keys.join(", ")}. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.`);
   }
 
   // Context paths should live outside the repo (the tool never writes into it).
@@ -115,9 +85,9 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 }
 
 export function formatEnforcement(list: AgentEnforcement[]): string {
-  const header = ["agent", "runtime", "memory", "AGENT.md", "others' ctx", "handoff", "repo CLAUDE/AGENTS", "owns"];
+  const header = ["agent", "runtime", "memory", "AGENT.md", "others' ctx", "handoff", "repo CLAUDE/AGENTS"];
   const rows = [header];
-  for (const e of list) rows.push([e.agent, e.runtime, e.memory, e.agentMd, e.otherContext, e.shared, e.repoInstructions, e.owns]);
+  for (const e of list) rows.push([e.agent, e.runtime, e.memory, e.agentMd, e.otherContext, e.shared, e.repoInstructions]);
   const w = header.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length)));
   const lines = rows.map((r) => r.map((c, i) => c.padEnd(w[i] ?? 0)).join("  ").trimEnd());
   lines.splice(1, 0, w.map((n) => "-".repeat(n)).join("  "));

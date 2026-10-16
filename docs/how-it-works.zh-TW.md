@@ -7,20 +7,24 @@
    每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的信仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。
 5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或（有設上限時）喚醒次數達到 `max_rounds`；預設 `0` 代表不限輪數。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗最多重試 `retry` 次（預設 2，即最多呼叫 3 次）；仍然失敗就停止整個 run（成員失敗為 `agent_failed`，lead 失敗為 `lead_failed`），不會少了它繼續跑：它正在處理的那封信維持未讀，結束訊息會告訴你怎麼查原因與怎麼繼續（修正後 `agent-lyceum resume <run>`，或用 `clear` 放棄）。同一個寄件人寄給同一個收件人、type、reply_to 與內文（忽略空白差異）都相同的信不會再被投遞，並通知寄件人，避免兩個 agent 對著同一封信繞圈。
 
-平行執行（`max_parallel > 1`）只會同時跑 `owns` 互不相交的 agent，且絕不與 lead 同時執行。此時每個非 lead 的 agent 都在**自己的 git worktree**（`projects/<name>/worktrees/<run-id>/<agent>`，branch `agent-lyceum/<run-id>/<agent>`）工作；worktree 是從喚醒當下 repo 的快照（`refs/agent-lyceum/<run-id>/base-<n>`，包含 lead 尚未提交的修改與新增、未被 ignore 的檔案）切出來的，你的 HEAD、branch 與工作目錄都不會被動到。`dispatcher.workspace_mode` 可設為 `auto`（`max_parallel > 1` 時用 worktree）、`worktree` 或 `shared`；`shared` 不能與平行 agent 並用。平行 run 在 repo 有你自己未提交的修改時，或 repo 不是 git repository 時，會拒絕啟動（請改為序列執行）。成員完成後，dispatcher 會提交它 worktree 中的修改，並在 lead 讀到該成員的信之前，把變更套用到你的工作目錄（不動你的 index 與 HEAD）。每個被改動的路徑都會先檢查：必須在該成員的 `owns` 內（rename 與刪除也算）、不得是 `CLAUDE.md`／`AGENTS.md`，symlink 不得指向專案或該成員 `owns` 之外。若同一檔案在成員的快照之後又在你的 repo 被改過、檢查未通過，或 `git apply` 失敗，就一個檔案都不套用：成果保留在它的 branch 與 worktree，報告與 patch 寫到 `runs/<run-id>/integration/`，並通知 lead，且這個 run 不能以 `completed` 結束（會以 `blocked` 結束）。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
+有待處理信件的成員會平行喚醒，沒有上限，且絕不與 lead 同時執行。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
 
 ## 同時執行多個 task
 
-預設一個專案一次只跑一個 task。設定 `dispatcher.max_concurrent_runs: N`（N > 1，需要 git repository）後，同一專案最多可有 N 個 run 同時進行；再多開一個會被拒絕，並列出擋住的 run。此模式下**每個** run（包括沒有平行成員的 run，以及單獨的 `run --agent <name>`）都在自己的 git worktree 工作：lead 在 `projects/<name>/worktrees/<run-id>/<lead>`、branch 為 `agent-lyceum/<run-id>/<lead>`，成員的 worktree 則從 lead 的內容分出。run 從你 repo 的 `HEAD` 起跑，所以允許你有未提交的修改，但這些修改**不會**在其中（啟動訊息會寫出有幾個檔案）。你的工作目錄、index 與 HEAD 一律不會被動到。
+並行不需要任何設定，同一專案可同時有任意多個 run，只要每個 run 都有自己的 worktree。新的 run（包括單獨的 `run --agent <name>`）怎麼做取決於資料夾：
+
+- **有 commit 的 git repo（預設 `files` ref 儲存）：** **每個** run 都在自己的 git worktree 工作：lead 在 `projects/<name>/worktrees/<run-id>/<lead>`、branch 為 `agent-lyceum/<run-id>/<lead>`，每個成員的 worktree 從 lead 的內容分出。run 從你 repo 的 `HEAD` 起跑，所以允許你有未提交的修改，但這些修改**不會**在其中（啟動訊息會寫出有幾個檔案）。你的工作目錄、index 與 HEAD 一律不會被動到，結果也**不會**寫進你的工作目錄：請用 `git merge <branch>` 或 `open_pr` 取得。
+- **非 git 資料夾、沒有 commit 的 repo，或使用 reftable 的 repo：** run 直接在該資料夾工作、一次只跑一個 agent，並以一行 info 說明原因，而不是報錯。同時只能有一個這樣的 run；再開第二個會被拒絕，並列出擋住的 run。有自己 worktree 的 run 可與它並存。
+- **衝突：** 同一個 run 的兩個 agent 改了同一個檔案時，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。不同檔案之間彼此不相容的修改不會被偵測到。
 
 - **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），lead 的成果會一次提交在它的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。停下來向你提問（`waiting`）的 run 還沒結束：不會提交、也不會印 merge 提示；成果留在 lead 的 worktree，`resume` 會在同一個 worktree 繼續。
-- **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`）。`resume` 沿用 run 啟動時的方式，而不是看目前的設定：以併發模式啟動的 run，即使你之後調低 `max_concurrent_runs`，仍會在它的 worktree 接續；以非併發模式啟動的 run，即使你之後調高，仍以非併發方式接續。這個設定只決定同時可有幾個 run，以及新的 run 怎麼做。
-- **`tidy`：** `tidy` 與 `tidy --undo` 需要獨占專案：有任何 run 在執行時會拒絕，執行期間也不能啟動任何 run，與 `max_concurrent_runs` 的值無關。
+- **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`）。`resume` 沿用 run 啟動時的方式。舊版啟動、沒有這個欄位的 run：若是平行 run，接續時 lead 在資料夾、成員在 worktree、全部平行；否則直接在該資料夾工作。
+- **`tidy`：** `tidy` 與 `tidy --undo` 需要獨占專案：有任何 run 在執行時會拒絕，執行期間也不能啟動任何 run。
 - **`clear`：** lead 的 branch 尚未合併時，`clear <run-id>` 會拒絕（用 `--keep-worktrees` 可保留它）。當機 run 留下的鎖用 `clear --lock [run-id] [-p name] --force` 移除；有多把鎖時要指定是哪個 run。
 
 已知限制：
 
-- agent 程序數量最多可達 `max_concurrent_runs × max_parallel`，沒有全域上限。
+- agent 程序數量沒有上限：每個執行中的 run 裡，有待處理信件的成員會同時被喚醒。
 - `can_edit_agent_md: true` 的 lead 修改的是它自己 worktree 裡的 `CLAUDE.md`／`AGENTS.md`；這些修改要等你合併它的 branch 才會進到你的 repo。
 - `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留；但若兩個 run 的喚醒時間重疊，一個 run 在另一個 run 的 agent 工作期間所做的修改，可能被另一個 run 還原。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
@@ -41,7 +45,7 @@
 
 當你的 task 要求開 PR 時，lead 會在它的 `done` 報告的 frontmatter 加上 `open_pr: true`。如果 run 之後以 `completed` 結束，且 lead 的 branch 有變更，就由 agent-lyceum（不是 agent）把 `agent-lyceum/<run-id>/<lead>` 推到 `origin`，並對 repo 的預設分支執行 `gh pr create`，以 lead 的報告作為描述（結尾為 `🤖 Opened by agent-lyceum`）。run 的結果會印出 PR 網址，`state.json` 也會把它記為 `pr_url`。只有 lead 能提出要求：其他人都不能送出 `done`，也沒有任何 agent 的沙箱被放寬——`git push` 與 `gh` 在沙箱外以你自己的憑證執行。
 
-- 它需要 lead 的 branch，所以只有在 run 有自己的 worktree 時（`dispatcher.max_concurrent_runs` 為 2 或以上）才有作用。否則這個要求會被回報並略過。
+- 它需要 lead 的 branch，所以只有在 run 有自己的 worktree 時（有 commit 的 git repo）才有作用。否則這個要求會被回報並略過。
 - 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
 - 開 PR 會把 lead 的 branch 與報告發布到 `origin`。因此，提出要求（`open_pr: true`）的 agent 能把它在沙箱內讀得到的任何東西送上遠端，所以只有在可以接受這件事時，才在 task 裡要求開 PR。push 與 `gh pr create` 從你的主 repo 執行，絕不在 agent 的 worktree 裡執行，因為 agent 能寫入那個目錄。
-- agent-lyceum 從不合併，也不等待 CI 或審查。`max_concurrent_runs` 為 2 以上時，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。
+- agent-lyceum 從不合併，也不等待 CI 或審查。在有 commit 的 git repo 裡，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。

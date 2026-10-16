@@ -28,7 +28,6 @@ describe("prepareDemo", () => {
 
     const pr = resolveProject(d.home, "demo");
     expect(Object.values(pr.agents).map((a) => a.runtime)).toEqual(["codex", "codex", "codex"]);
-    expect(pr.agents["fe-member"]!.owns).toEqual(["src/**"]);
     expect(validateProject(pr).issues.filter((i) => i.level === "error")).toEqual([]);
   });
 

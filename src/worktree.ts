@@ -5,19 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
-import type { DispatcherSettings } from "./schema.js";
+import type { RunState } from "./run-store.js";
 
 export type WorkspaceMode = "shared" | "worktree";
-
-/** Agents share the repo, or each non-lead agent gets its own git worktree. `auto` picks worktrees as soon as agents can run in parallel; several concurrent runs always do. */
-export function resolveWorkspaceMode(
-  d: Pick<DispatcherSettings, "workspace_mode" | "max_parallel"> & Partial<Pick<DispatcherSettings, "max_concurrent_runs">>,
-): WorkspaceMode {
-  if ((d.max_concurrent_runs ?? 1) > 1) return "worktree";
-  if (d.workspace_mode === "worktree") return "worktree";
-  if (d.workspace_mode === "shared") return "shared";
-  return d.max_parallel > 1 ? "worktree" : "shared";
-}
 
 export interface AgentWorkspace {
   agent: string;
@@ -257,36 +247,47 @@ export function dirtyPaths(dir: string): string[] {
   return parseStatus(execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all"], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }));
 }
 
-/** Refuse to start a worktree run when it cannot be isolated; returns nothing when it is fine. */
-export function assertWorktreeRunnable(project: ResolvedProject, opts: { fresh: boolean; concurrent?: boolean }): void {
-  if (!isGitRepo(project.dir)) {
-    throw new Error(`Parallel runs (worktree workspaces) need ${project.dir} to be a git repository. Run sequentially instead: dispatcher.max_parallel: 1.`);
-  }
+/** Why `dir` cannot give every run and agent its own git worktree, or undefined when it can. */
+export function isolationBlocker(dir: string): string | undefined {
+  if (!isGitRepo(dir)) return "not a git repository";
+  if (tryGit(dir, ["rev-parse", "--verify", "-q", "HEAD"]) === undefined) return "no commit yet";
   // With git's reftable ref storage a linked worktree's HEAD lives in `<gitDir>/reftable/`, a place the agent can write, and the
   // file `<gitDir>/HEAD` only says `ref: refs/heads/.invalid`: the check that a worktree's HEAD is its own branch cannot hold
-  // there, so every worktree would be refused in the middle of the run. Say so up front instead. (`rev-parse --show-ref-format`
-  // does not exist in older git, which only knows `files`.)
+  // there, so every worktree would be refused in the middle of the run. (`rev-parse --show-ref-format` does not exist in older
+  // git, which only knows `files`.)
+  if (tryGit(dir, ["rev-parse", "--show-ref-format"]) === "reftable") return "reftable ref storage";
+  return undefined;
+}
+
+export interface WorkspacePlan {
+  mode: WorkspaceMode;
+  /** The lead works in its own worktree (isolation mode); otherwise it works in the checkout. */
+  leadWorktree: boolean;
+  /** Why the run works in the checkout, when it was probed. */
+  reason?: string;
+}
+
+/**
+ * Where a run's agents work. A new run is isolated when the project dir can be (see `isolationBlocker`), otherwise it shares the
+ * checkout. A resumed run keeps what its state recorded, whatever the repo looks like now. Decided once, before the run's lock is taken.
+ */
+export function planWorkspace(project: ResolvedProject, resume?: RunState): WorkspacePlan {
+  if (resume) {
+    if (resume.lead_workspace === true) return { mode: "worktree", leadWorktree: true };
+    if (resume.workspace_mode === "worktree") return { mode: "worktree", leadWorktree: false };
+    return { mode: "shared", leadWorktree: false };
+  }
+  const reason = isolationBlocker(project.dir);
+  return reason === undefined ? { mode: "worktree", leadWorktree: true } : { mode: "shared", leadWorktree: false, reason };
+}
+
+/** Refuse to resume a worktree run when its repo can no longer be isolated; returns nothing when it is fine. */
+export function assertWorktreeRunnable(project: ResolvedProject): void {
+  if (!isGitRepo(project.dir)) {
+    throw new Error(`This run works in git worktrees, but ${project.dir} is no longer a git repository.`);
+  }
   if (tryGit(project.dir, ["rev-parse", "--show-ref-format"]) === "reftable") {
-    throw new Error(
-      `${project.dir} uses git's reftable ref storage, whose worktrees agent-lyceum cannot yet verify as isolated, so parallel agents and concurrent runs are not supported there. ` +
-        `Use a repository with the default "files" ref storage, or run one agent at a time without worktrees: dispatcher.max_parallel: 1 and dispatcher.max_concurrent_runs: 1.`,
-    );
-  }
-  if (!opts.fresh) return;
-  if (opts.concurrent) {
-    // A concurrent run starts from HEAD and never touches the working tree, so uncommitted changes are fine.
-    if (tryGit(project.dir, ["rev-parse", "--verify", "-q", "HEAD"]) === undefined) {
-      throw new Error(`Concurrent runs start from HEAD, but ${project.dir} has no commit yet. Make an initial commit, or set dispatcher.max_concurrent_runs: 1.`);
-    }
-    return;
-  }
-  const dirty = dirtyPaths(project.dir);
-  if (dirty.length) {
-    const shown = dirty.slice(0, 5).join(", ") + (dirty.length > 5 ? `, ... (${dirty.length} in all)` : "");
-    throw new Error(
-      `Parallel runs start from a clean repo, but ${project.dir} has uncommitted changes: ${shown}. ` +
-        `Commit or stash them first (agent-lyceum never touches your own edits), or run sequentially with dispatcher.max_parallel: 1.`,
-    );
+    throw new Error(`This run works in git worktrees, but ${project.dir} now uses git's reftable ref storage, whose worktrees agent-lyceum cannot yet verify as isolated.`);
   }
 }
 
@@ -496,33 +497,6 @@ export interface ChangeSet {
   violations: string[];
 }
 
-/** Glob as used in `owns`: `**` crosses folders, `*` and `?` stay within one, `{a,b}` alternates. */
-export function globMatch(glob: string, file: string): boolean {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i);
-    if (c === "*" && glob[i + 1] === "*") {
-      if (glob[i + 2] === "/") {
-        re += "(?:.*/)?";
-        i += 2;
-      } else {
-        re += ".*";
-        i += 1;
-      }
-    } else if (c === "*") re += "[^/]*";
-    else if (c === "?") re += "[^/]";
-    else if (c === "{") {
-      const end = glob.indexOf("}", i);
-      if (end < 0) re += "\\{";
-      else {
-        re += `(?:${glob.slice(i + 1, end).split(",").map((s) => s.replace(/[.+^$()|[\]\\]/g, "\\$&")).join("|")})`;
-        i = end;
-      }
-    } else re += c.replace(/[.+^$()|[\]\\}]/g, "\\$&");
-  }
-  return new RegExp(`^${re}$`).test(file);
-}
-
 const PROTECTED_NAMES = ["CLAUDE.md", "AGENTS.md"];
 
 /** Commit whatever is in an agent's worktree (no hooks, no signing, dispatcher identity). Returns the HEAD afterwards and whether a commit was made. */
@@ -540,10 +514,10 @@ export function commitWorkspace(ws: AgentWorkspace, message: string): { head: st
 
 /**
  * Commit whatever the agent left in its worktree and list what changed since its snapshot, checking every
- * changed path (modified, added, deleted, or either end of a rename) against the agent's `owns`, the project
+ * changed path (modified, added, deleted, or either end of a rename) against the project
  * folder, the protected instruction files, and symlink/submodule rules. Nothing is applied here.
  */
-export function collectAgentChanges(workspace: AgentWorkspace, owns: string[]): ChangeSet {
+export function collectAgentChanges(workspace: AgentWorkspace): ChangeSet {
   const { head } = commitWorkspace(workspace, `agent-lyceum: changes by ${workspace.agent}`);
   const base = workspace.base;
   const raw = base === head ? "" : agentGit(workspace, ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", base, head]);
@@ -565,15 +539,12 @@ export function collectAgentChanges(workspace: AgentWorkspace, owns: string[]): 
     }
     const p = rel === "" ? f.path : path.posix.relative(rel, f.path);
     if (PROTECTED_NAMES.includes(p)) violations.push(`${f.path}: protected instruction file; only the lead may change it, by hand`);
-    const allowed = (candidate: string) => owns.length === 0 || owns.some((g) => globMatch(g, candidate));
-    if (!allowed(p)) violations.push(`${f.path}: outside this agent's owns (${owns.join(", ")})`);
     if (f.mode === "160000") violations.push(`${f.path}: submodule changes are not integrated`);
     if (f.mode === "120000" && f.status !== "D") {
       const target = agentGit(workspace, ["show", `${head}:${f.path}`]);
       const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(p), target));
       if (path.posix.isAbsolute(target)) violations.push(`${f.path}: symlink to an absolute path (${target})`);
       else if (resolved.startsWith("..")) violations.push(`${f.path}: symlink leaves the project directory (${target})`);
-      else if (!allowed(resolved)) violations.push(`${f.path}: symlink points outside this agent's owns (${target})`);
     }
   }
   return { workspace, base, head, files, violations };

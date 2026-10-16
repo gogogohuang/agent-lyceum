@@ -10,7 +10,7 @@ Give a task to a **team of agents** (Claude Code and/or Codex) instead of one ov
 
 - **Roles that stay in role.** Each agent has its own persona (`AGENT.md`) and long-term memory, so a reviewer keeps reviewing instead of drifting into writing code.
 - **Agents can't rewrite the rules.** An agent can only write its own memory and outbox. It can't touch other agents' context or its own persona, and this is enforced by the OS sandbox where possible, not just by a prompt. See [Write scope](docs/write-scope.md).
-- **Mix runtimes.** Claude Code and Codex agents work in the same team, and each can be limited to the paths it owns.
+- **Mix runtimes.** Claude Code and Codex agents work in the same team.
 - **Nothing hidden.** Agents talk through plain-file mailboxes, so every message, decision and memory is a file you can read, grep and diff. The dispatcher never merges for you.
 
 **Not a fit** for small, one-shot edits: a single Claude Code or Codex session is faster and cheaper. Use a team when the task is big enough to split, review or run in parallel.
@@ -39,7 +39,7 @@ Latest unreleased code: `npx github:gogogohuang/agent-lyceum <command>`.
 3. Agents reply by writing mail to their own `outbox/`; the dispatcher checks `can_message` and delivers it.
 4. The run ends when the lead sends `done`.
 
-Its own data (config, mailboxes, logs, memory, worktrees) lives in `~/agent-lyceum-config/`, not in your repo. Agents edit your repo directly, or in git worktrees when running in parallel. agent-lyceum never merges. More: [How a run works](docs/how-it-works.md), [Configuration](docs/configuration.md).
+Its own data (config, mailboxes, logs, memory, worktrees) lives in `~/agent-lyceum-config/`, not in your repo. Concurrency needs no configuration. In a git repo with a commit, every run works in its own git worktree and ends on its own branch (`agent-lyceum/<run>/…`), members with pending mail wake in parallel, and any number of runs can be active at once; the result is not written into your working tree, so use `git merge <branch>` or `open_pr`, and note that a run starts from `HEAD` and does not see your uncommitted edits. In a non-git folder, a repo with no commit, or a repo using reftable, the run works directly in the folder, one agent at a time (an info line says why), and only one such run can be active. agent-lyceum never merges. Upgrading from a version with `owns`, `max_parallel`, `max_concurrent_runs` or `workspace_mode`: see [Upgrading](docs/upgrading-run-v2.md). More: [How a run works](docs/how-it-works.md), [Configuration](docs/configuration.md).
 
 ## Commands
 
@@ -68,7 +68,7 @@ dir: ~/code/web-app
 team: { lead: lead }
 agents:
   lead:      { can_message: all, can_edit_agent_md: true }
-  fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
+  fe-member: { runtime: codex, can_message: [lead] }
   pm:        { can_message: [lead], allow_web: fetch }
 ```
 

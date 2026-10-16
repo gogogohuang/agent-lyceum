@@ -45,7 +45,8 @@ export const AgentPartial = z
     can_edit_agent_md: z.boolean().optional(),
     can_ask_user: z.boolean().optional(),
     allow_web: z.enum(WEB_LEVELS).optional(),
-    owns: z.array(z.string()).optional(),
+    /** Removed setting: still accepted (any value) so old files load; ignored, with a warning from `validate`. */
+    owns: z.unknown().optional(),
   })
   .strict();
 export type AgentPartialT = z.infer<typeof AgentPartial>;
@@ -53,15 +54,19 @@ export type AgentPartialT = z.infer<typeof AgentPartial>;
 export const DispatcherPartial = z
   .object({
     max_rounds: z.number().int().min(0).optional(),
-    max_parallel: z.number().int().positive().optional(),
-    max_concurrent_runs: z.number().int().positive().optional(),
+    max_parallel: z.unknown().optional(),
+    max_concurrent_runs: z.unknown().optional(),
     wake_timeout_sec: z.number().int().positive().optional(),
     retry: z.number().int().min(0).optional(),
     strict: z.boolean().optional(),
-    workspace_mode: z.enum(["auto", "shared", "worktree"]).optional(),
+    workspace_mode: z.unknown().optional(),
     log_max_bytes: z.number().int().min(0).optional(),
   })
   .strict();
+
+/** Settings that no longer exist; files that still carry them load, and `validate` warns. */
+export const REMOVED_DISPATCHER_KEYS = ["max_parallel", "max_concurrent_runs", "workspace_mode"] as const;
+export const REMOVED_AGENT_KEYS = ["owns"] as const;
 
 export const GlobalConfig = z
   .object({
@@ -80,26 +85,18 @@ export const ProjectConfig = z
 
 export interface DispatcherSettings {
   max_rounds: number;
-  max_parallel: number;
-  /** How many runs of one project may be active at once. Above 1, every run works in its own git worktree. */
-  max_concurrent_runs: number;
   wake_timeout_sec: number;
   retry: number;
   strict: boolean;
-  /** "auto": a git worktree per non-lead agent when agents can run in parallel, otherwise one shared checkout. */
-  workspace_mode: "auto" | "shared" | "worktree";
   /** log.jsonl is rotated to log.1.jsonl past this size; 0 = never. */
   log_max_bytes: number;
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   max_rounds: 0,
-  max_parallel: 1,
-  max_concurrent_runs: 1,
   wake_timeout_sec: 600,
   retry: 2,
   strict: false,
-  workspace_mode: "auto",
   log_max_bytes: 8 * 1024 * 1024,
 };
 

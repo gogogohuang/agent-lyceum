@@ -9,7 +9,7 @@ import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
-import { dirtyPaths, git, isGitRepo, resolveWorkspaceMode } from "./worktree.js";
+import { dirtyPaths, git, isolationBlocker } from "./worktree.js";
 
 export type Cap = "yes" | "no" | "unknown";
 
@@ -154,18 +154,21 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   for (const i of v.issues) checks.push({ level: i.level === "error" ? "error" : "warn", subject: "config", message: i.message });
   if (!v.issues.length) checks.push({ level: "ok", subject: "config", message: "Configuration is valid." });
 
-  if (fs.existsSync(project.dir) && isGitRepo(project.dir)) {
-    if (resolveWorkspaceMode(project.dispatcher) === "worktree") {
+  const blocker = fs.existsSync(project.dir) ? isolationBlocker(project.dir) : undefined;
+  if (fs.existsSync(project.dir)) {
+    if (blocker) {
+      checks.push({ level: "info", subject: "git", message: `Runs work directly in ${project.dir}, one agent at a time (${blocker}).` });
+    } else {
       const dirty = dirtyPaths(project.dir);
-      if (dirty.length && project.dispatcher.max_concurrent_runs > 1) {
-        checks.push({ level: "info", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: concurrent runs start from HEAD and do not see them.` });
-      } else if (dirty.length) {
-        checks.push({ level: "warn", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: a parallel run would refuse to start until they are committed or stashed.` });
-      } else checks.push({ level: "ok", subject: "git", message: "Repo is clean; parallel runs can start." });
+      checks.push(
+        dirty.length
+          ? { level: "info", subject: "git", message: `${dirty.length} uncommitted change(s) in ${project.dir}: runs start from HEAD and do not see them.` }
+          : { level: "ok", subject: "git", message: "git repo with a commit: runs and agents work in their own worktrees." },
+      );
     }
   }
 
-  if (project.dispatcher.max_concurrent_runs > 1 && fs.existsSync(project.dir) && isGitRepo(project.dir)) {
+  if (fs.existsSync(project.dir) && !blocker) {
     const missing: string[] = [];
     if (!findOnPath("gh", opts.env?.PATH ?? process.env.PATH)) missing.push("`gh` is not on PATH");
     let remotes = "";

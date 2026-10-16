@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock, listRunLocks } from "../src/project-lock.js";
-import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeEnv, type TestEnv } from "./helpers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "..", "src", "cli.ts");
@@ -15,10 +15,9 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 /** The whole tool, as a user runs it: the real CLI on the real dispatcher, with a scripted stand-in for `claude`. */
-function setup(script: object) {
+function setup(script: object, opts: { git?: boolean } = {}) {
   env = makeEnv();
-  initGitRepo(env.repo);
-  makeParallel(env);
+  if (opts.git !== false) initGitRepo(env.repo);
   const bin = path.join(env.root, "bin");
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
@@ -58,7 +57,7 @@ describe("a run from start to clear", () => {
     first.child.kill("SIGINT");
     expect(await first.done).toBe(130);
     expect(listRunLocks(env.project().paths.root)).toEqual([]);
-    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // nothing reached the repo from the cancelled wake-up
+    expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false); // the repo is never touched; the run works in its own worktrees
 
     // 2. the status of the interrupted run, as JSON
     const mid = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out);
@@ -69,18 +68,23 @@ describe("a run from start to clear", () => {
     const resumed = t.sync(["resume", "-p", "demo"]);
     expect(resumed.code).toBe(0);
     expect(resumed.out).toMatch(/outcome: completed/);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("built properly\n");
-    expect(git(env.repo, "status", "--porcelain")).toBe("?? src/web/feature.txt"); // the user's repo: one new file, nothing staged
+    expect(git(env.repo, "status", "--porcelain")).toBe(""); // the user's repo is untouched
     expect(git(env.repo, "rev-list", "--count", "HEAD")).toBe("1"); // HEAD untouched
 
     const end = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out);
     expect(end.run).toMatchObject({ state: "ended", end_reason: "done", outcome: "completed", outcome_verified: true });
     const id = end.run.run_id;
+    expect(git(env.repo, "show", `agent-lyceum/${id}/lead:src/web/feature.txt`)).toBe("built properly"); // the member's files reached the lead's branch
 
     // 4. clear: preview, then do it
     const dry = t.sync(["clear", id, "-p", "demo", "--dry-run"]);
-    expect(dry.code).toBe(0);
-    expect(dry.out).toMatch(/would delete.*worktree and branch of fe-member/);
+    expect(dry.code).toBe(1); // the lead's branch holds work that is not in the repo yet
+    expect(dry.err + dry.out).toMatch(/lead has work that is not in the repo: src\/web\/feature\.txt/);
+    expect(fs.existsSync(path.join(env.project().paths.runs, id))).toBe(true);
+    git(env.repo, "merge", "--ff-only", `agent-lyceum/${id}/lead`); // the user brings it in
+    const dry2 = t.sync(["clear", id, "-p", "demo", "--dry-run"]);
+    expect(dry2.code).toBe(0);
+    expect(dry2.out).toMatch(/would delete.*worktree and branch of fe-member/);
     expect(fs.existsSync(path.join(env.project().paths.runs, id))).toBe(true);
 
     const cleared = t.sync(["clear", id, "-p", "demo"]);
@@ -99,18 +103,18 @@ describe("a run from start to clear", () => {
         { agent: "lead", mail: [{ to: "lead", type: "done", subject: "all good", outcome: "completed" }] },
       ],
     });
-    // while the member works, someone else edits the same file in the real repo
+    // while the member works, the lead's worktree gets a different edit of the same file
     const script = JSON.parse(fs.readFileSync(t.scriptFile, "utf8"));
-    script.calls[1].writeAbs = { [path.join(env.repo, "src/web/a.txt")]: "someone else's edit\n" };
+    script.calls[1].writeLead = { "src/web/a.txt": "lead's edit\n" };
     fs.writeFileSync(t.scriptFile, JSON.stringify(script));
 
     const r = t.sync(["run", "edit a.txt", "-p", "demo"]);
     expect(r.code).toBe(2);
     expect(r.out).toMatch(/outcome: blocked/);
     expect(r.out).toMatch(/fe-member.*agent-lyceum\//s);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n"); // never overwritten
-
     const id = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
+    const leadFile = path.join(env.project().paths.root, "worktrees", id, "lead", "src/web/a.txt");
+    expect(fs.readFileSync(leadFile, "utf8")).toBe("lead's edit\n"); // never overwritten
     const refused = t.sync(["clear", id, "-p", "demo"]);
     expect(refused.code).toBe(1);
     expect(refused.err).toMatch(/src\/web\/a\.txt/);
@@ -121,44 +125,55 @@ describe("a run from start to clear", () => {
     expect(git(env.repo, "branch", "--list", `agent-lyceum/${id}/fe-member`)).toContain("fe-member"); // the member's work is still there
   }, 120_000);
 
-  it("refuses to start a second run while another holds the lock and max_concurrent_runs is 1", () => {
-    const t = setup({ calls: [] });
-    const lease = acquireProjectLock(env.project().paths.root, "other-run");
+  it("refuses to start a checkout run while another checkout run holds the lock", () => {
+    const t = setup({ calls: [] }, { git: false }); // not a git repo: the run would work in the checkout
+    const lease = acquireProjectLock(env.project().paths.root, "other-run", { checkout: true });
     try {
       const r = t.sync(["run", "x", "-p", "demo"]);
       expect(r.code).toBe(1);
       expect(r.err).toMatch(/other-run/);
-      expect(r.err).toMatch(/max_concurrent_runs/);
+      expect(r.err).toMatch(/only one can be active/);
     } finally {
       lease.release();
     }
   }, 60_000);
 
-  it("with max_concurrent_runs: 2 a second run is admitted next to an active one, a third is refused", () => {
-    const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
-    makeConcurrent(env, 2);
-    const root = env.project().paths.root;
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
+  it("resuming a legacy shared run is refused while another legacy shared run is active", async () => {
+    const t = setup({ calls: [{ agent: "lead", sleep: true }, { agent: "lead", sleep: true }] }, { git: false });
+    env.editProjectYaml((x) => x.replace("dispatcher:\n", "dispatcher:\n  max_concurrent_runs: 2\n"));
+    const ids: string[] = [];
+    for (const name of ["first", "second"]) {
+      fs.rmSync(t.marker, { force: true });
+      const r = t.start(["run", `task ${name}`, "-p", "demo", "--name", name]);
+      await until(() => fs.existsSync(t.marker));
+      r.child.kill("SIGINT");
+      expect(await r.done).toBe(130);
+    }
+    const runs = env.project().paths.runs;
+    for (const id of fs.readdirSync(runs)) {
+      const file = path.join(runs, id, "state.json");
+      const old = JSON.parse(fs.readFileSync(file, "utf8"));
+      delete old.lead_workspace;
+      old.workspace_mode = "shared"; // as an old binary wrote it
+      fs.writeFileSync(file, JSON.stringify(old));
+      ids.push(id);
+    }
+    expect(ids).toHaveLength(2);
+    const first = ids.find((id) => JSON.parse(fs.readFileSync(path.join(runs, id, "state.json"), "utf8")).task_summary.includes("first"))!;
+    const second = ids.find((id) => id !== first)!;
+    const lease = acquireProjectLock(env.project().paths.root, first, { checkout: true }); // the first is resuming
     try {
-      const second = t.sync(["run", "x", "-p", "demo"]);
-      expect(second.err).not.toMatch(/At most/);
-      expect(second.code).toBe(0);
-      const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
-      try {
-        const third = t.sync(["run", "y", "-p", "demo"]);
-        expect(third.code).toBe(1);
-        expect(third.err).toMatch(/run-a/);
-        expect(third.err).toMatch(/run-b/);
-        expect(third.err).toMatch(/max_concurrent_runs: 2/);
-      } finally {
-        b.release();
-      }
+      fs.rmSync(t.marker, { force: true });
+      const r = t.sync(["resume", second, "-p", "demo"]);
+      expect(r.code).toBe(1);
+      expect(r.err).toMatch(new RegExp(`${first}[\\s\\S]*only one can be active`));
+      expect(fs.existsSync(t.marker)).toBe(false); // no agent was woken
     } finally {
-      a.release();
+      lease.release();
     }
   }, 60_000);
 
-  it("clear of a finished run goes ahead while another run is active (limit 1), but not while that run itself is", () => {
+  it("clear of a finished run goes ahead while another run is active, but not while that run itself is", () => {
     const t = setup({ calls: [{ agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] }] });
     expect(t.sync(["run", "x", "-p", "demo"]).code).toBe(0);
     const id: string = JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run.run_id;
@@ -188,8 +203,8 @@ describe("a run from start to clear", () => {
   it("clear --lock names the lock, needs --force, and with several locks insists on a run id", () => {
     const t = setup({ calls: [] });
     const root = env.project().paths.root;
-    const a = acquireProjectLock(root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(root, "run-b", { maxConcurrent: 2 });
+    const a = acquireProjectLock(root, "run-a", { checkout: false });
+    const b = acquireProjectLock(root, "run-b", { checkout: false });
     try {
       const many = t.sync(["clear", "--lock", "-p", "demo", "--force"]);
       expect(many.code).toBe(1);

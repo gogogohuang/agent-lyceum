@@ -14,10 +14,13 @@ const HEARTBEAT_MS = 5000;
 
 export interface LockOptions {
   heartbeatMs?: number;
-  /** Most runs that may hold a lock of this project at once, this one included. Default 1. */
-  maxConcurrent?: number;
+  /** The run works directly in the project checkout (not in its own worktree): only one such run may be active. It is written with `exclusive` too, so older binaries keep out. */
+  checkout?: boolean;
   /** The holder needs the whole project (e.g. a memory tidy): refused while any other lock is alive, and it keeps every other lock out while held. */
   exclusive?: boolean;
+  /** For a checkout run's refusal message: the checkout directory, and why this run has no worktree. */
+  dir?: string;
+  reason?: string;
 }
 
 export interface LockInfo {
@@ -31,6 +34,18 @@ export interface LockInfo {
   heartbeat_at: string;
   /** Held by an operation that needs the project to itself (a memory tidy). */
   exclusive?: boolean;
+  /** `true`: works in the project checkout; `false`: in its own worktree (or holds no files, like `clear`). Absent: an older version's run, treated as a checkout run. */
+  checkout?: boolean;
+}
+
+export type LockKind = "checkout" | "whole" | "worktree";
+
+/** What a lock protects: the checkout, the whole project (tidy/restore), or nothing shared (a worktree run). Locks of older versions count as checkout runs. */
+export function lockKind(l: Pick<LockInfo, "exclusive" | "checkout">): LockKind {
+  if (l.exclusive && l.checkout === true) return "checkout";
+  if (l.exclusive) return "whole";
+  if (l.checkout === false) return "worktree";
+  return "checkout";
 }
 
 export interface ProjectLease {
@@ -177,11 +192,10 @@ function heldError(info: LockInfo): Error {
   );
 }
 
-function limitError(active: LockInfo[], max: number): Error {
-  const list = active.map((l) => `${l.run_id} (pid ${l.pid})`).join(", ");
+function checkoutBusyError(holder: LockInfo, dir: string, reason: string): Error {
   return new Error(
-    `This project already has ${active.length} run(s) active: ${list}. At most ${max} may run at once (dispatcher.max_concurrent_runs: ${max}); ` +
-      `wait for one to end, stop one, or raise max_concurrent_runs in project.yaml.`,
+    `Run ${holder.run_id} (pid ${holder.pid}) is working directly in ${dir}, and this run would too (${reason}), so only one can be active. ` +
+      `Wait for it to end or stop it; in a git repo with a commit, runs work in their own worktrees and can run side by side.`,
   );
 }
 
@@ -254,7 +268,6 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
   assertRunId(runId);
   fs.mkdirSync(path.join(root, LOCKS_DIR), { recursive: true });
   const file = runLockFile(root, runId);
-  const max = opts.maxConcurrent ?? 1;
   const now = new Date().toISOString();
   const info: LockInfo = {
     token: crypto.randomBytes(16).toString("hex"),
@@ -264,8 +277,10 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     run_id: runId,
     acquired_at: now,
     heartbeat_at: now,
-    ...(opts.exclusive ? { exclusive: true } : {}),
+    ...(opts.exclusive || opts.checkout ? { exclusive: true } : {}),
+    checkout: opts.checkout === true,
   };
+  const kind = lockKind(info);
 
   withAdmission(root, () => {
     // 1. This run's own lock: a live holder means it is already running; a dead one is replaced.
@@ -282,10 +297,11 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     if (old.kind === "ok" && !lockHolderAlive(old.info)) fs.rmSync(legacyFile(root), { force: true });
     // 3. The other runs that are active now.
     const active = listRunLocks(root).filter((l) => l.run_id !== runId && lockHolderAlive(l));
-    const exclusiveHolder = active.find((l) => l.exclusive);
-    if (exclusiveHolder) throw exclusiveError(exclusiveHolder);
-    if (opts.exclusive && active.length) throw needsIdleError(active);
-    if (active.length >= max) throw limitError(active, max);
+    const whole = active.find((l) => lockKind(l) === "whole");
+    if (whole) throw exclusiveError(whole);
+    if (kind === "whole" && active.length) throw needsIdleError(active);
+    const busy = kind === "checkout" ? active.find((l) => lockKind(l) === "checkout") : undefined;
+    if (busy) throw checkoutBusyError(busy, opts.dir ?? root, opts.reason ?? "no worktree is available for it");
     if (!tryCreate(file, info)) throw new Error(`Could not take the run lock ${file}; another process just took it. Try again.`);
   });
 

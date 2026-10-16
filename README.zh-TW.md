@@ -10,7 +10,7 @@
 
 - **角色不會跑掉。** 每個 agent 有自己的人設（`AGENT.md`）與長期記憶，reviewer 會一直做 review，不會漸漸變成在寫程式。
 - **agent 改不了規則。** agent 只能寫自己的記憶與寄件匣（outbox），不能改其他 agent 的 context，也不能改自己的人設；能做到的地方由 OS 沙箱強制，而不只靠 prompt。見 [Write scope](docs/write-scope.zh-TW.md)。
-- **混用 runtime。** Claude Code 與 Codex agent 可在同一個團隊，並各自限制可寫的路徑。
+- **混用 runtime。** Claude Code 與 Codex agent 可在同一個團隊。
 - **沒有黑箱。** agent 透過純檔案信箱溝通，每則訊息、決策與記憶都是你能讀、能 grep、能 diff 的檔案；dispatcher 不會替你 merge。
 
 **不適合**小而單次的修改：單一 Claude Code 或 Codex session 更快更省。任務大到值得拆分、review 或平行執行時，再用團隊。
@@ -39,7 +39,7 @@ npx agent-lyceum status
 3. agent 把回信寫進自己的 `outbox/`，dispatcher 檢查 `can_message` 後投遞。
 4. lead 寄出 `done` 時，run 結束。
 
-工具自己的資料（設定、信箱、log、記憶、worktree）放在 `~/agent-lyceum-config/`，不放進你的 repo。agent 直接修改你的 repo；平行執行時則在各自的 git worktree 修改。agent-lyceum 不會幫你合併。詳見[一次執行如何運作](docs/how-it-works.zh-TW.md)、[設定](docs/configuration.zh-TW.md)。
+工具自己的資料（設定、信箱、log、記憶、worktree）放在 `~/agent-lyceum-config/`，不放進你的 repo。並行不需要任何設定。在有 commit 的 git repo 裡，每個 run 都在自己的 git worktree 工作，並結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒，同時也可有任意多個 run；結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`，且 run 從 `HEAD` 起跑，看不到你未提交的修改。在非 git 資料夾、沒有 commit 的 repo 或使用 reftable 的 repo，run 直接在該資料夾工作、一次只跑一個 agent（會有一行說明原因），且同時只能有一個這樣的 run。agent-lyceum 不會幫你合併。從有 `owns`、`max_parallel`、`max_concurrent_runs` 或 `workspace_mode` 的版本升級：見[升級](docs/upgrading-run-v2.md)。詳見[一次執行如何運作](docs/how-it-works.zh-TW.md)、[設定](docs/configuration.zh-TW.md)。
 
 ## 指令
 
@@ -68,7 +68,7 @@ dir: ~/code/web-app
 team: { lead: lead }
 agents:
   lead:      { can_message: all, can_edit_agent_md: true }
-  fe-member: { runtime: codex, can_message: [lead], owns: ["src/web/**"] }
+  fe-member: { runtime: codex, can_message: [lead] }
   pm:        { can_message: [lead], allow_web: fetch }
 ```
 

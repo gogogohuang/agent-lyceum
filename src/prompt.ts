@@ -221,9 +221,6 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
-  if (project.dispatcher.max_parallel > 1 && agent.owns.length > 0 && !isLead) {
-    lines.push(`- You own these repo paths and must only change files there: ${agent.owns.join(", ")}.`);
-  }
   return lines.join("\n");
 }
 

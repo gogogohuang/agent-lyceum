@@ -14,6 +14,7 @@ import {
   collectAgentChanges,
   commitWorkspace,
   assertWorktreeRunnable,
+  planWorkspace,
   existingAgentWorkspace,
   finishLeadBranch,
   inspectWorkspace,
@@ -410,13 +411,11 @@ describe("where the git dir comes from", () => {
   });
 });
 
-describe("the default (one run, one agent at a time)", () => {
-  it("makes no worktree, so nothing goes through agentGit", async () => {
+describe("a folder that is not a git repository (shared mode)", () => {
+  it("prints its start line, makes no worktree, so nothing goes through agentGit, and completes", async () => {
     env = makeEnv();
-    initGitRepo(env.repo);
     const project = env.project();
-    expect(project.dispatcher.max_parallel).toBe(1);
-    expect(project.dispatcher.max_concurrent_runs).toBe(1);
+    const lines: string[] = [];
     const runDir = path.join(project.paths.runs, "run-1");
     const task = prepareTask({ text: "go", cwd: env.root, runDir });
     const seen: (string | undefined)[] = [];
@@ -424,7 +423,7 @@ describe("the default (one run, one agent at a time)", () => {
       project,
       task,
       runDir,
-      log: () => {},
+      log: (l) => lines.push(l),
       invoker: async (i) => {
         seen.push(i.workspace?.root);
         write(path.join(outboxDir(i.project, i.agent.name), "d.md"), "---\nto: lead\ntype: done\nsubject: d\noutcome: partial\n---\n\n## Result\nx\n\n## Not done\nx\n");
@@ -433,6 +432,7 @@ describe("the default (one run, one agent at a time)", () => {
     });
     expect(s.endReason).toBe("done");
     expect(seen).toEqual([undefined]);
+    expect(lines.join("\n")).toContain(`agents take turns in ${project.dir} (no separate git worktrees: not a git repository)`);
     // agentGit only takes an AgentWorkspace, and those only exist for a worktree
     expect(fs.existsSync(path.join(project.paths.root, "worktrees"))).toBe(false);
     expect(fs.existsSync(path.join(env.repo, ".git", "worktrees"))).toBe(false);
@@ -705,37 +705,17 @@ describe.skipIf(!reftableSupported || posixOnly)("a repository that uses git's r
     expect(git(env.repo, "for-each-ref", "refs/agent-lyceum/")).toBe("");
   };
 
-  it("is refused before anything is created, for concurrent runs, for parallel agents, and on resume", () => {
+  it("falls back to the shared checkout for a new run, and a resume that needs worktrees is refused before anything is created", () => {
     reftableProject();
-    makeParallel(env);
-    makeConcurrent(env, 2);
     const project = env.project();
-    const msg = /reftable/;
-    expect(() => assertWorktreeRunnable(project, { fresh: true, concurrent: true })).toThrow(msg);
-    expect(() => assertWorktreeRunnable(project, { fresh: true })).toThrow(msg);
-    expect(() => assertWorktreeRunnable(project, { fresh: false, concurrent: true })).toThrow(msg);
-    // the message says what to do instead
-    expect(() => assertWorktreeRunnable(project, { fresh: true, concurrent: true })).toThrow(/max_concurrent_runs: 1/);
+    expect(planWorkspace(project)).toEqual({ mode: "shared", leadWorktree: false, reason: "reftable ref storage" });
+    expect(() => assertWorktreeRunnable(project)).toThrow(/reftable/);
     noWorktreeYet(project);
   });
 
-  it("makes a whole run fail early instead of refusing every worktree in the middle of it", async () => {
-    reftableProject();
-    makeConcurrent(env, 2);
-    const project = env.project();
-    const runDir = path.join(project.paths.runs, "run-1");
-    const task = prepareTask({ text: "go", cwd: env.root, runDir });
-    await expect(
-      runTeam({ project, task, runDir, log: () => {}, invoker: async () => ({ ok: true, text: "", exitCode: 0, timedOut: false }) }),
-    ).rejects.toThrow(/reftable/);
-    noWorktreeYet(project);
-  });
-
-  it("is not refused when no worktree is used (one run, one agent at a time), and a normal repository is not refused either", async () => {
+  it("runs a new run in the shared checkout without error, and a normal repository is isolated", async () => {
     reftableProject();
     const project = env.project();
-    expect(project.dispatcher.max_parallel).toBe(1);
-    expect(project.dispatcher.max_concurrent_runs).toBe(1);
     const runDir = path.join(project.paths.runs, "run-1");
     const task = prepareTask({ text: "go", cwd: env.root, runDir });
     const s = await runTeam({
@@ -754,8 +734,8 @@ describe.skipIf(!reftableSupported || posixOnly)("a repository that uses git's r
     env.cleanup();
     env = makeEnv();
     initGitRepo(env.repo);
-    makeConcurrent(env, 2);
-    expect(() => assertWorktreeRunnable(env.project(), { fresh: true, concurrent: true })).not.toThrow();
+    expect(planWorkspace(env.project())).toEqual({ mode: "worktree", leadWorktree: true });
+    expect(() => assertWorktreeRunnable(env.project())).not.toThrow();
   });
 });
 

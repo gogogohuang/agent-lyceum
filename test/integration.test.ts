@@ -9,7 +9,7 @@ import { commonFile, outboxDir } from "../src/policy.js";
 import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { collectAgentChanges, globMatch, integrateAgentChanges, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
+import { collectAgentChanges, integrateAgentChanges, planWorkspace, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
 import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
 import { PR_FOOTER, type CommandRunner } from "../src/open-pr.js";
 import type { ResolvedProject } from "../src/config.js";
@@ -34,20 +34,6 @@ function setup() {
 }
 const collect = (w: AgentWorkspace, owns: string[]) => collectAgentChanges(w, owns);
 
-describe("globMatch", () => {
-  it("handles **, *, ? and braces like the owns globs in project.yaml", () => {
-    expect(globMatch("src/web/**", "src/web/a/b/c.ts")).toBe(true);
-    expect(globMatch("src/web/**", "src/web")).toBe(false);
-    expect(globMatch("src/web/**", "src/webx/a.ts")).toBe(false);
-    expect(globMatch("src/*.ts", "src/a.ts")).toBe(true);
-    expect(globMatch("src/*.ts", "src/a/b.ts")).toBe(false);
-    expect(globMatch("**/*.md", "docs/x/y.md")).toBe(true);
-    expect(globMatch("**/*.md", "y.md")).toBe(true);
-    expect(globMatch("src/{web,api}/**", "src/api/x")).toBe(true);
-    expect(globMatch("a?c", "abc")).toBe(true);
-  });
-});
-
 describe("collectAgentChanges", () => {
   it("commits what the agent did in its worktree and lists the files", () => {
     const { ws } = setup();
@@ -67,21 +53,6 @@ describe("collectAgentChanges", () => {
     expect(collect(ws("fe-member"), FE_OWNS)).toMatchObject({ files: [], violations: [] });
   });
 
-  it("flags edits outside owns, in any form: modify, add, delete and rename", () => {
-    const { ws } = setup();
-    const fe = ws("fe-member");
-    write(path.join(fe.dir, "tests/t.txt"), "sneaky\n"); // modify outside
-    write(path.join(fe.dir, "docs/new.md"), "x\n"); // add outside
-    git(fe.root, "mv", "src/web/b.txt", "tests/b-moved.txt"); // rename out of owns
-    const v = collect(fe, FE_OWNS).violations.join("\n");
-    expect(v).toContain("tests/t.txt");
-    expect(v).toContain("docs/new.md");
-    expect(v).toContain("tests/b-moved.txt");
-    const fe2 = ws("qa-member");
-    fs.rmSync(path.join(fe2.dir, "src/web/a.txt")); // delete outside qa's owns
-    expect(collect(fe2, QA_OWNS).violations.join("\n")).toContain("src/web/a.txt");
-  });
-
   it("flags the repo's protected instruction files", () => {
     const { ws } = setup();
     const fe = ws("fe-member");
@@ -89,16 +60,18 @@ describe("collectAgentChanges", () => {
     expect(collect(fe, []).violations.join("\n")).toMatch(/CLAUDE\.md.*protected/);
   });
 
-  it("flags symlinks that point out of the agent's area, but not harmless ones inside it", () => {
+  it("flags symlinks that point out of the project, but not harmless ones inside it", () => {
     const { ws } = setup();
     const fe = ws("fe-member");
     fs.symlinkSync("/etc/passwd", path.join(fe.dir, "src/web/abs-link"));
-    fs.symlinkSync("../../tests/t.txt", path.join(fe.dir, "src/web/escape-link"));
+    fs.symlinkSync("../../../../../../outside/secret", path.join(fe.dir, "src/web/escape-link"));
+    fs.symlinkSync("../../tests/t.txt", path.join(fe.dir, "src/web/inside-link"));
     fs.symlinkSync("a.txt", path.join(fe.dir, "src/web/fine-link"));
     const v = collect(fe, FE_OWNS).violations.join("\n");
     expect(v).toContain("abs-link");
     expect(v).toContain("escape-link");
     expect(v).not.toContain("fine-link");
+    expect(v).not.toContain("inside-link");
   });
 
   it("without owns, anything inside the project is fine", () => {
@@ -165,15 +138,15 @@ describe("integrateAgentChanges", () => {
     expect(fs.readFileSync(path.join(fe.dir, "src/web/a.txt"), "utf8")).toBe("fe version\n"); // worktree untouched
   });
 
-  it("blocks changes that leave the agent's area and applies nothing", () => {
+  it("blocks a protected file change and applies nothing", () => {
     const { project, ws } = setup();
     const fe = ws("fe-member");
     write(path.join(fe.dir, "src/web/a.txt"), "ok\n");
-    write(path.join(fe.dir, "tests/t.txt"), "not mine\n");
+    write(path.join(fe.dir, "CLAUDE.md"), "new rules\n");
     const r = integrateAgentChanges(project, collect(fe, FE_OWNS));
     expect(r.status).toBe("blocked");
     expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("a\n");
-    expect(fs.readFileSync(path.join(env.repo, "tests/t.txt"), "utf8")).toBe("t\n");
+    expect(fs.readFileSync(path.join(env.repo, "CLAUDE.md"), "utf8")).toBe("rules\n");
   });
 
   it("is safe to repeat: changes already applied (a crash before the bookkeeping) are not a conflict", () => {
@@ -324,6 +297,7 @@ describe("dispatcher integration", () => {
     // Run B starts (its guard takes its baseline); its only agent is a member that may not edit COMMON.md.
     const b = new RunSession({
       project,
+      plan: planWorkspace(project),
       task: prepareTask({ text: "task b", cwd: env.root, runDir: runDirB }),
       runDir: runDirB,
       soloAgent: "fe-member",
@@ -462,16 +436,19 @@ describe("dispatcher integration", () => {
     expect(git(env.repo, "show", "agent-lyceum/run-1/lead:src/web/more.txt")).toBe("more");
   });
 
-  it("a run started non-concurrent resumes as before after max_concurrent_runs was raised", async () => {
+  it("old run state decides the resume mode, regardless of current detection", async () => {
     env = makeEnv();
-    initGitRepo(env.repo);
+    initGitRepo(env.repo); // detection now says "own worktree"
     const { runDir } = await start(async (i) => {
-      expect(i.workspace).toBeUndefined();
       ask(i.project);
       return OK;
     });
-    expect(loadRunState(runDir).lead_workspace).toBeUndefined();
-    makeConcurrent(env, 2);
+    // Rewrite the state as an old run that started in the shared checkout.
+    const stateFile = path.join(runDir, "state.json");
+    const old = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    delete old.lead_workspace;
+    old.workspace_mode = "shared";
+    fs.writeFileSync(stateFile, JSON.stringify(old));
     answer(runDir);
     let workspace: unknown = "unset";
     const s = await resumeRun(runDir, async (i) => {
@@ -484,7 +461,7 @@ describe("dispatcher integration", () => {
     expect(s.outcome).toBe("completed");
     expect(s.resultBranch).toBeUndefined();
     expect(loadRunState(runDir).workspace_mode).toBe("shared");
-    expect(git(env.repo, "status", "--porcelain")).toBe("?? src/web/shared.txt");
+    expect(git(env.repo, "status", "--porcelain")).toContain("src/web/shared.txt");
   });
 
   it("a solo run in a concurrent project works in its own worktree", async () => {
@@ -516,17 +493,19 @@ describe("dispatcher integration", () => {
     expect(git(env.repo, "show", "agent-lyceum/run-1/fe-member:src/web/solo.txt")).toBe("solo");
   });
 
-  it("brings a member's files into the repo before the lead hears the member is done", async () => {
+  it("brings a member's files into the lead's worktree before the lead hears the member is done", async () => {
     env = makeEnv();
     initGitRepo(env.repo);
     makeParallel(env);
     let seenByLead = "";
     let leadCalls = 0;
+    let leadDir = "";
     const { summary } = await start(async (i) => {
       if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
         if (++leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
         else {
-          seenByLead = fs.existsSync(path.join(env.repo, "src/web/feature.txt")) ? fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8") : "MISSING";
+          seenByLead = fs.existsSync(path.join(leadDir, "src/web/feature.txt")) ? fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8") : "MISSING";
           mail(i.project, "lead", "lead", "bye", "done");
         }
       } else {
@@ -546,8 +525,10 @@ describe("dispatcher integration", () => {
     makeParallel(env);
     let leadCalls = 0;
     let leadPrompt = "";
+    let leadDir = "";
     const { summary, runDir } = await start(async (i) => {
       if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
         if (++leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
         else {
           leadPrompt = i.userPrompt;
@@ -555,17 +536,52 @@ describe("dispatcher integration", () => {
         }
       } else {
         write(path.join(i.workspace!.dir, "src/web/a.txt"), "member version\n");
-        write(path.join(env.repo, "src/web/a.txt"), "someone else's edit\n"); // collides while the member works
+        write(path.join(leadDir, "src/web/a.txt"), "someone else's edit\n"); // collides while the member works
         mail(i.project, i.agent.name, "lead", "finished");
       }
       return OK;
     });
     expect(leadPrompt).toContain("could not be brought into the repo");
     expect(leadPrompt).toContain("agent-lyceum/run-1/fe-member");
-    expect(fs.readFileSync(path.join(env.repo, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n");
+    expect(fs.readFileSync(path.join(leadDir, "src/web/a.txt"), "utf8")).toBe("someone else's edit\n");
     expect(summary.outcome).toBe("blocked");
     expect(summary.outcomeNote).toMatch(/fe-member.*agent-lyceum\/run-1\/fe-member/);
     expect(loadRunState(runDir).blocked_integrations?.map((b) => b.agent)).toEqual(["fe-member"]);
+  });
+
+  it("a same-file conflict refuses the later member and keeps its branch", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    let leadCalls = 0;
+    let leadPrompt = "";
+    let leadDir = "";
+    const { summary, runDir } = await start(async (i) => {
+      if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
+        if (++leadCalls === 1) {
+          mail(i.project, "lead", "fe-member", "job", "task");
+          mail(i.project, "lead", "qa-member", "job", "task");
+        } else {
+          leadPrompt = i.userPrompt;
+          mail(i.project, "lead", "lead", "bye", "done");
+        }
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/a.txt"), `${i.agent.name} version\n`);
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
+      return OK;
+    });
+    const blocked = loadRunState(runDir).blocked_integrations ?? [];
+    expect(blocked).toHaveLength(1);
+    const later = blocked[0]!.agent;
+    const first = later === "fe-member" ? "qa-member" : "fe-member";
+    expect(fs.readFileSync(path.join(leadDir, "src/web/a.txt"), "utf8")).toBe(`${first} version\n`); // the later change is not applied
+    expect(git(env.repo, "show", `agent-lyceum/run-1/${later}:src/web/a.txt`)).toBe(`${later} version`); // its branch keeps it
+    expect(fs.existsSync(path.join(env.project().paths.root, "worktrees", "run-1", later))).toBe(true);
+    expect(leadPrompt.match(/'s changes could not be brought into the repo/g)).toHaveLength(1); // one failure mail
+    expect(leadPrompt).toContain("src/web/a.txt");
+    expect(leadPrompt).toContain(`agent-lyceum/run-1/${later}`);
+    expect(summary.outcome).toBe("blocked");
   });
 
   it("survives a crash right after a member's files were brought in: resume neither loses nor re-applies them", async () => {
@@ -576,9 +592,11 @@ describe("dispatcher integration", () => {
     const runDir = path.join(project.paths.runs, "run-1");
     const task = prepareTask({ text: "go", cwd: env.root, runDir });
     let leadCalls = 0;
+    let leadDir = "";
     const invoker: Parameters<typeof runTeam>[0]["invoker"] = async (i) => {
       if (i.agent.name === "lead") {
-        if (++leadCalls === 1 && !fs.existsSync(path.join(env.repo, "src/web/feature.txt"))) mail(i.project, "lead", "fe-member", "job", "task");
+        leadDir = i.workspace!.dir;
+        if (++leadCalls === 1 && !fs.existsSync(path.join(leadDir, "src/web/feature.txt"))) mail(i.project, "lead", "fe-member", "job", "task");
         else mail(i.project, "lead", "lead", "bye", "done");
       } else {
         write(path.join(i.workspace!.dir, "src/web/feature.txt"), "feature\n");
@@ -591,13 +609,13 @@ describe("dispatcher integration", () => {
     };
     await expect(runTeam({ project, task, runDir, invoker, log: () => {} })).rejects.toThrow(/killed/);
     setFaultHook(undefined);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("feature\n"); // integrated before the crash
+    expect(fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8")).toBe("feature\n"); // integrated before the crash
 
     leadCalls = 0;
     const s = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, invoker, log: () => {} });
     expect(s.outcome).toBe("completed");
     expect(loadRunState(runDir).blocked_integrations ?? []).toEqual([]);
-    expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("feature\n");
+    expect(fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8")).toBe("feature\n");
   });
 
   /** A runner that records every call and answers like a healthy git + gh. */
@@ -754,16 +772,16 @@ describe("dispatcher integration", () => {
       expect(pr.calls).toEqual([]);
     });
 
-    it("does not open a PR for a run without its own worktree, and points at max_concurrent_runs", async () => {
+    it("does not open a PR for a run without its own worktree, and says why", async () => {
       env = makeEnv();
-      initGitRepo(env.repo); // max_concurrent_runs stays 1: the lead works in the repo itself
+      // not a git repo: the lead works in the project directory itself
       const pr = fakePr();
       const { summary } = await start(async (i) => {
         leadDone(i, "open_pr: true\n");
         return OK;
       }, { pr: pr.run });
       expect(summary.outcome).toBe("completed");
-      expect(summary.pr).toMatchObject({ status: "skipped", reason: expect.stringMatching(/max_concurrent_runs/) });
+      expect(summary.pr).toMatchObject({ status: "skipped", reason: expect.stringMatching(/not a git repo with a commit/) });
       expect(pr.calls).toEqual([]);
     });
 

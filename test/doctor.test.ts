@@ -107,20 +107,20 @@ describe("diagnoseProject", () => {
     for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
   });
 
-  it("lists every active run lock and notes that concurrent runs start from HEAD", async () => {
+  it("lists every active run lock and notes that runs start from HEAD", async () => {
     env = makeEnv();
     initGitRepo(env.repo);
     makeConcurrent(env, 2);
     write(path.join(env.repo, "dirty.txt"), "x\n");
     const p = env.project();
-    const a = acquireProjectLock(p.paths.root, "run-a", { maxConcurrent: 2 });
-    const b = acquireProjectLock(p.paths.root, "run-b", { maxConcurrent: 2 });
+    const a = acquireProjectLock(p.paths.root, "run-a", { checkout: false });
+    const b = acquireProjectLock(p.paths.root, "run-b", { checkout: false });
     const { bin } = fakeBin(env.root);
     const report = await diagnoseProject(p, { env: envWith(bin, "full") });
     const msgs = report.checks.map((c) => `${c.level}:${c.message}`).join("\n");
     expect(msgs).toMatch(/A run is active: run-a/);
     expect(msgs).toMatch(/A run is active: run-b/);
-    expect(msgs).toMatch(/info:.*uncommitted.*concurrent runs start from HEAD/);
+    expect(msgs).toMatch(/info:.*uncommitted.*start from HEAD/);
     a.release();
     b.release();
   });
