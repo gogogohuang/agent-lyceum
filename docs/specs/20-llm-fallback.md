@@ -21,7 +21,7 @@
 | 5 | 順序：`rate_limit`、`quota` 重試也沒用，直接切下一個；`timeout`、`network`、`crash` 先在同一個模型上重試 `retry` 次（加 backoff），仍失敗才切換。 |
 | 6 | 切換後是全新 session：沿用 `retryPrompt` 附 Retry notice 重做這個 wake，未讀信件本來就會重新送達；不帶前一個模型的部分輸出。session id 以 `runtime+model` 為 key 存進 `state.sessions`，不與主要模型的 id 混用。 |
 | 7 | 每個任務（wake）重新從主要模型開始，但主要模型因 `rate_limit` 或 `quota` 失敗後，在這次 run 內冷卻，期間所有 wake 直接從備用開始。冷卻表以 `runtime+model` 為 key、run 內共用（平行 wake 也共用，更新在單一同步點），存在 `state.json`，不跨 run。 |
-| 8 | 載入設定時驗證（fail closed）：備用鏈裡任何項目的 adapter 若無法保證該 agent 的限制（`allow_web`、write-scope、worktree 隔離、`can_ask_user` 等），`validate` 報 `error`，拒絕載入。`doctor` 另外檢查備用鏈裡每個 CLI 是否已安裝並登入。 |
+| 8 | 載入設定時驗證（fail closed）：備用鏈裡任何項目的 adapter 若無法保證該 agent 的限制（`allow_web`、write-scope、worktree 隔離、`can_ask_user` 等），`validate` 報 `error`，拒絕載入。`doctor` 另外檢查備用鏈裡每個 CLI 是否已安裝（見 20.12）。 |
 | 9 | `call` 與 `RunSession.wake` 共用同一個切換函式，不寫兩份。 |
 | 10 | 呈現：切換時印一行並寫進 note；`failure` 多 `tried`；`status` 與 `log.jsonl` 標示（20.5）；monitor 只加小標記。 |
 | 11 | 沒設 `fallback` 的專案行為完全不變（既有 `retry` 迴圈、`failure` 形狀的既有欄位不動）。 |
@@ -59,8 +59,8 @@ agents:
 - `RunSession.wake`：現有 `for attempt` 迴圈改為「對每個候選、依 `nextStep` 重試或前進」。`state.rounds`、`beginAttempt`／`finishAttempt`、`parkOutbox`、abort 與 `max_rounds` 的處理保持原樣，每次呼叫仍各算一輪、各有自己的 attempt 記錄。切換時 `say("  <agent> falling back to <runtime>/<model> (<kind>)")`，並 `note`。
 - 備用候選的呼叫：用一份覆寫了 `runtime`、`model`、`effort` 的 `ResolvedAgent` 呼叫同一個 `invoke`；`buildInvocation` 本來就依 `agent.runtime` 分派，adapter 不必知道備援。
 - `call`：同一個函式，傳入 `invoke`、agent、候選序列與 cooldown（單次呼叫用一個空的暫時冷卻表）。
-- 冷卻：`rate_limit`、`quota` 發生時 `mark`；CLI 若回報 retry-after 則用它（上限 1 小時），否則用 `fallback_cooldown_sec`。冷卻只影響「是否先試主要模型」，不影響已在進行的 wake。
-- 全鏈失敗：run 以現有的 `agent_failed`／`lead_failed` 結束；`failure` 形狀為 `{agent, error, attempts, tried?}`，`tried: {runtime, model, kind, error}[]` 依序列出每個試過的候選（只有設了備援才有此欄，舊形狀不變）。`failureGuide` 逐層列出，並提示 `agent-lyceum resume`。
+- 冷卻：`rate_limit`、`quota` 發生時 `mark`；CLI 若回報 retry-after 則用它（上限 1 小時），否則用 `fallback_cooldown_sec`（見 20.12）。冷卻只影響「是否先試主要模型」，不影響已在進行的 wake。
+- 全鏈失敗：run 以現有的 `agent_failed`／`lead_failed` 結束；`failure` 形狀為 `{agent, error, attempts, tried?}`，`tried: {runtime, model, kind, error}[]` 依序列出每個試過的候選（見 20.12；只有設了備援才有此欄，舊形狀不變）。`failureGuide` 逐層列出，並提示 `agent-lyceum resume`。
 
 ## 20.5 呈現
 
@@ -85,7 +85,7 @@ agents:
 | `src/run-outcome.ts` | `failureGuide` 列出 `tried` |
 | `src/call.ts` | 改走共用切換函式 |
 | `src/status.ts`、monitor 前端 | 20.5 |
-| `src/cli.ts`（`doctor`） | 檢查備援鏈 CLI 已安裝並登入 |
+| `src/doctor.ts` | 檢查備援鏈 CLI 已安裝（見 20.12） |
 
 `state.sessions` 的 key 目前是 agent 名稱；改為 `agent` 名稱（主要模型，沿用，舊 state 可讀）與 `agent@runtime/model`（備用）兩種，讀取時主要模型先找舊 key。
 
@@ -141,8 +141,10 @@ agents:
 
 1. **retry-after（20.4）：** 這個版本不使用。沒有任何 adapter 提供 retry-after，冷卻一律是 `fallback_cooldown_sec`。
 2. **doctor（20.2 #8、20.3）：** `doctor` 只檢查備援鏈裡的 CLI 是否已安裝，不檢查登入。備用 CLI 不存在時是 doctor 的警告（warning），不擋 run；啟動前的檢查（preflight）只看主要模型。
-3. **write-scope 規則（20.2 #8）：** 只有在備用模型某一項的防護等級是 `prompt-only`、而主要模型的更強（`os`、`tool-rules`、`post-hoc`）時才 fail closed；備用模型為 `os`、`tool-rules`、`post-hoc` 都接受。
+3. **write-scope 規則（20.2 #8）：** 只有在備用模型某一項的防護等級是 `prompt-only`、而主要模型的更強（`os`、`tool-rules`、`post-hoc`）時才 fail closed；備用模型為 `os`、`tool-rules`、`post-hoc` 都接受。載入時只驗證 write-scope 的對等；worktree 隔離與 `can_ask_user` 由 dispatcher 執行，兩種 runtime 完全相同，不需要依 runtime 檢查。
 4. **`failure.tried`（20.4）：** 每個模型只列一次，內容是它最後一次的失敗，而不是每次呼叫一筆。
 5. **冷卻（20.4）：** 只有 agent 設了備援鏈時才記錄冷卻；沒有備援鏈的行為與狀態和原本完全相同。
 6. **codex 斷網（20.4）：** codex 在網路不通時會一直重連，直到逾時，所以實際表現為 `timeout`；它的 `network` 分類在實務上幾乎碰不到。
 7. **`state.sessions` 的 key（20.4）：** 主要模型的 key 維持 agent 名稱，備用模型是 `agent@runtime/model`。
+8. **`allow_web`（20.2 #8）：** 不在載入時檢查，改為備用模型沿用主要模型實際的網路等級：主要模型設了 `allow_web` 就照用；沒設且主要是 claude-code（預設沒有網路工具）、備用是 codex 時，備用設為 `none`（codex 的網路搜尋關閉）；主要是 codex 且沒設時，備用維持沒設；同 runtime 的備用照原樣沿用。
+9. **共用的 `dispatcher.fallback`（20.2 #4）：** 共用鏈裡和 agent 自己的主要模型相同的項目，或重複的項目（runtime 相同、model 去頭尾空白且不分大小寫後相同，沒設 model 等同空字串），執行時直接略過，不算錯誤。agent 自己設的 `fallback` 裡若有和主要模型相同的項目，`validate` 仍然報錯；自己清單裡的重複項目執行時同樣略過。

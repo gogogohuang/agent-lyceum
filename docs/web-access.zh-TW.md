@@ -20,7 +20,7 @@
 
 ## 要注意的事
 
-- **不設不等於 `none`。**不設是讓各 runtime 維持自己的預設：Claude Code 沒有網路工具，但 Codex 可能本來就開著網路搜尋。想明確關掉請設 `none`。
+- **不設不等於 `none`。**不設是讓各 runtime 維持自己的預設：Claude Code 沒有網路工具，但 Codex 可能本來就開著網路搜尋。想明確關掉請設 `none`。[備援](configuration.zh-TW.md)的備用模型沿用主要模型實際的網路等級：`allow_web` 沒設的 Claude Code agent，備用模型若是 Codex，執行時網路搜尋是關閉的。
 - **Codex 只有一個 `web_search` 設定，不是兩個工具**，所以 `search` 與 `fetch` 對應到 `cached` 與 `live`。依 Codex 的說法，`cached` 是從索引回答、不即時瀏覽，`live` 是即時搜尋網路；這是依風險做的近似對應。`codex exec` 不收 `--search` 旗標，所以 agent-lyceum 改傳 `-c web_search="..."`。
 - **沒有實際端對端跑過。**Codex 的設定鍵與合法值用 Codex 0.160.0 確認過，但 `cached`／`live` 以及 Claude 兩個工具的實際行為，沒有用真的 CLI 跑過（會花 token）。正式依賴前，請先在該 agent 上手動試一次。
 - `call` 會讀 `team.yaml` 裡的這個欄位，`run --agent` 也會保留。

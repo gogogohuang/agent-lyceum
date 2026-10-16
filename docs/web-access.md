@@ -20,7 +20,7 @@ The two are separate levels because the risk is different. Text read from a page
 
 ## Things to know
 
-- **Unset is not `none`.** Unset leaves each runtime's own default alone: Claude Code has no web tools, but Codex may already have web search on. Set `none` to turn it off explicitly.
+- **Unset is not `none`.** Unset leaves each runtime's own default alone: Claude Code has no web tools, but Codex may already have web search on. Set `none` to turn it off explicitly. A [fallback](configuration.md) backup keeps the primary's effective web level: a Codex backup of a Claude Code agent with `allow_web` unset runs with web search off.
 - **Codex has one `web_search` setting, not two tools**, so `search` and `fetch` map to `cached` and `live`. As Codex describes them, `cached` answers from an index instead of browsing, and `live` searches the web in real time; this is an approximation by risk. `codex exec` takes no `--search` flag, so agent-lyceum passes `-c web_search="..."`.
 - **Not run end to end.** The Codex setting and its allowed values were checked against Codex 0.160.0, but the behaviour of `cached` / `live` and of Claude's two tools was not exercised against the real CLIs (that costs tokens). Try it once on the agent before relying on it.
 - `call` reads the field from `team.yaml`, and `run --agent` keeps it.

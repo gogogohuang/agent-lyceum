@@ -38,7 +38,7 @@ Concurrency needs no configuration: in a git repo with a commit every run and ev
 
 When a model keeps failing for a temporary reason, a run can switch to a backup instead of stopping; see [When a wake-up fails](how-it-works.md#when-a-wake-up-fails). Backups are an ordered list, `fallback`, of entries with these fields:
 
-- `model`, `runtime`, `effort`, all optional, but an entry needs `model` or `runtime`. A missing `runtime` is inferred from `model` (same rule as for agents), and if that finds nothing, the agent's own runtime is used. A runtime without a `model` means that runtime's default model. `effort` must be valid for the entry's runtime.
+- `model`, `runtime`, `effort`, all optional, but an entry needs `model` or `runtime`. A missing `runtime` is inferred from `model` (same rule as for agents), and if that finds nothing, the agent's own runtime is used. A runtime without a `model` means that runtime's default model. `effort` must be valid for the entry's runtime. An entry without `effort` runs at its runtime's CLI default: the primary's `effort` is not inherited.
 
 Where to write it, from the strongest to the weakest:
 
@@ -47,7 +47,7 @@ Where to write it, from the strongest to the weakest:
 3. `dispatcher.fallback` in `project.yaml`, shared by every agent that has none of its own;
 4. nothing: the agent has no backup.
 
-`fallback: []` on an agent means no backup, even when `dispatcher.fallback` is set. `dispatcher.fallback_cooldown_sec` (default `300`) is how long a model that hit `rate_limit` or `quota` is skipped in this run.
+`fallback: []` on an agent means no backup, even when `dispatcher.fallback` is set. `dispatcher.fallback_cooldown_sec` (default `300`) is how long a model that hit `rate_limit` or `quota` is skipped in this run; `0` means it is never cooled down.
 
 ```yaml
 # project.yaml
