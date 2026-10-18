@@ -10,6 +10,8 @@ export type Block = {
   name: string
   runtime: string
   lead: boolean
+  /** True while the agent's latest wake ran on a backup model. */
+  backup?: boolean
   dot: Dot
   working?: { round?: number; elapsed: string }
   handling: MailView[]
@@ -78,6 +80,7 @@ export function blocks(report: Report, now: number): Block[] {
       name: a.name,
       runtime: a.runtime ?? '?',
       lead: a.lead,
+      ...(a.fallback ? { backup: true } : {}),
       dot,
       working: act ? { round: act.round, elapsed: elapsed(act.since, now) } : undefined,
       handling: (act?.handling ?? []).map(m => mailView(m)),
@@ -142,7 +145,7 @@ export function blockLines(b: Block, expanded = false): Line[] {
     : b.dot === 'failed' ? { text: '上次喚醒失敗', tone: 'bad' }
     : b.dot === 'queued' ? { text: `排隊 ${b.queued.length} 封`, tone: 'warn' }
     : { text: '閒置', tone: 'dim' }
-  const lines: Line[] = [{ text: `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}`, tone: 'bold' }, status]
+  const lines: Line[] = [{ text: `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`, tone: 'bold' }, status]
   for (const m of b.handling) lines.push(...mailLines(m, 'bold', '', expanded))
   for (const m of b.queued) lines.push(...mailLines({ ...m, head: `排隊：${m.head}` }, 'dim', '  ', expanded))
   lines.push({ text: `喚醒 ${b.wakes} 次${b.failed ? `（失敗 ${b.failed}）` : ''} · ${tokens(b.tokens)} tok`, tone: b.failed ? 'bad' : 'dim' })

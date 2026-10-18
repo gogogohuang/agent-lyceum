@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { repoDirFor, writePolicy } from "../policy.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
+import type { ErrorKind } from "../schema.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 /** Claude Code path rules: `//abs/path` — a leading "/" plus the absolute path. */
@@ -90,8 +91,53 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
   };
 }
 
+interface Rule {
+  kind: ErrorKind;
+  /** Matched against the failure text. */
+  re: RegExp;
+}
+
+/**
+ * Ordered, first match wins: put the more specific kind before the broader one (a usage limit is `quota`, not `rate_limit`).
+ * Samples: observed = captured from a real run, documented = from the CLI/API docs, not yet seen in a log.
+ */
+const CLAUDE_RULES: Rule[] = [
+  // observed: `Invalid API key · Fix external API key` with api_error_status 401; documented: `Not logged in · Please run /login`
+  { kind: "auth", re: /\bHTTP 401\b|invalid api key|not logged in|please run \/login/i },
+  // documented: `5-hour limit reached ∙ resets 3pm`, API 400 `Credit balance is too low`
+  { kind: "quota", re: /\b(5-hour|weekly|usage) limit reached\b|credit balance is too low/i },
+  // documented: API 429 `rate_limit_error`, 529 `overloaded_error`
+  { kind: "rate_limit", re: /\bHTTP (429|529)\b|rate_limit_error|rate limit (reached|exceeded)|overloaded_error|^api error: overloaded/im },
+  // observed: `API Error: Connection refused — ... (ECONNREFUSED)`; documented: the other Node error codes
+  { kind: "network", re: /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up/i },
+  // documented: a native crash prints one of these (a signal kill has no exit code, see `isSignalKill`)
+  { kind: "crash", re: /segmentation fault|heap out of memory/i },
+];
+
+/** A process that ended without an exit code was killed by a signal that was not ours (timeouts and cancels never get here). */
+const isSignalKill = (code: number | null) => code === null;
+
+function classifyWith(rules: Rule[], code: number | null, text: string): ErrorKind {
+  const hit = rules.find((r) => r.re.test(text));
+  if (hit) return hit.kind;
+  return isSignalKill(code) ? "crash" : "unknown"; // never default to crash: a wrong guess would switch models for nothing
+}
+
+/**
+ * The text the rules read: the result message (only when it is an error message: pass `result` for an `is_error` run), stderr, and the HTTP status
+ * the CLI reports as `api_error_status`. With no `result` and no result in stdout, stdout itself, but only when it is plain text: structured
+ * output (starting with `{` or `[`) without a result is a transcript, and the agent's own words there must not read as an error.
+ */
+export function classifyClaudeError(out: { code: number | null; stdout: string; stderr: string; result?: string }): ErrorKind {
+  const status = /"api_error_status":\s*(\d{3})/.exec(out.stdout)?.[1];
+  const j = extractClaudeResult(out.stdout);
+  const structured = /^[[{]/.test(out.stdout.trimStart());
+  const message = out.result ?? (j ? (j.is_error ? String(j.result ?? "") : "") : structured ? "" : out.stdout);
+  return classifyWith(CLAUDE_RULES, out.code, [message, out.stderr, status ? `HTTP ${status}` : ""].join("\n"));
+}
+
 function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: string, code: number | null): Parsed {
-  if (!j) return { ok: false, text: stdout, error: (stderr || stdout || `exit code ${code}`).slice(0, 500) };
+  if (!j) return { ok: false, text: stdout, error: (stderr || stdout || `exit code ${code}`).slice(0, 500), kind: classifyClaudeError({ code, stdout, stderr }) };
   const ok = code === 0 && !j.is_error;
   return {
     ok,
@@ -99,6 +145,7 @@ function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: st
     sessionId: j.session_id,
     outputTokens: j.usage?.output_tokens,
     error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
+    kind: ok ? undefined : classifyClaudeError({ code, stdout, stderr, result: j.is_error && j.result !== undefined ? String(j.result) : undefined }),
   };
 }
 

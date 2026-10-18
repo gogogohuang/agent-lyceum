@@ -49,3 +49,23 @@
 - 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
 - 開 PR 會把 lead 的 branch 與報告發布到 `origin`。因此，提出要求（`open_pr: true`）的 agent 能把它在沙箱內讀得到的任何東西送上遠端，所以只有在可以接受這件事時，才在 task 裡要求開 PR。push 與 `gh pr create` 從你的主 repo 執行，絕不在 agent 的 worktree 裡執行，因為 agent 能寫入那個目錄。
 - agent-lyceum 從不合併，也不等待 CI 或審查。在有 commit 的 git repo 裡，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。
+
+## 喚醒失敗時
+
+沒有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備援模型)）時，喚醒失敗不論原因，都在同一個模型上重試最多 `retry` 次，之後停止 run，這部分不變。有備援鏈時，會先為失敗分類：
+
+| 種類 | 處理 |
+|---|---|
+| `rate_limit`、`quota` | 不重試：立刻改用下一個模型，並把失敗的模型標為冷卻中。 |
+| `timeout`、`network`、`crash` | 在同一個模型上重試最多 `retry` 次，之後才切換。 |
+| `auth` | 停止。登入問題不會因為換模型而被掩蓋。 |
+| `unknown`（認不出的錯誤） | 在同一個模型上重試 `retry` 次，之後停止，不切換。 |
+
+細節：
+
+- **Backoff：** 只有在有備援鏈時，同一個模型上的重試才會等待：5 秒、15 秒、45 秒，上限 60 秒。沒有備援鏈就不等。
+- **全新 session：** 切換後在備用模型上開新的 session，prompt 附上一般的重試提示，未讀信件照常重新送達；失敗模型的輸出不會帶過去。備用模型的 session 存在 `state.sessions` 的 `<agent>@<runtime>/<model>` 下；主要模型沿用 agent 名稱這個 key，備用模型不會拿到它的 id。
+- **每次喚醒都從主要模型開始，** 除非它正在冷卻。因 `rate_limit` 或 `quota` 失敗的模型，在 `fallback_cooldown_sec`（預設 300 秒）內會被這次 run 的所有喚醒略過，包括平行的喚醒。冷卻存在 `state.json`，所以 `resume` 會保留；新的 run 則從零開始。若備援鏈上每個模型都在冷卻，就整條鏈都試。只有設了備援鏈的 agent 才會記錄冷卻。
+- **切換會被告知：** 切換時印出一行 `<agent> falling back to <runtime>/<model> (<kind>)`，並在 run 的 notes 加一筆，提醒失敗模型已產生的副作用沒有被還原、可能已經發生。
+- **全部失敗時** run 照舊以 `agent_failed` 或 `lead_failed` 停止。`failure.tried` 依序列出每個模型各一筆（取該模型最後一次的失敗），結束訊息會逐一列出，並仍然說明如何 `resume`。
+- **已知限制：** Codex 在網路斷線時會一直重連，直到喚醒逾時，所以結果是 `timeout` 而不是 `network`。它與其他逾時同樣處理：先重試，再切換。

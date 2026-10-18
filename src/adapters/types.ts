@@ -1,3 +1,4 @@
+import type { ErrorKind } from "../schema.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { AgentWorkspace } from "../worktree.js";
 
@@ -28,6 +29,8 @@ export interface WakeResult {
   error?: string;
   /** Stopped because the run was cancelled, not because it failed. */
   cancelled?: boolean;
+  /** Why it failed, for the fallback decision. Unset on success and on cancellation. */
+  kind?: ErrorKind;
 }
 
 export type Parsed = {
@@ -36,6 +39,8 @@ export type Parsed = {
   sessionId?: string;
   outputTokens?: number;
   error?: string;
+  /** Set on failure only; `unknown` when no rule recognizes the output. */
+  kind?: ErrorKind;
 };
 
 /** Reads a runtime's stdout line by line while it runs, keeping only what it needs. */

@@ -21,6 +21,7 @@
 | [16](16-task-names-and-reopen.md) | task 名稱與重開已完成的 run | 中 | 中 | [plan](../plans/2026-10-14-16-task-names-and-reopen.md) |
 | [17](17-run-shared-memory.md) | task 接續用的共享 memory | 中 | 中（write guard） | [plan](../plans/2026-10-14-17-run-shared-memory.md) |
 | [19](19-open-concurrency.md) | 零設定並行（移除 owns 與併發設定） | 高 | 高（並行、run 鎖、相容） | — |
+| [20](20-llm-fallback.md) | LLM 備援（主要模型失敗時切換備用） | 中 | 中（錯誤分類、權限一致性） | [plan](../plans/2026-10-16-20-llm-fallback.md) |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 

@@ -1,7 +1,11 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { buildClaudeInvocation, buildClaudeSettings } from "../src/adapters/claude.js";
-import { buildCodexInvocation, codexWritableRoots } from "../src/adapters/codex.js";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildClaudeInvocation, buildClaudeSettings, classifyClaudeError, extractClaudeResult } from "../src/adapters/claude.js";
+import { buildCodexInvocation, classifyCodexError, codexWritableRoots } from "../src/adapters/codex.js";
 import { commonFile, repoInstructionFiles, writePolicy } from "../src/policy.js";
 import { buildSoloSystemPrompt, buildSystemPrompt } from "../src/prompt.js";
 import { soloProject } from "../src/solo.js";
@@ -258,5 +262,187 @@ describe("ask protocol in the system prompt", () => {
     } finally {
       env.cleanup();
     }
+  });
+});
+
+// Samples marked "observed" were captured from the real CLIs (claude 2.x, codex-cli 0.162.1) with a bogus API key or an unreachable
+// base URL. "documented" ones come from the CLIs' / APIs' documented error text and were not seen in a run log: kept conservative.
+describe("classifyClaudeError", () => {
+  const claudeJson = (status: number | null, result: string) => JSON.stringify({ is_error: true, api_error_status: status, result, type: "result" });
+  const cases: [string, string, string, string][] = [
+    // [rule, expected kind, stdout, source]
+    ["auth: HTTP 401", "auth", claudeJson(401, "Invalid API key · Fix external API key"), "observed"],
+    ["auth: not logged in", "auth", claudeJson(null, "Not logged in · Please run /login"), "documented"],
+    ["quota: usage limit", "quota", claudeJson(null, "5-hour limit reached ∙ resets 3pm"), "documented"],
+    ["quota: credit balance", "quota", claudeJson(400, "Credit balance is too low"), "documented"],
+    ["rate_limit: HTTP 429", "rate_limit", claudeJson(429, "API Error: Request rejected (429)"), "documented"],
+    ["rate_limit: overloaded", "rate_limit", claudeJson(529, "API Error: Overloaded"), "documented"],
+    ["network: ECONNREFUSED", "network", claudeJson(null, "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)"), "observed"],
+    ["network: ENOTFOUND", "network", claudeJson(null, "API Error: getaddrinfo ENOTFOUND api.anthropic.com"), "documented"],
+    ["network: socket hang up", "network", claudeJson(null, "API Error: socket hang up"), "documented"],
+    ["crash: heap out of memory", "crash", claudeJson(null, "FATAL ERROR: JavaScript heap out of memory"), "documented"],
+  ];
+  it.each(cases)("%s => %s (%s sample)", (_rule, kind, stdout) => {
+    const j = JSON.parse(stdout) as { result: string };
+    expect(classifyClaudeError({ code: 1, stdout, stderr: "", result: j.result })).toBe(kind);
+  });
+  it("crash: killed by a signal (exit code null) or a native crash message; documented, not observed", () => {
+    expect(classifyClaudeError({ code: null, stdout: "", stderr: "" })).toBe("crash");
+    expect(classifyClaudeError({ code: 139, stdout: "", stderr: "Segmentation fault: 11" })).toBe("crash");
+  });
+  it("a failure no rule recognizes is unknown, never crash", () => {
+    expect(classifyClaudeError({ code: 1, stdout: "", stderr: "something nobody has seen before" })).toBe("unknown");
+    expect(classifyClaudeError({ code: 3, stdout: "", stderr: "" })).toBe("unknown");
+    expect(classifyClaudeError({ code: 1, stdout: claudeJson(null, "I could not finish the task"), stderr: "", result: "I could not finish the task" })).toBe("unknown");
+  });
+  it("reads result only from an is_error run: a normal answer mentioning rate limits is not a rate_limit", () => {
+    const answer = '{"is_error":false,"result":"I added a rate limit (429) and an Invalid API key check","session_id":"s"}';
+    expect(classifyClaudeError({ code: 1, stdout: answer, stderr: "" })).toBe("unknown");
+    const err = '{"is_error":true,"result":"5-hour limit reached ∙ resets 3pm","session_id":"s"}';
+    expect(classifyClaudeError({ code: 0, stdout: err, stderr: "" })).toBe("quota");
+    env = makeEnv();
+    const c = buildClaudeInvocation({ ...input(env, "lead", { runtime: "claude-code" }) });
+    expect(c.parse({ stdout: answer, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
+    expect(c.parse({ stdout: err, stderr: "", code: 0 })).toMatchObject({ ok: false, kind: "quota" });
+  });
+  it("does not read a structured stdout with no result in it: an array transcript saying rate limit is unknown", () => {
+    const transcript = '[{"type":"system","subtype":"init"},{"type":"assistant","message":{"content":[{"type":"text","text":"Rate limit exceeded on the upstream API; ECONNRESET too"}]}}]';
+    expect(classifyClaudeError({ code: 1, stdout: transcript, stderr: "" })).toBe("unknown");
+    expect(classifyClaudeError({ code: 1, stdout: transcript, stderr: "API Error: 429 rate_limit_error" })).toBe("rate_limit");
+    // Plain-text stdout (no JSON at all) is still read.
+    expect(classifyClaudeError({ code: 1, stdout: "Not logged in · Please run /login", stderr: "" })).toBe("auth");
+  });
+  it("a bare number or word is not enough: rules want a status-like context", () => {
+    expect(classifyClaudeError({ code: 1, stdout: "", stderr: "retried 429 times, rate limiting is on, overloaded machine" })).toBe("unknown");
+  });
+  it("the first matching rule wins (a 5-hour limit is quota, not rate_limit)", () => {
+    expect(classifyClaudeError({ code: 1, stdout: "", stderr: "5-hour limit reached ∙ rate limit" })).toBe("quota");
+  });
+});
+
+describe("classifyCodexError", () => {
+  const cases: [string, string, string, string][] = [
+    ["auth: 401 / invalid_api_key", "auth", "unexpected status 401 Unauthorized: Incorrect API key provided: sk-bogus., url: https://api.openai.com/v1/responses, auth error: 401, auth error code: invalid_api_key", "observed"],
+    ["auth: not logged in", "auth", "Not logged in. Run `codex login`", "documented"],
+    ["quota: insufficient_quota", "quota", "unexpected status 429 Too Many Requests: You exceeded your current quota, error code: insufficient_quota", "documented"],
+    ["quota: usage limit", "quota", "You've hit your usage limit. Upgrade to Pro or try again later.", "documented"],
+    ["rate_limit: 429", "rate_limit", "exceeded retry limit, last status: 429 Too Many Requests", "documented"],
+    ["rate_limit: rate_limit_exceeded", "rate_limit", "Rate limit reached for gpt-5 (rate_limit_exceeded)", "documented"],
+    ["network: waiting for network", "network", "Reconnecting... waiting for network (Connection failed: error sending request)", "observed as a retry event only; final-failure sample documented"],
+    ["crash: panicked at", "crash", "thread 'main' panicked at core/src/lib.rs:10:5", "documented"],
+    ["network: ENOTFOUND", "network", "dns error: failed to lookup address (ENOTFOUND api.openai.com)", "documented"],
+  ];
+  it.each(cases)("%s => %s (%s sample)", (_rule, kind, text) => {
+    expect(classifyCodexError({ code: 1, stdout: "", stderr: text })).toBe(kind);
+    expect(classifyCodexError({ code: 1, stdout: JSON.stringify({ type: "turn.failed", error: { message: text } }), stderr: "" })).toBe(kind);
+  });
+  it("reads only error channels: command output or messages in stdout never classify a failure", () => {
+    const stdout = '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"429 rate limit unauthorized codex login"}}';
+    expect(classifyCodexError({ code: 1, stdout, stderr: "" })).toBe("unknown");
+    expect(classifyCodexError({ code: 1, stdout, stderr: "unexpected status 429 Too Many Requests" })).toBe("rate_limit");
+  });
+  it("a bare number or word is not enough: rules want a status-like context", () => {
+    expect(classifyCodexError({ code: 1, stdout: "", stderr: "line 401 of the unauthorized.ts file, 429 items, rate limiting" })).toBe("unknown");
+  });
+  it("crash: killed by a signal; documented, not observed", () => {
+    expect(classifyCodexError({ code: null, stdout: "", stderr: "" })).toBe("crash");
+  });
+  it("the final turn.failed message decides, not the reconnect noise before it", () => {
+    const stdout = [
+      '{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}',
+      '{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: auth error code: invalid_api_key"}}',
+    ].join("\n");
+    expect(classifyCodexError({ code: 1, stdout, stderr: "" })).toBe("auth");
+  });
+  it("a failure no rule recognizes is unknown, never crash", () => {
+    expect(classifyCodexError({ code: 1, stdout: "", stderr: "something nobody has seen before" })).toBe("unknown");
+    expect(classifyCodexError({ code: 2, stdout: "", stderr: "" })).toBe("unknown");
+  });
+});
+
+describe("Parsed.kind", () => {
+  const inv = (runtime: "claude-code" | "codex") => {
+    env = makeEnv();
+    const p = env.project();
+    return runtime === "codex"
+      ? buildCodexInvocation({ project: p, agent: { ...p.agents.lead, runtime }, workDir: path.join(env.root, "w"), systemPrompt: "S", userPrompt: "U", timeoutSec: 5 })
+      : buildClaudeInvocation({ project: p, agent: { ...p.agents.lead, runtime }, workDir: path.join(env.root, "w"), systemPrompt: "S", userPrompt: "U", timeoutSec: 5 });
+  };
+  it("is set on a failed Claude run (stream and parse) and absent on success", () => {
+    const c = inv("claude-code");
+    const bad = JSON.stringify({ is_error: true, api_error_status: 401, result: "Invalid API key · Fix external API key" });
+    const s = c.stream!();
+    s.line(bad);
+    expect(s.finish({ code: 1, stdoutTail: bad, stderrTail: "" })).toMatchObject({ ok: false, kind: "auth" });
+    expect(c.parse({ stdout: bad, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "auth" });
+    expect(c.parse({ stdout: "garbage", stderr: "boom", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
+    const good = c.parse({ stdout: '{"result":"ok","session_id":"s"}', stderr: "", code: 0 });
+    expect(good.ok).toBe(true);
+    expect(good.kind).toBeUndefined();
+  });
+  it("is set on a failed Codex run and absent on success", () => {
+    const c = inv("codex");
+    const out = '{"type":"turn.failed","error":{"message":"unexpected status 429 Too Many Requests"}}';
+    expect(c.parse({ stdout: out, stderr: "", code: 1 })).toMatchObject({ ok: false, kind: "rate_limit" });
+    expect(c.parse({ stdout: "", stderr: "weird", code: 1 })).toMatchObject({ ok: false, kind: "unknown" });
+    const good = c.parse({ stdout: "", stderr: "", code: 0 });
+    expect(good.ok).toBe(true);
+    expect(good.kind).toBeUndefined();
+  });
+});
+
+describe("fake runtimes: FAKE_FAIL", () => {
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "runtime");
+  let tmp = "";
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fakefail-"));
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const run = (fixture: string, env: Record<string, string>) =>
+    spawnSync(process.execPath, [path.join(dir, fixture), ...(fixture.includes("codex") ? ["exec", "-"] : ["-p"])], { input: "hi", encoding: "utf8", env: { ...process.env, AGENT_LYCEUM_AGENT: "lead", ...env }, timeout: 10_000 });
+  /** What the adapter would do with this output: Claude's `result` comes from its JSON, when there is any. */
+  const classify = (fixture: string, r: ReturnType<typeof run>) => {
+    if (fixture.includes("codex")) return classifyCodexError({ code: r.status, stdout: r.stdout, stderr: r.stderr });
+    const result = extractClaudeResult(r.stdout)?.result;
+    return classifyClaudeError({ code: r.status, stdout: r.stdout, stderr: r.stderr, result });
+  };
+
+  describe.each(["fake-claude.mjs", "fake-codex.mjs"])("%s", (fixture) => {
+    it.each(["rate_limit", "quota", "network", "auth", "unknown"] as const)("FAKE_FAIL=%s fails with a message its own classifier reads back as %s", (kind) => {
+      const r = run(fixture, { FAKE_FAIL: kind });
+      expect(r.status).not.toBe(0);
+      expect(classify(fixture, r)).toBe(kind);
+    });
+    it("FAKE_FAIL=crash dies from a signal", () => {
+      const r = run(fixture, { FAKE_FAIL: "crash" });
+      expect(r.status).toBeNull();
+      expect(classify(fixture, r)).toBe("crash");
+    });
+    it("FAKE_FAIL=<kind>:<n> fails the first n calls (counted in FAKE_FAIL_COUNT), then succeeds", () => {
+      const env = { FAKE_FAIL: "rate_limit:2", FAKE_FAIL_COUNT: path.join(tmp, `${fixture}.count`) };
+      expect([run(fixture, env).status, run(fixture, env).status]).toEqual([1, 1]);
+      expect(run(fixture, env).status).toBe(0);
+      expect(run(fixture, env).status).toBe(0);
+    });
+    it("FAKE_FAIL=<kind>:<n> without FAKE_FAIL_COUNT refuses loudly", () => {
+      const r = run(fixture, { FAKE_FAIL: "rate_limit:2" });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/FAKE_FAIL_COUNT/);
+    });
+    it("FAKE_FAIL without a count fails every call", () => {
+      expect(run(fixture, { FAKE_FAIL: "auth" }).status).toBe(1);
+      expect(run(fixture, { FAKE_FAIL: "auth" }).status).toBe(1);
+    });
+  });
+
+  it("a FAKE_SCRIPT entry can say fail: <kind>; other entries succeed as before", () => {
+    const file = path.join(tmp, "script.json");
+    fs.writeFileSync(file, JSON.stringify({ calls: [{ agent: "lead", fail: "quota" }, { agent: "lead", result: "fine" }] }));
+    const first = run("fake-claude.mjs", { FAKE_SCRIPT: file });
+    expect(first.status).toBe(1);
+    expect(classify("fake-claude.mjs", first)).toBe("quota");
+    const second = run("fake-claude.mjs", { FAKE_SCRIPT: file });
+    expect(second.status).toBe(0);
+    expect(JSON.parse(second.stdout)).toMatchObject({ result: "fine" });
   });
 });

@@ -24,3 +24,5 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `autoOpen` | Open the pane when a session starts (it seats only from 144 columns when opened unasked) | `false` |
 
 Changes take effect on the next session start. If the pane shows `無法取得狀態：...`, the `command` could not run (usually `dist/cli.js` was not built) or the project name is not registered.
+
+**Fallback badge.** When an agent that has a fallback chain is running on a backup model, its block title carries a small `備援中` (on a fallback) mark; nothing else in the layout changes. Which model it fell back from and why, and any cooldown, are in `agent-lyceum status`.

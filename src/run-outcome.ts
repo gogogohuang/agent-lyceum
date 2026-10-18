@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { DoneContract } from "./format.js";
-import type { EndReason } from "./run-store.js";
+import type { EndReason, RunFailure } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 
 export interface UnintegratedWork {
@@ -26,7 +26,7 @@ export function resolveDoneOutcome(
 }
 
 /** How a run turned out, from why it stopped (`done` carries the lead's own verdict). */
-export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; note?: string }, failure?: { agent: string; error?: string; attempts: number }): { outcome: RunOutcome; note?: string } {
+export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; note?: string }, failure?: RunFailure): { outcome: RunOutcome; note?: string } {
   switch (endReason) {
     case "done":
       return { outcome: done?.outcome ?? "partial", note: done?.note };
@@ -50,10 +50,15 @@ export function endOutcome(endReason: EndReason, done?: { outcome: RunOutcome; n
 }
 
 /** What to tell the user when an agent kept failing and the run stopped: where to look, what to fix, how to go on. */
-export function failureGuide(project: string, run: string, f: { agent: string; error?: string; attempts: number }, runDir: string): string {
+export function failureGuide(project: string, run: string, f: RunFailure, runDir: string): string {
+  // With a fallback chain: every model given up on, in order.
+  const tried = f.tried?.length
+    ? ["Models tried, in order:", ...f.tried.map((t, i) => `  ${i + 1}. ${t.model ? `${t.runtime}/${t.model}` : t.runtime}: ${t.kind ?? "unknown error"}${t.error ? ` (${t.error})` : ""}`)]
+    : [];
   return [
     "",
     `${f.agent} was called ${f.attempts} time(s) and failed every time (${f.error ?? "unknown error"}). The run stopped; nothing was lost: the message ${f.agent} was handling is still unread and the work done so far is kept.`,
+    ...tried,
     "To fix it:",
     `  1. Read why it failed: ${path.join(runDir, "log.jsonl")} (event "wake"), and the full output of each attempt in ${path.join(runDir, "mail", "attempts")}`,
     `  2. Fix the cause: the ${f.agent} CLI (installed, logged in, model name), a timeout (dispatcher.wake_timeout_sec), or its AGENT.md / the message it keeps failing on. Check with: agent-lyceum doctor -p ${project}`,

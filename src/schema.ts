@@ -26,12 +26,33 @@ export function inferRuntime(model: string | undefined): Runtime | undefined {
 export const WEB_LEVELS = ["none", "search", "fetch"] as const;
 export type WebLevel = (typeof WEB_LEVELS)[number];
 
+/** Why a wake failed, as far as the CLI's output reveals; decides whether to retry, fall back, or stop. */
+export const ERROR_KINDS = ["rate_limit", "quota", "timeout", "network", "crash", "auth", "unknown"] as const;
+export type ErrorKind = (typeof ERROR_KINDS)[number];
+
+/** One link of a fallback chain after resolution: runtime and model are filled in (model "" = the runtime's own default). */
+export interface FallbackEntry {
+  runtime: Runtime;
+  model: string;
+  effort?: Effort;
+}
+
 const Memory = z
   .object({
     global: z.string().optional(),
     project: z.string().optional(),
   })
   .strict();
+
+/** A fallback entry as written in a file: `runtime` may be omitted (inferred from `model`, else the agent's). */
+export const FallbackEntryPartial = z
+  .object({
+    runtime: z.enum(RUNTIMES).optional(),
+    model: z.string().optional(),
+    effort: z.enum(EFFORTS).optional(),
+  })
+  .strict();
+export type FallbackEntryPartialT = z.infer<typeof FallbackEntryPartial>;
 
 export const AgentPartial = z
   .object({
@@ -45,6 +66,7 @@ export const AgentPartial = z
     can_edit_agent_md: z.boolean().optional(),
     can_ask_user: z.boolean().optional(),
     allow_web: z.enum(WEB_LEVELS).optional(),
+    fallback: z.array(FallbackEntryPartial).optional(),
     /** Removed setting: still accepted (any value) so old files load; ignored, with a warning from `validate`. */
     owns: z.unknown().optional(),
   })
@@ -61,6 +83,8 @@ export const DispatcherPartial = z
     strict: z.boolean().optional(),
     workspace_mode: z.unknown().optional(),
     log_max_bytes: z.number().int().min(0).optional(),
+    fallback: z.array(FallbackEntryPartial).optional(),
+    fallback_cooldown_sec: z.number().int().min(0).optional(),
   })
   .strict();
 
@@ -90,6 +114,8 @@ export interface DispatcherSettings {
   strict: boolean;
   /** log.jsonl is rotated to log.1.jsonl past this size; 0 = never. */
   log_max_bytes: number;
+  /** How long a primary that hit rate_limit/quota is skipped within a run, unless the CLI says when to come back. */
+  fallback_cooldown_sec: number;
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {
@@ -98,6 +124,7 @@ export const DISPATCHER_DEFAULTS: DispatcherSettings = {
   retry: 2,
   strict: false,
   log_max_bytes: 8 * 1024 * 1024,
+  fallback_cooldown_sec: 300,
 };
 
 /** How a run turned out, independent of why it stopped (`EndReason`). Only "completed" means success. */
