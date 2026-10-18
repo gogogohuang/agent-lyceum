@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { diagnoseProject, preflightRuntimes, probeRuntime } from "../src/doctor.js";
+import { setOsSandboxForTest } from "../src/policy.js";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { initGitRepo, makeConcurrent, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
@@ -168,6 +169,9 @@ describe("diagnoseProject", () => {
   });
 
   describe("fallback chains", () => {
+    // claude-code -> codex fallbacks need the OS sandbox (Linux CI has no bubblewrap); pin it so validation passes everywhere
+    beforeEach(() => setOsSandboxForTest(true));
+    afterEach(() => setOsSandboxForTest(undefined));
     const allClaude = () => {
       const p = env.project();
       for (const a of Object.values(p.agents)) a.runtime = "claude-code";

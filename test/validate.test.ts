@@ -106,11 +106,14 @@ describe("validate", () => {
 });
 
 describe("validate fallback", () => {
+  afterEach(() => setOsSandboxForTest(undefined));
   const setFallback = (env: TestEnv, line: string) =>
     env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n    fallback: ${line}\n    can_message: [lead]`));
 
   it("accepts a sound chain", () => {
     env = makeEnv();
+    // the codex entry needs the OS sandbox (Linux CI has no bubblewrap): see "write-scope parity"
+    setOsSandboxForTest(true);
     setFallback(env, "[{ model: haiku }, { runtime: codex, model: gpt-5, effort: high }]");
     expect(errors(env)).toEqual([]);
   });
@@ -144,7 +147,6 @@ describe("validate fallback", () => {
   });
 
   describe("write-scope parity", () => {
-    afterEach(() => setOsSandboxForTest(undefined));
     const chain = (env: TestEnv, primary: string, fb: string) =>
       env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message: [lead]", `  fe-member:\n    runtime: ${primary}\n    model: m1\n    fallback: [{ runtime: ${fb}, model: m2 }]\n    can_message: [lead]`));
 
