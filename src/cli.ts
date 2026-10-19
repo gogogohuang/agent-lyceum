@@ -22,6 +22,7 @@ import { prepareTask, readTaskFile, taskMessageBody } from "./task.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
+import { runMonitor } from "./monitor-lifecycle.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 
@@ -717,8 +718,16 @@ program
         }
         process.stdout.write(`\x1b[2J\x1b[H${text}\n\nRefreshing every ${sec}s — ${new Date().toLocaleTimeString()} — Ctrl-C to quit\n`);
       };
-      draw();
-      setInterval(draw, sec * 1000);
+      runMonitor({
+        draw,
+        intervalMs: sec * 1000,
+        stdout: process.stdout,
+        stdin: process.stdin,
+        ppid: () => process.ppid,
+        exit: (code) => process.exit(code),
+        onSignal: (sig, handler) => process.on(sig, handler),
+        fail: (message) => fail(message),
+      });
       await new Promise(() => {});
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
