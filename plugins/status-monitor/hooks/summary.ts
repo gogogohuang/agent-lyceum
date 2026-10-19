@@ -9,9 +9,14 @@ export function runLabel(r: Run): string {
   return OUTCOME[r.outcome ?? ''] ?? r.outcome ?? '結束'
 }
 
+/** `x/limit`, or just `x` when there is no round limit (`max_rounds: 0`). */
+export function roundsLabel(rounds: number, limit: number): string {
+  return limit > 0 ? `${rounds}/${limit}` : String(rounds)
+}
+
 export function progress(r: Run): string {
   const steps = r.steps ?? []
-  return steps.length ? `${steps.filter(s => s.done).length}/${steps.length} 步` : `${r.rounds}/${r.max_rounds} 輪`
+  return steps.length ? `${steps.filter(s => s.done).length}/${steps.length} 步` : `${roundsLabel(r.rounds, r.max_rounds)} 輪`
 }
 
 export function clip(t: string, n: number): string {
