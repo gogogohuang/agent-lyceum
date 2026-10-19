@@ -23,6 +23,7 @@ import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { runMonitor } from "./monitor-lifecycle.js";
+import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 
@@ -143,6 +144,8 @@ function takeLock(pr: ResolvedProject, runId: string, opts: { checkout?: boolean
 /**
  * Ctrl-C (or SIGTERM) stops the run cleanly: the first signal cancels it (agents are killed, unread mail is kept,
  * the lock is released, exit code 130); a second one quits at once.
+ * Started through a launcher that does not relay SIGHUP (npx, npm exec, tsx), the launcher exiting counts as that
+ * first signal: otherwise closing the terminal would leave this process running on its own (spec 21).
  */
 function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
   const ac = new AbortController();
@@ -153,13 +156,24 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
       ac.abort();
     } else process.exit(130);
   };
+  const onParentGone = () => {
+    if (seen > 0) return; // already stopping
+    seen = 1;
+    // stderr may be a dead terminal or pipe: console.error would throw EPIPE/EIO there
+    try {
+      fs.writeSync(2, "\nLauncher exited (parent process gone): stopping the run (running agents are being stopped; unread mail is kept).\n");
+    } catch {}
+    ac.abort();
+  };
   const onInt = handler("Interrupted");
   const onTerm = handler("Terminated");
   const onHup = handler("Hung up");
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
   process.on("SIGHUP", onHup); // the terminal went away
+  const stopWatch = startedByWrapper() ? watchParent(onParentGone, { startPpid: LAUNCH_PPID }) : () => {};
   return { signal: ac.signal, dispose: () => {
+      stopWatch();
       process.off("SIGINT", onInt);
       process.off("SIGTERM", onTerm);
       process.off("SIGHUP", onHup);

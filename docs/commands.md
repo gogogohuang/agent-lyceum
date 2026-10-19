@@ -237,7 +237,7 @@ agent-lyceum checks the result: every file that existed before must still be in 
 
 ## Stopping a run
 
-**Stopping a run:** Ctrl-C (or SIGTERM) cancels it cleanly: running agents get SIGTERM, then SIGKILL after 5 s (their whole process tree), unread mail is kept, the lock is released and the exit code is `130`; continue later with `agent-lyceum resume`. A second Ctrl-C quits at once. A wake-up that exceeds `wake_timeout_sec` is stopped the same way and counts as a failed attempt. Each attempt's complete stdout/stderr is written to `runs/<run-id>/mail/attempts/<attempt>/log/`; only the last 64 KiB of each stream is kept in memory.
+**Stopping a run:** Ctrl-C (or SIGTERM) cancels it cleanly: running agents get SIGTERM, then SIGKILL after 5 s (their whole process tree), unread mail is kept, the lock is released and the exit code is `130`; continue later with `agent-lyceum resume`. A second Ctrl-C quits at once. `npx`, `npm exec`/`npm run` and `tsx` do not pass SIGHUP on: if such a launcher exits (for example, the terminal is closed), `run`, `resume` and `call` are cancelled the same way (exit `130`), while `tidy` restores its snapshot and exits `1`. To keep a run going after its launcher exits, run the installed `agent-lyceum` binary directly; inside an npm script, which inherits `npm_execpath`, use `env -u npm_execpath agent-lyceum …`. A wake-up that exceeds `wake_timeout_sec` is stopped the same way as Ctrl-C and counts as a failed attempt. Each attempt's complete stdout/stderr is written to `runs/<run-id>/mail/attempts/<attempt>/log/`; only the last 64 KiB of each stream is kept in memory.
 
 ## Exit codes
 
