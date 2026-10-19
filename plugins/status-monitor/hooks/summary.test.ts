@@ -13,6 +13,10 @@ test('status line shows state, progress, active and unread', () => {
   expect(statusLine(rep())).toBe(undefined)
 })
 
+test('no round limit (max_rounds 0) shows only the round number', () => {
+  expect(statusLine(rep(run({ max_rounds: 0 })))).toBe('team 執行中 2 輪 · 0 tok [dev] · 2 未讀')
+})
+
 test('toast on finish and on a failed wake', () => {
   expect(transition(rep(run()), rep(run({ state: 'ended', end_reason: 'done', outcome: 'completed', outcome_verified: true })))).toContain('完成')
   const bad = run({ wakes: [{ round: 1, agent: 'dev', ok: false, duration_ms: 1, error: 'boom' }] })

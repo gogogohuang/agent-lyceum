@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
-import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, parseProjects, progress, runLabel, tagToast, transition } from './summary'
+import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, paneWidth } from './graph'
 import { graphView } from './graph-view'
 
@@ -119,7 +119,7 @@ export const register: Register = (on, options) => {
         {run && (
           <Box flexDirection="column">
             <Text>
-              執行 {run.run_id} [{runLabel(run)}] 第 {run.rounds}/{run.max_rounds} 輪 · {run.output_tokens.toLocaleString('en-US')} tokens
+              執行 {run.run_id} [{runLabel(run)}] 第 {roundsLabel(run.rounds, run.max_rounds)} 輪 · {run.output_tokens.toLocaleString('en-US')} tokens
             </Text>
             <Text>
               任務：{run.task_summary}
@@ -132,7 +132,7 @@ export const register: Register = (on, options) => {
               </Text>
             )}
             <Text>
-              進度：{mode === 'graph' ? `${bar(run.steps?.length ? run.steps.filter(s => s.done).length : run.rounds, run.steps?.length || run.max_rounds)} ` : ''}
+              進度：{mode === 'graph' && (run.steps?.length || run.max_rounds > 0) ? `${bar(run.steps?.length ? run.steps.filter(s => s.done).length : run.rounds, run.steps?.length || run.max_rounds)} ` : ''}
               {progress(run)}
             </Text>
             {run.current_step && <Text>目前：{run.current_step}</Text>}
