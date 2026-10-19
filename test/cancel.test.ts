@@ -99,6 +99,9 @@ describe("the CLI on Ctrl-C", () => {
   };
   const cliRun = (home: string, bin: string, args: string[], extraEnv: Record<string, string>) =>
     spawn(tsx, [cli, "--home", home, ...args], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
+  // no tsx wrapper: it relays only SIGINT/SIGTERM, so a SIGHUP would kill the wrapper and leave the real CLI running
+  const cliRunDirect = (home: string, bin: string, args: string[], extraEnv: Record<string, string>) =>
+    spawn(process.execPath, ["--import", "tsx", cli, "--home", home, ...args], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
   const exited = (c: ReturnType<typeof spawn>) => new Promise<number | null>((r) => c.on("exit", (code) => r(code)));
 
   it("stops the agents, releases the lock, exits 130, and a later resume finishes the job (exit 0)", async () => {
@@ -114,15 +117,41 @@ describe("the CLI on Ctrl-C", () => {
     const pids = JSON.parse(fs.readFileSync(marker, "utf8")) as { pid: number; grandchild: number };
     expect(listRunLocks(env.project().paths.root).length > 0).toBe(true);
 
-    first.kill("SIGINT");
-    const code = await exited(first);
-    expect(code).toBe(130);
-    await until(() => !alive(pids.pid) && !alive(pids.grandchild));
-    expect(alive(pids.pid)).toBe(false);
-    expect(alive(pids.grandchild)).toBe(false);
-    expect(listRunLocks(env.project().paths.root).length > 0).toBe(false);
+    try {
+      first.kill("SIGINT");
+      const code = await exited(first);
+      expect(code).toBe(130);
+      await until(() => !alive(pids.pid) && !alive(pids.grandchild));
+      expect(alive(pids.pid)).toBe(false);
+      expect(alive(pids.grandchild)).toBe(false);
+      expect(listRunLocks(env.project().paths.root).length > 0).toBe(false);
+    } finally {
+      for (const p of [pids.pid, pids.grandchild]) if (alive(p)) process.kill(p, "SIGKILL");
+      first.kill("SIGKILL");
+    }
 
     const second = cliRun(env.home, bin, ["resume", "-p", "demo"], { FAKE_MODE: "completed" });
     expect(await exited(second)).toBe(0);
+  }, 90_000);
+
+  it("treats SIGHUP (terminal closed) like Ctrl-C: agents stopped, exit 130", async () => {
+    env = makeEnv();
+    const bin = path.join(env.root, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, { mode: 0o755 });
+    const marker = path.join(env.root, "marker.json");
+    const first = cliRunDirect(env.home, bin, ["run", "do it", "-p", "demo"], { FAKE_MODE: "sleep", FAKE_MARKER: marker });
+    await until(() => fs.existsSync(marker));
+    const pids = JSON.parse(fs.readFileSync(marker, "utf8")) as { pid: number; grandchild: number };
+    try {
+      first.kill("SIGHUP");
+      expect(await exited(first)).toBe(130);
+      await until(() => !alive(pids.pid) && !alive(pids.grandchild));
+      expect(alive(pids.pid)).toBe(false);
+      expect(alive(pids.grandchild)).toBe(false);
+    } finally {
+      for (const p of [pids.pid, pids.grandchild]) if (alive(p)) process.kill(p, "SIGKILL");
+      first.kill("SIGKILL");
+    }
   }, 90_000);
 });

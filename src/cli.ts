@@ -154,11 +154,14 @@ function cancelOnSignals(): { signal: AbortSignal; dispose: () => void } {
   };
   const onInt = handler("Interrupted");
   const onTerm = handler("Terminated");
+  const onHup = handler("Hung up");
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
+  process.on("SIGHUP", onHup); // the terminal went away
   return { signal: ac.signal, dispose: () => {
       process.off("SIGINT", onInt);
       process.off("SIGTERM", onTerm);
+      process.off("SIGHUP", onHup);
     },
   };
 }

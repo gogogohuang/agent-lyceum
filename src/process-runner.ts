@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { Invocation, StreamParser, WakeResult } from "./adapters/types.js";
@@ -48,6 +48,122 @@ function endStream(s: fs.WriteStream): Promise<void> {
 }
 
 /**
+ * Runtimes that are running right now, with the descendants seen so far, so an exiting agent-lyceum can take them with it.
+ * A descendant that left the process group (setsid, daemon) is only found by parent links while its parent is alive, so a
+ * shared timer samples the process table while any runtime is registered. Remaining gap: a child that escapes and
+ * outlives its parent within one sampling interval is never seen.
+ */
+const live = new Map<number, Set<number>>();
+let exitHook = false;
+let sampler: NodeJS.Timeout | undefined;
+let samplerMs = 2000;
+
+/** Parent -> children from one `ps` run, or undefined when it fails or hangs (SIGKILL on timeout: a ps that ignores SIGTERM must not block, even in the exit hook). */
+function processTable(): Map<number, number[]> | undefined {
+  if (process.platform === "win32") return undefined;
+  const ps = spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 2000, killSignal: "SIGKILL" });
+  if (ps.status !== 0 || !ps.stdout) return undefined;
+  const kids = new Map<number, number[]>();
+  for (const line of ps.stdout.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!pid || !ppid) continue;
+    kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+  }
+  return kids;
+}
+
+function below(kids: Map<number, number[]> | undefined, root: number): number[] {
+  const out: number[] = [];
+  if (!kids) return out;
+  for (let todo = [root]; todo.length; ) {
+    const next: number[] = [];
+    for (const p of todo) {
+      for (const k of kids.get(p) ?? []) {
+        if (out.includes(k)) continue;
+        out.push(k);
+        next.push(k);
+      }
+    }
+    todo = next;
+  }
+  return out;
+}
+
+/** Pids below `root` (children, grandchildren, ...) by parent links; catches descendants that left the process group (setsid, daemons). */
+export function descendantsOf(root: number): number[] {
+  return below(processTable(), root);
+}
+
+/** Record the current descendants of every live runtime (one `ps` for all). */
+function sample(): void {
+  if (!live.size) return;
+  const kids = processTable();
+  for (const [pid, seen] of live) for (const d of below(kids, pid)) seen.add(d);
+}
+
+function register(pid: number): void {
+  live.set(pid, new Set());
+  if (!exitHook) {
+    exitHook = true;
+    process.on("exit", killAllRunning); // process.exit() and crashes must not leave detached runtimes behind
+  }
+  if (!sampler) {
+    sampler = setInterval(sample, samplerMs);
+    sampler.unref();
+  }
+}
+
+function unregister(pid: number): void {
+  live.delete(pid);
+  if (!live.size && sampler) {
+    clearInterval(sampler);
+    sampler = undefined;
+  }
+}
+
+/** Sampling interval of the descendant timer (default 2000 ms); for tests. Takes effect for the next timer. */
+export function setSamplerIntervalMs(ms: number): void {
+  samplerMs = ms;
+}
+
+/** Whether the descendant timer is running (for tests). */
+export function samplerActive(): boolean {
+  return sampler !== undefined;
+}
+
+function signalPid(pid: number, sig: NodeJS.Signals, group: boolean): void {
+  try {
+    process.kill(group && process.platform !== "win32" ? -pid : pid, sig);
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Signal the runtime's group, the descendants recorded earlier that are still in the process table, and its current descendants. */
+function killTree(pid: number, sig: NodeJS.Signals): void {
+  const kids = processTable();
+  const seen = live.get(pid) ?? new Set<number>();
+  const now = below(kids, pid);
+  const present = kids ? new Set([...kids.values()].flat()) : undefined; // without a table, trust the record
+  for (const d of now) seen.add(d);
+  signalPid(pid, sig, true);
+  for (const d of seen) if (!present || present.has(d)) signalPid(d, sig, false);
+}
+
+/** How many runtimes are registered as running (for tests). */
+export function runningCount(): number {
+  return live.size;
+}
+
+/** Synchronously SIGKILL every runtime still running, with the descendants seen when it was started or last checked. Used when agent-lyceum itself is going away. */
+export function killAllRunning(): void {
+  for (const pid of [...live.keys()]) {
+    killTree(pid, "SIGKILL");
+    unregister(pid);
+  }
+}
+
+/**
  * Run an invocation as a child process in its own process group, with a timeout, cancellation, bounded memory
  * and a bounded finish: whatever the runtime and its descendants do with the output pipes, this settles once,
  * and the whole process tree is gone by then (SIGTERM, then SIGKILL after `killGraceMs`).
@@ -66,6 +182,7 @@ export function runInvocation(inv: Invocation, opts: RunnerOptions): Promise<Wak
     errLog.on("error", () => {});
 
     const child = spawn(inv.cmd, inv.args, { cwd: inv.cwd, env: inv.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+    if (child.pid !== undefined) register(child.pid);
     const stdoutTail = new Tail();
     const stderrTail = new Tail();
     const parser: StreamParser | undefined = inv.stream?.();
@@ -77,13 +194,7 @@ export function runInvocation(inv: Invocation, opts: RunnerOptions): Promise<Wak
     const timers: NodeJS.Timeout[] = [];
 
     const killGroup = (sig: NodeJS.Signals) => {
-      if (child.pid === undefined) return;
-      try {
-        if (process.platform === "win32") child.kill(sig);
-        else process.kill(-child.pid, sig);
-      } catch {
-        /* nothing left to signal */
-      }
+      if (child.pid !== undefined) killTree(child.pid, sig);
     };
 
     const finish = (spawnError?: Error) => {
@@ -92,6 +203,7 @@ export function runInvocation(inv: Invocation, opts: RunnerOptions): Promise<Wak
       for (const t of timers) clearTimeout(t);
       opts.signal?.removeEventListener("abort", onAbort);
       killGroup("SIGKILL"); // whatever of the tree is still around
+      if (child.pid !== undefined) unregister(child.pid);
       child.stdout?.destroy();
       child.stderr?.destroy();
       void Promise.all([endStream(outLog), endStream(errLog)]).then(() => {
