@@ -237,7 +237,7 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 ## 中止 run
 
-**中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-lyceum resume` 接續。再按一次 Ctrl-C 會立刻結束。超過 `wake_timeout_sec` 的喚醒也以同樣方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
+**中止 run：** Ctrl-C（或 SIGTERM）會乾淨地取消 run：執行中的 agent 先收到 SIGTERM，5 秒後 SIGKILL（連同整個子程序樹），未讀信件保留、專案鎖釋放，exit code 為 `130`；之後可用 `agent-lyceum resume` 接續。再按一次 Ctrl-C 會立刻結束。`npx`、`npm exec`／`npm run` 與 `tsx` 不會轉送 SIGHUP：這類啟動器結束時（例如關閉終端機），`run`、`resume`、`call` 會以同樣方式取消（exit code `130`），`tidy` 則還原快照並以 `1` 結束。若要讓 run 在啟動器結束後繼續，請直接執行已安裝的 `agent-lyceum`；在 npm script 內會繼承 `npm_execpath`，須改用 `env -u npm_execpath agent-lyceum …`。超過 `wake_timeout_sec` 的喚醒也以與 Ctrl-C 相同的方式停止，並算作一次失敗的嘗試。每次嘗試完整的 stdout／stderr 都寫在 `runs/<run-id>/mail/attempts/<attempt>/log/`，記憶體中每個串流只保留最後 64 KiB。
 
 ## 退出碼
 

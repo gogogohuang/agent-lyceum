@@ -8,6 +8,7 @@
 //                                        the first <times> calls fail (counted in FAKE_FAIL_COUNT=<file>, required with <times>), then calls behave as below; no <times> = always fail.
 //                                        A script entry can say `fail: "<kind>"` instead (it is counted by the script itself).
 // FAKE_MARKER=<file>                     written when a sleeping call starts: { pid, grandchild }
+// FAKE_IGNORE_TERM=1                     a sleeping call ignores SIGTERM (it only dies on SIGKILL, after the kill grace)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +30,7 @@ const outbox = dirs.find((d) => d.endsWith(path.join("outbox", me)));
 const FULL = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Not done\nNone\n";
 
 const sleepForever = () => {
+  if (process.env.FAKE_IGNORE_TERM) process.on("SIGTERM", () => {});
   const gc = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "inherit" });
   if (process.env.FAKE_MARKER) fs.writeFileSync(process.env.FAKE_MARKER, JSON.stringify({ pid: process.pid, grandchild: gc.pid }));
   setInterval(() => {}, 1000);
