@@ -12,7 +12,19 @@ function grandchild() {
   return gc;
 }
 
-if (mode === "ok") {
+if (mode === "detach-exit") {
+  // a detached, unref'd child in its own session; we exit 0 after a pause, leaving it behind
+  const gc = spawn(process.execPath, ["-e", childCode], { stdio: "ignore", detached: true });
+  gc.unref();
+  if (pidFile) fs.writeFileSync(pidFile, String(gc.pid));
+  setTimeout(() => process.exit(0), Number(process.argv[4] ?? 600));
+} else if (mode === "escape") {
+  // a descendant in its own process group (setsid-style daemon), invisible to a group kill
+  const gc = spawn(process.execPath, ["-e", childCode], { stdio: "ignore", detached: true });
+  if (pidFile) fs.writeFileSync(pidFile + ".self", String(process.pid));
+  if (pidFile) fs.writeFileSync(pidFile, String(gc.pid));
+  setInterval(() => {}, 1000);
+} else if (mode === "ok") {
   process.stdout.write('not json\n{"result":"hello","session_id":"s1","usage":{"output_tokens":7}}\n');
 } else if (mode === "hang") {
   grandchild();

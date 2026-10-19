@@ -2,10 +2,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Invocation } from "../src/adapters/types.js";
-import { runInvocation, TAIL_BYTES } from "../src/process-runner.js";
+import { killAllRunning, runInvocation, runningCount, samplerActive, setSamplerIntervalMs, TAIL_BYTES } from "../src/process-runner.js";
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "runtime", "process-tree.mjs");
 const dirs: string[] = [];
@@ -14,7 +14,17 @@ const tmp = () => {
   dirs.push(d);
   return d;
 };
+const spawned = new Set<number>();
 afterEach(() => {
+  for (const p of spawned) {
+    try {
+      process.kill(p, "SIGKILL"); // a failing test must not leave its fixtures running
+    } catch {
+      /* already gone */
+    }
+  }
+  spawned.clear();
+  setSamplerIntervalMs(2000);
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -35,7 +45,11 @@ const alive = (pid: number) => {
     return false;
   }
 };
-const readPid = (f: string) => Number(fs.readFileSync(f, "utf8"));
+const readPid = (f: string) => {
+  const pid = Number(fs.readFileSync(f, "utf8"));
+  spawned.add(pid);
+  return pid;
+};
 const until = async (cond: () => boolean, ms = 3000) => {
   const end = Date.now() + ms;
   while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
@@ -113,6 +127,127 @@ describe("runInvocation", () => {
     await until(() => !alive(gc));
     expect(alive(gc)).toBe(false);
   }, 15_000);
+
+  it("also kills a descendant that left the process group", async () => {
+    const pidFile = path.join(tmp(), "pid");
+    const ac = new AbortController();
+    const done = runInvocation(inv("escape", pidFile), { timeoutSec: 20, logDir: tmp(), signal: ac.signal, killGraceMs: 200 });
+    try {
+      await until(() => fs.existsSync(pidFile + ".self") && fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8") !== "");
+      readPid(pidFile + ".self");
+      const gc = readPid(pidFile);
+      expect(alive(gc)).toBe(true);
+      ac.abort();
+      await done;
+      await until(() => !alive(gc));
+      expect(alive(gc)).toBe(false);
+    } finally {
+      ac.abort();
+      await done;
+    }
+  });
+
+  it("kills a detached child of a runtime that exits normally, found by the sampler while the runtime lived", async () => {
+    setSamplerIntervalMs(100);
+    const pidFile = path.join(tmp(), "pid");
+    const r = await runInvocation(inv("detach-exit", pidFile), { timeoutSec: 20, logDir: tmp() });
+    expect(r.ok).toBe(true);
+    const gc = readPid(pidFile);
+    await until(() => !alive(gc));
+    expect(alive(gc)).toBe(false);
+    expect(runningCount()).toBe(0);
+  });
+
+  it("runs the sampler only while a runtime is registered", async () => {
+    expect(samplerActive()).toBe(false);
+    const pidFile = path.join(tmp(), "pid");
+    const ac = new AbortController();
+    const done = runInvocation(inv("hang", pidFile), { timeoutSec: 20, logDir: tmp(), signal: ac.signal, killGraceMs: 200 });
+    try {
+      expect(samplerActive()).toBe(true);
+    } finally {
+      ac.abort();
+      await done;
+    }
+    expect(samplerActive()).toBe(false);
+    expect(runningCount()).toBe(0);
+  });
+
+  it("descendantsOf gives up on a ps that hangs and ignores SIGTERM", async () => {
+    const dir = tmp();
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    const psPid = path.join(dir, "ps.pid");
+    fs.writeFileSync(path.join(bin, "ps"), `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(psPid)}, String(process.pid));\nprocess.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+    const script = path.join(dir, "probe.mjs");
+    const src = pathToFileURL(path.join(path.dirname(fixture), "..", "..", "..", "src", "process-runner.ts")).href;
+    fs.writeFileSync(script, `import { descendantsOf } from ${JSON.stringify(src)};\nconst t = Date.now();\nconst r = descendantsOf(process.pid);\nconsole.log(JSON.stringify({ r, ms: Date.now() - t }));\n`);
+    const root = path.join(path.dirname(fixture), "..", "..", "..");
+    try {
+      // supervised with its own hard kill, so a regression cannot hang vitest
+      const out = spawnSync(process.execPath, ["--import", "tsx", script], { cwd: root, encoding: "utf8", timeout: 20_000, killSignal: "SIGKILL", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+      expect(out.error).toBeUndefined();
+      const res = JSON.parse(out.stdout.trim().split("\n").at(-1) ?? "{}") as { r: number[]; ms: number };
+      expect(res.r).toEqual([]);
+      expect(res.ms).toBeLessThan(3000);
+    } finally {
+      if (fs.existsSync(psPid)) spawned.add(Number(fs.readFileSync(psPid, "utf8")));
+    }
+  }, 30_000);
+
+  it("killAllRunning (used when agent-lyceum exits) takes down runtimes that are still running", async () => {
+    const pidFile = path.join(tmp(), "pid");
+    const done = runInvocation(inv("hang", pidFile), { timeoutSec: 20, logDir: tmp(), killGraceMs: 200 });
+    await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8") !== "");
+    const gc = readPid(pidFile);
+    expect(alive(gc)).toBe(true);
+    killAllRunning();
+    await until(() => !alive(gc));
+    expect(alive(gc)).toBe(false);
+    await done;
+  });
+
+  it("forgets a runtime once it has exited normally", async () => {
+    const before = runningCount();
+    await runInvocation(inv("ok"), { timeoutSec: 20, logDir: tmp() });
+    expect(runningCount()).toBe(before);
+  });
+
+  it("registers a live runtime and drops it after a kill", async () => {
+    const pidFile = path.join(tmp(), "pid");
+    const ac = new AbortController();
+    const before = runningCount();
+    const done = runInvocation(inv("hang", pidFile), { timeoutSec: 20, logDir: tmp(), signal: ac.signal, killGraceMs: 200 });
+    expect(runningCount()).toBe(before + 1);
+    await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8") !== "");
+    ac.abort();
+    await done;
+    expect(runningCount()).toBe(before);
+  });
+
+  it("does not kill unrelated processes: killAllRunning with nothing registered is a no-op", () => {
+    expect(() => killAllRunning()).not.toThrow();
+    expect(alive(process.pid)).toBe(true);
+  });
+
+  describe.each(["exit", "throw"])("when agent-lyceum dies by %s", (how) => {
+    it("kills the runtime and the descendant that left its process group", async () => {
+      const pidFile = path.join(tmp(), "pid");
+      const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+      const hook = path.join(path.dirname(fixture), "exit-hook.mjs");
+      const host = spawnSync(process.execPath, ["--import", "tsx", hook, pidFile, how], { cwd: root, encoding: "utf8", timeout: 30_000 });
+      expect(host.status).not.toBe(0);
+      const gc = readPid(pidFile);
+      const rt = readPid(pidFile + ".self");
+      try {
+        await until(() => !alive(gc) && !alive(rt));
+        expect(alive(rt)).toBe(false);
+        expect(alive(gc)).toBe(false);
+      } finally {
+        for (const p of [gc, rt]) if (alive(p)) process.kill(p, "SIGKILL");
+      }
+    }, 40_000);
+  });
 
   it("does not start anything when it is already cancelled", async () => {
     const ac = new AbortController();
