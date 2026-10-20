@@ -23,6 +23,7 @@ import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { runMonitor } from "./monitor-lifecycle.js";
+import { createStatusWatcher } from "./status-watch.js";
 import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
@@ -699,8 +700,37 @@ program
   .option("--monitor", "keep the page open and refresh it (Ctrl-C to quit)")
   .option("--interval <sec>", "refresh interval for --monitor", "2")
   .option("--json", "print the report as JSON (no colour); works with --task-list and --task-id")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean }) => {
+  .option("--watch", "with --json: keep running and print one JSON line (the project report plus one per running task) whenever it changes (Ctrl-C to quit)")
+  .option("--heartbeat <sec>", "with --watch: how often to re-check when no file event came", "5")
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; watch?: boolean; heartbeat: string }) => {
     try {
+      if (opts.watch) {
+        if (!opts.json) fail("--watch needs --json.");
+        if (opts.monitor || opts.taskList || opts.taskId !== undefined) fail("--watch cannot be combined with --monitor, --task-list or --task-id.");
+        const beat = Number(opts.heartbeat);
+        if (!(beat > 0)) fail("--heartbeat must be a positive number of seconds.");
+        loadProject(opts.project); // fail now on an unknown project, not as a frame
+        const watcher = createStatusWatcher({
+          load: () => loadProject(opts.project),
+          dir: (p) => p.paths.runs,
+          write: (line) => process.stdout.write(`${line}\n`),
+          debounceMs: 100,
+        });
+        runMonitor({
+          draw: watcher.beat,
+          intervalMs: beat * 1000,
+          stdout: process.stdout,
+          stdin: process.stdin,
+          ppid: () => process.ppid,
+          exit: (code) => {
+            watcher.close();
+            process.exit(code);
+          },
+          onSignal: (sig, handler) => process.on(sig, handler),
+          fail: (message) => fail(message),
+        });
+        await new Promise(() => {});
+      }
       const pr = loadProject(typeof opts.taskList === "string" ? opts.taskList : opts.project);
       if (opts.json) {
         if (opts.monitor) fail("--json cannot be combined with --monitor.");

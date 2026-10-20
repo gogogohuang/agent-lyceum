@@ -240,3 +240,39 @@ describe("doctor --json", () => {
 });
 
 void fs;
+
+describe("status --json --watch", () => {
+  it("needs --json and rejects --monitor / --task-list", () => {
+    env = makeEnv();
+    expect(run(["status", "-p", "demo", "--watch"]).err).toContain("--watch needs --json");
+    expect(run(["status", "-p", "demo", "--json", "--watch", "--task-list"]).err).toContain("cannot be combined");
+  });
+
+  it("prints a frame at start and another when a run starts, without polling", async () => {
+    env = makeEnv();
+    const { spawn } = await import("node:child_process");
+    const child = spawn(tsx, [cli, "--home", env.home, "status", "-p", "demo", "--json", "--watch", "--heartbeat", "60"], { stdio: ["pipe", "pipe", "pipe"] });
+    const lines: string[] = [];
+    let buf = "";
+    child.stdout.on("data", (d) => {
+      buf += d;
+      const parts = buf.split("\n");
+      buf = parts.pop() ?? "";
+      lines.push(...parts.filter(Boolean));
+    });
+    const until = async (n: number) => {
+      for (let i = 0; i < 200 && lines.length < n; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(lines.length).toBeGreaterThanOrEqual(n);
+    };
+    try {
+      await until(1);
+      expect(JSON.parse(lines[0]).runs).toEqual({});
+      // The heartbeat is 60s, so only the file watcher can produce the second frame.
+      write(path.join(env.project().paths.runs, "20260101-000000", "state.json"), JSON.stringify({ run_id: "20260101-000000", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], pid: process.pid }));
+      await until(2);
+      expect(Object.keys(JSON.parse(lines[1]).runs)).toEqual(["20260101-000000"]);
+    } finally {
+      child.kill();
+    }
+  });
+});

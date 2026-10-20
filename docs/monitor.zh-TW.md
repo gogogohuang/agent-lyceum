@@ -1,6 +1,6 @@
 # 監控 mod（Claude Code）
 
-`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供通知與 `/status-monitor` 面板，並輪詢 `agent-lyceum status --json`。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
+`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供通知與 `/status-monitor` 面板，資料來自 `agent-lyceum status --json --watch`：一個長駐程序，run 的檔案有變動才輸出一行（不輪詢）。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
 
 **載入。** 先 build（`npm run build`；mod 會執行 `dist/cli.js`），再用下面的指令啟動 session：
 
@@ -20,9 +20,11 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 |---|---|---|
 | `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | 已註冊的專案名稱（`-p`）；用逗號分隔可同時監看多個；留空則依 session 所在目錄推斷 | 空 |
-| `intervalSeconds` | 輪詢狀態的間隔（秒） | `1` |
+| `intervalSeconds` | 只有 `status --watch` 起不來（舊版 CLI）時才用：改成每隔這麼久輪詢一次 | `1` |
 | `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
 
 設定變更要等下次啟動 session 才生效。面板若顯示 `無法取得狀態：...`，通常是 `command` 跑不起來（多半是還沒 build `dist/cli.js`），或專案名稱沒有註冊。
 
 **備援標記。** 設有備援鏈的 agent 正在使用備用模型時，它的區塊標題會多一個小小的 `備援中` 標記，其他版面不變。從哪個模型切換、原因，以及冷卻狀態，請看 `agent-lyceum status`。
+
+**如何保持最新。** mod 對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個執行中 task 各一份）；剛結束的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。
