@@ -1,5 +1,5 @@
 # dependencies & build output (dist is rebuilt by `npm run prepare` on install)
-node_modules/
+node_modules
 dist/
 
 # logs, caches, coverage
