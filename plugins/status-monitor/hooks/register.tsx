@@ -28,6 +28,28 @@ async function fetchReport($: EngineInterface, args: string[]): Promise<Report> 
   return JSON.parse(res.stdout) as Report
 }
 
+/** Toast the transitions of every run in a report set, keep the running ones, and publish the snapshot. */
+async function apply($: EngineInterface, t: Target, report: Report, seen: Record<string, Report>) {
+  const runs: Record<string, Report> = {}
+  for (const [id, r] of Object.entries(seen)) {
+    const key = `${t.key}|${id}`
+    const note = tagToast(transition(last.get(key) ?? null, r), r.project.name, several)
+    if (note) $.ui.toast(note)
+    if (r.run?.state === 'running') {
+      last.set(key, r)
+      runs[id] = r
+    } else {
+      last.delete(key) // finished: toast once, then stop tracking
+    }
+  }
+  await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, runs, error: null } }))
+}
+
+async function fail($: EngineInterface, t: Target, err: unknown) {
+  await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, runs: s[t.key]?.runs, error: err instanceof Error ? err.message : String(err) } }))
+}
+
+/** One pull of the status: the fallback when `status --watch` cannot be used. */
 async function poll($: EngineInterface, t: Target) {
   if (polling.has(t.key)) return
   polling.add(t.key)
@@ -37,29 +59,59 @@ async function poll($: EngineInterface, t: Target) {
     const list = JSON.parse((await $.process.run([...t.status, '--task-list'], { timeoutMs: 15000 })).stdout) as { runs: { run_id: string; state: string }[] }
     const tracked = [...last.keys()].filter(k => k.startsWith(`${t.key}|`)).map(k => k.slice(t.key.length + 1))
     const ids = new Set([...list.runs.filter(r => r.state === 'running').map(r => r.run_id), ...tracked])
-    const runs: Record<string, Report> = {}
-    for (const id of ids) {
-      const r = await fetchReport($, [...t.status, '--task-id', id])
-      const key = `${t.key}|${id}`
-      const note = tagToast(transition(last.get(key) ?? null, r), r.project.name, several)
-      if (note) $.ui.toast(note)
-      if (r.run?.state === 'running') {
-        last.set(key, r)
-        runs[id] = r
-      } else {
-        last.delete(key) // finished: toast once, then stop tracking
-      }
-    }
-    await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, runs, error: null } }))
+    const seen: Record<string, Report> = {}
+    for (const id of ids) seen[id] = await fetchReport($, [...t.status, '--task-id', id])
+    await apply($, t, report, seen)
   } catch (err) {
-    await update($, snapshot, s => ({ ...s, [t.key]: { report: s[t.key]?.report ?? null, runs: s[t.key]?.runs, error: err instanceof Error ? err.message : String(err) } }))
+    await fail($, t, err)
   } finally {
     polling.delete(t.key)
   }
 }
 
-function pollAll($: EngineInterface, targets: Target[]) {
-  for (const t of targets) void poll($, t)
+/** What `status --json --watch` prints per line (see src/status-watch.ts). */
+type Frame = { report?: Report; runs?: Record<string, Report>; error?: string }
+
+/**
+ * Follow `status --json --watch`: the CLI prints a line when something changed, so nothing runs between changes.
+ * Resolves when the child ends (with why), so the caller can fall back to polling.
+ */
+async function follow($: EngineInterface, t: Target): Promise<string> {
+  let buf = ''
+  let err = ''
+  for await (const { stream, text } of $.process.spawn({ argv: [...t.status, '--watch'] })) {
+    if (stream === 'stderr') {
+      err += text
+      continue
+    }
+    buf += text
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const l of lines) {
+      if (!l.trim()) continue
+      try {
+        const f = JSON.parse(l) as Frame
+        if (f.report) await apply($, t, f.report, f.runs ?? {})
+        else await fail($, t, f.error ?? 'no report')
+      } catch (e) {
+        await fail($, t, e)
+      }
+    }
+  }
+  return err.trim().split('\n')[0] || 'status --watch ended'
+}
+
+/** Watch every target; a target whose watcher ends is polled every `every` ms instead. */
+function watchAll($: EngineInterface, targets: Target[], every: number) {
+  for (const t of targets) {
+    void follow($, t)
+      .catch(e => (e instanceof Error ? e.message : String(e)))
+      .then(why => {
+        $.ui.log(`status-monitor: ${t.key || '(inferred project)'}: ${why}; polling every ${every / 1000}s`, { to: 'debug' })
+        void poll($, t)
+        $.clock.every(every, () => void poll($, t))
+      })
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -74,8 +126,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane' })
-    pollAll($, targets)
-    $.clock.every(every, () => pollAll($, targets))
+    watchAll($, targets, every)
     if (options.autoOpen === true) void $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
     return next(e)
   })
@@ -89,7 +140,6 @@ export const register: Register = (on, options) => {
     }
     // Dock at half the terminal's width (a request: a width the person dragged the dock to wins).
     const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: Math.max(40, Math.floor(columns / 2)), rows: 16, focus: true })
-    pollAll($, targets)
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
