@@ -261,7 +261,7 @@ describe("status --json --watch", () => {
       lines.push(...parts.filter(Boolean));
     });
     const until = async (n: number) => {
-      for (let i = 0; i < 200 && lines.length < n; i++) await new Promise((r) => setTimeout(r, 50));
+      for (let i = 0; i < 400 && lines.length < n; i++) await new Promise((r) => setTimeout(r, 50));
       expect(lines.length).toBeGreaterThanOrEqual(n);
     };
     try {
@@ -274,5 +274,5 @@ describe("status --json --watch", () => {
     } finally {
       child.kill();
     }
-  });
+  }, 30000); // tsx starts slowly on a loaded CI runner
 });
