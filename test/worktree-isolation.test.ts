@@ -23,7 +23,7 @@ import {
   snapshotBase,
   snapshotHead,
 } from "../src/worktree.js";
-import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { git, initGitRepo, makeConcurrent, makeEnv, makeParallel, withSections, write, type TestEnv } from "./helpers.js";
 
 // Every attack here plants something an agent may write (its worktree, or its own git dir under `.git/worktrees/`) so that
 // git would run a program — or write a file — outside the sandbox. The control drives the same planted worktree with plain git,
@@ -481,7 +481,7 @@ describe("a refused worktree during a run", () => {
   const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply") =>
     write(
       path.join(outboxDir(p, from), `${Math.random()}.md`),
-      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : "body"}\n`,
+      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : withSections(type, `body of ${subject}`)}\n`,
     );
   async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {
     const project = env.project();
@@ -608,7 +608,7 @@ describe("a refusal between batches", () => {
   const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply") =>
     write(
       path.join(outboxDir(p, from), `${Math.random()}.md`),
-      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : "body"}\n`,
+      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: partial\n" : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Not done\nx\n" : withSections(type, `body of ${subject}`)}\n`,
     );
   async function start(invoker: Parameters<typeof runTeam>[0]["invoker"]) {
     env = makeEnv();

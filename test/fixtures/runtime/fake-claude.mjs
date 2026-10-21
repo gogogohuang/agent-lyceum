@@ -37,7 +37,7 @@ const sleepForever = () => {
 };
 const sendMail = (m) => {
   const fm = [`to: ${m.to ?? "lead"}`, `type: ${m.type ?? "reply"}`, `subject: ${m.subject ?? "re"}`, ...(m.outcome ? [`outcome: ${m.outcome}`] : [])].join("\n");
-  const body = m.body ?? (m.type === "done" ? FULL : "## Changes\n- done\n\n## Verification\nok\n\n## Open items\nNone\n\n## Risks\nNone\n");
+  const body = m.body ?? (m.type === "done" ? FULL : m.type === "task" ? "## Goal\nx\n\n## Acceptance criteria\nNone\n\n## Scope\nNone\n\n## Upstream\nNone\n" : "## Changes\n- done\n\n## Verification\nok\n\n## Open items\nNone\n\n## Risks\nNone\n");
   fs.writeFileSync(path.join(outbox, `m${Date.now()}-${Math.random().toString(16).slice(2)}.md`), `---\n${fm}\n---\n\n${body}\n`);
 };
 // kind -> [exit code, stdout result message, api_error_status, stderr]. auth and network are real captured output; the others follow the documented text.

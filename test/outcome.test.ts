@@ -10,7 +10,7 @@ import { loadRunState, outcomeOf } from "../src/run-store.js";
 import { exitCodeForOutcome, RUN_OUTCOMES } from "../src/schema.js";
 import { formatTaskList } from "../src/status.js";
 import { prepareTask } from "../src/task.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { REPLY_BODY, TASK_BODY, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -21,7 +21,7 @@ const FULL = "## Result\nShipped login.\n\n## Files\n- src/login.ts\n\n## Verifi
 const sendDone = (i: Parameters<Invoker>[0], fm: string, body: string) =>
   write(path.join(outboxDir(i.project, "lead"), `${Math.random()}.md`), `---\ntype: done\nsubject: report\n${fm}---\n\n${body}\n`);
 const sendTask = (i: Parameters<Invoker>[0]) =>
-  write(path.join(outboxDir(i.project, "lead"), `${Math.random()}.md`), `---\nto: fe-member\ntype: task\nsubject: job\n---\n\n## Goal\nx\n`);
+  write(path.join(outboxDir(i.project, "lead"), `${Math.random()}.md`), `---\nto: fe-member\ntype: task\nsubject: job\n---\n\n${TASK_BODY}\n`);
 
 async function run(invoker: Invoker): Promise<RunSummary> {
   env = makeEnv();
@@ -109,7 +109,7 @@ describe("run outcome", () => {
     const runDir = path.join(project.paths.runs, "run-a");
     const s = await runTeam({ project, task: prepareTask({ text: "go", cwd: env.root, runDir }), runDir, log: () => {}, invoker: async (i) => {
         if (i.agent.name === "lead") sendTask(i);
-        else write(path.join(outboxDir(i.project, "fe-member"), "r.md"), "---\nto: lead\ntype: reply\nsubject: back\n---\n\nx\n");
+        else write(path.join(outboxDir(i.project, "fe-member"), "r.md"), `---\nto: lead\ntype: reply\nsubject: back\n---\n\n${REPLY_BODY}\n`);
         return OK;
       } });
     expect(s.endReason).toBe("max_rounds");
