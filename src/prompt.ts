@@ -5,7 +5,7 @@ import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
-import { commonFile, memoryDirs, outboxDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { archiveFile, commonFile, decisionsFile, lessonsFile, memoryDirs, outboxDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -15,6 +15,8 @@ function memoryLabel(agent: ResolvedAgent, dir: string): string {
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
 export const HANDOFF_LIMIT = COMMON_LIMIT;
+/** Cap of each of DECISIONS.md and LESSONS.md in a prompt. */
+export const CONTEXT_LIMIT = 6 * 1024;
 export const LEAD_BATCH_LIMIT = 5;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
@@ -218,6 +220,11 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       (isLead || agent.canEditAgentMd ? " unless you need to as lead (changes are logged)." : "."),
     "- Never touch another agent's memory, inbox or outbox, or the team's config files.",
     `- The shared team context is in \`${commonFile(project)}\`${isLead ? " (you maintain it; keep it short)" : " (read-only)"}.`,
+    ...(isLead
+      ? [
+          `- You also keep two durable records for every future run of this project: \`${decisionsFile(project)}\` (what was decided and why; a new decision replaces the one it contradicts) and \`${lessonsFile(project)}\` (heuristics and pitfalls that stay true). Update them before you send \`done\`. Each is shown in prompts only up to ${CONTEXT_LIMIT / 1024} KB: move the oldest entries into \`${archiveFile(decisionsFile(project))}\` / \`${archiveFile(lessonsFile(project))}\` (read on demand) to keep them under it.`,
+        ]
+      : []),
     PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
@@ -247,6 +254,16 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     if (common.truncated) {
       parts.push(`\n[COMMON.md was truncated at ${COMMON_LIMIT} bytes — the lead should condense it.]`);
     }
+  }
+
+  for (const [title, file] of [
+    ["Project decisions (DECISIONS.md)", decisionsFile(project)],
+    ["Project lessons (LESSONS.md)", lessonsFile(project)],
+  ] as const) {
+    const rec = readCapped(file, CONTEXT_LIMIT);
+    if (!rec?.text.trim()) continue; // nothing recorded yet: no heading, no tokens
+    parts.push("", `# ${title}`, rec.text.trim());
+    if (rec.truncated) parts.push(`\n[${path.basename(file)} was truncated at ${CONTEXT_LIMIT} bytes — the lead should move the oldest entries to ${path.basename(archiveFile(file))}.]`);
   }
 
   const handoffFile = handoff ? sharedIndex(project) : undefined;

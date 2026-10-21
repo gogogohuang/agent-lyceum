@@ -327,6 +327,9 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   };
 }
 
+/** A run that ended with a verified-or-inferred `completed` outcome: the only kind the monitor stops listing. */
+export const isCompletedRun = (r: Pick<RunReport, "state" | "outcome">): boolean => r.state === "ended" && r.outcome === "completed";
+
 const projectInfo = (p: ResolvedProject) => ({ name: p.name, dir: p.dir, lead: p.lead });
 
 /** The fallback part of an agent's report: nothing at all for an agent without a chain. */

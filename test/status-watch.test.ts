@@ -34,6 +34,21 @@ describe("buildWatchFrame", () => {
   });
 });
 
+describe("buildWatchFrame keeps what is not completed", () => {
+  it("lists interrupted, waiting and non-completed ended runs, and drops completed ones", () => {
+    env = makeEnv();
+    const dead = 2 ** 22 + 1; // no such process: the dispatcher is gone
+    writeRun("20260101-000000", { pid: dead });
+    writeRun("20260102-000000", { end_reason: "waiting" });
+    writeRun("20260103-000000", { end_reason: "done", outcome: "partial" });
+    writeRun("20260104-000000", { end_reason: "agent_failed", outcome: "failed" });
+    writeRun("20260105-000000", { end_reason: "done", outcome: "completed" });
+    const frame = buildWatchFrame(env.project(), new Set());
+    expect(Object.keys(frame.runs ?? {}).sort()).toEqual(["20260101-000000", "20260102-000000", "20260103-000000", "20260104-000000"]);
+    expect(frame.runs?.["20260101-000000"].run?.state).toBe("interrupted");
+  });
+});
+
 describe("createStatusWatcher", () => {
   function make() {
     vi.useFakeTimers();

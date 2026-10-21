@@ -17,7 +17,7 @@ export type Run = {
   started_at?: string
   live?: boolean
   task_source?: string
-  state: 'running' | 'interrupted' | 'ended'
+  state: 'running' | 'interrupted' | 'ended' | 'waiting'
   end_reason?: string
   outcome?: string
   outcome_verified: boolean
