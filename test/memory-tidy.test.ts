@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { findMissingPaths, fingerprint, listMemoryFiles, memoryStats, projectChanges, readTidyState, restoreDirs, snapshotDirs, STAMP_RE, targetsFor, tidyStamp, verifyConservation, tidyAdvice, tidyMemory, restoreMemory, writeTidyState } from "../src/memory-tidy.js";
-import { writePolicy } from "../src/policy.js";
+import { recordsDir, writePolicy } from "../src/policy.js";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { buildTidyPrompts, type TidyContext } from "../src/prompt.js";
 import { git, initGitRepo, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
@@ -490,6 +490,76 @@ describe("restoreMemory", () => {
   });
 });
 
+describe("tidyAdvice for records", () => {
+  const big = (id: string, status = "active", extra = "") => `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: ${id}\n${extra}---\n${"x".repeat(4000)}\n`;
+
+  it("hints at the lead only when a kind's effective-active size is over the budget; superseded entries do not count", () => {
+    env = makeEnv();
+    const rd = recordsDir(env.project());
+    write(path.join(rd, "decisions", "d-a.md"), big("d-a"));
+    expect(tidyAdvice(env.project())).toEqual([]);
+    write(path.join(rd, "decisions", "d-b.md"), big("d-b"));
+    const a = tidyAdvice(env.project());
+    expect(a).toHaveLength(1);
+    expect(a[0]?.agent).toBe(env.project().lead);
+    expect(a[0]?.reason).toMatch(/decisions.*6144/);
+    write(path.join(rd, "decisions", "d-b.md"), big("d-b", "superseded"));
+    expect(tidyAdvice(env.project())).toEqual([]);
+    write(path.join(rd, "decisions", "d-b.md"), big("d-b", "active", "supersedes: [d-a]\n"));
+    expect(tidyAdvice(env.project())).toEqual([]);
+  });
+});
+
+describe("tidy --dry-run and the records", () => {
+  const rec = (status = "active") => `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: t\n---\nbody\n`;
+  const seedRec = (e: TestEnv) => {
+    const rd = recordsDir(e.project());
+    write(path.join(rd, "decisions", "d-a.md"), rec());
+    write(path.join(rd, "decisions", "d-b.md"), rec("superseded"));
+    write(path.join(rd, "lessons", "l-a.md"), rec());
+    return rd;
+  };
+  const dry = async (e: TestEnv, o: { layer: "project" | "global"; agent?: string }) => {
+    const lines: string[] = [];
+    const res = await tidyMemory({ project: e.project(), ...o, dryRun: true, say: (l) => lines.push(l) });
+    return { lines, res };
+  };
+
+  it("prints one records line for the default project layer and for --agent <lead>, once", async () => {
+    env = makeMemoryEnv();
+    const rd = seedRec(env);
+    for (const agent of [undefined, "lead"]) {
+      const { lines } = await dry(env, { layer: "project", agent });
+      const r = lines.filter((l) => l.startsWith("records "));
+      expect(r).toHaveLength(1);
+      expect(r[0]).toContain(rd);
+      expect(r[0]).toMatch(/3 file\(s\).*active: decisions 1, lessons 1/);
+    }
+  });
+
+  it("prints no records line for another agent or the global layer", async () => {
+    env = makeMemoryEnv();
+    seedRec(env);
+    expect((await dry(env, { layer: "project", agent: "qa-member" })).lines.join("\n")).not.toContain("records ");
+    expect((await dry(env, { layer: "global" })).lines.join("\n")).not.toContain("records ");
+  });
+
+  it("works for a lead with records but no memory dir", async () => {
+    env = makeMemoryEnv();
+    seedRec(env);
+    fs.rmSync(mem(env), { recursive: true, force: true });
+    const { lines, res } = await dry(env, { layer: "project", agent: "lead" });
+    expect(lines.filter((l) => l.startsWith("records "))).toHaveLength(1);
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ agent: "lead", status: "dry-run" });
+  });
+
+  it("prints no records line when there are no records", async () => {
+    env = makeMemoryEnv();
+    expect((await dry(env, { layer: "project" })).lines.join("\n")).not.toContain("records ");
+  });
+});
+
 describe("tidyAdvice", () => {
   it("is silent for small memory", () => {
     env = makeMemoryEnv();
@@ -519,5 +589,326 @@ describe("tidyAdvice", () => {
     }
     expect(tidyAdvice(env.project()).map((x) => x.agent)).toEqual(["lead"]);
     expect(tidyAdvice(env.project())[0]?.reason).toMatch(/51 commits/);
+  });
+});
+
+describe("tidy of the project records (the lead's wake-up)", () => {
+  const rec = (id: string, extra = "") => `---\nstatus: active\ndate: 2026-01-0${id.length % 9 + 1}\ntitle: ${id} title\n${extra}---\nbody of ${id}\n`;
+  const seedRecords = (e: TestEnv) => {
+    const dir = recordsDir(e.project());
+    write(path.join(dir, "decisions", "d-one.md"), rec("d-one"));
+    write(path.join(dir, "decisions", "d-two.md"), rec("d-two"));
+    write(path.join(dir, "lessons", "l-one.md"), rec("l-one"));
+    return dir;
+  };
+  const promptsOf = () => {
+    const prompts: Record<string, string> = {};
+    const invoker: Invoker = async (input) => {
+      prompts[input.agent.name] = input.userPrompt;
+      return OK;
+    };
+    return { prompts, invoker };
+  };
+  const merge = (rd: string, stamp: string) => {
+    write(path.join(rd, "decisions", "d-merged.md"), rec("d-merged", "supersedes: [d-one, d-two]\n"));
+    for (const id of ["d-one", "d-two"]) {
+      fs.mkdirSync(path.join(rd, ".archive", stamp, "decisions"), { recursive: true });
+      fs.renameSync(path.join(rd, "decisions", `${id}.md`), path.join(rd, ".archive", stamp, "decisions", `${id}.md`));
+    }
+    write(path.join(rd, ".archive", stamp, "tidy-report.md"), "## Merged\nx\n\n## Archived\nx\n\n## Unsure\nNone\n");
+  };
+  const recStamp = (prompt: string) => /^Records archive directory: .*\/\.archive\/(.+)$/m.exec(prompt)![1]!;
+
+  it("puts a records section in the lead's prompt only; memory prompt is unchanged for the lead's memory", async () => {
+    env = makeMemoryEnv();
+    seed(env);
+    seedRecords(env);
+    const { prompts, invoker } = promptsOf();
+    // The fake does nothing, so the tidy fails on the missing reports; the prompts are what is checked.
+    await tidyMemory({ project: env.project(), layer: "project", invoker, say: () => {} });
+    expect(prompts.lead).toContain("# Project records");
+    expect(prompts.lead).toMatch(/decisions\/d-one\.md\s+active\s+2026-01-\d\d\s+\d+ B\s+d-one title/);
+    expect(prompts.lead).toContain("Memory directory:");
+    for (const [name, p] of Object.entries(prompts)) if (name !== "lead") expect(p).not.toContain("# Project records");
+  });
+
+  it("does not include records with --agent <other> or --layer global", async () => {
+    env = makeMemoryEnv();
+    seed(env);
+    seedRecords(env);
+    const names = Object.keys(env.project().agents).filter((n) => n !== "lead");
+    const other = names.find((n) => env.project().agents[n]!.memory.project);
+    const { prompts, invoker } = promptsOf();
+    if (other) {
+      write(path.join(mem(env, other), "MEMORY.md"), "- [a](a.md)\n");
+      write(path.join(mem(env, other), "a.md"), "x");
+      await tidyMemory({ project: env.project(), layer: "project", agent: other, invoker, say: () => {} });
+      expect(prompts[other]).not.toContain("# Project records");
+    }
+    const g = promptsOf();
+    await tidyMemory({ project: env.project(), layer: "global", agent: "lead", invoker: g.invoker, say: () => {} });
+    expect(g.prompts.lead ?? "").not.toContain("# Project records");
+  });
+
+  it("tidies the lead with only records (no memory dir), and not at all when neither exists", async () => {
+    env = makeMemoryEnv();
+    const { prompts, invoker } = promptsOf();
+    await tidyMemory({ project: env.project(), layer: "project", agent: "lead", invoker, say: () => {} }).catch(() => undefined);
+    expect(prompts.lead).toBeUndefined();
+    seedRecords(env);
+    fs.rmSync(mem(env), { recursive: true, force: true });
+    const res = await tidyMemory({ project: env.project(), layer: "project", invoker, say: () => {} });
+    expect(prompts.lead).toContain("# Project records");
+    expect(prompts.lead).not.toContain("Memory directory:");
+    expect(res.find((r) => r.agent === "lead")?.status).toBe("failed"); // fake wrote no report
+  });
+
+  it("merges two entries: one stamp for both archives, conservation holds", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const rd = seedRecords(env);
+    const invoker: Invoker = async (input) => {
+      const stamp = recStamp(input.userPrompt);
+      expect(archiveOf(input.userPrompt)).toMatch(new RegExp(`\\.archive/${stamp}$`));
+      if (input.agent.name === "lead") {
+        merge(rd, stamp);
+        report(archiveOf(input.userPrompt));
+      }
+      return OK;
+    };
+    const res = await tidyMemory({ project: env.project(), layer: "project", agent: "lead", invoker, say: () => {} });
+    expect(res[0]).toMatchObject({ status: "tidied", problems: [], recordsDir: rd });
+    const stamp = res[0]!.archive!;
+    expect(fs.existsSync(path.join(rd, ".archive", stamp, "decisions", "d-one.md"))).toBe(true);
+    expect(fs.existsSync(path.join(rd, "decisions", "d-merged.md"))).toBe(true);
+    expect(fs.existsSync(path.join(d, ".archive", stamp, "tidy-report.md"))).toBe(true);
+  });
+
+  it("rolls both dirs back when a record is deleted", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const rd = seedRecords(env);
+    const before = { d: fingerprint(d), r: fingerprint(rd) };
+    const invoker: Invoker = async (input) => {
+      fs.rmSync(path.join(rd, "decisions", "d-one.md"));
+      write(path.join(d, "junk.md"), "x");
+      report(archiveOf(input.userPrompt));
+      write(path.join(rd, ".archive", recStamp(input.userPrompt), "tidy-report.md"), "## Merged\nNone\n");
+      return OK;
+    };
+    const res = await tidyMemory({ project: env.project(), layer: "project", agent: "lead", invoker, say: () => {} });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/d-one\.md/);
+    expect({ d: fingerprint(d), r: fingerprint(rd) }).toEqual(before);
+  });
+
+  it("rolls both dirs back when the agent writes outside the two dirs", async () => {
+    env = makeMemoryEnv();
+    const d = seed(env);
+    const rd = seedRecords(env);
+    const common = path.join(rd, "..", "COMMON.md");
+    write(common, "orig");
+    const before = { d: fingerprint(d), r: fingerprint(rd) };
+    const invoker: Invoker = async (input) => {
+      merge(rd, recStamp(input.userPrompt));
+      report(archiveOf(input.userPrompt));
+      write(common, "changed");
+      return OK;
+    };
+    const res = await tidyMemory({ project: env.project(), layer: "project", agent: "lead", invoker, say: () => {} });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/COMMON\.md/);
+    expect({ d: fingerprint(d), r: fingerprint(rd) }).toEqual(before);
+    expect(fs.readFileSync(common, "utf8")).toBe("orig");
+  });
+
+  describe("undo", () => {
+    const stamp = "20261008T031500Z";
+    it("restores both archives without overwriting", () => {
+      env = makeMemoryEnv();
+      const d = seed(env);
+      const rd = seedRecords(env);
+      write(path.join(d, ".archive", stamp, "c.md"), "gamma");
+      write(path.join(rd, ".archive", stamp, "decisions", "d-old.md"), rec("d-old"));
+      write(path.join(rd, ".archive", stamp, "decisions", "d-one.md"), "older");
+      const r = restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp });
+      expect(r.restored).toEqual(["c.md"]);
+      expect(r.records?.restored).toEqual(["decisions/d-old.md"]);
+      expect(r.records?.skipped.map((s) => s.rel)).toEqual(["decisions/d-one.md"]);
+      expect(fs.readFileSync(path.join(rd, "decisions", "d-one.md"), "utf8")).toContain("d-one title");
+    });
+    it("works with only a records archive, or only a memory archive", () => {
+      env = makeMemoryEnv();
+      const d = seed(env);
+      const rd = seedRecords(env);
+      write(path.join(rd, ".archive", stamp, "lessons", "l-old.md"), rec("l-old"));
+      const onlyRec = restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp });
+      expect(onlyRec.restored).toEqual([]);
+      expect(onlyRec.records?.restored).toEqual(["lessons/l-old.md"]);
+      const stamp2 = "20261009T031500Z";
+      write(path.join(d, ".archive", stamp2, "c.md"), "gamma");
+      const onlyMem = restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: stamp2 });
+      expect(onlyMem.restored).toEqual(["c.md"]);
+      expect(onlyMem.records).toBeUndefined();
+      expect(() => restoreMemory({ project: env.project(), agent: "lead", layer: "project", stamp: "20200101T000000Z" })).toThrow(/no archive/i);
+    });
+  });
+});
+
+describe("tidy hardening (review of T3a)", () => {
+  const rec = (id: string) => `---\nstatus: active\ndate: 2026-01-01\ntitle: ${id} title\n---\nbody of ${id}\n`;
+  const OLD = "20260101T000000Z";
+  const seedAll = (e: TestEnv) => {
+    const d = seed(e);
+    const rd = recordsDir(e.project());
+    write(path.join(rd, "decisions", "d-one.md"), rec("d-one"));
+    write(path.join(d, ".archive", OLD, "old.md"), "old memory");
+    write(path.join(rd, ".archive", OLD, "decisions", "old.md"), rec("old"));
+    return { d, rd };
+  };
+  const recStampOf = (prompt: string) => /^Records archive directory: .*\/\.archive\/(.+)$/m.exec(prompt)![1]!;
+  const finish = (input: { userPrompt: string }, rd?: string) => {
+    report(archiveOf(input.userPrompt));
+    if (rd) write(path.join(rd, ".archive", recStampOf(input.userPrompt), "tidy-report.md"), "## Merged\nNone\n\n## Archived\nNone\n\n## Unsure\nNone\n");
+  };
+  const lead = (e: TestEnv) => ({ project: e.project(), layer: "project" as const, agent: "lead", say: () => {} });
+
+  for (const [what, tamper] of [
+    ["overwrites a file in", (dir: string, rel: string) => write(path.join(dir, ".archive", OLD, rel), "overwritten")],
+    ["adds a file to", (dir: string) => write(path.join(dir, ".archive", OLD, "extra.md"), "new")],
+    ["deletes a file from", (dir: string, rel: string) => fs.rmSync(path.join(dir, ".archive", OLD, rel))],
+    ["replaces a file by a directory in", (dir: string, rel: string) => { fs.rmSync(path.join(dir, ".archive", OLD, rel)); fs.mkdirSync(path.join(dir, ".archive", OLD, rel)); }],
+  ] as const)
+    it(`rolls both trees back when the agent ${what} an earlier archive (memory and records)`, async () => {
+      for (const target of ["memory", "records"] as const) {
+        env = makeMemoryEnv();
+        const { d, rd } = seedAll(env);
+        const before = { d: fingerprint(d), r: fingerprint(rd) };
+        const invoker: Invoker = async (input) => {
+          finish(input, rd);
+          if (target === "memory") tamper(d, "old.md");
+          else tamper(rd, "decisions/old.md");
+          return OK;
+        };
+        const res = await tidyMemory({ ...lead(env), invoker });
+        expect(res[0]?.status).toBe("failed");
+        expect(res[0]?.problems.join("\n")).toMatch(/earlier archive|\.archive\/20260101/);
+        expect({ d: fingerprint(d), r: fingerprint(rd) }).toEqual(before);
+        env.cleanup();
+      }
+    });
+
+  it("leaves earlier archives alone in a good tidy", async () => {
+    env = makeMemoryEnv();
+    const { d, rd } = seedAll(env);
+    const invoker: Invoker = async (input) => {
+      finish(input, rd);
+      return OK;
+    };
+    const res = await tidyMemory({ ...lead(env), invoker });
+    expect(res[0]?.status).toBe("tidied");
+    expect(fs.readFileSync(path.join(d, ".archive", OLD, "old.md"), "utf8")).toBe("old memory");
+  });
+
+  it("an exception during validation (tidy-report.md is a directory) rolls back and fails with the message", async () => {
+    env = makeMemoryEnv();
+    const { d, rd } = seedAll(env);
+    const before = { d: fingerprint(d), r: fingerprint(rd) };
+    const invoker: Invoker = async (input) => {
+      fs.mkdirSync(path.join(archiveOf(input.userPrompt), "tidy-report.md"), { recursive: true });
+      write(path.join(d, "junk.md"), "x");
+      return OK;
+    };
+    const res = await tidyMemory({ ...lead(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/EISDIR|directory|tidy-report/i);
+    expect({ d: fingerprint(d), r: fingerprint(rd) }).toEqual(before);
+  });
+
+  it("an exception while finalizing (the state file cannot be written) rolls both trees back", async () => {
+    env = makeMemoryEnv();
+    const { d, rd } = seedAll(env);
+    const before = { d: fingerprint(d), r: fingerprint(rd) };
+    const invoker: Invoker = async (input) => {
+      finish(input, rd);
+      fs.mkdirSync(path.join(d, ".tidy-state.json")); // writeTidyState renames a file over this
+      return OK;
+    };
+    const res = await tidyMemory({ ...lead(env), invoker });
+    expect(res[0]?.status).toBe("failed");
+    expect(res[0]?.problems.join("\n")).toMatch(/tidy-state|EISDIR|ENOTDIR|rename/i);
+    expect({ d: fingerprint(d), r: fingerprint(rd) }).toEqual(before);
+    expect(fs.existsSync(path.join(d, ".tidy-state.json"))).toBe(false);
+  });
+
+  it("passes the runtime a policy that may write only the dirs being tidied", async () => {
+    env = makeMemoryEnv();
+    const { d, rd } = seedAll(env);
+    const seen: Record<string, import("../src/policy.js").WritePolicy | undefined> = {};
+    const invoker: Invoker = async (input) => {
+      seen[input.agent.name] = input.policy;
+      finish(input, input.agent.name === "lead" ? rd : undefined);
+      return OK;
+    };
+    write(path.join(mem(env, "fe-member"), "MEMORY.md"), "- [a](a.md)\n");
+    write(path.join(mem(env, "fe-member"), "a.md"), "x");
+    await tidyMemory({ project: env.project(), layer: "project", invoker, say: () => {} });
+    expect(seen.lead?.allowDirs.sort()).toEqual([d, rd].sort());
+    expect(seen.lead?.allowFiles).toEqual([]);
+    expect(seen["fe-member"]?.allowDirs).toEqual([mem(env, "fe-member")]);
+    expect(seen["fe-member"]?.allowFiles).toEqual([]);
+    // reading stays as before: the repo is readable, the outbox and shared dirs are not writable
+    expect(seen.lead?.readDirs).toContain(env.project().dir);
+    expect(seen.lead?.deny).toEqual(expect.arrayContaining(writePolicy(env.project(), env.project().agents.lead!).deny));
+  });
+
+  it("uses one stamp for every agent of a tidy, whatever the clock does", async () => {
+    env = makeMemoryEnv();
+    seed(env);
+    write(path.join(mem(env, "fe-member"), "MEMORY.md"), "- [a](a.md)\n");
+    write(path.join(mem(env, "fe-member"), "a.md"), "x");
+    let t = Date.parse("2026-10-08T03:15:00Z");
+    const now = () => {
+      t += 5000;
+      return new Date(t);
+    };
+    const invoker: Invoker = async (input) => {
+      report(archiveOf(input.userPrompt));
+      return OK;
+    };
+    const res = await tidyMemory({ project: env.project(), layer: "project", invoker, now, say: () => {} });
+    const stamps = res.filter((r) => r.status === "tidied").map((r) => r.archive);
+    expect(stamps.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(stamps).size).toBe(1);
+  });
+
+  it("a failed result of the lead names the records dir when records took part", async () => {
+    env = makeMemoryEnv();
+    const { rd } = seedAll(env);
+    const res = await tidyMemory({ ...lead(env), invoker: async () => OK });
+    expect(res[0]).toMatchObject({ status: "failed", recordsDir: rd });
+    fs.rmSync(path.join(rd, "decisions"), { recursive: true });
+    fs.rmSync(path.join(rd, ".archive"), { recursive: true });
+    const noRec = await tidyMemory({ ...lead(env), invoker: async () => OK });
+    expect(noRec[0]?.recordsDir).toBeUndefined();
+  });
+
+  it("the memory-only tidy prompt of the lead is unchanged from before records existed (901ec87)", () => {
+    env = makeMemoryEnv();
+    const fx = JSON.parse(fs.readFileSync(new URL("./fixtures/tidy-prompt-memory-only.json", import.meta.url), "utf8")) as { system: string; user: string };
+    const agentMd = path.join(env.root, "persona.md");
+    fs.writeFileSync(agentMd, "PERSONA");
+    const a = { ...env.project().agents.lead!, name: "lead", agentMd };
+    const p = buildTidyPrompts(a, {
+      layer: "project",
+      dir: "/m/lead",
+      archiveDir: "/m/lead/.archive/20261008T031500Z",
+      files: [{ rel: "MEMORY.md", bytes: 20, mtime: "2026-09-01T00:00:00.000Z" }, { rel: "a.md", bytes: 5, mtime: "2026-08-01T00:00:00.000Z" }],
+      index: "- [a](a.md)\n",
+      changes: { head: "h2", since: "h1", log: ["abc123 add feature"], stat: [" src/x.ts | 2 +-"] },
+      missing: [{ file: "a.md", path: "src/gone.ts" }],
+    });
+    expect(p.systemPrompt.slice(p.systemPrompt.indexOf("# Memory tidy"))).toBe(fx.system);
+    expect(p.userPrompt).toBe(fx.user);
   });
 });

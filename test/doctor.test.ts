@@ -6,7 +6,7 @@ import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { diagnoseProject, preflightRuntimes, probeRuntime } from "../src/doctor.js";
-import { setOsSandboxForTest } from "../src/policy.js";
+import { recordsDir, setOsSandboxForTest } from "../src/policy.js";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { initGitRepo, makeConcurrent, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
@@ -106,6 +106,37 @@ describe("diagnoseProject", () => {
     await diagnoseProject(env.project(), { env: envWith(bin, "full") });
     expect(calls().length).toBeGreaterThan(0);
     for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
+  });
+
+  describe("project records", () => {
+    const rec = (extra = "") => `---\nstatus: active\ndate: 2026-01-02\ntitle: t\n${extra}---\nbody\n`;
+    const recChecks = async () => {
+      const { bin } = fakeBin(env.root);
+      return (await diagnoseProject(env.project(), { env: envWith(bin, "full") })).checks.filter((c) => c.subject === "records");
+    };
+
+    it("is silent for a clean records dir and for a missing one", async () => {
+      env = makeEnv();
+      expect(await recChecks()).toEqual([]);
+      write(path.join(recordsDir(env.project()), "decisions", "d-a.md"), rec());
+      write(path.join(recordsDir(env.project()), "decisions", "d-b.md"), rec("supersedes: [d-a]\n"));
+      expect(await recChecks()).toEqual([]);
+    });
+
+    it("warns about invalid frontmatter and about a supersedes id that does not exist in the same kind", async () => {
+      env = makeEnv();
+      const rd = recordsDir(env.project());
+      write(path.join(rd, "decisions", "d-bad.md"), "no frontmatter\n");
+      write(path.join(rd, "decisions", "d-dangling.md"), rec("supersedes: [d-gone, l-one]\n"));
+      write(path.join(rd, "lessons", "l-one.md"), rec());
+      const checks = await recChecks();
+      expect(checks.every((c) => c.level === "warn")).toBe(true);
+      const msgs = checks.map((c) => c.message);
+      expect(msgs.some((m) => m.includes("d-bad.md") && m.includes("missing frontmatter"))).toBe(true);
+      expect(msgs.some((m) => m.includes("d-dangling.md") && m.includes('"d-gone"'))).toBe(true);
+      expect(msgs.some((m) => m.includes('"l-one"'))).toBe(true);
+      expect(msgs).toHaveLength(3);
+    });
   });
 
   it("lists every active run lock and notes that runs start from HEAD", async () => {

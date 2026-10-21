@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { mayEditProtected, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
+import { readRegularFileNoFollow } from "./fs-util.js";
+import { mayEditProtected, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
 
 export interface Violation {
   file: string;
@@ -27,6 +28,8 @@ function safeName(file: string): string {
  */
 export class ProtectedGuard {
   private baseline = new Map<string, Buffer | null>();
+  /** Regular files of the records tree (including `.archive/`); only the lead may change them. */
+  private records = new Map<string, Buffer>();
 
   constructor(private project: ResolvedProject) {
     this.rebase();
@@ -38,6 +41,7 @@ export class ProtectedGuard {
    */
   rebase(): void {
     for (const f of ProtectedGuard.protectedFiles(this.project)) this.baseline.set(f, read(f));
+    this.records = readTree(recordsDir(this.project));
   }
 
   static protectedFiles(project: ResolvedProject): string[] {
@@ -96,8 +100,112 @@ export class ProtectedGuard {
         violations.push({ file, action: "restored", suspects: running.map((a) => a.name), ...kept });
       }
     }
+    this.checkRecords(running, violations);
     return violations;
   }
+
+  private checkRecords(running: ResolvedAgent[], violations: Violation[]): void {
+    const root = recordsDir(this.project);
+    // Never write through a symlinked parent of the records tree: skip its protection for this batch.
+    if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
+    const now = readTree(root);
+    const lead = running.some((a) => a.name === this.project.lead);
+    const suspects = running.map((a) => a.name);
+    const fixedDirs = new Set<string>();
+    for (const file of new Set([...this.records.keys(), ...now.keys()])) {
+      const before = this.records.get(file) ?? null;
+      const cur = now.get(file) ?? null;
+      if (same(before, cur)) continue;
+      if (lead) continue;
+      const kept = this.keep(file, cur);
+      if (before === null) {
+        if (!insideRoot(root, path.dirname(file))) continue;
+        fs.rmSync(file, { force: true });
+        violations.push({ file, action: "removed", suspects, ...kept });
+      } else {
+        if (!this.realDirs(root, path.dirname(file), fixedDirs, suspects, violations)) continue;
+        fs.rmSync(file, { recursive: true, force: true });
+        fs.writeFileSync(file, before);
+        violations.push({ file, action: "restored", suspects, ...kept });
+      }
+    }
+    if (lead) this.records = now;
+  }
+
+  /**
+   * Make every directory from the records root down to `dir` a real directory. A symlink or file standing in for one is an
+   * unauthorized change: unlink it (never follow it), recreate the directory and report it. False when `dir` is not safe to write into.
+   */
+  private realDirs(root: string, dir: string, done: Set<string>, suspects: string[], violations: Violation[]): boolean {
+    const rel = path.relative(root, dir);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
+    let cur = root;
+    for (const part of ["", ...(rel ? rel.split(path.sep) : [])]) {
+      cur = part ? path.join(cur, part) : cur;
+      let st: fs.Stats | undefined;
+      try {
+        st = fs.lstatSync(cur);
+      } catch {}
+      if (st?.isDirectory()) continue;
+      if (st) {
+        fs.rmSync(cur, { force: true });
+        if (!done.has(cur)) violations.push({ file: cur, action: "removed", suspects, ...this.keep(cur, null) });
+        done.add(cur);
+      }
+      fs.mkdirSync(cur, { recursive: true });
+    }
+    return insideRoot(root, dir);
+  }
+}
+
+function isLink(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function insideRoot(root: string, dir: string): boolean {
+  try {
+    const r = path.relative(fs.realpathSync(root), fs.realpathSync(dir));
+    return !r.startsWith("..") && !path.isAbsolute(r);
+  } catch {
+    return false;
+  }
+}
+
+/** Regular files under `dir`, recursively; symlinks and special files are not followed or read. */
+function readTree(dir: string): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return out; // a symlinked root is never walked
+  } catch {
+    return out;
+  }
+  const walk = (d: string): void => {
+    let names: string[];
+    try {
+      names = fs.readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      const f = path.join(d, n);
+      try {
+        const st = fs.lstatSync(f);
+        if (st.isDirectory()) walk(f);
+        else if (st.isFile()) {
+          const buf = readRegularFileNoFollow(f);
+          if (buf) out.set(f, buf);
+        }
+      } catch {
+        // vanished while scanning
+      }
+    }
+  };
+  walk(dir);
+  return out;
 }
 
 function read(file: string): Buffer | null {

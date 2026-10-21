@@ -6,8 +6,9 @@ import { realInvoker, type Invoker } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
-import { memoryDirs } from "./policy.js";
-import { buildTidyPrompts, MEMORY_INDEX_LIMIT } from "./prompt.js";
+import { commonFile, memoryDirs, recordsDir, repoDirFor, writePolicy, type WritePolicy } from "./policy.js";
+import { buildTidyPrompts, MEMORY_INDEX_LIMIT, type TidyRecordsContext } from "./prompt.js";
+import { activeRecordsBytes, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
 import { git, isGitRepo } from "./worktree.js";
 
 export type Layer = "project" | "global";
@@ -98,6 +99,11 @@ export function fingerprint(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of listMemoryFiles(dir)) out[f.rel] = crypto.createHash("sha256").update(fs.readFileSync(path.join(dir, f.rel))).digest("hex");
   return out;
+}
+
+/** The content hashes of every earlier tidy's archive in `dir` (not this tidy's own folder), which no tidy may touch. */
+function earlierArchives(dir: string, stamp: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(fingerprint(dir)).filter(([rel]) => rel.startsWith(`${ARCHIVE_DIR}/`) && !rel.startsWith(`${ARCHIVE_DIR}/${stamp}/`)));
 }
 
 const slot = (into: string, i: number) => path.join(into, String(i));
@@ -251,6 +257,8 @@ export interface TidyResult {
   status: "tidied" | "skipped" | "failed" | "dry-run";
   /** The archive stamp of a finished tidy. */
   archive?: string;
+  /** Set when the project records were tidied too: their folder (its archive is `<recordsDir>/.archive/<archive>`). */
+  recordsDir?: string;
   problems: string[];
 }
 
@@ -269,36 +277,104 @@ function describeTarget(t: MemoryTarget, project: ResolvedProject, say: (l: stri
   for (const m of findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined)) say(`  missing path: ${m.path} (in ${m.file})`);
 }
 
-async function tidyOne(o: TidyOptions, t: MemoryTarget, stamp: string): Promise<TidyResult> {
+/** The live files of the project records (the archive is not listed). */
+const liveRecordFiles = (project: ResolvedProject): MemoryFile[] => (isPlainDir(recordsDir(project)) ? listMemoryFiles(recordsDir(project)).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`)) : []);
+
+function isPlainDir(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function describeRecords(project: ResolvedProject, say: (l: string) => void): void {
+  const live = liveRecordFiles(project);
+  const bytes = live.reduce((n, f) => n + f.bytes, 0);
+  const active = RECORD_KINDS.map((k) => `${k} ${effectiveActive(listRecords(project, k)).length}`).join(", ");
+  say(`records ${recordsDir(project)}: ${live.length} file(s), ${kb(bytes)}; active: ${active}`);
+}
+
+/** The lead's wake-up also tidies the project records, in a default project-layer tidy or with `--agent <lead>`. */
+const recordsInScope = (o: TidyOptions): boolean => o.layer === "project" && (!o.agent || o.agent === o.project.lead);
+
+function recordsContext(project: ResolvedProject, archiveDir: string, live: MemoryFile[]): TidyRecordsContext {
+  const dir = recordsDir(project);
+  const entries: TidyRecordsContext["entries"] = [];
+  const known = new Set<string>();
+  for (const kind of RECORD_KINDS)
+    for (const r of listRecords(project, kind)) {
+      const rel = `${kind}/${path.basename(r.file)}`;
+      known.add(rel);
+      entries.push({ kind, id: r.id, rel, status: r.status, date: r.date, bytes: live.find((f) => f.rel === rel)?.bytes ?? 0, title: r.title, invalid: r.invalid });
+    }
+  return { dir, archiveDir, entries, otherFiles: live.filter((f) => !known.has(f.rel)) };
+}
+
+const hasReport = (archiveDir: string): boolean => {
+  const f = path.join(archiveDir, TIDY_REPORT_FILE);
+  return fs.existsSync(f) && fs.readFileSync(f, "utf8").trim() !== "";
+};
+
+/** Tidy one agent's memory directory (`dir`, if it has files) and, for the lead, the project records, in one wake-up. */
+async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: string | undefined }, stamp: string, withRecords: boolean): Promise<TidyResult> {
   const { project } = o;
   const say = o.say ?? ((s: string) => console.log(s));
-  const base = { agent: t.agent, layer: t.layer, dir: t.dir };
+  const base = { agent: t.agent, layer: t.layer, dir: t.dir ?? recordsDir(project) };
   const agent = project.agents[t.agent]!;
-  const live = listMemoryFiles(t.dir).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`));
-  if (live.length === 0) return { ...base, status: "skipped", problems: ["no memory files: nothing to tidy"] };
+  const live = t.dir ? listMemoryFiles(t.dir).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`)) : [];
+  const recLive = withRecords ? liveRecordFiles(project) : [];
+  const memPart = live.length > 0;
+  const recPart = recLive.length > 0;
+  if (!memPart && !recPart) return { ...base, status: "skipped", problems: ["no memory files: nothing to tidy"] };
 
-  const dirs = memoryDirs(agent);
-  const others = dirs.filter((d) => d !== t.dir);
-  const before = listMemoryFiles(t.dir).map((f) => f.rel);
+  const recDir = recordsDir(project);
+  const dirs = [...memoryDirs(agent), ...(recPart ? [recDir] : [])];
+  const others = dirs.filter((d) => d !== t.dir && d !== recDir);
+  const before = t.dir && memPart ? listMemoryFiles(t.dir).map((f) => f.rel) : [];
+  const recBefore = recPart ? listMemoryFiles(recDir).map((f) => f.rel) : [];
+  const watched = [commonFile(project)].filter((f) => fs.existsSync(f));
+  const watchedBefore = watched.map((f) => fs.readFileSync(f, "utf8"));
   const othersBefore = others.map((d) => fingerprint(d));
-  const archiveDir = path.join(t.dir, ARCHIVE_DIR, stamp);
+  const archivesBefore = { mem: t.dir && memPart ? earlierArchives(t.dir, stamp) : {}, rec: recPart ? earlierArchives(recDir, stamp) : {} };
+  const archiveDir = t.dir ? path.join(t.dir, ARCHIVE_DIR, stamp) : undefined;
+  const recArchive = path.join(recDir, ARCHIVE_DIR, stamp);
   const workDir = tidyWorkDir(project, stamp, t.agent);
   const snapshot = path.join(workDir, "snapshot");
-  const state = readTidyState(t.dir);
-  const changes = t.layer === "project" ? projectChanges(project.dir, state?.head) : undefined;
-  const missing = findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined);
-  const index = fs.existsSync(path.join(t.dir, "MEMORY.md")) ? fs.readFileSync(path.join(t.dir, "MEMORY.md"), "utf8") : "";
-  const prompts = buildTidyPrompts(agent, { layer: t.layer, dir: t.dir, archiveDir, files: live, index, changes, missing });
+  const state = t.dir ? readTidyState(t.dir) : undefined;
+  const changes = memPart && t.layer === "project" ? projectChanges(project.dir, state?.head) : undefined;
+  const missing = memPart && t.dir ? findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined) : [];
+  const index = t.dir && fs.existsSync(path.join(t.dir, "MEMORY.md")) ? fs.readFileSync(path.join(t.dir, "MEMORY.md"), "utf8") : "";
+  const prompts = buildTidyPrompts(agent, {
+    layer: t.layer,
+    ...(memPart ? { dir: t.dir, archiveDir } : {}),
+    files: live,
+    index,
+    changes,
+    missing,
+    ...(recPart ? { records: recordsContext(project, recArchive, recLive) } : {}),
+  });
 
   ensureProjectDirs(project);
   snapshotDirs(dirs, snapshot);
   const fail = (problems: string[]): TidyResult => {
     restoreDirs(dirs, snapshot);
+    for (const [i, f] of watched.entries()) atomicWrite(f, watchedBefore[i]!);
     fs.rmSync(snapshot, { recursive: true, force: true });
-    return { ...base, status: "failed", problems };
+    return { ...base, status: "failed", ...(recPart ? { recordsDir: recDir } : {}), problems };
   };
 
-  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)) …`);
+  // The runtime may write only the directories being tidied (and read what it could read before): not the repo, outbox or shared files.
+  const normal = writePolicy(project, agent);
+  const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : [])];
+  const policy: WritePolicy = {
+    allowDirs,
+    allowFiles: [],
+    readDirs: [...new Set([repoDirFor(project, t.agent), ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
+    deny: normal.deny,
+  };
+
+  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}) …`);
   const invoke = o.invoker ?? realInvoker;
   const result = await invoke({
     project,
@@ -309,35 +385,64 @@ async function tidyOne(o: TidyOptions, t: MemoryTarget, stamp: string): Promise<
     timeoutSec: project.dispatcher.wake_timeout_sec,
     signal: o.signal,
     logDir: path.join(workDir, "log"),
+    policy,
   }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
   if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
 
-  const problems: string[] = [];
-  others.forEach((d, i) => {
-    if (JSON.stringify(fingerprint(d)) !== JSON.stringify(othersBefore[i])) problems.push(`the agent changed ${d}, which is not the ${t.layer} memory being tidied`);
-  });
-  problems.push(...verifyConservation(before, t.dir, stamp));
-  const reportFile = path.join(archiveDir, TIDY_REPORT_FILE);
-  if (!fs.existsSync(reportFile) || fs.readFileSync(reportFile, "utf8").trim() === "") problems.push(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+  // Anything that throws from here on (a report path that is a directory, a state file that cannot be written) is a failed tidy that is rolled back.
+  let problems: string[] = [];
+  try {
+    others.forEach((d, i) => {
+      if (JSON.stringify(fingerprint(d)) !== JSON.stringify(othersBefore[i])) problems.push(`the agent changed ${d}, which is not the ${t.layer} memory being tidied`);
+    });
+    watched.forEach((f, i) => {
+      if (!fs.existsSync(f) || fs.readFileSync(f, "utf8") !== watchedBefore[i]) problems.push(`the agent changed ${f}, which a tidy may not touch`);
+    });
+    if (memPart && t.dir && archiveDir) {
+      if (JSON.stringify(earlierArchives(t.dir, stamp)) !== JSON.stringify(archivesBefore.mem)) problems.push(`the agent changed an earlier archive under ${path.join(t.dir, ARCHIVE_DIR)}`);
+      problems.push(...verifyConservation(before, t.dir, stamp));
+      if (!hasReport(archiveDir)) problems.push(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+    }
+    if (recPart) {
+      if (JSON.stringify(earlierArchives(recDir, stamp)) !== JSON.stringify(archivesBefore.rec)) problems.push(`project records: the agent changed an earlier archive under ${path.join(recDir, ARCHIVE_DIR)}`);
+      problems.push(...verifyConservation(recBefore, recDir, stamp).map((p) => `project records: ${p}`));
+      if (!hasReport(recArchive)) problems.push(`project records: ${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+    }
+    if (!problems.length && memPart && t.dir) writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
+  } catch (e) {
+    problems = [...problems, `the tidy could not be checked or finished: ${(e as Error).message}`];
+  }
   if (problems.length) return fail(problems);
 
   fs.rmSync(snapshot, { recursive: true, force: true });
-  writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
-  return { ...base, status: "tidied", archive: stamp, problems: [] };
+  return { ...base, status: "tidied", archive: stamp, ...(recPart ? { recordsDir: recDir } : {}), problems: [] };
 }
 
 /** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum tidy`). */
 export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   const say = o.say ?? ((s: string) => console.log(s));
-  const targets = targetsFor(o.project, { layer: o.layer, agent: o.agent });
+  const withRecords = recordsInScope(o) && liveRecordFiles(o.project).length > 0;
+  const lead = o.project.lead;
+  let targets: MemoryTarget[];
+  try {
+    targets = targetsFor(o.project, { layer: o.layer, agent: o.agent });
+  } catch (e) {
+    // `--agent <lead>` with no project memory directory is fine when there are records to tidy.
+    if (!(withRecords && o.agent === lead && o.project.agents[lead])) throw e;
+    targets = [];
+  }
   const results: TidyResult[] = [];
-  for (const t of targets) {
+  const stamp = tidyStamp(o.now?.()); // one per tidy, for every agent
+  const jobs: { agent: string; layer: Layer; dir: string | undefined }[] = targets.map((t) => ({ ...t }));
+  if (withRecords && !jobs.some((j) => j.agent === lead)) jobs.push({ agent: lead, layer: o.layer, dir: undefined });
+  for (const j of jobs) {
     if (o.dryRun) {
-      describeTarget(t, o.project, say);
-      results.push({ agent: t.agent, layer: t.layer, dir: t.dir, status: "dry-run", problems: [] });
+      if (j.dir) describeTarget(j as MemoryTarget, o.project, say);
+      if (withRecords && j.agent === lead) describeRecords(o.project, say);
+      results.push({ agent: j.agent, layer: j.layer, dir: j.dir ?? recordsDir(o.project), status: "dry-run", problems: [] });
       continue;
     }
-    const r = await tidyOne(o, t, tidyStamp(o.now?.()));
+    const r = await tidyOne(o, j, stamp, withRecords && j.agent === lead);
     results.push(r);
     if (o.signal?.aborted) break;
   }
@@ -347,6 +452,8 @@ export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
 export interface RestoreResult {
   restored: string[];
   skipped: { rel: string; reason: string }[];
+  /** The same for the project records archive of that stamp, when the lead's undo found one. */
+  records?: { restored: string[]; skipped: { rel: string; reason: string }[] };
 }
 
 function titleOf(file: string, rel: string): string {
@@ -365,19 +472,13 @@ function pruneEmpty(dir: string, stop: string): void {
   }
 }
 
-/** Move the files of one tidy's archive back to where they were. Nothing that exists now is overwritten. */
-export function restoreMemory(o: { project: ResolvedProject; agent: string; layer: Layer; stamp: string }): RestoreResult {
-  if (!STAMP_RE.test(o.stamp)) throw new Error(`"${o.stamp}" is not an archive stamp (expected something like 20261008T031500Z).`);
-  const [t] = targetsFor(o.project, { layer: o.layer, agent: o.agent });
-  const archive = path.join(t!.dir, ARCHIVE_DIR, o.stamp);
-  if (!fs.existsSync(archive)) throw new Error(`No archive ${o.stamp} for ${o.agent} (${o.layer}). Archives: ${listArchives(t!.dir).join(", ") || "(none)"}.`);
-
+/** Move the files of `archive` back under `dir`. Nothing that exists now is overwritten. */
+function moveBack(dir: string, archive: string): { restored: string[]; skipped: { rel: string; reason: string }[] } {
   const restored: string[] = [];
-  const skipped: RestoreResult["skipped"] = [];
-  const inArchive = listMemoryFiles(archive).filter((f) => f.rel !== TIDY_REPORT_FILE);
-  for (const f of inArchive) {
+  const skipped: { rel: string; reason: string }[] = [];
+  for (const f of listMemoryFiles(archive).filter((f) => f.rel !== TIDY_REPORT_FILE)) {
     const from = path.join(archive, f.rel);
-    const to = path.join(t!.dir, f.rel);
+    const to = path.join(dir, f.rel);
     if (fs.existsSync(to)) {
       skipped.push({ rel: f.rel, reason: "a file with this name exists now; it was not overwritten" });
       continue;
@@ -387,12 +488,40 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
     pruneEmpty(path.dirname(from), archive);
     restored.push(f.rel);
   }
-
-  const indexFile = path.join(t!.dir, "MEMORY.md");
-  const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, "utf8") : "";
-  const add = restored.filter((rel) => rel.endsWith(".md") && !index.includes(rel)).map((rel) => `- [${titleOf(path.join(t!.dir, rel), rel)}](${rel}) — restored from tidy ${o.stamp}`);
-  if (add.length) atomicWrite(indexFile, `${index.replace(/\n*$/, index ? "\n" : "")}${add.join("\n")}\n`);
   return { restored, skipped };
+}
+
+/**
+ * Move the files of one tidy's archive back to where they were. Nothing that exists now is overwritten.
+ * For the lead on the project layer this covers the project records archive of the same stamp too; either archive may be the only one.
+ */
+export function restoreMemory(o: { project: ResolvedProject; agent: string; layer: Layer; stamp: string }): RestoreResult {
+  if (!STAMP_RE.test(o.stamp)) throw new Error(`"${o.stamp}" is not an archive stamp (expected something like 20261008T031500Z).`);
+  const isLead = o.layer === "project" && o.agent === o.project.lead;
+  const recDir = recordsDir(o.project);
+  const recArchive = path.join(recDir, ARCHIVE_DIR, o.stamp);
+  const recHas = isLead && isPlainDir(recDir) && fs.existsSync(recArchive);
+  let dir: string | undefined;
+  try {
+    dir = targetsFor(o.project, { layer: o.layer, agent: o.agent })[0]!.dir;
+  } catch (e) {
+    if (!(isLead && o.project.agents[o.agent])) throw e;
+  }
+  const archive = dir ? path.join(dir, ARCHIVE_DIR, o.stamp) : undefined;
+  const memHas = !!archive && fs.existsSync(archive);
+  if (!memHas && !recHas) {
+    const recs = isLead ? `${dir ? "; project records archives: " : " Project records archives: "}${listArchives(recDir).join(", ") || "(none)"}` : "";
+    throw new Error(`No archive ${o.stamp} for ${o.agent} (${o.layer}).${dir ? ` Archives: ${listArchives(dir).join(", ") || "(none)"}` : ""}${recs}.`);
+  }
+
+  const mem = dir && memHas ? moveBack(dir, archive!) : { restored: [], skipped: [] };
+  if (dir && memHas) {
+    const indexFile = path.join(dir, "MEMORY.md");
+    const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, "utf8") : "";
+    const add = mem.restored.filter((rel) => rel.endsWith(".md") && !index.includes(rel)).map((rel) => `- [${titleOf(path.join(dir, rel), rel)}](${rel}) — restored from tidy ${o.stamp}`);
+    if (add.length) atomicWrite(indexFile, `${index.replace(/\n*$/, index ? "\n" : "")}${add.join("\n")}\n`);
+  }
+  return { ...mem, ...(recHas ? { records: moveBack(recDir, recArchive) } : {}) };
 }
 
 /** The stamps of the archives in a memory directory, oldest first. */
@@ -425,6 +554,10 @@ export function tidyAdvice(project: ResolvedProject): TidyAdvice[] {
     if (!since || !fs.existsSync(project.dir) || !isGitRepo(project.dir)) continue;
     const n = Number(tryGit(project.dir, ["rev-list", "--count", `${since}..HEAD`]));
     if (Number.isFinite(n) && n >= ADVICE_COMMITS) out.push({ agent: t.agent, reason: `${n} commits since the last tidy` });
+  }
+  for (const kind of RECORD_KINDS) {
+    const bytes = activeRecordsBytes(project, kind);
+    if (bytes > RECORDS_BUDGET) out.push({ agent: project.lead, reason: `active ${kind} records are ${bytes} bytes, more than the ${RECORDS_BUDGET} an agent is shown (\`done\` is refused while over)` });
   }
   return out;
 }

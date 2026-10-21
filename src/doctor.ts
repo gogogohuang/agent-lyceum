@@ -5,6 +5,7 @@ import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
 import { tidyAdvice } from "./memory-tidy.js";
+import { listRecords, RECORD_KINDS } from "./records.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
@@ -208,6 +209,15 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   }
 
   for (const a of tidyAdvice(project)) checks.push({ level: "info", subject: "memory", message: `${a.agent}: ${a.reason}. Consider: agent-lyceum tidy -p ${project.name} --agent ${a.agent} (doctor only suggests; it never tidies).` });
+
+  for (const kind of RECORD_KINDS) {
+    const recs = listRecords(project, kind);
+    const ids = new Set(recs.map((r) => r.id));
+    for (const r of recs) {
+      if (r.invalid) checks.push({ level: "warn", subject: "records", message: `${r.file}: ${r.invalid}` });
+      for (const s of r.supersedes) if (!ids.has(s)) checks.push({ level: "warn", subject: "records", message: `${r.file}: supersedes "${s}", but no ${kind} entry has that id.` });
+    }
+  }
 
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));

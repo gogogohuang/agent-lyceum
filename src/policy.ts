@@ -33,24 +33,18 @@ export function commonFile(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "COMMON.md");
 }
 
-/** Durable decisions and lessons of the project, kept next to COMMON.md: the lead writes them, everyone else reads them. */
-export function decisionsFile(project: ResolvedProject): string {
-  return path.join(project.paths.shared, "common", "DECISIONS.md");
+/** Durable decisions and lessons of the project, one file per entry: the lead writes them, everyone else reads them. `.archive/` is tidy's output, never shown in prompts. */
+export function recordsDir(project: ResolvedProject): string {
+  return path.join(project.paths.shared, "common", "records");
 }
 
-export function lessonsFile(project: ResolvedProject): string {
-  return path.join(project.paths.shared, "common", "LESSONS.md");
-}
-
-/** Where the lead moves entries that no longer fit under the prompt cap; read on demand, never injected. */
-export function archiveFile(file: string): string {
-  return file.replace(/\.md$/, "_ARCHIVE.md");
+export function recordsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
+  return path.join(recordsDir(project), kind);
 }
 
 /** The lead-maintained files shared by every run of the project. */
 export function sharedContextFiles(project: ResolvedProject): string[] {
-  const [d, l] = [decisionsFile(project), lessonsFile(project)];
-  return [commonFile(project), d, l, archiveFile(d), archiveFile(l)];
+  return [commonFile(project)];
 }
 
 export function outboxDir(project: ResolvedProject, agent: string): string {
@@ -114,6 +108,9 @@ function runDenyPaths(project: ResolvedProject): string[] {
   ]);
 }
 
+/** The working directory of a wake-up that runs under a policy override: an empty dir, so nothing of the repo is writable by default. */
+export const scratchCwd = (workDir: string): string => path.join(workDir, "cwd");
+
 /** The repo directory this agent works in: its own worktree, or the main repo. */
 export function repoDirFor(project: ResolvedProject, agent: string): string {
   return project.workspaces?.[agent]?.dir ?? project.dir;
@@ -131,6 +128,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
+    ...(isLead ? [recordsDir(project)] : []),
   ];
   const allowFiles: string[] = [];
   if (isLead) allowFiles.push(...sharedContextFiles(project));
@@ -154,6 +152,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   for (const f of sharedContextFiles(project)) addDeny(f);
   for (const f of repoInstructionFiles(project)) addDeny(f);
   if (shared && !mayWriteShared) deny.push(shared);
+  if (!isLead) deny.push(recordsDir(project));
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
   // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
   for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
@@ -164,7 +163,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    readDirs: shared && !mayWriteShared ? [shared] : [],
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)])],
     allowFiles,
     deny: [...new Set(deny)],
   };

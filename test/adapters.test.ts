@@ -449,3 +449,43 @@ describe("fake runtimes: FAKE_FAIL", () => {
     expect(JSON.parse(second.stdout)).toMatchObject({ result: "fine" });
   });
 });
+
+describe("a write-policy override (memory tidy)", () => {
+  const override = (e: TestEnv, agent: string) => {
+    const p = e.project();
+    const dir = path.join(e.root, "tidy-mem");
+    return { dir, policy: { allowDirs: [dir], readDirs: [e.repo], allowFiles: [], deny: writePolicy(p, p.agents[agent]).deny } };
+  };
+
+  it("claude: the settings allow writing the given dirs only, not the repo, outbox or shared files", () => {
+    env = makeEnv();
+    const { dir, policy } = override(env, "lead");
+    const inp = input(env, "lead", { policy });
+    const inv = buildClaudeInvocation(inp);
+    const s = JSON.parse(fs.readFileSync(path.join(inp.workDir, "claude-settings.json"), "utf8")) as ClaudeSettingsView;
+    const allow = JSON.stringify(s.permissions.allow);
+    expect(allow).toContain(dir);
+    expect(allow).not.toContain(env.repo);
+    expect(allow).not.toContain("outbox");
+    const write_ = s.sandbox.filesystem.allowWrite;
+    expect(write_).toContain(dir);
+    expect(write_.join("\n")).not.toContain(env.repo);
+    expect(write_.join("\n")).not.toContain("outbox");
+    expect(inv.cwd).not.toBe(env.repo);
+    expect(inv.args).toContain(env.repo); // still readable
+    // a normal wake is unchanged
+    const normal = buildClaudeInvocation(input(env, "lead"));
+    expect(normal.cwd).toBe(env.repo);
+  });
+
+  it("codex: the writable roots are the given dirs, and the working directory is not the repo", () => {
+    env = makeEnv();
+    const { dir, policy } = override(env, "lead");
+    const inp = input(env, "lead", { policy });
+    expect(codexWritableRoots(inp)).toEqual([dir]);
+    const inv = buildCodexInvocation(inp);
+    expect(inv.cwd).not.toBe(env.repo);
+    expect(inv.args[inv.args.indexOf("-C") + 1]).toBe(inv.cwd);
+    expect(codexWritableRoots(input(env, "lead")).some((r) => r.includes("outbox"))).toBe(true);
+  });
+});

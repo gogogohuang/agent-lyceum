@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoDirFor, writePolicy } from "../policy.js";
+import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 export function codexWritableRoots(input: WakeInput): string[] {
-  const pol = writePolicy(input.project, input.agent);
-  const work = repoDirFor(input.project, input.agent.name);
+  const pol = input.policy ?? writePolicy(input.project, input.agent);
+  const work = input.policy ? scratchCwd(input.workDir) : repoDirFor(input.project, input.agent.name);
   const roots = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === work || d.startsWith(work + path.sep)));
   return [...new Set(roots)];
 }
@@ -55,8 +55,9 @@ const CODEX_WEB_SEARCH = { none: "disabled", search: "cached", fetch: "live" } a
 
 export function buildCodexInvocation(input: WakeInput): Invocation {
   const { project, agent, workDir } = input;
-  const repo = repoDirFor(project, agent.name);
+  const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });
+  if (input.policy) fs.mkdirSync(repo, { recursive: true });
   const lastFile = path.join(workDir, "codex-last-message.txt");
   const roots = codexWritableRoots(input);
   const common = [

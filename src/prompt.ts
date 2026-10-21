@@ -5,7 +5,8 @@ import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
-import { archiveFile, commonFile, decisionsFile, lessonsFile, memoryDirs, outboxDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
+import { commonFile, memoryDirs, outboxDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -15,8 +16,8 @@ function memoryLabel(agent: ResolvedAgent, dir: string): string {
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
 export const HANDOFF_LIMIT = COMMON_LIMIT;
-/** Cap of each of DECISIONS.md and LESSONS.md in a prompt. */
-export const CONTEXT_LIMIT = 6 * 1024;
+/** Cap of each kind of project record (decisions, lessons) in a prompt. */
+export const CONTEXT_LIMIT = RECORDS_BUDGET;
 export const LEAD_BATCH_LIMIT = 5;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
@@ -222,7 +223,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- The shared team context is in \`${commonFile(project)}\`${isLead ? " (you maintain it; keep it short)" : " (read-only)"}.`,
     ...(isLead
       ? [
-          `- You also keep two durable records for every future run of this project: \`${decisionsFile(project)}\` (what was decided and why; a new decision replaces the one it contradicts) and \`${lessonsFile(project)}\` (heuristics and pitfalls that stay true). Update them before you send \`done\`. Each is shown in prompts only up to ${CONTEXT_LIMIT / 1024} KB: move the oldest entries into \`${archiveFile(decisionsFile(project))}\` / \`${archiveFile(lessonsFile(project))}\` (read on demand) to keep them under it.`,
+          `- You also keep two kinds of durable records for every future run of this project, one Markdown file per entry: decisions in \`${recordsKindDir(project, "decisions")}/\` (what was decided and why) and lessons in \`${recordsKindDir(project, "lessons")}/\` (heuristics and pitfalls that stay true). The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`. Add or update entries before you send \`done\`.`,
         ]
       : []),
     PR_ATTRIBUTION_RULE,
@@ -259,14 +260,12 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     }
   }
 
-  for (const [title, file] of [
-    ["Project decisions (DECISIONS.md)", decisionsFile(project)],
-    ["Project lessons (LESSONS.md)", lessonsFile(project)],
+  for (const [title, kind] of [
+    ["Project decisions", "decisions"],
+    ["Project lessons", "lessons"],
   ] as const) {
-    const rec = readCapped(file, CONTEXT_LIMIT);
-    if (!rec?.text.trim()) continue; // nothing recorded yet: no heading, no tokens
-    parts.push("", `# ${title}`, rec.text.trim());
-    if (rec.truncated) parts.push(`\n[${path.basename(file)} was truncated at ${CONTEXT_LIMIT} bytes — the lead should move the oldest entries to ${path.basename(archiveFile(file))}.]`);
+    const view = buildRecordsView(project, kind, CONTEXT_LIMIT);
+    if (view) parts.push("", `# ${title}`, view); // nothing recorded yet: no heading, no tokens
   }
 
   const handoffFile = handoff ? sharedIndex(project) : undefined;
@@ -312,12 +311,23 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   return parts.join("\n");
 }
 
+export interface TidyRecordsContext {
+  /** The project records folder (`<shared>/common/records`). */
+  dir: string;
+  /** Absolute path of this tidy's archive folder for the records (the agent creates it). */
+  archiveDir: string;
+  /** One line per entry: kind, id, status, date, size and title (the archive is not listed). */
+  entries: { kind: string; id: string; rel: string; status: string; date: string; bytes: number; title: string; invalid?: string }[];
+  /** Live files that are not entries (kept as they are). */
+  otherFiles: MemoryFile[];
+}
+
 export interface TidyContext {
   layer: Layer;
-  /** The memory directory being tidied. */
-  dir: string;
+  /** The memory directory being tidied; absent when only the project records are tidied (the lead has no memory directory). */
+  dir?: string;
   /** Absolute path of this tidy's archive folder (the agent creates it). */
-  archiveDir: string;
+  archiveDir?: string;
   /** Live files only (the archive is not listed). */
   files: MemoryFile[];
   /** MEMORY.md text ("" when there is none). */
@@ -325,10 +335,14 @@ export interface TidyContext {
   /** What changed in the project since the last tidy (project layer only). */
   changes?: ProjectChanges;
   missing: MissingPath[];
+  /** Set only for the lead's project-layer tidy: the project records are tidied in the same wake-up. */
+  records?: TidyRecordsContext;
 }
 
 /** The prompts of a memory-tidy wake-up: a maintenance job, not a task, so it has none of the mail protocol. */
 export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { systemPrompt: string; userPrompt: string } {
+  const { dir, archiveDir, records } = ctx;
+  const touch = [dir ? `your ${ctx.layer} memory (\`${dir}\`)` : "", records ? `the project records (\`${records.dir}\`)` : ""].filter(Boolean).join(" and ");
   const systemPrompt = [
     readPersona(agent),
     "",
@@ -336,36 +350,57 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
     "",
     "# Memory tidy (injected by agent-lyceum)",
     "",
-    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy your own ${ctx.layer} memory so it stays small, accurate and useful.`,
+    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy ${records ? touch : `your own ${ctx.layer} memory`} so it stays small, accurate and useful.`,
     "",
     "## What you may touch",
-    `Only files inside \`${ctx.dir}\`. Everything else is read-only. Do not touch your other memory directories, \`${ctx.dir}/.tidy-state.json\` or the archive folders of earlier tidies.`,
-    "",
-    "## What to do",
-    "- Merge entries that say the same thing; keep one file with the combined, current content.",
-    "- Rewrite entries that are stale (see the project changes and the missing paths below); correct them if you can tell what is true now, otherwise keep them and say so in the report.",
-    "- Keep `MEMORY.md` as the index: one line per entry, each pointing at an existing file, and nothing for files that were archived.",
-    "- **When unsure, keep it.** Prefer leaving an entry alone over losing information.",
-    "",
-    "## Never delete",
-    `To retire a file, move it into the archive folder, keeping its relative path (\`${ctx.dir}/x/y.md\` goes to \`${ctx.archiveDir}/x/y.md\`). Never delete a file. \`MEMORY.md\` itself is never archived. A file whose content you merged into another one is archived too.`,
-    "",
-    "## Before you finish",
-    `Write \`${ctx.archiveDir}/tidy-report.md\` — even when you changed nothing — with these headings: \`## Merged\` (what was combined into what), \`## Archived\` (each archived file and why), \`## Unsure\` (things you kept but doubt). Write \`None\` under a heading with nothing to say. The tidy is rolled back if the report is missing or any file went missing.`,
+    `Only files inside ${[dir ? `\`${dir}\`` : "", records ? `\`${records.dir}\`` : ""].filter(Boolean).join(" and ")}. Everything else is read-only. Do not touch your other memory directories, \`${dir ? `${dir}/` : ""}.tidy-state.json\` or the archive folders of earlier tidies.`,
+    ...(dir && archiveDir
+      ? [
+          "",
+          records ? "## What to do with your memory" : "## What to do",
+          "- Merge entries that say the same thing; keep one file with the combined, current content.",
+          "- Rewrite entries that are stale (see the project changes and the missing paths below); correct them if you can tell what is true now, otherwise keep them and say so in the report.",
+          "- Keep `MEMORY.md` as the index: one line per entry, each pointing at an existing file, and nothing for files that were archived.",
+          "- **When unsure, keep it.** Prefer leaving an entry alone over losing information.",
+          "",
+          "## Never delete",
+          `To retire a file, move it into the archive folder, keeping its relative path (\`${dir}/x/y.md\` goes to \`${archiveDir}/x/y.md\`). Never delete a file. \`MEMORY.md\` itself is never archived. A file whose content you merged into another one is archived too.`,
+          "",
+          records ? "## Before you finish (memory)" : "## Before you finish",
+          `Write \`${archiveDir}/tidy-report.md\` — even when you changed nothing — with these headings: \`## Merged\` (what was combined into what), \`## Archived\` (each archived file and why), \`## Unsure\` (things you kept but doubt). Write \`None\` under a heading with nothing to say. The tidy is rolled back if the report is missing or any file went missing.`,
+        ]
+      : []),
+    ...(records
+      ? [
+          "",
+          "## What to do with the project records",
+          `The records are the project's durable decisions and lessons, one file per entry (\`${records.dir}/decisions/<id>.md\`, \`${records.dir}/lessons/<id>.md\`). Every entry has frontmatter with \`status\` (\`active\` or \`superseded\`), \`date\` (YYYY-MM-DD) and \`title\` (one line), optionally \`run\` and \`supersedes\` (a list of ids).`,
+          "- Merge entries that say the same thing into one entry (write the merged content, then archive the entries that were merged).",
+          "- When a newer entry replaces an older one, list the old id under `supersedes` in the newer entry, or set the old entry to `status: superseded`.",
+          "- Archive entries that are obsolete.",
+          "- Keep the frontmatter valid: `status`, `date` and `title` are required; the id is the file name without `.md` and uses only lowercase letters, digits and `-`.",
+          "- **When unsure, keep it.** Never delete a file.",
+          `To archive a record, move it into \`${records.archiveDir}\`, keeping its relative path (\`${records.dir}/lessons/x.md\` goes to \`${records.archiveDir}/lessons/x.md\`).`,
+          `Write \`${records.archiveDir}/tidy-report.md\` — even when you changed nothing — with the headings \`## Merged\`, \`## Archived\`, \`## Unsure\` (\`None\` when empty). The tidy of both folders is rolled back if the report is missing or any file went missing.`,
+        ]
+      : []),
   ].join("\n");
 
-  const parts: string[] = [
-    `Archive directory: ${ctx.archiveDir}`,
-    `Layer: ${ctx.layer}${ctx.layer === "global" ? " (shared by every project; do not judge entries by one project's code)" : ""}`,
-    `Memory directory: ${ctx.dir}`,
-    "",
-    "# Files",
-    ...(ctx.files.length ? ctx.files.map((f) => `${f.rel}  ${f.bytes} B  modified ${f.mtime.slice(0, 10)}`) : ["(none)"]),
-    "",
-    `# MEMORY.md (${ctx.dir}/MEMORY.md)`,
-    ctx.index.trim() ? ctx.index.trim() : "(no MEMORY.md)",
-  ];
-  if (ctx.layer === "project") {
+  const parts: string[] = [];
+  if (dir && archiveDir) {
+    parts.push(
+      `Archive directory: ${archiveDir}`,
+      `Layer: ${ctx.layer}${ctx.layer === "global" ? " (shared by every project; do not judge entries by one project's code)" : ""}`,
+      `Memory directory: ${dir}`,
+      "",
+      "# Files",
+      ...(ctx.files.length ? ctx.files.map((f) => `${f.rel}  ${f.bytes} B  modified ${f.mtime.slice(0, 10)}`) : ["(none)"]),
+      "",
+      `# MEMORY.md (${dir}/MEMORY.md)`,
+      ctx.index.trim() ? ctx.index.trim() : "(no MEMORY.md)",
+    );
+  }
+  if (ctx.layer === "project" && dir) {
     const c = ctx.changes;
     parts.push("", "# Changes in the project since the last tidy");
     if (!c) parts.push("(not available)");
@@ -375,7 +410,23 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
       if (c.stat.length) parts.push("", "Files changed:", ...c.stat);
     }
   }
-  parts.push("", "# Paths named in the memory that no longer exist");
-  parts.push(...(ctx.missing.length ? ctx.missing.map((m) => `- \`${m.path}\` (mentioned in ${m.file})`) : ["(none found)"]));
+  if (dir) {
+    parts.push("", "# Paths named in the memory that no longer exist");
+    parts.push(...(ctx.missing.length ? ctx.missing.map((m) => `- \`${m.path}\` (mentioned in ${m.file})`) : ["(none found)"]));
+  }
+  if (records) {
+    parts.push(
+      ...(parts.length ? [""] : []),
+      "# Project records",
+      `Records archive directory: ${records.archiveDir}`,
+      `Records directory: ${records.dir}`,
+      "",
+      "Entries (kind/id  status  date  size  title):",
+      ...(records.entries.length
+        ? records.entries.map((e) => `${e.rel}  ${e.status}  ${e.date || "no date"}  ${e.bytes} B  ${e.title}${e.invalid ? `  [INVALID: ${e.invalid}]` : ""}`)
+        : ["(none)"]),
+      ...(records.otherFiles.length ? ["", "Other files (leave them alone):", ...records.otherFiles.map((f) => `${f.rel}  ${f.bytes} B`)] : []),
+    );
+  }
   return { systemPrompt, userPrompt: parts.join("\n") };
 }

@@ -222,13 +222,15 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 - `--dry-run`：只印出記憶大小、專案的變化與已不存在的路徑。不喚醒任何人、不改任何東西、不取鎖。
 - `--undo 時間戳`：不整理，改為還原那一次整理。見下方。
 
-task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 agent 設定 global 記憶，要使用 project 記憶需在 `project.yaml` 為 agent 設定 `memory.project`；沒有任何 agent 設定時，指令會說明並以 `0` 結束。
+task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 agent 設定 global 記憶，要使用 project 記憶需在 `project.yaml` 為 agent 設定 `memory.project`；沒有任何 agent 設定、範圍內也沒有專案紀錄時，指令會說明並以 `0` 結束。
 
-每個 agent 會被喚醒一次來做這件事，不屬於任何 run（不消耗輪數），而且只能改動自己的記憶。淘汰＝封存，不是刪除：檔案會以相同的相對路徑搬到 `memory/.archive/<時間戳>/`，並附上 `tidy-report.md`（合併了什麼、封存了什麼與理由、仍存疑的項目）。agent 會看到每個記憶檔的大小與修改時間、`MEMORY.md` 索引、自上次整理以來 repo 的變化（`git log` 與 `git diff --stat`），以及記憶中提到但已不存在的路徑。`memory/.tidy-state.json` 記錄上次整理時 repo 的 `HEAD`；第一次整理沒有基準，只做路徑檢查。
+每個 agent 會被喚醒一次來做這件事，不屬於任何 run（不消耗輪數），而且只能改動自己的記憶目錄，lead 的這次喚醒還可改動專案紀錄；tidy 期間 runtime 只能寫入這些目錄（不能寫 repo、信件或共用檔案）。淘汰＝封存，不是刪除：檔案會以相同的相對路徑搬到 `memory/.archive/<時間戳>/`，並附上 `tidy-report.md`（合併了什麼、封存了什麼與理由、仍存疑的項目）。agent 會看到每個記憶檔的大小與修改時間、`MEMORY.md` 索引、自上次整理以來 repo 的變化（`git log` 與 `git diff --stat`），以及記憶中提到但已不存在的路徑。`memory/.tidy-state.json` 記錄上次整理時 repo 的 `HEAD`；第一次整理沒有基準，只做路徑檢查。
 
 agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要獨占專案：有任何 run 在執行時，`tidy`（與 `tidy --undo`）會拒絕，執行期間也不能啟動任何 run。
 
-**`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
+**專案紀錄：**使用 `--layer project`（預設）時，lead 的那次喚醒也會整理專案紀錄（`shared/common/records/`），即使 lead 沒有記憶資料夾；`--agent <lead>` 包含它們，`--agent <其他>` 與 `--layer global` 不包含。合併或過時的條目會搬到 `records/.archive/<時間戳>/` 並附上 `tidy-report.md`；不會刪除任何東西。任何違規都會讓記憶資料夾與紀錄一起還原，結束碼為 `1`。`--dry-run` 也會印出一行紀錄資訊（檔案數、大小、各類別的有效 active 條目數）。某類別超過 6 KB 預算時，`doctor` 與 `status` 會提示；`doctor` 另外會警告 frontmatter 無效與未知的 `supersedes` id。
+
+**`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引；搭配 `--agent <lead>` 時也會還原該時間戳的紀錄封存。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 
 - `--agent a`：還原誰的記憶。必填。
 - `--layer project|global`：哪一層記憶（預設 `project`）。

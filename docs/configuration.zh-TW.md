@@ -8,7 +8,7 @@
 └── projects/<project>/
     ├── project.yaml                  # 團隊、repo 路徑、覆寫設定
     ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶
-    ├── shared/common/{COMMON.md, DECISIONS.md, LESSONS.md}   # 由 lead 維護，其他 agent 唯讀；*_ARCHIVE.md 放較舊的條目，需要時才讀
+    ├── shared/common/{COMMON.md, records/{decisions,lessons}/<id>.md, records/.archive/}   # 由 lead 維護，其他 agent 唯讀；每個決策／教訓一個檔（frontmatter：status、date、run?、supersedes?、title）；.archive 是 tidy 的輸出，不會放進 prompt
     ├── locks/<run-id>.json           # 該 run 執行期間持有
     ├── task-memory/<run-id>/{<agent>/, _shared/}   # 任務記憶：每次 run 獨立，不與其他任務共用；_shared 是 lead 為追加要求寫的交接筆記
     └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}

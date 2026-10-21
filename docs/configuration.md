@@ -8,7 +8,7 @@
 └── projects/<project>/
     ├── project.yaml                  # team, repo dir, overrides
     ├── agents/<agent>/{AGENT.md?, memory/}   # project-level persona (optional) + project memory
-    ├── shared/common/{COMMON.md, DECISIONS.md, LESSONS.md}   # lead-maintained, read-only for the rest; *_ARCHIVE.md = older entries, read on demand
+    ├── shared/common/{COMMON.md, records/{decisions,lessons}/<id>.md, records/.archive/}   # lead-maintained, read-only for the rest; one file per decision/lesson (frontmatter: status, date, run?, supersedes?, title); .archive = tidy output, never shown in prompts
     ├── locks/<run-id>.json           # held while that run is active
     ├── task-memory/<run-id>/{<agent>/, _shared/}   # per-run memory, never shared between runs; _shared = the lead's handoff notes for follow-ups
     └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}

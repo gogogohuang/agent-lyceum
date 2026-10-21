@@ -53,3 +53,24 @@ export function readFileCapped(file: string, limit: number): { text: string; tru
     }
   }
 }
+
+/**
+ * The bytes of a regular file, opened without following a symlink and without blocking (a FIFO opens at once and fails the
+ * fstat check). undefined for anything else or on any error: never throws, never hangs.
+ */
+export function readRegularFileNoFollow(file: string): Buffer | undefined {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+    if (!fs.fstatSync(fd).isFile()) return undefined;
+    return fs.readFileSync(fd);
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+  }
+}
