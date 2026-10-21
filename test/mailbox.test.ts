@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { missingSections } from "../src/format.js";
 import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
-import { inboxDir, outboxDir } from "../src/policy.js";
+import { inboxDir, outboxDir, recordsKindDir } from "../src/policy.js";
 import { bindRunProject } from "../src/run-store.js";
 import { makeEnv, REPLY_BODY, write, type TestEnv } from "./helpers.js";
 
@@ -137,6 +137,32 @@ describe("mailbox routing", () => {
 
     send(p, "lead", "d2.md", "type: done\nsubject: shipped", "summary");
     expect(routeOutboxes(p).done).toMatchObject({ from: "lead", subject: "shipped", body: "summary" });
+  });
+
+  it("rejects the lead's done while a records kind is over its 6 KB budget", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    const rec = (id: string, status: string, size: number) =>
+      write(path.join(recordsKindDir(p, "lessons"), `${id}.md`), `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: T${id}\n---\n${"x".repeat(size)}\n`);
+    rec("big", "active", 7000);
+    send(p, "lead", "d1.md", "type: done\nsubject: ship", "summary");
+    const r = routeOutboxes(p);
+    expect(r.done).toBeUndefined();
+    expect(r.rejected[0].reason).toMatch(/records\/lessons hold \d+ bytes.*6144.*superseded.*supersedes/);
+
+    rec("big", "superseded", 7000);
+    send(p, "lead", "d2.md", "type: done\nsubject: ship2", "summary");
+    expect(routeOutboxes(p).done).toMatchObject({ subject: "ship2" });
+  });
+
+  it("accepts done with records under budget", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    write(path.join(recordsKindDir(p, "decisions"), "ok.md"), "---\nstatus: active\ndate: 2026-01-02\ntitle: T\n---\nsmall\n");
+    send(p, "lead", "d.md", "type: done\nsubject: ship", "summary");
+    expect(routeOutboxes(p).done).toMatchObject({ subject: "ship" });
   });
 
   it("rejects malformed mail", () => {

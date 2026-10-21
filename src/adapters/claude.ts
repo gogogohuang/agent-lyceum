@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoDirFor, writePolicy } from "../policy.js";
+import { repoDirFor, scratchCwd, writePolicy, type WritePolicy } from "../policy.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { ErrorKind } from "../schema.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
@@ -21,10 +21,11 @@ function denyRules(p: string): string[] {
   return out;
 }
 
-export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent): Record<string, unknown> {
-  const pol = writePolicy(project, agent);
-  const ws = project.workspaces?.[agent.name];
-  const repo = repoDirFor(project, agent.name);
+/** `override`: a policy that replaces the agent's own; `cwd` is then the (scratch) directory the runtime starts in, in place of the repo. */
+export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent, override?: { policy: WritePolicy; cwd: string }): Record<string, unknown> {
+  const pol = override?.policy ?? writePolicy(project, agent);
+  const ws = override ? undefined : project.workspaces?.[agent.name];
+  const repo = override?.cwd ?? repoDirFor(project, agent.name);
   const allow = ["Bash", "Read", "Glob", "Grep"];
   // Web tools are opt-in: `search` is the lighter one (snippets only), `fetch` also pulls whole pages into the agent's context.
   if (agent.allowWeb === "search" || agent.allowWeb === "fetch") allow.push("WebSearch");
@@ -43,7 +44,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
       enabled: true,
       allowUnsandboxedCommands: false,
       filesystem: {
-        allowWrite: [ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
+        allowWrite: [override?.cwd ?? ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
         denyWrite: pol.deny,
       },
     },
@@ -55,11 +56,13 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
   fs.mkdirSync(workDir, { recursive: true });
   const settingsFile = path.join(workDir, "claude-settings.json");
   const systemFile = path.join(workDir, "system-prompt.md");
-  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent), null, 2));
+  const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
+  const scope = input.policy ? { policy: input.policy, cwd: repo } : undefined;
+  if (scope) fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent, scope), null, 2));
   fs.writeFileSync(systemFile, input.systemPrompt);
 
-  const pol = writePolicy(project, agent);
-  const repo = repoDirFor(project, agent.name);
+  const pol = input.policy ?? writePolicy(project, agent);
   const addDirs = [...pol.allowDirs, ...pol.readDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
 
   const args = [

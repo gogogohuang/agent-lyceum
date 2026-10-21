@@ -8,6 +8,7 @@ import { atomicWrite } from "./fs-util.js";
 import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_REJECTIONS } from "./format-rejections.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
+import { activeRecordsBytes, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
 import { must } from "./assert.js";
 
 export { atomicWrite };
@@ -306,6 +307,13 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
       if (type === "done") {
         if (sender.name !== project.lead) {
           reject(`only the lead ("${project.lead}") may send a "done" message.`);
+          continue;
+        }
+        const over = RECORD_KINDS.map((k) => ({ k, n: activeRecordsBytes(project, k) })).filter((x) => x.n > RECORDS_BUDGET);
+        if (over.length) {
+          reject(
+            `${over.map((x) => `records/${x.k} hold ${x.n} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (6 KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
+          );
           continue;
         }
         res.done = { from: sender.name, subject, body: parsed.body, file, meta: d };

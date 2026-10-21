@@ -1,5 +1,6 @@
 import type { ErrorKind } from "../schema.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
+import type { WritePolicy } from "../policy.js";
 import type { AgentWorkspace } from "../worktree.js";
 
 export interface WakeInput {
@@ -17,6 +18,11 @@ export interface WakeInput {
   signal?: AbortSignal;
   /** Where the full stdout/stderr of this invocation are written. */
   logDir?: string;
+  /**
+   * Replaces the agent's normal write policy (memory tidy: only the dirs being tidied). The repo is then not writable
+   * either: the runtime starts in an empty scratch dir inside `workDir` and may only read the repo.
+   */
+  policy?: WritePolicy;
 }
 
 export interface WakeResult {
