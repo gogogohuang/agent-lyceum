@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { isOpen, agentStats, newestFirst, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
+import { cacheLabel, isOpen, agentStats, newestFirst, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
 import type { Report, Run } from '../types'
 
 const run = (o: Partial<Run> = {}): Run => ({
@@ -81,4 +81,10 @@ test('isOpen: only a completed run leaves the pane', () => {
   expect(isOpen(run({ state: 'waiting' }))).toBe(true)
   expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'partial', outcome_verified: true }))).toBe(true)
   expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'completed', outcome_verified: true }))).toBe(false)
+})
+
+test('cacheLabel: reads, writes and the hit share; empty when nothing was recorded', () => {
+  expect(cacheLabel(288_000, 21_000)).toBe('快取 讀 288.0k 寫 21.0k 命中 93%')
+  expect(cacheLabel()).toBe('')
+  expect(cacheLabel(0, 0)).toBe('')
 })

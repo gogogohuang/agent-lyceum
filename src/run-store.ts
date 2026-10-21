@@ -43,6 +43,9 @@ export interface WakeRecord {
   duration_ms: number;
   ok: boolean;
   output_tokens?: number;
+  /** Prompt-cache input tokens read / written by this wake (claude only). */
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   handling: WakeTopic[];
   /** Mail this wake handed to others; `to` is "(done)" for the lead's final message. */
   sent?: SentTopic[];
@@ -114,6 +117,9 @@ export interface RunState {
   pr_url?: string;
   sessions: Record<string, string>;
   output_tokens: number;
+  /** Run totals of the wakes' prompt-cache input tokens (0 for runs before this was recorded, and for codex). */
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   /** `runtime`/`model` only for agents with a fallback chain. */
   last_wake: Record<string, { at: string; ok: boolean; error?: string; runtime?: Runtime; model?: string }>;
   /** Process running this dispatcher, so a monitor can tell "running" from "interrupted". */
@@ -180,6 +186,8 @@ const WireState = z
     ask_rejections: z.record(z.string(), nonNeg).optional(),
     sessions: z.record(z.string(), z.string()).optional(),
     output_tokens: nonNeg.optional(),
+    cache_read_tokens: nonNeg.optional(),
+    cache_write_tokens: nonNeg.optional(),
     last_wake: z.record(z.string(), z.any()).optional(),
     pid: z.number().optional(),
     task_summary: z.string().optional(),
@@ -222,6 +230,8 @@ function normalize(w: z.infer<typeof WireState>): RunState {
     max_rounds: w.max_rounds ?? 0,
     sessions: w.sessions ?? {},
     output_tokens: w.output_tokens ?? 0,
+    cache_read_tokens: w.cache_read_tokens ?? 0,
+    cache_write_tokens: w.cache_write_tokens ?? 0,
     last_wake: w.last_wake ?? {},
     pid: w.pid ?? 0,
     task_summary: w.task_summary ?? "",

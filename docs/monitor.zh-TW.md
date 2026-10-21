@@ -27,4 +27,6 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 
 **備援標記。** 設有備援鏈的 agent 正在使用備用模型時，它的區塊標題會多一個小小的 `備援中` 標記，其他版面不變。從哪個模型切換、原因，以及冷卻狀態，請看 `agent-lyceum status`。
 
+**快取用量。** 執行那一行也會顯示這個 run 讀取與寫入的 prompt 快取輸入 token，以及讀取所占比例（`快取 讀 … 寫 … 命中 …%`），`agent-lyceum status` 的顯示相同。只記錄 `claude` agent；這項記錄出現之前的 run 與 codex agent 不顯示。
+
 **如何保持最新。** mod 對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個未完成 task 各一份）；剛完成的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。

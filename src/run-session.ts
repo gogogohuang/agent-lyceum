@@ -448,6 +448,8 @@ export class RunSession {
         }));
         if (result.sessionId && agent.resume) state.sessions[sessionKey] = result.sessionId;
         if (result.outputTokens) state.output_tokens += result.outputTokens;
+        state.cache_read_tokens += result.cacheReadTokens ?? 0;
+        state.cache_write_tokens += result.cacheWriteTokens ?? 0;
         delete state.active[agent.name];
         // With a chain only: which model ran, what it replaced, why it failed.
         const which = chain ? { runtime: c.runtime, model: c.model, fallback_from: c.primary || !replaced ? undefined : modelLabel(replaced), kind: result.kind } : {};
@@ -458,6 +460,8 @@ export class RunSession {
           duration_ms: Date.now() - started,
           ok: result.ok,
           output_tokens: result.outputTokens,
+          cache_read_tokens: result.cacheReadTokens,
+          cache_write_tokens: result.cacheWriteTokens,
           handling,
           error: result.error,
           ...which,

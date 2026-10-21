@@ -123,6 +123,9 @@ describe("Claude Code adapter", () => {
     const inv = buildClaudeInvocation(input(env, "lead"));
     const ok = inv.parse({ stdout: JSON.stringify({ result: "hi", session_id: "s9", usage: { output_tokens: 42 }, is_error: false }), stderr: "", code: 0 });
     expect(ok).toMatchObject({ ok: true, text: "hi", sessionId: "s9", outputTokens: 42 });
+    const cached = inv.parse({ stdout: JSON.stringify({ result: "hi", usage: { output_tokens: 1, cache_read_input_tokens: 900, cache_creation_input_tokens: 100 }, is_error: false }), stderr: "", code: 0 });
+    expect(cached).toMatchObject({ cacheReadTokens: 900, cacheWriteTokens: 100 });
+    expect(ok.cacheReadTokens).toBeUndefined(); // an output without cache fields stays unknown, not 0
     expect(inv.parse({ stdout: JSON.stringify({ result: "boom", is_error: true }), stderr: "", code: 1 }).ok).toBe(false);
     expect(inv.parse({ stdout: "garbage", stderr: "x", code: 1 }).ok).toBe(false);
     // newer Claude Code versions print an array of events; the result is the "result" element

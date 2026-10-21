@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
-import { agentStats, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
+import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, paneWidth } from './graph'
 import { graphView } from './graph-view'
 
@@ -168,6 +168,7 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column">
             <Text>
               執行 {run.run_id} [{runLabel(run)}] 第 {roundsLabel(run.rounds, run.max_rounds)} 輪 · {run.output_tokens.toLocaleString('en-US')} tokens
+              {cacheLabel(run.cache_read_tokens, run.cache_write_tokens) && ` · ${cacheLabel(run.cache_read_tokens, run.cache_write_tokens)}`}
             </Text>
             <Text>
               任務：{run.task_summary}
