@@ -8,14 +8,14 @@ import { MAX_KEEP_BYTES, ProtectedGuard } from "../src/guard.js";
 import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
-import { FULL_DONE, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, withSections, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const mail = (i: WakeInput, to: string, subject: string, type = "reply") =>
-  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`);
+  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : withSections(type, `body of ${subject}`)}\n`);
 
 async function run(invoker: Invoker, opts: { task?: string; file?: string } = {}): Promise<RunSummary> {
   const project = env.project();
@@ -57,8 +57,8 @@ describe("dispatcher", () => {
       const send = (to: string, type: string, subject: string, body: string) =>
         write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body}\n`);
       if (i.agent.name === "lead" && !i.userPrompt.includes("from: fe-member"))
-        send("fe-member", "task", "implement login", "## Goal\nBuild the login form\n\n## Steps\n- [x] design\n- [ ] build\n");
-      else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n");
+        send("fe-member", "task", "implement login", `## Goal\nBuild the login form\n\n## Acceptance criteria\nNone\n\n## Scope\nNone\n\n## Upstream\nNone\n\n## Steps\n- [x] design\n- [ ] build\n`);
+      else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n\n## Verification\nNone\n\n## Open items\nNone\n\n## Risks\nNone\n");
       else send("lead", "done", "all good", `${FULL_DONE}\n## Steps\n- [x] design\n- [x] build\n`);
       return OK;
     }, { task: "ship login\n\n- [ ] design\n- [ ] build" });

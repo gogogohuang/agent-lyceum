@@ -152,12 +152,12 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       : `Report results to the lead by mail; the lead decides what happens next.`,
     isLead
       ? "Each wake-up handles one message, except that several `reply`/`failure` messages waiting together are handed to you in one wake-up: weigh them together, then decide the next step once."
-      : "Each wake-up handles one message. Do the work it asks, then send the replies that are needed, then stop.",
+      : "Each wake-up handles one message, except that consecutive `reply`/`failure` messages on the same thread may be handed to you together: handle them together. Do the work it asks, then send the replies that are needed, then stop.",
     "Mail that repeats an earlier mail of yours to the same agent (same type, same text) is not sent again; you are told, and should wait for the answer or ask for something different instead of resending.",
     "",
     "## Message format",
     "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
-    "Mail missing a heading is still delivered, but is flagged to the recipient.",
+    "A `task` or `reply` missing a heading is sent back to you (at most twice per sender + type + subject); after that it is delivered with a warning flagged to the recipient.",
     "",
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
@@ -224,13 +224,16 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   return lines.join("\n");
 }
 
-/** Messages one wake-up handles: the oldest one, or for the lead a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so it decides once on all of it. */
+/** Messages one wake-up handles: the oldest one, or a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so the agent decides once on all of it; the lead takes any such run, other agents only same-thread ones. */
 export function pickMessages(project: ResolvedProject, agent: ResolvedAgent, queue: Message[]): Message[] {
   const sorted = [...queue].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
-  if (agent.name !== project.lead || !BATCHABLE.has(sorted[0]?.meta.type)) return sorted.slice(0, 1);
+  const first = sorted[0];
+  if (!first || !BATCHABLE.has(first.meta.type)) return sorted.slice(0, 1);
+  const isLead = agent.name === project.lead;
   const run: Message[] = [];
   for (const m of sorted) {
     if (!BATCHABLE.has(m.meta.type) || run.length >= LEAD_BATCH_LIMIT) break;
+    if (!isLead && m.meta.thread !== first.meta.thread) break;
     run.push(m);
   }
   return run;

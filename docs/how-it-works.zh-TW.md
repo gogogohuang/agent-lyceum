@@ -2,9 +2,9 @@
 
 1. 任務（文字，或 `--task-file` 的唯讀副本 `runs/<id>/task.md`）會成為寄給 lead 的第一封信。≤ 16 KB 的任務直接內嵌，更大的改以引用方式傳遞。超過 1 MB 的檔案會被拒絕。
 2. dispatcher 用 `claude -p` 或 `codex exec`（headless）喚醒有未讀信件的 agent。除非設定 `resume: true`，否則每次喚醒都是全新的 session。
-3. 每次喚醒的 prompt 都包含：該 agent 的 `AGENT.md`、團隊協定、`COMMON.md`（唯讀，≤ 8 KB）、每個記憶資料夾的 `MEMORY.md` 索引、**最舊**一封未讀信件全文（每次喚醒只處理一封；lead 例外，會一次拿到連續最多 5 封 `reply`/`failure` 並一併決策），以及排隊中信件的標題；排隊的信維持未讀，等各自的喚醒再處理。
+3. 每次喚醒的 prompt 都包含：該 agent 的 `AGENT.md`、團隊協定、`COMMON.md`（唯讀，≤ 8 KB）、每個記憶資料夾的 `MEMORY.md` 索引、**最舊**一封未讀信件全文（每次喚醒只處理一封；lead 例外，會一次拿到連續最多 5 封 `reply`/`failure`；其他 agent 則會一次拿到同一討論串連續最多 5 封 `reply`/`failure`，並一併決策），以及排隊中信件的標題；排隊的信維持未讀，等各自的喚醒再處理。
 4. agent 寄信的方式，是在**自己的** `outbox/` 寫一個含 frontmatter（`to`、`type`、`subject`）的 Markdown 檔。dispatcher 會檢查 `can_message`、蓋上真正的寄件者，並移到收件者的 `inbox/`。處理完的信件移至 `inbox/<agent>/read/`。信箱屬於單一 run（`runs/<run-id>/mail/`），信件不會跨 run。舊版本啟動的 run 繼續使用共用的 `shared/{inbox,outbox}/` 信箱（信件不會被搬移），接續這類 run 時會沿用舊版配置。
-   每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的信仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。
+   每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的 `task` 或 `reply` 會退回給寄件人，並以 `failure` 信列出缺少的標題；同一 run 內同一寄件人、type 與主旨最多退回兩次，之後仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。舊版配置的 run 一律直接送達並附警告。
 5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或（有設上限時）喚醒次數達到 `max_rounds`；預設 `0` 代表不限輪數。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗最多重試 `retry` 次（預設 2，即最多呼叫 3 次）；仍然失敗就停止整個 run（成員失敗為 `agent_failed`，lead 失敗為 `lead_failed`），不會少了它繼續跑：它正在處理的那封信維持未讀，結束訊息會告訴你怎麼查原因與怎麼繼續（修正後 `agent-lyceum resume <run>`，或用 `clear` 放棄）。同一個寄件人寄給同一個收件人、type、reply_to 與內文（忽略空白差異）都相同的信不會再被投遞，並通知寄件人，避免兩個 agent 對著同一封信繞圈。
 
 有待處理信件的成員會平行喚醒，沒有上限，且絕不與 lead 同時執行。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。

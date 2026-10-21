@@ -35,6 +35,17 @@ export function makeEnv(name = "demo"): TestEnv {
 /** A `done` body that meets the completion contract for `outcome: completed`. */
 export const FULL_DONE = "## Result\nShipped.\n\n## Files\n- src/x.ts\n\n## Verification\nnpm test: passed\n\n## Not done\nNone\n";
 
+/** A `reply` body that carries every required heading. */
+export const REPLY_BODY = "## Changes\nNone\n## Verification\nNone\n## Open items\nNone\n## Risks\nNone";
+
+/** A `task` body that carries every required heading. */
+export const TASK_BODY = "## Goal\nx\n## Acceptance criteria\nNone\n## Scope\nNone\n## Upstream\nNone";
+
+/** `text` followed by the headings a `task` or `reply` must carry, so the mail is not sent back. */
+export function withSections(type: string, text: string): string {
+  return `${text}\n\n${type === "task" ? TASK_BODY : REPLY_BODY}`;
+}
+
 export function write(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);

@@ -10,7 +10,7 @@ import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { collectAgentChanges, integrateAgentChanges, planWorkspace, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
-import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, REPLY_BODY, withSections, write, type TestEnv } from "./helpers.js";
 import { PR_FOOTER, type CommandRunner } from "../src/open-pr.js";
 import type { ResolvedProject } from "../src/config.js";
 
@@ -196,7 +196,7 @@ describe("dispatcher integration", () => {
   const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply", outcome = "completed") =>
     write(
       path.join(outboxDir(p, from), `${Math.random()}.md`),
-      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Not done\nNone\n" : "body"}\n`,
+      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Not done\nNone\n" : withSections(type, `body of ${subject}`)}\n`,
     );
 
   async function start(invoker: Parameters<typeof runTeam>[0]["invoker"], opts: { pr?: CommandRunner } = {}) {
@@ -737,7 +737,7 @@ describe("dispatcher integration", () => {
           write(path.join(i.workspace!.dir, "src/web/feature.txt"), "built\n");
           write(
             path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`),
-            `---\nto: lead\ntype: reply\nsubject: finished\nopen_pr: true\n---\n\nbody of finished\n`,
+            `---\nto: lead\ntype: reply\nsubject: finished\nopen_pr: true\n---\n\n${REPLY_BODY}\n`,
           );
         }
         return OK;

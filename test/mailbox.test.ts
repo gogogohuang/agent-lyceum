@@ -5,12 +5,10 @@ import { missingSections } from "../src/format.js";
 import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { bindRunProject } from "../src/run-store.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { makeEnv, REPLY_BODY, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
-
-const REPLY_BODY = "## Changes\nNone\n## Verification\nNone\n## Open items\nNone\n## Risks\nNone";
 
 function send(project: ReturnType<TestEnv["project"]>, from: string, name: string, fm: string, body = "hello") {
   write(path.join(outboxDir(project, from), name), `---\n${fm}\n---\n\n${body}\n`);
@@ -165,6 +163,46 @@ describe("mailbox routing", () => {
     expect(listUnread(p, "lead")).toHaveLength(0);
     expect(readMessage(path.join(path.dirname(a.file), "read", path.basename(a.file))).body).toBe("1");
     expect(b.meta.id).not.toBe(a.meta.id);
+  });
+});
+
+describe("format rejection in a run", () => {
+  const runProject = (layout: "run" | "legacy") => {
+    env = makeEnv();
+    const base = env.project();
+    const p = bindRunProject(base, path.join(base.paths.runs, "run-a"), layout);
+    ensureProjectDirs(p);
+    return p;
+  };
+  it("sends a section-less reply back twice, then delivers it with a warning", () => {
+    const p = runProject("run");
+    for (let i = 1; i <= 2; i++) {
+      send(p, "fe-member", `r${i}.md`, "to: lead\ntype: reply\nsubject: Done", `body ${i}`);
+      const res = routeOutboxes(p);
+      expect(res.delivered).toHaveLength(0);
+      expect(res.rejected[0]?.reason).toMatch(/Changes/);
+    }
+    send(p, "fe-member", "r3.md", "to: lead\ntype: reply\nsubject: Done", "body 3");
+    const res = routeOutboxes(p);
+    expect(res.delivered).toHaveLength(1);
+    expect(res.warnings).toHaveLength(1);
+  });
+  it("still delivers with a warning at once in the legacy layout", () => {
+    const p = runProject("legacy");
+    send(p, "fe-member", "r.md", "to: lead\ntype: reply\nsubject: Done", "body");
+    const res = routeOutboxes(p);
+    expect(res.delivered).toHaveLength(1);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.rejected).toHaveLength(0);
+  });
+  it("sends one failure, and delivers nothing, when a mail is both a partial duplicate and section-less", () => {
+    const p = runProject("run");
+    // a section-less mail already delivered (e.g. after the cap), then the same text to two recipients
+    deliver(p, { from: "fe-member", to: "lead", type: "reply", subject: "S", body: "bare text that is long enough to count" });
+    send(p, "fe-member", "c.md", "to: [lead, qa-member]\ntype: reply\nsubject: S3", "bare text that is long enough to count");
+    const res = routeOutboxes(p);
+    expect(res.delivered).toHaveLength(0);
+    expect(listUnread(p, "fe-member").filter((m) => m.meta.type === "failure")).toHaveLength(1);
   });
 });
 
