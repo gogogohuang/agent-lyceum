@@ -1,21 +1,22 @@
 import fs from "node:fs";
 import type { ResolvedProject } from "./config.js";
-import { buildStatusReport, buildTaskListReport, type StatusReport } from "./status.js";
+import { buildStatusReport, buildTaskListReport, isCompletedRun, type StatusReport } from "./status.js";
 
-/** What `status --json --watch` prints, one JSON object per line: the project's report plus one per running task. */
+/** What `status --json --watch` prints, one JSON object per line: the project's report plus one per task that is not completed. */
 export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Record<string, StatusReport>; error?: string };
 
 /**
- * The frame for now. Every running task gets its own report; a task that was running in the previous frame
- * and has ended since is included once more, so the reader sees it finish (and can toast) before it is dropped.
- * `tracked` is that previous set; it is replaced by the ids running now.
+ * The frame for now. Every task that is not completed (running, interrupted, waiting for answers, or ended partial,
+ * blocked, failed or cancelled) gets its own report, so it stays listed until it is resumed to completion or cleared.
+ * A task that was running in the previous frame and has completed since is included once more, so the reader sees
+ * it finish (and can toast) before it is dropped. `tracked` is that previous set; it is replaced by the ids running now.
  */
 export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>): WatchFrame {
-  const running = buildTaskListReport(project)
-    .runs.filter((r) => r.state === "running")
-    .map((r) => r.run_id);
+  const all = buildTaskListReport(project).runs;
+  const running = all.filter((r) => r.state === "running").map((r) => r.run_id);
+  const open = all.filter((r) => !isCompletedRun(r)).map((r) => r.run_id);
   const runs: Record<string, StatusReport> = {};
-  for (const id of new Set([...running, ...tracked])) runs[id] = buildStatusReport(project, id);
+  for (const id of new Set([...open, ...tracked])) runs[id] = buildStatusReport(project, id);
   const report = buildStatusReport(project);
   tracked.clear();
   for (const id of running) tracked.add(id);

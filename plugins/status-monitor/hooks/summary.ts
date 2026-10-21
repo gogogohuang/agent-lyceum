@@ -9,6 +9,11 @@ export function runLabel(r: Run): string {
   return OUTCOME[r.outcome ?? ''] ?? r.outcome ?? '結束'
 }
 
+/** A task stays on the pane until it completed: running, interrupted, waiting, or ended any other way. */
+export function isOpen(r: Run): boolean {
+  return !(r.state === 'ended' && r.outcome === 'completed')
+}
+
 /** `x/limit`, or just `x` when there is no round limit (`max_rounds: 0`). */
 export function roundsLabel(rounds: number, limit: number): string {
   return limit > 0 ? `${rounds}/${limit}` : String(rounds)

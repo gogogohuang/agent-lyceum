@@ -33,6 +33,26 @@ export function commonFile(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "COMMON.md");
 }
 
+/** Durable decisions and lessons of the project, kept next to COMMON.md: the lead writes them, everyone else reads them. */
+export function decisionsFile(project: ResolvedProject): string {
+  return path.join(project.paths.shared, "common", "DECISIONS.md");
+}
+
+export function lessonsFile(project: ResolvedProject): string {
+  return path.join(project.paths.shared, "common", "LESSONS.md");
+}
+
+/** Where the lead moves entries that no longer fit under the prompt cap; read on demand, never injected. */
+export function archiveFile(file: string): string {
+  return file.replace(/\.md$/, "_ARCHIVE.md");
+}
+
+/** The lead-maintained files shared by every run of the project. */
+export function sharedContextFiles(project: ResolvedProject): string[] {
+  const [d, l] = [decisionsFile(project), lessonsFile(project)];
+  return [commonFile(project), d, l, archiveFile(d), archiveFile(l)];
+}
+
 export function outboxDir(project: ResolvedProject, agent: string): string {
   return path.join(project.paths.outboxRoot, agent);
 }
@@ -113,7 +133,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(shared && mayWriteShared ? [shared] : []),
   ];
   const allowFiles: string[] = [];
-  if (isLead) allowFiles.push(commonFile(project));
+  if (isLead) allowFiles.push(...sharedContextFiles(project));
   if (mayWriteShared && sharedIdx) allowFiles.push(sharedIdx);
   if (agent.canEditAgentMd) {
     for (const a of Object.values(project.agents)) allowFiles.push(a.agentMd);
@@ -131,7 +151,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     if (a.name !== agent.name) deny.push(outboxDir(project, a.name));
     deny.push(inboxDir(project, a.name));
   }
-  addDeny(commonFile(project));
+  for (const f of sharedContextFiles(project)) addDeny(f);
   for (const f of repoInstructionFiles(project)) addDeny(f);
   if (shared && !mayWriteShared) deny.push(shared);
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));

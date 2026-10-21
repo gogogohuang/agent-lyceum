@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
-import { agentStats, runtimeTokens, clip, elapsed, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
+import { agentStats, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, paneWidth } from './graph'
 import { graphView } from './graph-view'
 
@@ -28,19 +28,17 @@ async function fetchReport($: EngineInterface, args: string[]): Promise<Report> 
   return JSON.parse(res.stdout) as Report
 }
 
-/** Toast the transitions of every run in a report set, keep the running ones, and publish the snapshot. */
+/** Toast the transitions of every run in a report set, keep the ones not completed, and publish the snapshot. */
 async function apply($: EngineInterface, t: Target, report: Report, seen: Record<string, Report>) {
   const runs: Record<string, Report> = {}
   for (const [id, r] of Object.entries(seen)) {
     const key = `${t.key}|${id}`
     const note = tagToast(transition(last.get(key) ?? null, r), r.project.name, several)
     if (note) $.ui.toast(note)
-    if (r.run?.state === 'running') {
-      last.set(key, r)
-      runs[id] = r
-    } else {
-      last.delete(key) // finished: toast once, then stop tracking
-    }
+    // Only a running task can change state under us; the toast needs its previous report.
+    if (r.run?.state === 'running') last.set(key, r)
+    else last.delete(key)
+    if (r.run && isOpen(r.run)) runs[id] = r // completed: toast once, then drop
   }
   await update($, snapshot, s => ({ ...s, [t.key]: { ...s[t.key], report, runs, error: null } }))
 }
@@ -54,11 +52,11 @@ async function poll($: EngineInterface, t: Target) {
   if (polling.has(t.key)) return
   polling.add(t.key)
   try {
-    // `status --json` shows one run (the newest running). Concurrent runs need one report each: list the tasks, then fetch every running one.
+    // `status --json` shows one run (the newest running). Concurrent runs need one report each: list the tasks, then fetch every one that is not completed.
     const report = await fetchReport($, t.status)
-    const list = JSON.parse((await $.process.run([...t.status, '--task-list'], { timeoutMs: 15000 })).stdout) as { runs: { run_id: string; state: string }[] }
+    const list = JSON.parse((await $.process.run([...t.status, '--task-list'], { timeoutMs: 15000 })).stdout) as { runs: { run_id: string; state: string; outcome?: string }[] }
     const tracked = [...last.keys()].filter(k => k.startsWith(`${t.key}|`)).map(k => k.slice(t.key.length + 1))
-    const ids = new Set([...list.runs.filter(r => r.state === 'running').map(r => r.run_id), ...tracked])
+    const ids = new Set([...list.runs.filter(r => !(r.state === 'ended' && r.outcome === 'completed')).map(r => r.run_id), ...tracked])
     const seen: Record<string, Report> = {}
     for (const id of ids) seen[id] = await fetchReport($, [...t.status, '--task-id', id])
     await apply($, t, report, seen)
@@ -255,14 +253,15 @@ export const register: Register = (on, options) => {
       )
     }
 
-    // One tab per running task, newest first. Finished and interrupted runs are not listed.
+    // One tab per task that is not completed, newest first: running, interrupted, waiting and failed/partial/blocked ones stay until resumed or cleared.
     const tabs = newestFirst(
       targets.flatMap(t =>
         Object.values(snap[t.key]?.runs ?? {}).flatMap(r => {
           const run = r.run
-          if (run?.state !== 'running') return []
+          if (!run || !isOpen(run)) return []
           const label = t.key || r.project.name || '目前'
-          return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${label}：` : ''}${clip(run.task_summary, 12)}`, body: () => section(t, r) }]
+          const mark = run.state === 'running' ? '' : `[${runLabel(run)}] `
+          return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${label}：` : ''}${mark}${clip(run.task_summary, 12)}`, body: () => section(t, r) }]
         }),
       ),
       x => x.startedAt,
@@ -271,7 +270,7 @@ export const register: Register = (on, options) => {
     const active = tabs.find(x => x.id === wanted) ?? tabs[0]
     if (!active) {
       const errors = targets.map(t => snap[t.key]?.error).filter((m): m is string => !!m)
-      return <Text dimColor>{errors.length && !targets.some(t => snap[t.key]?.report) ? `無法取得狀態：${errors[0]}` : '沒有執行中的任務'}</Text>
+      return <Text dimColor>{errors.length && !targets.some(t => snap[t.key]?.report) ? `無法取得狀態：${errors[0]}` : '沒有未完成的任務'}</Text>
     }
 
     return (

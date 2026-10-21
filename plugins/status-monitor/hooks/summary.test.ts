@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { agentStats, newestFirst, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
+import { isOpen, agentStats, newestFirst, overviewLine, parseProjects, runtimeTokens, elapsed, statusLine, tagToast, tokens, transition } from './summary'
 import type { Report, Run } from '../types'
 
 const run = (o: Partial<Run> = {}): Run => ({
@@ -73,4 +73,12 @@ test('tagToast prefixes the project only when several are watched', () => {
 test('newestFirst orders by start time, undated last, ties stable', () => {
   const xs = [{ n: 'old', t: '2026-01-01T00:00:00Z' }, { n: 'none' }, { n: 'new', t: '2026-01-02T00:00:00Z' }, { n: 'none2', t: 'bad' }] as { n: string; t?: string }[]
   expect(newestFirst(xs, x => x.t).map(x => x.n)).toEqual(['new', 'old', 'none', 'none2'])
+})
+
+test('isOpen: only a completed run leaves the pane', () => {
+  expect(isOpen(run())).toBe(true)
+  expect(isOpen(run({ state: 'interrupted' }))).toBe(true)
+  expect(isOpen(run({ state: 'waiting' }))).toBe(true)
+  expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'partial', outcome_verified: true }))).toBe(true)
+  expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'completed', outcome_verified: true }))).toBe(false)
 })
