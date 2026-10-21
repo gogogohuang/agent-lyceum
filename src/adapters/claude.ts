@@ -144,6 +144,8 @@ function interpretClaude(j: ClaudeResult | undefined, stdout: string, stderr: st
     text: String(j.result ?? ""),
     sessionId: j.session_id,
     outputTokens: j.usage?.output_tokens,
+    cacheReadTokens: j.usage?.cache_read_input_tokens,
+    cacheWriteTokens: j.usage?.cache_creation_input_tokens,
     error: ok ? undefined : String(j.result ?? stderr).slice(0, 500),
     kind: ok ? undefined : classifyClaudeError({ code, stdout, stderr, result: j.is_error && j.result !== undefined ? String(j.result) : undefined }),
   };
@@ -175,7 +177,7 @@ function claudeStream(): StreamParser {
 interface ClaudeResult {
   result?: string;
   session_id?: string;
-  usage?: { output_tokens?: number };
+  usage?: { output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
   is_error?: boolean;
 }
 

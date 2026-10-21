@@ -27,4 +27,6 @@ Changes take effect on the next session start. If the pane shows `無法取得�
 
 **Fallback badge.** When an agent that has a fallback chain is running on a backup model, its block title carries a small `備援中` (on a fallback) mark; nothing else in the layout changes. Which model it fell back from and why, and any cooldown, are in `agent-lyceum status`.
 
+**Cache usage.** The run line also shows the prompt-cache input tokens read and written over the run and the share that was read (`快取 讀 … 寫 … 命中 …%`), the same as `agent-lyceum status`. It is recorded for `claude` agents only; runs from before this was recorded, and codex agents, show nothing.
+
 **How it stays current.** The mod starts `agent-lyceum status --json --watch` once per watched project. It watches the project's `runs/` directory (debounced 100 ms, since a round writes several files) and prints one JSON line (the project report plus one report per task that is not completed) when the result differs from the last line; a task that just completed is included once more so the toast can fire. `--heartbeat <sec>` (default 5) is the slow re-check for what a file event cannot show (a dead lock holder, a `runs/` directory that did not exist yet). The process ends when its parent goes away. If it cannot run, the mod logs why to the debug log and falls back to polling at `intervalSeconds`.

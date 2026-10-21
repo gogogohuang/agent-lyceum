@@ -9,6 +9,8 @@ export type Wake = {
   duration_ms: number
   error?: string
   output_tokens?: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
   handling?: Mail[]
   sent?: Sent[]
 }
@@ -24,6 +26,8 @@ export type Run = {
   rounds: number
   max_rounds: number
   output_tokens: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
   task_summary: string
   steps?: Step[]
   current_step?: string | null

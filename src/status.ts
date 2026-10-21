@@ -134,6 +134,12 @@ const padCols = (t: string, n: number) => t + " ".repeat(Math.max(0, n - cols(t)
 const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
 const tokens = (n: number | undefined) => (n ? n.toLocaleString("en-US") : "0");
 
+/** "快取 讀 288,124 寫 21,364 命中 93%": the share of cached input that was read, not written. Empty when nothing was recorded. */
+export function cacheText(read: number | undefined, write: number | undefined): string {
+  const [r, w] = [read ?? 0, write ?? 0];
+  return r + w > 0 ? `快取 讀 ${tokens(r)} 寫 ${tokens(w)} 命中 ${Math.round((100 * r) / (r + w))}%` : "";
+}
+
 function since(iso: string, now: number): string {
   const sec = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`;
@@ -197,6 +203,9 @@ export interface RunReport {
   /** Set when an agent kept failing and the run stopped: `resume` after fixing the cause. */
   failure?: RunFailure;
   output_tokens: number;
+  /** Prompt-cache input tokens read / written over the run (claude only; 0 when unknown). */
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   task_source: "text" | "file";
   task_path?: string;
   task_summary: string;
@@ -307,6 +316,8 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     max_rounds: s.max_rounds,
     ...(s.failure ? { failure: s.failure } : {}),
     output_tokens: s.output_tokens,
+    cache_read_tokens: s.cache_read_tokens ?? 0,
+    cache_write_tokens: s.cache_write_tokens ?? 0,
     task_source: s.task_source,
     task_path: s.task_path,
     task_summary: s.task_summary,
@@ -467,7 +478,7 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
 /** What a run is doing / did, one line per wake. */
 function describeRun(s: RunReport, now: number, c: Paint, limit = Infinity): string[] {
   const lines = [
-    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${roundsLabel(s.rounds, s.max_rounds)}  輸出 tokens ${tokens(s.output_tokens)}`,
+    `${c.bold("執行 " + runLabel(s))}  [${stateColor(c, reportLabel(s))}]  輪次 ${roundsLabel(s.rounds, s.max_rounds)}  輸出 tokens ${tokens(s.output_tokens)}${cacheText(s.cache_read_tokens, s.cache_write_tokens) ? `  ${cacheText(s.cache_read_tokens, s.cache_write_tokens)}` : ""}`,
     `  任務：${taskText(s)}`,
   ];
   const steps = stepsLine(s.steps, c);
@@ -604,7 +615,7 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
   const fb = fallbackLines(report.agents, c);
   if (fb.length) lines.push("", ...fb);
-  if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}`);
+  if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}${cacheText(run.cache_read_tokens, run.cache_write_tokens) ? `　${cacheText(run.cache_read_tokens, run.cache_write_tokens)}` : ""}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
 }

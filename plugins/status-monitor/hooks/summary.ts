@@ -14,6 +14,12 @@ export function isOpen(r: Run): boolean {
   return !(r.state === 'ended' && r.outcome === 'completed')
 }
 
+/** "快取 讀 288.1k 寫 21.4k 命中 93%"; empty when nothing was recorded (codex, older runs). */
+export function cacheLabel(read?: number, write?: number): string {
+  const [r, w] = [read ?? 0, write ?? 0]
+  return r + w > 0 ? `快取 讀 ${tokens(r)} 寫 ${tokens(w)} 命中 ${Math.round((100 * r) / (r + w))}%` : ''
+}
+
 /** `x/limit`, or just `x` when there is no round limit (`max_rounds: 0`). */
 export function roundsLabel(rounds: number, limit: number): string {
   return limit > 0 ? `${rounds}/${limit}` : String(rounds)

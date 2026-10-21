@@ -24,6 +24,9 @@ export interface WakeResult {
   text: string;
   sessionId?: string;
   outputTokens?: number;
+  /** Prompt-cache usage (claude only): input tokens read from / written to the cache. */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   exitCode: number | null;
   timedOut: boolean;
   error?: string;
@@ -38,6 +41,8 @@ export type Parsed = {
   text: string;
   sessionId?: string;
   outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   error?: string;
   /** Set on failure only; `unknown` when no rule recognizes the output. */
   kind?: ErrorKind;
