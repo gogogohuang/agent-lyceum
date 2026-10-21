@@ -7,7 +7,7 @@ import { outboxDir } from "../src/policy.js";
 import { loadRunState, saveRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import type { CommandRunner } from "../src/open-pr.js";
-import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -16,7 +16,7 @@ const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const send = (i: WakeInput, to: string, type: string, subject: string, body?: string) =>
   write(
     path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`),
-    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body ?? (type === "done" ? FULL_DONE.replace("Shipped.", subject) : `body of ${subject}`)}\n`,
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body ?? (type === "done" ? FULL_DONE.replace("Shipped.", subject) : withSections(type, `body of ${subject}`))}\n`,
   );
 /** The lead answers its first wake-up with a done report. */
 const leadDone = (text: string): Invoker => async (i) => {

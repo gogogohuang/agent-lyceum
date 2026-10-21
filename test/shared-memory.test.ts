@@ -12,7 +12,7 @@ import { HANDOFF_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt
 import { soloProject } from "../src/solo.js";
 import { prepareTask } from "../src/task.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
-import { FULL_DONE, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
+import { FULL_DONE, REPLY_BODY, TASK_BODY, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -103,6 +103,11 @@ describe("the handoff folder: where it is and who may write it", () => {
 });
 
 describe("prompts", () => {
+  it("tells agents that mail missing a heading is sent back at most twice", () => {
+    env = makeEnv();
+    const p = bound();
+    expect(buildSystemPrompt(p, p.agents["fe-member"])).toContain("is sent back to you (at most twice per sender + type + subject)");
+  });
   it("the lead is told to write handoff notes before done; a member is not", () => {
     env = makeEnv();
     const p = bound();
@@ -141,7 +146,7 @@ const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const send = (i: WakeInput, to: string, type: string, subject: string) =>
   write(
     path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`),
-    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE.replace("Shipped.", subject) : `body of ${subject}`}\n`,
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE.replace("Shipped.", subject) : (type === "task" ? TASK_BODY : REPLY_BODY).replace("None", subject)}\n`,
   );
 const firstSegment = async (invoker: Invoker) => {
   const project = env.project();

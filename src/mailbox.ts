@@ -5,6 +5,7 @@ import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
 import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
+import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_REJECTIONS } from "./format-rejections.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
 import { must } from "./assert.js";
@@ -331,6 +332,17 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         continue;
       }
 
+      const missing = missingSections(type, parsed.body);
+      if (missing.length && project.run?.layout === "run") {
+        const key = formatRejectionKey(sender.name, type, subject);
+        if (formatRejections(project.run.dir, key) < MAX_FORMAT_REJECTIONS) {
+          const n = countFormatRejection(project.run.dir, key);
+          reject(
+            `this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}. Add them (write \`None\` where a section is empty) and send it again. (Attempt ${n} of ${MAX_FORMAT_REJECTIONS}; after that it is delivered with a warning.)`,
+          );
+          continue;
+        }
+      }
       const replyTo = d.reply_to ? String(d.reply_to) : undefined;
       const thread = d.thread ? String(d.thread) : undefined;
       // Mail whose delivery was already planned (a replay after a crash) is not a repeat of itself.
@@ -360,7 +372,6 @@ export function routeOutboxes(project: ResolvedProject): RouteResult {
         });
         res.rejected.push({ from: sender.name, file, reason: `duplicate: ${repeatNote()}` });
       }
-      const missing = missingSections(type, parsed.body);
       const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
       if (sender.name === project.lead) {
         const st = parseSteps(parsed.body);

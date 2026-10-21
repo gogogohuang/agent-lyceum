@@ -7,14 +7,14 @@ import { deliver, listUnread, readMessage, routeOutboxes } from "../src/mailbox.
 import { inboxDir, outboxDir, writePolicy } from "../src/policy.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, makeEnv, REPLY_BODY, TASK_BODY, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 const send = (project: ReturnType<typeof bindRunProject>, from: string, to: string, subject: string, type = "reply", extra = "") =>
-  write(path.join(outboxDir(project, from), `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}${extra}---\n\n${type === "done" ? FULL_DONE : "body"}\n`);
+  write(path.join(outboxDir(project, from), `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}${extra}---\n\n${type === "done" ? FULL_DONE : (type === "task" ? TASK_BODY : REPLY_BODY).replace("None", subject)}\n`);
 
 describe("run-scoped mailboxes", () => {
   it("keeps the unread mail of one run invisible to another run of the same project", () => {

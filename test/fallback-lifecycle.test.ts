@@ -14,7 +14,7 @@ import { failureGuide } from "../src/run-outcome.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import type { ErrorKind, FallbackEntry } from "../src/schema.js";
 import { prepareTask } from "../src/task.js";
-import { FULL_DONE, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, initGitRepo, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -24,7 +24,7 @@ const fail = (kind: ErrorKind, error: string = `${kind} error`): WakeResult => (
 const send = (p: Parameters<typeof outboxDir>[0], from: string, to: string, subject: string, type = "reply") =>
   write(
     path.join(outboxDir(p, from), `${subject.replace(/\W+/g, "-")}-${Math.random().toString(16).slice(2)}.md`),
-    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : `body of ${subject}`}\n`,
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : withSections(type, `body of ${subject}`)}\n`,
   );
 const subjectsIn = (dir: string) =>
   (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter((f) => f.endsWith(".md")).map((f) => /subject: (.*)/.exec(fs.readFileSync(path.join(dir, f), "utf8"))![1]);
@@ -271,11 +271,12 @@ describe("fallback in a run", () => {
   it("(f) the backup's session is kept under agent@runtime/model and the primary's key is untouched", async () => {
     const seen: [string, string | undefined][] = [];
     let lead = 0;
+    let feDone = 0;
     let failedOnce = false;
     const { s, runDir } = await start(
       async (i) => {
         if (i.agent.name === "fe-member") {
-          send(i.project, "fe-member", "lead", "fe done");
+          send(i.project, "fe-member", "lead", `fe done ${++feDone}`);
           return OK;
         }
         seen.push([i.agent.model ?? "", i.sessionId]);

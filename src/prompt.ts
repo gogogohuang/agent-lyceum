@@ -157,7 +157,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     "",
     "## Message format",
     "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
-    "Mail missing a heading is still delivered, but is flagged to the recipient.",
+    "A `task` or `reply` missing a heading is sent back to you (at most twice per sender + type + subject); after that it is delivered with a warning flagged to the recipient.",
     "",
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
