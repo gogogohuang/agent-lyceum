@@ -72,7 +72,7 @@ agent-lyceum 是一個命令列工具：你交一個任務，它叫一組 AI age
 | I-14 | 部分成立 | 「Claude 載入 CLAUDE.md」可由 flag 確認，但摘要把「未實測」限定詞丟了；還漏 user 層級來源 | `claude.ts:68-82`、`claude --help` |
 | I-15 | 成立 | 他人 worktree／memory 在 Claude 下可讀（含沙箱內），已實測；R2:94,174 不是這個問題 | `policy.ts:148,158`；`git -C` 與 `head` 實測 |
 | I-16 | 成立 | R1 §6 十三項建議無優先度、狀態、owner；R2 無處置表 | R1:162-176；R2 §3 只評 B–I |
-| I-17 | 成立 | R1 §6 #12 成立條件未寫；但條件是「無 OS sandbox」，不是 Codex＋`can_edit_agent_md` | `run-session.ts:593`、`worktree.ts:541`、`policy.ts:196-203` |
+| I-17 | 成立 | R1 §6 #12 成立條件未寫；但條件是「無 OS sandbox，或 Codex 的 repo `CLAUDE.md`／`AGENTS.md`（事後還原，`policy.ts:200-201`）」，不是 Codex＋`can_edit_agent_md` | `run-session.ts:593`、`worktree.ts:541`、`policy.ts:196-203` |
 | I-18 | 部分成立 | 提示 notes 已部分實作；但「缺 `can_edit_agent_md` 警告」是錯的，`policy.ts:203` 已有 | `policy.ts:196-203`、`validate.ts:132`、`cli.ts:557` |
 | I-19 | 部分成立 | 備援 note 在備援已有自己的 session 時不準屬實；但「R1／R2 均未提」錯（R1:41 有）、原因也講錯 | `run-session.ts:413,423,429,449` |
 | I-20 | 成立 | mail 內文原文進 prompt、無長度上限；但語料中沒有超大信，優先度應為中 | `prompt.ts:304`、`mailbox.ts:174,281` |
@@ -505,7 +505,7 @@ B 類全部是**改文件**（只動 R1、R2），本次只寫建議，不修改
 3. **為什麼要修正**：#11（無沙箱警告）已有 notes，Codex 的 `can_edit_agent_md` 警告也在（`policy.ts:203`）；#12 的「改用 worktree 分離」其實已存在（有 worktree 就隔離），髒窗口只在無 OS 沙箱時。寫成待辦會誘發重複工作。
 4. **怎麼修正**：
    - #11 改前：「無沙箱警告待辦」；改後：「已有 notes；缺：Claude 在無 OS 沙箱＋`can_edit_agent_md` 的警告、避免使用的建議。」
-   - #12 改前：「改用 worktree 分離待辦」；改後：「靜態路徑成立（`run-session.ts:593` 批次後檢查）；窗口僅在無 OS 沙箱時；worktree 分離已存在；shared 模式（無 git）一次一個 agent，無窗口。」
+   - #12 改前：「改用 worktree 分離待辦」；改後：「靜態路徑成立（`run-session.ts:593` 批次後檢查）；窗口僅在無 OS 沙箱時，或 Codex 的 repo 指示檔（即使有 OS 沙箱也是事後還原，`policy.ts:200-201`）；worktree 分離已存在；shared 模式（無 git）一次一個 agent，無窗口。」
 5. **怎麼確認修好了**：兩列的新文字能用 `policy.ts:203`、`worktree.ts:541` 核對。
 6. **優先度／把握**：中（#12）／低（#11）；已驗證（靜態；實際交錯為推論）。
 7. **相依**：A-03、A-04。
@@ -684,7 +684,7 @@ B 類全部是**改文件**（只動 R1、R2），本次只寫建議，不修改
 
 1. **編號與標題**：C-12。白話：COMMON、records、記憶、使用者全域設定彼此矛盾時，agent 沒有規則可依。
 2. **要改哪裡**：`src/prompt.ts:218-223`（`## Rules`）；`docs/how-it-works.md` 與其中文版。**改程式＋改文件**；**需要另開任務實作，本次不改**。
-3. **為什麼要修正**：沒有規則時 agent 自己選，結果不可預期。評估報告提議的順序有三個問題（見 A-06）：自相矛盾、漏 AGENT.md／repo CLAUDE.md／user 層級 CLAUDE.md（B-07）、讓任務凌駕寫入限制。每次喚醒 prompt 多約 150–250 B；`prompt snapshot` 測試要更新；且依 `claude --help` 文字（未實測），被 resume 的 Claude lead 可能看不到新文字（C-16）。
+3. **為什麼要修正**：沒有規則時 agent 自己選，結果不可預期。評估報告提議的順序有三個問題（見 A-06）：自相矛盾、漏 AGENT.md／repo CLAUDE.md／user 層級 CLAUDE.md（B-07）、讓任務凌駕寫入限制。每次喚醒 prompt 多約 150–250 B（估計，未實測）；`prompt snapshot` 測試要更新；且依 `claude --help` 文字（未實測），被 resume 的 Claude lead 可能看不到新文字（C-16）。
 4. **怎麼修正**：
    - 改前：「lead task > COMMON > records > 個人 memory（順序由 lead 決定）」
    - 改後：「`## Rules` 永遠最優先（寫入限制不可被任何內容覆蓋）；內容衝突時，依 lead 最新的明確指示，並在 Open items 回報衝突，而不是默默選一邊。」
@@ -760,7 +760,7 @@ B 類全部是**改文件**（只動 R1、R2），本次只寫建議，不修改
 | 2 | §2、I-03、§7a：「失敗也寫回 sessionId」 | 只有失敗結果帶回 id 時才寫回；逾時、取消、spawn 失敗都沒有 | `process-runner.ts:174,214,216-217`；`run-session.ts:449`；語料 18 個失敗 attempt 中 6 個逾時 | A-01 |
 | 3 | §2：「`:413` 不準確，因為同候選重試會沿用 session」 | 原因講錯：`:413` 是備援候選（key `agent@key`）。只有備援已有自己的 session 且 resume 為真時才不準 | `run-session.ts:413,423` | A-02 |
 | 4 | I-18／§7b #11：「缺 `can_edit_agent_md` 警告」 | 已有：`can_edit_agent_md widens Codex writable roots to whole agent directories.` | `policy.ts:203` | A-04 |
-| 5 | I-17／§3 #12：「Codex＋`can_edit_agent_md` 時成立」 | 條件錯：該 agent 被授權，guard 不還原，沒有髒窗口；窗口只在無 OS 沙箱時。檢查在 `worktree.ts:541`，不是 `:500` | `policy.ts:196-203`；`codex.ts:7-11`；`worktree.ts:541` | A-03 |
+| 5 | I-17／§3 #12：「Codex＋`can_edit_agent_md` 時成立」 | 條件錯：該 agent 被授權，guard 不還原，沒有髒窗口；窗口只在無 OS 沙箱時，或 Codex 的 repo 指示檔（`policy.ts:200-201`）。檢查在 `worktree.ts:541`，不是 `:500` | `policy.ts:196-203`；`codex.ts:7-11`；`worktree.ts:541` | A-03 |
 | 6 | I-19 修法選項：「備援一律不帶 sessionId」 | 不可取：lead 在長冷卻期間停在備援，每次喚醒都失去連續性 | `run-session.ts:423,429`（備援 session key 與主模型分開，resume 時沿用） | A-02、C-07 |
 | 7 | I-03 修法：只在 `sessionId === undefined` 時注入 | 會替 lead 關掉 F（lead 預設 resume，通常有 id），連 2d1b53 這個 F 案例都排除 | `config.ts:236`；2d1b53 的 `done.md` 被 park | A-05、C-03 |
 | 8 | I-20 修法：「`routeOutboxes` 超長就 reject」 | 較差：多一次喚醒；與格式拒收、重複檢查互動；管不到 dispatcher 自己寫的信。較好：prompt 端截斷並附檔案路徑（沿用 `task.ts` 16 KiB 模式） | `task.ts:6`；`prompt.ts:304`；`run-session.ts:430-432` | A-06、C-08 |
