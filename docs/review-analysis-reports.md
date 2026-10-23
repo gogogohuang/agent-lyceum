@@ -67,7 +67,7 @@
 | runs | 17 | `ls runs` 19，排除當前 run 與 d52bff = 17 | 吻合（排除規則正文未寫） |
 | inbox mails | 147 | 18 個 run 共 158，去掉 d52bff（11）= 147 | 吻合 |
 | request-changes | 15 | request-changes 15、approve-with-comment 4、approve 4、pass 2 | 吻合；集中度：0a2b9f=5、6e01a3=3（兩個 run 占 8/15） |
-| 失敗 attempt | 18（6 interrupted、6 timeout、6 runtime） | 153 個 attempt：committed 128、failed 18、**started 7**；失敗中 interrupted 6、timeout 6、其餘 6 | 吻合；另有 7 個 `started` 未被報告提及（來源未查；resume 時 recovery 會把 `started` 轉為 failed／interrupted，見 `run-session.ts:843,869`、`message-store.ts:257-260`、R2:115，故不視為 F 的缺口） |
+| 失敗 attempt | 18（6 interrupted、6 timeout、6 runtime） | 153 個 attempt：committed 128、failed 18、**started 7**；失敗中 interrupted 6、timeout 6、其餘 6 | 吻合；另有 7 個 `started` 未被報告提及（來源未查；resume 時 recovery 會把 `started` 轉為 failed／interrupted，見 `run-session.ts:843,869`、`message-store.ts:257-260`、R2:115，故應不構成 F 的缺口（推論）） |
 | 成員回覆數 | 61（13 個 run） | lead inbox 82 封扣 user／dispatcher = 61，分布在 **11** 個 run | 回覆數吻合，run 數差 2（原因未查） |
 | 36／61 重新探索環境 | 36 | 關鍵字 grep 35–40（依詞表） | 數量級接近；人工分類無法機械重現，屬推論 |
 | node-engineer 被喚醒 8 個 run、1 個留 task memory | 8／1 | 8 個 run；僅 0a2b9f 有 `task-memory/<run>/node-engineer` | 吻合 |
