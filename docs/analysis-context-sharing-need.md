@@ -108,7 +108,7 @@ a2 另有一個流程解法：程式碼整合之後才派 docs，或者在 task 
 1. **候選 attempt**：`status: failed`（任何 error：`cancelled`、`interrupted`、timeout、runtime 錯誤），attempt 的 `agent` 與它所屬 claim 的 `agent` 都等於正在喚醒的 agent，而且 claim 的 `message_ids` 與本次處理的 message id 有交集。同一 wake 內重試時就是同一個 claim 的前幾次 attempt。resume 後重做時，舊 claim 已是 `abandoned`，新 claim 的 id 不同，所以要靠 message id 對應：attempt 只有 `claim_id`（`src/message-store.ts:174-186`），必須再讀 claim（`src/message-store.ts:106-113,121-123`）。
 2. **以實際目錄為準（reconciliation）**：草稿清單取自 `attempts/<id>/outbox/` 的實際內容，不取自 metadata 的 `parked`。原因是 park 的每次 rename 和 `finishAttempt` 不是同一個交易（`src/message-store.ts:230-241`，`src/run-session.ts:493-494,498-499`）。reviewer 的 probe 證實：park 後、`finishAttempt` 前崩潰，resume 會把 attempt 記成 `failed`、`parked: []`，草稿卻仍在目錄中（`src/message-store.ts:257-261`）。只搬了一半時，剩下的檔案會在 recovery 時才被搬進來，metadata 只記到後半。兩邊不一致時，以目錄為準，並記一筆 `draft_reconcile`（attempt id、目錄有但 metadata 沒記的檔名、metadata 有但目錄沒有的檔名）。
 3. **metadata 損壞**：`listAttempts` 會略過讀不了的 JSON（`src/message-store.ts:200-212`）。這時從目錄名 `<claim id>-a<n>` 推回 claim id，只有 claim 檔存在且 `agent` 相符才採用，否則略過並記錄原因。agent 名稱可能含 `-`，所以不從 claim id 解析 agent。
-4. **排序與去重**：attempt 依 `finished_at`（沒有時依 `started_at`，再沒有時依目錄名）由新到舊排列；同一 attempt 內依檔名排序。內容的 sha256 相同時只保留最新的一份。最多 5 個檔案。
+4. **排序與去重**：attempt 依 `finished_at`（沒有時依 `started_at`，再沒有時依目錄名）由新到舊排列；同一 attempt 內依檔名排序。去重只針對「在讀取上限內完整讀完」的檔案：全文 sha256 相同時只保留最新的一份；被截斷的檔案一律不去重，也不為了計算 hash 多讀任何 byte（上述讀取上限適用於所有前處理）。最多 5 個檔案。
 5. **三條失敗路徑**都要涵蓋，而且都只注入 prompt：
    - graceful Ctrl-C：`cancelled`，claim 被 abandon（`src/run-session.ts:491-495,515`）。
    - timeout 或 runtime 錯誤：同一 wake 內重試（`:440`）；重試用完時 run 停下（`:522`），之後 resume。
@@ -131,7 +131,7 @@ a2 另有一個流程解法：程式碼整合之後才派 docs，或者在 task 
 - 正常路徑：第一次嘗試先寫 outbox 再 timeout，第二次的 prompt 含草稿段並標示「unverified」；graceful 取消後 resume，重做的 prompt 含草稿段；硬殺（attempt 停在 `started`）後 resume，同樣含草稿段。
 - 故障注入：沿用 `setFaultHook`（`src/message-store.ts:7-13`），在 `parkOutbox` 每次 rename 後、`finishAttempt` 前各加一個 fault 點。要測：搬完第一個檔就崩潰（兩個檔分散在兩處）、搬完最後一個檔才崩潰（`parked: []`，即 reviewer 的 probe）、`finishAttempt` 之前崩潰。三者 resume 後都要帶回全部草稿，並記錄 `draft_reconcile`。
 - 讀取安全：leaf symlink、`attempts/<id>` 或 `outbox` 是 symlink、FIFO（讀取放在子程序中跑，外層設 10 s 硬期限，因為 Vitest 的 timeout 中斷不了同步阻塞）、64 MB 的 sparse regular file（斷言實際讀取量 ≤ 4 KB + 1）、attempt JSON 損壞、`id` 或 `parked` 含 `../`。
-- 選取：別的 agent、或 message id 沒有交集的草稿不出現；兩個 attempt 的內容相同時只出現一次，而且由新到舊排列；超過 5 個檔案或 4 KB 時有截斷與「未顯示」那一行。
+- 選取：別的 agent、或 message id 沒有交集的草稿不出現；兩個 attempt 的小檔內容相同時只出現一次，而且由新到舊排列；兩個超過預算、前綴相同但尾端不同的大檔都會出現（各自截斷），且實際讀取量仍 ≤ 4 KB + 1，不為 hash 額外讀檔；超過 5 個檔案或 4 KB 時有截斷與「未顯示」那一行。
 - 不變性：沒有失敗時，`buildSystemPrompt` + `buildUserPrompt` 的輸出與「只套用 G」時逐字相同（快照）；草稿從不投遞（收件者 inbox 與 route journal 都沒有變化）。
 
 **docs-writer**：在 `docs/how-it-works.md` 與 `.zh-TW.md` 的重試／resume 段落各補一句：重做的 wake 會看到上次的未驗證草稿（有上限，只給本人），以及 G 的提示。
