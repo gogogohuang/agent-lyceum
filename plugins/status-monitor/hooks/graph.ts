@@ -85,7 +85,9 @@ export function blocks(report: Report, now: number): Block[] {
       tokens: st?.tokens ?? 0,
     }
   })
-  return [...all.filter(b => b.lead), ...all.filter(b => !b.lead)]
+  // Members in the order of who needs a look first: working, failed, waiting, then idle (the setup order within each).
+  const rank: Record<Dot, number> = { active: 0, failed: 1, queued: 2, idle: 3 }
+  return [...all.filter(b => b.lead), ...all.filter(b => !b.lead).sort((a, b) => rank[a.dot] - rank[b.dot])]
 }
 
 /** The glyph between the lead and a member: who may write to whom; hot when it is the latest hand-off. */
@@ -110,18 +112,20 @@ function mailLines(m: MailView, headTone: Tone | undefined, indent: string, expa
 }
 
 /** The text of one block, line by line, with a tone the view turns into a colour. Collapsed, a mail shows its point only; `expanded` shows all of it. */
-export function blockLines(b: Block, expanded = false): Line[] {
+export function blockLines(b: Block, expanded = false, maxTokens = 0): Line[] {
   const status: Line =
     b.dot === 'active' ? { text: `進行中${b.working?.round ? ` #${b.working.round}` : ''} ${b.working?.elapsed ?? ''}`.trimEnd(), tone: 'ok' }
     : b.dot === 'failed' ? { text: '上次喚醒失敗', tone: 'bad' }
     : b.dot === 'queued' ? { text: `排隊 ${b.queued.length} 封`, tone: 'warn' }
     : { text: '閒置', tone: 'dim' }
+  // Collapsed, the glyph already says idle / waiting / working: only what it cannot say stays (the round and time, the count, the failure).
+  const brief = b.dot === 'idle' ? '' : b.dot === 'active' ? `${b.working?.round ? `#${b.working.round}` : ''} ${b.working?.elapsed ?? ''}`.trim() : b.dot === 'queued' ? `${b.queued.length} 封` : '失敗'
   const title = `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`
   // Collapsed, the status shares the title's line (and its colour); the wake count and the hand-off targets wait for `e`.
-  const lines: Line[] = expanded ? [{ text: title, tone: 'bold' }, status] : [{ text: `${title} · ${status.text}`, tone: status.tone }]
+  const lines: Line[] = expanded ? [{ text: title, tone: 'bold' }, status] : [{ text: brief ? `${title} · ${brief}` : title, tone: status.tone }]
   for (const m of b.handling) lines.push(...mailLines(m, 'bold', '', expanded))
   for (const m of b.queued) lines.push(...mailLines({ ...m, head: `排隊：${m.head}` }, 'dim', '  ', expanded))
-  if (expanded || b.failed) lines.push({ text: `喚醒 ${b.wakes} 次${b.failed ? `（失敗 ${b.failed}）` : ''} · ${tokens(b.tokens)} tok`, tone: b.failed ? 'bad' : 'dim' })
+  if (expanded || b.failed) lines.push({ text: `喚醒 ${b.wakes} 次${b.failed ? `（失敗 ${b.failed}）` : ''} · ${tokens(b.tokens)} tok${maxTokens > 0 ? ` ${bar(b.tokens, maxTokens, 6)}` : ''}`, tone: b.failed ? 'bad' : 'dim' })
   if (expanded && b.targets.length) lines.push({ text: `→ ${b.targets.map(t => (t.hot ? `${t.name} ●` : t.name)).join(', ')}`, tone: 'dim' })
   return lines
 }
@@ -139,14 +143,23 @@ export function bar(done: number, total: number, width = 10): string {
 export function treeLines(bs: Block[], expanded = false): Line[] {
   const lead = bs.find(b => b.lead)
   const members = bs.filter(b => !b.lead)
-  const out: Line[] = lead ? blockLines(lead, expanded) : []
-  members.forEach((b, i) => {
-    const last = i === members.length - 1
+  const maxTokens = Math.max(0, ...bs.map(b => b.tokens))
+  const failed = bs.filter(b => b.dot === 'failed')
+  // Many idle members would only repeat "idle": collapsed, they share one line (`e` lists them).
+  const idle = members.filter(b => b.dot === 'idle')
+  const folded = !expanded && idle.length >= 3
+  const shown = folded ? members.filter(b => b.dot !== 'idle') : members
+  const out: Line[] = []
+  if (failed.length) out.push({ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' })
+  if (lead) out.push(...blockLines(lead, expanded, maxTokens))
+  shown.forEach((b, i) => {
+    const last = i === shown.length - 1 && !folded
     const link = leadLink(bs, b)
     const leadTone: Tone = link?.hot ? 'warn' : 'dim'
-    blockLines(b, expanded).forEach((l, j) => {
+    blockLines(b, expanded, maxTokens).forEach((l, j) => {
       out.push({ ...l, lead: j === 0 ? `${last ? '└─' : '├─'}${link?.glyph ?? '─'} ` : `${last ? ' ' : '│'}   `, leadTone })
     })
   })
+  if (folded) out.push({ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim', lead: '└── ', leadTone: 'dim' })
   return out
 }

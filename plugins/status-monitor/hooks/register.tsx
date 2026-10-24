@@ -155,8 +155,8 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
           <Text>
             進度：{mode === 'graph' && (run.steps?.length || run.max_rounds > 0) ? `${bar(run.steps?.length ? run.steps.filter(s => s.done).length : run.rounds, run.steps?.length || run.max_rounds)} ` : ''}
             {progress(run)}
+            {run.current_step ? ` · 目前：${run.current_step}` : ''}
           </Text>
-          {run.current_step && <Text>目前：{run.current_step}</Text>}
           {(open ? (run.steps ?? []) : []).map(s => (
             <Text dimColor={s.done}>
               {s.done ? '[x]' : '[ ]'} {s.text}
