@@ -166,8 +166,8 @@ export function padCenter(s: string, width: number): string {
 
 /**
  * How many cells the graph may use: the pane's own body width (`props.bodyColumns`), never below 40;
- * 0 or missing (not laid out yet) falls back to the width the pane is opened with.
+ * capped at `maxColumns` (the `maxColumns` option); 0 or missing (not laid out yet) falls back to the width the pane is opened with.
  */
-export function paneWidth(bodyColumns: number | undefined): number {
-  return bodyColumns ? Math.max(40, bodyColumns) : OPEN_WIDTH
+export function paneWidth(bodyColumns: number | undefined, maxColumns = Infinity): number {
+  return bodyColumns ? Math.min(Math.max(40, bodyColumns), Math.max(40, maxColumns)) : OPEN_WIDTH
 }

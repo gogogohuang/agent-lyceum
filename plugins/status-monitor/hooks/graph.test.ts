@@ -176,6 +176,8 @@ test('bar, padCenter and paneWidth', () => {
   expect(padCenter('▼', 9)).toBe('    ▼')
   expect(paneWidth(96)).toBe(96)
   expect(paneWidth(30)).toBe(40)
+  expect(paneWidth(400, 250)).toBe(250)
+  expect(paneWidth(96, 250)).toBe(96)
   expect(paneWidth(0)).toBe(56)
   expect(paneWidth(undefined)).toBe(56)
 })
