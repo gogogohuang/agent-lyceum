@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { readFileCapped } from "./fs-util.js";
+import { cutUtf8, readFileCapped } from "./fs-util.js";
 import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
@@ -18,6 +18,9 @@ export const MEMORY_INDEX_LIMIT = 4 * 1024;
 export const HANDOFF_LIMIT = COMMON_LIMIT;
 /** Cap of each kind of project record (decisions, lessons) in a prompt. */
 export const CONTEXT_LIMIT = RECORDS_BUDGET;
+/** Largest mail body put in a prompt (the inline task limit), and the total for the mails handled in one wake-up. */
+export const MAIL_BODY_LIMIT = 16 * 1024;
+export const MAIL_BATCH_LIMIT = 64 * 1024;
 export const LEAD_BATCH_LIMIT = 5;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
@@ -292,8 +295,16 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   const queued = sorted.slice(handleCount);
   parts.push("", current.length > 1 ? `# Messages to handle now (${current.length}, oldest first — decide on them together)` : "# Message to handle now");
   if (current.length === 0) parts.push("(no message)");
+  let remaining = MAIL_BATCH_LIMIT;
   current.forEach((m, i) => {
     if (current.length > 1) parts.push("", `## Message ${i + 1} of ${current.length}`);
+    const raw = Buffer.from(m.body, "utf8");
+    const shown = cutUtf8(raw, Math.min(MAIL_BODY_LIMIT, remaining));
+    remaining -= shown.length;
+    const body =
+      shown.length === raw.length
+        ? m.body
+        : `${shown.toString("utf8")}\n[agent-lyceum: this message was cut at ${shown.length} of ${raw.length} bytes; read the whole message in \`${m.file}\` (it moves to \`read/\` in the same folder after this wake-up)]`;
     parts.push(
       `id: ${m.meta.id}`,
       `from: ${m.meta.from}`,
@@ -301,7 +312,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
       `thread: ${m.meta.thread}`,
       `subject: ${m.meta.subject}`,
       "",
-      m.body,
+      body,
     );
   });
   if (queued.length) {

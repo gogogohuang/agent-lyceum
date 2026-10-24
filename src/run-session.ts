@@ -8,11 +8,12 @@ import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContr
 import { ProtectedGuard } from "./guard.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
-import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
+import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
 import { outboxDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
+import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
@@ -40,10 +41,8 @@ function readIndex(file: string | undefined): string | undefined {
   return readFileCapped(file, INDEX_COMPARE_LIMIT)?.text ?? "";
 }
 
-/** Prompt for a repeat attempt: the earlier one failed and may have changed things already. */
-function retryPrompt(prompt: string, error?: string): string {
-  return `${prompt}\n\n# Retry notice\nYour previous attempt at this wake-up failed${error ? ` (${error})` : ""} after possibly changing files already. Its mail was discarded. Check the current state of the repository before redoing the work, and send the mail again.`;
-}
+/** The `state.sessions` key of the session an agent runs in on candidate `c`: a backup has a session of its own. */
+const sessionKeyOf = (agent: ResolvedAgent, c: Candidate): string => (c.primary ? agent.name : `${agent.name}@${c.key}`);
 
 /** `runtime/model`, or the runtime alone for its default model. */
 const modelLabel = (c: { runtime: string; model?: string }): string => (c.model ? `${c.runtime}/${c.model}` : c.runtime);
@@ -409,8 +408,9 @@ export class RunSession {
         this.syncCooldowns();
         if (opts.signal?.aborted) return;
         say(`  ${agent.name} falling back to ${modelLabel(to)} (${kind ?? "unknown error"})`);
+        const resumes = agent.resume && !!state.sessions[sessionKeyOf(agent, to)];
         this.note(
-          `${agent.name} fell back from ${modelLabel(from)} to ${modelLabel(to)} (${kind ?? "unknown error"}); the backup starts a fresh session and redoes this wake-up. ` +
+          `${agent.name} fell back from ${modelLabel(from)} to ${modelLabel(to)} (${kind ?? "unknown error"}); the backup ${resumes ? "resumes its own earlier session" : "starts a fresh session"} and redoes this wake-up. ` +
             `Anything the failed attempts already did outside the mailbox (file edits, commands) was not undone: side effects may have happened.`,
         );
       },
@@ -420,10 +420,13 @@ export class RunSession {
         const attempt = ctx.attempt;
         // A backup runs as the same agent on another runtime/model, in a session of its own.
         const runAs = agentForCandidate(agent, c);
-        const sessionKey = c.primary ? agent.name : `${agent.name}@${c.key}`;
+        const sessionKey = sessionKeyOf(agent, c);
         const round = ++state.rounds;
         const started = Date.now();
         const att = beginAttempt(runDir, claim.id);
+        // Looked up again for every call: a retry sees what the attempt before it just set aside.
+        const redo = this.redoContext(agent.name, unread.map((m) => m.meta.id), att.id, attempt);
+        const userPrompt = redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
         const retryN = chain ? ctx.candidateAttempt : attempt;
         say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime})${retryN ? ` — retry ${retryN}` : ""}`);
         const sessionId = agent.resume ? state.sessions[sessionKey] : undefined;
@@ -437,7 +440,7 @@ export class RunSession {
           agent: runAs,
           signal: opts.signal,
           logDir: attemptLogDir(runDir, att.id),
-          userPrompt: attempt ? retryPrompt(base.userPrompt, ctx.previous?.error) : base.userPrompt,
+          userPrompt,
           sessionId,
         }).catch((e: Error) => ({
           ok: false,
@@ -477,6 +480,7 @@ export class RunSession {
           duration_ms: Date.now() - started,
           messages: unread.map((m) => m.meta.id),
           error: result.error,
+          ...(redo.prior.length ? { redo_of: redo.prior.map((a) => a.id) } : {}),
           ...(chain ? { model: c.model, fallback_from: which.fallback_from, kind: result.kind } : {}),
         });
         this.saveState();
@@ -491,11 +495,13 @@ export class RunSession {
         if (result.cancelled) {
           // Stopped on purpose: not a failure to report. Its output is set aside (its input stays unread for the resume, below).
           const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+          fault("park:before-finish");
           finishAttempt(runDir, att.id, "failed", { error: "cancelled", parked });
           return result;
         }
         // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
         const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+        fault("park:before-finish");
         finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
         say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
         this.note(
@@ -521,6 +527,37 @@ export class RunSession {
     }
     // The agent failed every time it was called: the run stops here (see settle) and its message stays unread for the resume.
     return { ok: false, error: result?.error, attempts: calls, ...(chain ? { tried: lastPerModel(outcome.tried) } : {}) };
+  }
+
+  /**
+   * The earlier failed attempts at these messages and the drafts they left, for the invoke that `attemptId` is about to make.
+   * Every skip and the outcome go to the log; a read problem never fails the wake-up.
+   */
+  private redoContext(agent: string, messageIds: string[], attemptId: string, attempt: number): { prior: PriorAttempt[]; drafts: string } {
+    const { log, runDir } = this;
+    let prior: PriorAttempt[] = [];
+    let drafts: DraftsResult | undefined;
+    const skipped: { path: string; reason: string }[] = [];
+    try {
+      const found = priorFailedAttempts(runDir, agent, messageIds, attemptId);
+      prior = found.prior;
+      skipped.push(...found.skipped);
+      if (prior.length) {
+        drafts = collectDrafts(runDir, prior);
+        skipped.push(...drafts.skipped);
+      }
+    } catch (e) {
+      prior = [];
+      drafts = undefined;
+      skipped.push({ path: "mail/attempts", reason: `error:${(e as Error).message}` });
+    }
+    for (const s of skipped) log("draft_skip", { agent, attempt: attemptId, path: s.path, reason: s.reason });
+    if (!prior.length) return { prior, drafts: "" };
+    log("redo", { agent, attempt: attemptId, prior: prior.map((a) => a.id), notice: attempt > 0 ? "retry" : "redo" });
+    for (const r of drafts?.reconciled ?? []) log("draft_reconcile", { agent, attempt: r.attempt, only_on_disk: r.onlyOnDisk, only_in_record: r.onlyInRecord });
+    if (drafts?.injected.length) log("draft_inject", { agent, attempt: attemptId, files: drafts.injected });
+    else log("draft_none", { agent, attempt: attemptId, prior: prior.map((a) => a.id) });
+    return { prior, drafts: drafts?.text ?? "" };
   }
 
   /** Copy the shared cooldown table into the state (only once something has cooled down); true when it was. */

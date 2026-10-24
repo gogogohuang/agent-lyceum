@@ -72,7 +72,6 @@ export function callProject(home: string, agent: ResolvedAgent, dir: string, cal
     config: path.join(callDir, "call.yaml"),
     agentsDir: path.join(callDir, "agents"),
     shared: path.join(callDir, "shared"),
-    common: path.join(callDir, "shared", "COMMON.md"),
     inboxRoot: path.join(callDir, "mail", "inbox"),
     outboxRoot: path.join(callDir, "mail", "outbox"),
     runs: path.join(callDir, "runs"),

@@ -1,10 +1,12 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { runTeam } from "../src/dispatcher.js";
 import { finishDone, listUnread, routeOutboxes } from "../src/mailbox.js";
-import { claimMessages, commitClaim, loadClaim, recoverRunMail, setFaultHook } from "../src/message-store.js";
+import { beginAttempt, claimMessages, commitClaim, loadClaim, recoverRunMail, setFaultHook } from "../src/message-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
@@ -217,5 +219,81 @@ describe("dispatcher restart", () => {
     // the lead goes first once a reply is in, so qa-member may never be woken before it ends; it must never be woken twice
     expect(woken.filter((a) => a === "qa-member").length).toBeLessThanOrEqual(1);
     expect(s.endReason).toBe("done");
+  });
+});
+
+describe("beginAttempt numbering", () => {
+  let runDir: string;
+  afterEach(() => fs.rmSync(runDir, { recursive: true, force: true }));
+  const start = () => {
+    runDir = fs.mkdtempSync(path.join(os.tmpdir(), "lyceum-attempt-"));
+    const claim = claimMessages(runDir, "fe-member", [{ file: "x.md", meta: { id: "m1" } }]);
+    const dir = path.join(runDir, "mail", "attempts");
+    fs.mkdirSync(dir, { recursive: true });
+    return { claim, dir };
+  };
+  /** Every entry under attempts/ with its content hash (files) or listing (directories). */
+  const snapshot = (dir: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) {
+          out[`${path.relative(dir, f)}/`] = "dir";
+          walk(f);
+        } else out[path.relative(dir, f)] = crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+      }
+    };
+    walk(dir);
+    return out;
+  };
+  const good = (claimId: string, n: number) => JSON.stringify({ id: `${claimId}-a${n}`, claim_id: claimId, agent: "fe-member", n, status: "failed", started_at: "t" });
+
+  it.each([
+    ["a damaged a1 beside a valid a2 and an a1 outbox", (c: string, d: string) => {
+      fs.writeFileSync(path.join(d, `${c}-a1.json`), "{ not json");
+      fs.mkdirSync(path.join(d, `${c}-a1`, "outbox"), { recursive: true });
+      fs.writeFileSync(path.join(d, `${c}-a1`, "outbox", "x.md"), "draft");
+      fs.writeFileSync(path.join(d, `${c}-a2.json`), good(c, 2));
+    }, 3],
+    ["a damaged a1 and an a2 whose claim_id differs", (c: string, d: string) => {
+      fs.writeFileSync(path.join(d, `${c}-a1.json`), "{ not json");
+      fs.writeFileSync(path.join(d, `${c}-a2.json`), JSON.stringify({ id: `${c}-a2`, claim_id: "other", agent: "x", n: 2, status: "failed", started_at: "t" }));
+    }, 3],
+    ["only directories a1 and a4 and no JSON", (c: string, d: string) => {
+      fs.mkdirSync(path.join(d, `${c}-a1`, "outbox"), { recursive: true });
+      fs.writeFileSync(path.join(d, `${c}-a1`, "outbox", "x.md"), "draft");
+      fs.mkdirSync(path.join(d, `${c}-a4`), { recursive: true });
+    }, 5],
+    ["a damaged highest a3", (c: string, d: string) => {
+      fs.writeFileSync(path.join(d, `${c}-a1.json`), good(c, 1));
+      fs.writeFileSync(path.join(d, `${c}-a2.json`), good(c, 2));
+      fs.writeFileSync(path.join(d, `${c}-a3.json`), "");
+    }, 4],
+    ["another claim's a9 and a non-numeric suffix", (c: string, d: string) => {
+      fs.writeFileSync(path.join(d, "zz-other-abc123-a9.json"), good("zz-other-abc123", 9));
+      fs.mkdirSync(path.join(d, `${c}-a1x`), { recursive: true });
+    }, 1],
+  ])("%s", (_name, seedFn, expected) => {
+    const { claim, dir } = start();
+    seedFn(claim.id, dir);
+    const before = snapshot(dir);
+    const rec = beginAttempt(runDir, claim.id);
+    expect(rec.n).toBe(expected);
+    expect(rec.id).toBe(`${claim.id}-a${expected}`);
+    expect(Object.keys(before)).not.toContain(`${rec.id}.json`);
+    const after = snapshot(dir);
+    for (const [k, v] of Object.entries(before)) expect(after[k]).toBe(v); // nothing existing was touched
+  });
+
+  it("refuses to number past the largest safe integer, before writing anything", () => {
+    const { claim, dir } = start();
+    fs.writeFileSync(path.join(dir, `${claim.id}-a${Number.MAX_SAFE_INTEGER}.json`), "{}");
+    fs.writeFileSync(path.join(dir, `${claim.id}-a${Number.MAX_SAFE_INTEGER + 1}.json`), "{}");
+    const before = snapshot(dir);
+    const names = fs.readdirSync(dir).sort();
+    expect(() => beginAttempt(runDir, claim.id)).toThrow(/attempt numbers exhausted/);
+    expect(snapshot(dir)).toEqual(before);
+    expect(fs.readdirSync(dir).sort()).toEqual(names);
   });
 });
