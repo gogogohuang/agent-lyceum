@@ -121,7 +121,7 @@ export const register: Register = (on, options) => {
     return { key: name, status: [...base, 'status', '--json', ...p] }
   })
   const every = Math.max(1, Number(options.intervalSeconds ?? 1)) * 1000
-  const maxColumns = Math.max(40, Number(options.maxColumns ?? 250))
+  const maxColumns = Number(options.maxColumns) > 0 ? Math.max(40, Number(options.maxColumns)) : Infinity
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane' })
@@ -151,7 +151,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const mode = await read($, view)
     const open = await read($, expanded)
-    const width = paneWidth(e.props.bodyColumns, maxColumns)
+    const width = paneWidth(e.props.bodyColumns)
 
     const section = (t: Target, shown?: Report) => {
       const { report: base, error } = snap[t.key] ?? { report: null, error: null }
