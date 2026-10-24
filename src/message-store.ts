@@ -211,10 +211,29 @@ export function listAttempts(runDir: string): AttemptRecord[] {
   return out;
 }
 
+/**
+ * One more than the highest number any entry under `attempts/` already uses for this claim. Only names count (a damaged JSON or a
+ * bare folder still holds its number), because a new attempt's paths come from the name and a rename would overwrite them.
+ */
+function nextAttemptNumber(runDir: string, claimId: string): number {
+  const dir = path.join(mailDir(runDir), "attempts");
+  const re = new RegExp(`^${claimId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-a(\\d+)(\\.json)?$`);
+  let max = 0;
+  if (fs.existsSync(dir)) {
+    for (const name of fs.readdirSync(dir)) {
+      const m = re.exec(name);
+      const used = m ? Number(m[1]) : 0;
+      if (Number.isSafeInteger(used) && used > max) max = used;
+    }
+  }
+  if (!Number.isSafeInteger(max + 1)) throw new Error(`attempt numbers exhausted for claim ${claimId} (highest used: ${max}) in ${dir}`);
+  return max + 1;
+}
+
 /** Start the next attempt for a claim (a1, a2, ...). */
 export function beginAttempt(runDir: string, claimId: string): AttemptRecord {
   const claim = loadClaim(runDir, claimId);
-  const n = listAttempts(runDir).filter((a) => a.claim_id === claimId).length + 1;
+  const n = nextAttemptNumber(runDir, claimId);
   const rec: AttemptRecord = { id: `${claimId}-a${n}`, claim_id: claimId, agent: claim.agent, n, status: "started", started_at: new Date().toISOString() };
   saveAttempt(runDir, rec);
   return rec;
@@ -235,6 +254,7 @@ export function parkOutbox(runDir: string, outbox: string, attemptId: string): s
     if (!e.isFile() || e.name.startsWith(".")) continue;
     fs.mkdirSync(dest, { recursive: true });
     fs.renameSync(path.join(outbox, e.name), path.join(dest, e.name));
+    fault("park:moved");
     moved.push(e.name);
   }
   return moved;

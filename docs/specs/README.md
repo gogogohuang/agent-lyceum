@@ -23,6 +23,7 @@
 | [19](19-open-concurrency.md) | 零設定並行（移除 owns 與併發設定） | 高 | 高（並行、run 鎖、相容） | — |
 | [20](20-llm-fallback.md) | LLM 備援（主要模型失敗時切換備用） | 中 | 中（錯誤分類、權限一致性） | [plan](../plans/2026-10-16-20-llm-fallback.md) |
 | [21](21-launcher-exit.md) | wrapper 消失時取消 run／call／tidy | 中 | 低（只在 wrapper 底下武裝） | — |
+| [22](22-context-continuity-fixes.md) | context 連續性修正（C 類處置、重做脈絡） | 中 | 中（prompt 與 attempt 編號） | — |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 

@@ -46,7 +46,6 @@ export interface ProjectPaths {
   config: string;
   agentsDir: string;
   shared: string;
-  common: string;
   inboxRoot: string;
   outboxRoot: string;
   runs: string;
@@ -62,7 +61,6 @@ export function projectPaths(home: string, project: string): ProjectPaths {
     config: path.join(root, "project.yaml"),
     agentsDir: path.join(root, "agents"),
     shared,
-    common: path.join(shared, "COMMON.md"),
     inboxRoot: path.join(shared, "inbox"),
     outboxRoot: path.join(shared, "outbox"),
     runs: path.join(root, "runs"),

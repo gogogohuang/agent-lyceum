@@ -74,3 +74,54 @@ export function readRegularFileNoFollow(file: string): Buffer | undefined {
     }
   }
 }
+
+/** `buf` cut to at most `limit` bytes, backed up to a character boundary so a multi-byte character is never split. */
+export function cutUtf8(buf: Buffer, limit: number): Buffer {
+  if (buf.length <= limit) return buf;
+  let cut = limit;
+  while (cut > 0 && ((buf[cut] ?? 0) & 0xc0) === 0x80) cut--;
+  return buf.subarray(0, cut);
+}
+
+/** `buf` without a trailing incomplete UTF-8 sequence (a cut-off lead byte and its continuation bytes). */
+export function trimPartialUtf8(buf: Buffer): Buffer {
+  for (let i = 1; i <= Math.min(3, buf.length); i++) {
+    const b = buf[buf.length - i] as number;
+    if ((b & 0xc0) === 0x80) continue;
+    const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+    return need > i ? buf.subarray(0, buf.length - i) : buf;
+  }
+  return buf;
+}
+
+export type CappedRead = { ok: true; buf: Buffer; size: number; truncated: boolean } | { ok: false; reason: string };
+
+/**
+ * Up to `limit` bytes of a regular file, opened without following a symlink and without blocking; reads at most `limit + 1` bytes.
+ * `size` is the file's size from fstat. Never throws: a refusal says why, from the one open (`symlink`, `not_regular`, `open_error:<code>`).
+ */
+export function readRegularFileCappedNoFollow(file: string, limit: number): CappedRead {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return { ok: false, reason: "not_regular" };
+    const buf = Buffer.alloc(limit + 1);
+    let n = 0;
+    while (n < buf.length) {
+      const r = fs.readSync(fd, buf, n, buf.length - n, n);
+      if (r === 0) break;
+      n += r;
+    }
+    return { ok: true, buf: buf.subarray(0, Math.min(n, limit)), size: st.size, truncated: n > limit };
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? "unknown";
+    return { ok: false, reason: code === "ELOOP" ? "symlink" : `open_error:${code}` };
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+  }
+}

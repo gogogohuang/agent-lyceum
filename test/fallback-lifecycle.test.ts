@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import type { ResolvedProject } from "../src/config.js";
 import { runTeam } from "../src/dispatcher.js";
-import { listUnread } from "../src/mailbox.js";
+import { deliver, listUnread } from "../src/mailbox.js";
 import { mailDir } from "../src/message-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { failureGuide } from "../src/run-outcome.js";
-import { bindRunProject, loadRunState } from "../src/run-store.js";
+import { bindRunProject, loadRunState, newRunState, saveRunState } from "../src/run-store.js";
 import type { ErrorKind, FallbackEntry } from "../src/schema.js";
 import { prepareTask } from "../src/task.js";
 import { FULL_DONE, initGitRepo, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
@@ -438,6 +438,86 @@ describe("fallback in a run", () => {
   });
 });
 
+/** A resumed run whose state already holds `sessions`, with a task waiting for `agent`; the agents get `chains`. */
+async function resumedWith(agent: string, sessions: Record<string, string>, invoker: Invoker, chains: Record<string, FallbackEntry[]>) {
+  env = makeEnv();
+  const project = withChains(env.project(), chains);
+  project.agents[agent]!.resume = true;
+  const runDir = path.join(project.paths.runs, "run-a");
+  fs.mkdirSync(runDir, { recursive: true });
+  const p = bindRunProject(project, runDir, "run");
+  saveRunState(runDir, { ...newRunState({ run_id: "run-a", project: project.name, max_rounds: 10, rounds: 1, pid: 1, task_summary: "t" }), sessions });
+  deliver(p, { from: "lead", to: agent, type: "task", subject: "job", body: "x" });
+  const s = await runTeam({ project, resume: loadRunState(runDir), runDir, invoker, log: () => {}, sleep: async () => {} });
+  return { s, runDir, project };
+}
+
+describe("fallback note says whether the backup resumes a session (T13)", () => {
+  const run = async (sessions: Record<string, string>) => {
+    const { runDir } = await resumedWith(
+      "lead",
+      sessions,
+      async (i) => {
+        if (i.agent.model !== "backup") return fail("rate_limit", "429");
+        send(i.project, "lead", "lead", "shipped", "done");
+        return OK;
+      },
+      { lead: [BACKUP] },
+    );
+    return loadRunState(runDir).notes!.find((n) => n.includes("fell back"))!;
+  };
+
+  it("names the backup's own earlier session when it has one", async () => {
+    expect(await run({ "lead@claude-code/backup": "SB" })).toContain("the backup resumes its own earlier session and redoes this wake-up");
+  });
+
+  it("still says a fresh session when the backup has none", async () => {
+    const note = await run({ lead: "S0" });
+    expect(note).toContain("the backup starts a fresh session and redoes this wake-up");
+    expect(note).toContain("side effects may have happened");
+  });
+});
+
+describe("a backup gets the failed model's draft whatever the sessions (T17c)", () => {
+  const MARKER = "T17C-DRAFT-BODY";
+  const run = async (sessions: Record<string, string>) => {
+    const calls: WakeInput[] = [];
+    await resumedWith(
+      "fe-member",
+      sessions,
+      async (i) => {
+        if (i.agent.name === "lead") {
+          if (i.userPrompt.includes("fe finished")) send(i.project, "lead", "lead", "all good", "done");
+          return OK;
+        }
+        calls.push(i);
+        if (i.agent.model !== "backup") {
+          write(path.join(outboxDir(i.project, "fe-member"), "draft.md"), `---\nto: lead\ntype: reply\nsubject: half\n---\n\n${MARKER}\n`);
+          return { ...fail("rate_limit", "429"), sessionId: "SA" };
+        }
+        send(i.project, "fe-member", "lead", "fe finished");
+        return OK;
+      },
+      { "fe-member": [BACKUP] },
+    );
+    return calls;
+  };
+
+  it("resumes the backup's own session and still carries the draft", async () => {
+    const calls = await run({ "fe-member@claude-code/backup": "SB" });
+    expect(calls.map((c) => c.agent.model ?? "")).toEqual(["", "backup"]);
+    expect(calls[1]!.sessionId).toBe("SB");
+    expect(calls[1]!.userPrompt).toContain(MARKER);
+  });
+
+  it("with no session of its own the backup starts fresh and still carries the draft", async () => {
+    const calls = await run({});
+    expect(calls[1]!.agent.model).toBe("backup");
+    expect(calls[1]!.sessionId).toBeUndefined();
+    expect(calls[1]!.userPrompt).toContain(MARKER);
+  });
+});
+
 describe("no fallback configured (spec 20.2 decision 11)", () => {
   it("keeps state.json, log.jsonl, the failure and the printed lines exactly as before", async () => {
     let feCalls = 0;
@@ -484,8 +564,9 @@ describe("no fallback configured (spec 20.2 decision 11)", () => {
     expect(logEvents(runDir, "wake").map((e) => Object.keys(e))).toEqual([
       ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages"],
       ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages", "error"],
-      ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages", "error"],
-      ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages", "error"],
+      // a retry names the failed attempts it redoes (spec 22.5.5)
+      ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages", "error", "redo_of"],
+      ["ts", "event", "agent", "runtime", "attempt", "ok", "exit_code", "timed_out", "duration_ms", "messages", "error", "redo_of"],
     ]);
     expect(logEvents(runDir, "wake").map((e) => e.attempt)).toEqual([0, 0, 1, 2]);
     expect(lines.filter((l) => !/agents take turns|format warning/.test(l))).toEqual([
