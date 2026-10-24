@@ -16,6 +16,12 @@
       "description": "How often the run status is polled (default 1 second).",
       "default": 1
     },
+    "maxColumns": {
+      "type": "number",
+      "title": "Maximum pane width (columns)",
+      "description": "The pane never opens or draws wider than this (default 250).",
+      "default": 250
+    },
     "autoOpen": {
       "type": "boolean",
       "title": "Open the pane automatically",

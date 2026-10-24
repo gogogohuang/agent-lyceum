@@ -121,6 +121,7 @@ export const register: Register = (on, options) => {
     return { key: name, status: [...base, 'status', '--json', ...p] }
   })
   const every = Math.max(1, Number(options.intervalSeconds ?? 1)) * 1000
+  const maxColumns = Math.max(40, Number(options.maxColumns ?? 250))
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane' })
@@ -137,7 +138,7 @@ export const register: Register = (on, options) => {
       return { text: 'agent-lyceum pane closed.' }
     }
     // Dock at half the terminal's width (a request: a width the person dragged the dock to wins).
-    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: Math.max(40, Math.floor(columns / 2)), rows: 16, focus: true })
+    const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: Math.min(maxColumns, Math.max(40, Math.floor(columns / 2))), rows: 16, focus: true })
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
@@ -150,7 +151,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const mode = await read($, view)
     const open = await read($, expanded)
-    const width = paneWidth(e.props.bodyColumns)
+    const width = paneWidth(e.props.bodyColumns, maxColumns)
 
     const section = (t: Target, shown?: Report) => {
       const { report: base, error } = snap[t.key] ?? { report: null, error: null }
