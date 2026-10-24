@@ -349,3 +349,78 @@ describe("clear: a concurrent run's branch", () => {
     expect(plan.items.filter((i) => i.kind === "workspace").map((i) => i.agent)).toEqual(["fe-member"]);
   });
 });
+
+describe("clear: an interrupted run is not blocked by clear's own lock", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const cli = path.join(here, "..", "src", "cli.ts");
+  const tsx = path.join(here, "..", "node_modules", ".bin", "tsx");
+  const run = (args: string[]) => {
+    const r = spawnSync(tsx, [cli, "--home", env.home, ...args], { encoding: "utf8" });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+  const deadPid = () => {
+    const r = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    return Number(r.stdout);
+  };
+  /** Schema 2 state with no end reason: the dispatcher died mid-run. */
+  function interrupted(id: string, pid: number) {
+    const p = env.project();
+    const dir = makeRun(id);
+    saveRunState(dir, { ...newRunState({ run_id: id, project: "demo", max_rounds: 5, task_summary: "t" }), pid });
+    return { p, dir };
+  }
+  function writeLock(root: string, id: string, pid: number) {
+    const now = new Date().toISOString();
+    write(path.join(root, "locks", `${id}.json`), JSON.stringify({ token: "t", hostname: os.hostname(), pid, run_id: id, acquired_at: now, heartbeat_at: now, checkout: false }));
+  }
+
+  it("clears it when a stale run lock is left behind", () => {
+    env = makeEnv();
+    const dead = deadPid();
+    const { p, dir } = interrupted("run-a", dead);
+    writeLock(p.paths.root, "run-a", dead);
+    const r = run(["clear", "run-a", "-p", "demo"]);
+    expect(r.err).not.toMatch(/still running/);
+    expect(r.code).toBe(0);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("clears it with no lock file even if state.pid was reused by a live process", () => {
+    env = makeEnv();
+    const { dir } = interrupted("run-a", process.pid);
+    const r = run(["clear", "run-a", "-p", "demo"]);
+    expect(r.err).not.toMatch(/still running/);
+    expect(r.code).toBe(0);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("still refuses when a live process holds the run's lock, and deletes nothing", () => {
+    env = makeEnv();
+    const { p, dir } = interrupted("run-a", deadPid());
+    writeLock(p.paths.root, "run-a", process.pid);
+    const r = run(["clear", "run-a", "-p", "demo"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/still running \(pid /);
+    expect(r.err).toContain(String(process.pid));
+    expect(fs.existsSync(dir)).toBe(true);
+    expect(exists(p.paths.taskMemory, "run-a", "lead", "MEMORY.md")).toBe(true);
+  });
+
+  it("finishes a repeated clear whose journal is already there", () => {
+    env = makeEnv();
+    const { p, dir } = interrupted("run-a", deadPid());
+    let n = 0;
+    expect(() =>
+      executeRunCleanup(planRunCleanup(p, "run-a", { lockHeld: true }), {
+        afterItem: () => {
+          if (++n === 1) throw new Error("crash");
+        },
+      }),
+    ).toThrow(/crash/);
+    expect(fs.existsSync(path.join(p.paths.root, "cleanup"))).toBe(true);
+    const r = run(["clear", "run-a", "-p", "demo"]);
+    expect(r.code).toBe(0);
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(fs.existsSync(path.join(p.paths.root, "cleanup"))).toBe(false);
+  });
+});

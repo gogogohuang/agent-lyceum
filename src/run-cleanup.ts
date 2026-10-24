@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { assertName } from "./paths.js";
+import { inspectRunLock } from "./project-lock.js";
 import { loadRunState } from "./run-store.js";
 import { runIsAlive } from "./status.js";
 import { deleteSnapshotRefs, existingAgentWorkspace, inspectWorkspace, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace } from "./worktree.js";
@@ -50,8 +51,10 @@ const lexists = (p: string) => {
 /**
  * What clearing a run would do. Deletes nothing. Refuses (see `refusals`) while the run is running, or while
  * a worktree holds work that is not in the repo, unless `keepWorktrees` keeps the worktrees and their branches.
+ * `lockHeld`: the caller holds this run's lock (taking it would have thrown while a dispatcher was alive), so the
+ * run cannot be running and the lock, which is the caller's own, is not consulted.
  */
-export function planRunCleanup(project: ResolvedProject, runId: string, opts: { keepWorktrees?: boolean } = {}): CleanupPlan {
+export function planRunCleanup(project: ResolvedProject, runId: string, opts: { keepWorktrees?: boolean; lockHeld?: boolean } = {}): CleanupPlan {
   assertName("run", runId);
   const keepWorktrees = !!opts.keepWorktrees;
   const runDir = path.join(project.paths.runs, runId);
@@ -63,7 +66,10 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   if (hasRun) {
     const state = loadRunState(runDir);
     plan.summary = `${runId}: ${state.task_summary}`;
-    if (!state.end_reason && runIsAlive(state, project)) plan.refusals.push(`Run ${runId} is still running (pid ${state.pid}); stop it first.`);
+    if (!state.end_reason && !opts.lockHeld && runIsAlive(state, project)) {
+      const holder = state.schema_version >= 2 ? inspectRunLock(project.paths.root, runId) : undefined;
+      plan.refusals.push(`Run ${runId} is still running (pid ${holder?.pid ?? state.pid}); stop it first.`);
+    }
   }
 
   // A concurrent run has a worktree for the lead: members' work lands there, and the lead's branch is what you merge.

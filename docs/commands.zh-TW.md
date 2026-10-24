@@ -148,7 +148,7 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 
 **用法:** `clear <run> [-p name] [--dry-run] [--keep-worktrees]` · `clear --lock [run-id] [-p name] --force`
 
-依 id、名稱或唯一前綴（前綴有歧義時會列出候選並以 `1` 結束）刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**（含交接筆記），以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。run 仍在執行，或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
+依 id、名稱或唯一前綴（前綴有歧義時會列出候選並以 `1` 結束）刪除一個任務（run）：它的 run 目錄（狀態、log、結果、被還原的受保護檔案修改的留存副本、信箱）、**任務記憶**（含交接筆記），以及各 agent 的 git worktree、branch 與快照 ref。全域與專案層（長期）記憶一律不會動。被中斷的 run（process 已不存在、也沒有正常結束）可直接 `clear`，不必先 `clear --lock --force`；殘留的 run 鎖由 `clear` 自行取代並移除。run 的 process 仍在執行（有存活的 process 持有它的鎖），或有 worktree 內的成果不在你的 repo 裡（未提交，或已提交但尚未整合進來）時會拒絕且什麼都不刪，並列出那些成果。絕不會順著 symlink 刪到專案 home 之外。進度會記在 `projects/<name>/cleanup/` 的 journal，所以中斷後重跑同一個指令即可完成。id 可用 `status --task-list` 查。
 
 選項：
 

@@ -510,7 +510,7 @@ program
       }
       const lease = takeLock(pr, full, { checkout: false });
       try {
-        const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees });
+        const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees, lockHeld: true });
         if (plan.refusals.length) refuse(plan);
         showPlan(plan);
         const report = executeRunCleanup(plan);
