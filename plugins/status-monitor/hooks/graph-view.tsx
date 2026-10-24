@@ -1,5 +1,5 @@
 import type { Report } from '../types'
-import { blockLines, blocks, layout, leadLink, padCenter, type Block, type Tone } from './graph'
+import { blocks, treeLines, type Tone } from './graph'
 
 // The resolved `Box` / `Text` of `$.ui.resolve(e)`. Typed loosely here: the pure model in graph.ts carries the logic.
 type Ui = { Box: any; Text: any }
@@ -8,38 +8,18 @@ const toneProps = (t?: Tone) =>
   t === 'bold' ? { bold: true } : t === 'dim' ? { dimColor: true } : t === 'ok' ? { color: 'green' } : t === 'warn' ? { color: 'yellow' } : t === 'bad' ? { color: 'red' } : {}
 
 /**
- * One bordered block per agent; between the lead and each member a glyph shows who may write to whom (yellow = the latest hand-off).
- * Collapsed, a mail shows its point only (and wraps rather than cuts it); `expanded` shows all of it. A working member has a full-width row.
+ * The agents as a tree, one line per fact: the lead on top, a branch to each member (see `treeLines`).
+ * Collapsed, a mail shows its point only; `expanded` shows all of it. A line wraps beside its branch rather than being cut.
  */
-export function graphView({ Box, Text }: Ui, report: Report, now: number, width: number, expanded: boolean) {
-  const bs = blocks(report, now)
-  const lay = layout(bs, width)
-  const card = (b: Block, w: number) => (
-    <Box flexDirection="column" borderStyle="round" borderColor={b.dot === 'active' ? 'green' : b.dot === 'failed' ? 'red' : undefined} width={w} paddingX={1}>
-      {blockLines(b, expanded).map(l => (
-        <Text wrap={b.dot === 'active' || !expanded ? 'wrap' : 'truncate-end'} {...toneProps(l.tone)}>
-          {l.text}
-        </Text>
-      ))}
-    </Box>
-  )
+export function graphView({ Box, Text }: Ui, report: Report, now: number, expanded: boolean) {
   return (
     <Box flexDirection="column">
-      {lay.rows.map((row, i) => (
-        <Box flexDirection="column">
-          {!row[0]?.lead && !lay.narrow && (
-            <Box>
-              {row.map(b => {
-                const k = leadLink(bs, b)
-                return (
-                  <Box width={lay.widths[i]}>
-                    <Text {...(k?.hot ? { color: 'yellow', bold: true } : { dimColor: true })}>{k ? padCenter(k.glyph, lay.widths[i]!) : ' '}</Text>
-                  </Box>
-                )
-              })}
-            </Box>
-          )}
-          <Box>{row.map(b => card(b, lay.widths[i]!))}</Box>
+      {treeLines(blocks(report, now), expanded).map(l => (
+        <Box>
+          {l.lead && <Text {...toneProps(l.leadTone)}>{l.lead}</Text>}
+          <Text wrap="wrap" {...toneProps(l.tone)}>
+            {l.text}
+          </Text>
         </Box>
       ))}
     </Box>

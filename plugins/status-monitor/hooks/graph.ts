@@ -3,7 +3,8 @@ import { agentStats, elapsed, tokens } from './summary'
 
 export type Dot = 'active' | 'queued' | 'failed' | 'idle'
 export type Tone = 'bold' | 'dim' | 'ok' | 'warn' | 'bad'
-export type Line = { text: string; tone?: Tone }
+/** `lead` is the tree branch drawn before `text` (in `leadTone`); the text wraps beside it. */
+export type Line = { text: string; tone?: Tone; lead?: string; leadTone?: Tone }
 export type MailView = { head: string; type: string; sections: DigestSection[] }
 export type Target = { name: string; hot: boolean }
 export type Block = {
@@ -23,13 +24,6 @@ export type Block = {
 }
 export type Edge = { from: string; to: string }
 type MailLike = { from: string; type: string; subject: string; brief?: string; digest?: DigestSection[] }
-
-/** Below this many columns blocks stack in one column and no link glyphs are drawn. */
-export const NARROW = 70
-/** The narrowest a member block may get before a row wraps. */
-export const MIN_BLOCK = 30
-/** The pane's width when it is opened (see register.tsx). */
-const OPEN_WIDTH = 56
 
 /** One message as a head line plus all its readable sections (digest, else brief, else nothing). What is shown of them is decided by `mailLines`. */
 export function mailView(m: MailLike): MailView {
@@ -94,29 +88,6 @@ export function blocks(report: Report, now: number): Block[] {
   return [...all.filter(b => b.lead), ...all.filter(b => !b.lead)]
 }
 
-/** `widths[i]` is the width of every block in `rows[i]`. */
-export type Layout = { narrow: boolean; memberWidth: number; rows: Block[][]; widths: number[] }
-
-/**
- * Rows of blocks: the lead alone on top; then each member that is working right now on a row of its own,
- * full width, so its mail has room; then the other members in as many columns as fit.
- */
-export function layout(bs: Block[], width: number): Layout {
-  if (width < NARROW) return { narrow: true, memberWidth: width, rows: bs.map(b => [b]), widths: bs.map(() => width) }
-  const lead = bs.filter(b => b.lead)
-  const working = bs.filter(b => !b.lead && b.dot === 'active')
-  const rest = bs.filter(b => !b.lead && b.dot !== 'active')
-  const cols = Math.max(1, Math.min(rest.length || 1, Math.floor(width / MIN_BLOCK)))
-  const memberWidth = Math.floor(width / cols)
-  const rows: Block[][] = [...lead.map(b => [b]), ...working.map(b => [b])]
-  const widths = rows.map(() => width)
-  for (let i = 0; i < rest.length; i += cols) {
-    rows.push(rest.slice(i, i + cols))
-    widths.push(memberWidth)
-  }
-  return { narrow: false, memberWidth, rows, widths }
-}
-
 /** The glyph between the lead and a member: who may write to whom; hot when it is the latest hand-off. */
 export function leadLink(bs: Block[], member: Block): { glyph: '▼' | '▲' | '↕'; hot: boolean } | undefined {
   const lead = bs.find(b => b.lead)
@@ -145,11 +116,13 @@ export function blockLines(b: Block, expanded = false): Line[] {
     : b.dot === 'failed' ? { text: '上次喚醒失敗', tone: 'bad' }
     : b.dot === 'queued' ? { text: `排隊 ${b.queued.length} 封`, tone: 'warn' }
     : { text: '閒置', tone: 'dim' }
-  const lines: Line[] = [{ text: `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`, tone: 'bold' }, status]
+  const title = `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`
+  // Collapsed, the status shares the title's line (and its colour); the wake count and the hand-off targets wait for `e`.
+  const lines: Line[] = expanded ? [{ text: title, tone: 'bold' }, status] : [{ text: `${title} · ${status.text}`, tone: status.tone }]
   for (const m of b.handling) lines.push(...mailLines(m, 'bold', '', expanded))
   for (const m of b.queued) lines.push(...mailLines({ ...m, head: `排隊：${m.head}` }, 'dim', '  ', expanded))
-  lines.push({ text: `喚醒 ${b.wakes} 次${b.failed ? `（失敗 ${b.failed}）` : ''} · ${tokens(b.tokens)} tok`, tone: b.failed ? 'bad' : 'dim' })
-  if (b.targets.length) lines.push({ text: `→ ${b.targets.map(t => (t.hot ? `${t.name} ●` : t.name)).join(', ')}`, tone: 'dim' })
+  if (expanded || b.failed) lines.push({ text: `喚醒 ${b.wakes} 次${b.failed ? `（失敗 ${b.failed}）` : ''} · ${tokens(b.tokens)} tok`, tone: b.failed ? 'bad' : 'dim' })
+  if (expanded && b.targets.length) lines.push({ text: `→ ${b.targets.map(t => (t.hot ? `${t.name} ●` : t.name)).join(', ')}`, tone: 'dim' })
   return lines
 }
 
@@ -159,15 +132,21 @@ export function bar(done: number, total: number, width = 10): string {
   return '▓'.repeat(filled) + '░'.repeat(width - filled)
 }
 
-/** `s` indented so a one-cell glyph sits in the middle of `width` cells. */
-export function padCenter(s: string, width: number): string {
-  return ' '.repeat(Math.max(0, Math.floor((width - 1) / 2))) + s
-}
-
 /**
- * How many cells the graph may use: the pane's own body width (`props.bodyColumns`), never below 40;
- * no upper cap, so the graph follows the width the person drags the pane to; 0 or missing (not laid out yet) falls back to the width the pane is opened with.
+ * The agents as a tree: the lead on top, each member on a branch below it. The glyph on a branch says who may write to whom
+ * (▼ the lead to the member, ▲ the member to the lead, ↕ both; ─ when neither); yellow while it is the latest hand-off.
  */
-export function paneWidth(bodyColumns: number | undefined): number {
-  return bodyColumns ? Math.max(40, bodyColumns) : OPEN_WIDTH
+export function treeLines(bs: Block[], expanded = false): Line[] {
+  const lead = bs.find(b => b.lead)
+  const members = bs.filter(b => !b.lead)
+  const out: Line[] = lead ? blockLines(lead, expanded) : []
+  members.forEach((b, i) => {
+    const last = i === members.length - 1
+    const link = leadLink(bs, b)
+    const leadTone: Tone = link?.hot ? 'warn' : 'dim'
+    blockLines(b, expanded).forEach((l, j) => {
+      out.push({ ...l, lead: j === 0 ? `${last ? '└─' : '├─'}${link?.glyph ?? '─'} ` : `${last ? ' ' : '│'}   `, leadTone })
+    })
+  })
+  return out
 }

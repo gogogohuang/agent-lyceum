@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, blockLines, blocks, layout, leadLink, padCenter, paneWidth, pointSections } from './graph'
+import { bar, blockLines, blocks, leadLink, pointSections, treeLines } from './graph'
 import type { Report, Run } from '../types'
 
 const NOW = Date.parse('2026-01-01T00:01:05Z')
@@ -74,29 +74,32 @@ test('older CLI without can_message: no targets, no link', () => {
   expect(leadLink(bs, bs[1]!)).toBeUndefined()
 })
 
-test('layout: wide puts the lead on top and wraps members; narrow stacks everything', () => {
+test('treeLines: the lead on top, a branch per member with the link glyph', () => {
   const bs = blocks(report(run()), NOW)
-  const wide = layout(bs, 90)
-  expect(wide.narrow).toBe(false)
-  expect(wide.rows.map(r => r.map(b => b.name))).toEqual([['lead'], ['fe', 'qa']])
-  expect(wide.memberWidth).toBe(45)
-  const tight = layout(bs, 62)
-  expect(tight.narrow).toBe(true)
-  expect(tight.rows.map(r => r.map(b => b.name))).toEqual([['lead'], ['fe'], ['qa']])
-  const many = layout([...bs, { ...bs[1]!, name: 'x' }, { ...bs[1]!, name: 'y' }], 90)
-  expect(many.rows.map(r => r.length)).toEqual([1, 3, 1])
+  expect(treeLines(bs).map(l => (l.lead ?? '') + l.text)).toEqual([
+    '○ lead ★ · claude-code · 閒置',
+    '├─↕ ○ fe · codex · 閒置',
+    '└─▼ ○ qa · claude-code · 閒置',
+  ])
 })
 
-test('layout: a working member gets a full-width row of its own, right under the lead', () => {
-  const r = run({ active: { qa: { since: '2026-01-01T00:00:00Z', round: 2, handling: [{ from: 'lead', type: 'task', subject: 'x'.repeat(60) }] } } })
-  const bs = blocks(report(r), NOW)
-  const lay = layout(bs, 90)
-  expect(lay.rows.map(r => r.map(b => b.name))).toEqual([['lead'], ['qa'], ['fe']])
-  expect(lay.widths).toEqual([90, 90, 90])
-  expect(bs.find(b => b.name === 'qa')!.handling[0]!.head).toContain('x'.repeat(60))
-  const two = layout(blocks(report(run({ active: { qa: { since: '2026-01-01T00:00:00Z' }, fe: { since: '2026-01-01T00:00:00Z' } } })), NOW), 90)
-  expect(two.rows.map(r => r.length)).toEqual([1, 1, 1])
-  expect(layout(bs, 62).widths).toEqual([62, 62, 62])
+test('treeLines: a member\'s details hang under its branch; the last branch has no bar', () => {
+  const r = run({ queue: [{ agent: 'fe', from: 'lead', type: 'task', subject: 'write ui', digest: [{ label: '目標', lines: ['做登入頁'] }] }] })
+  const lines = treeLines(blocks(report(r), NOW))
+  expect(lines.map(l => (l.lead ?? '') + l.text)).toEqual([
+    '○ lead ★ · claude-code · 閒置',
+    '├─↕ ◐ fe · codex · 排隊 1 封',
+    '│     排隊：來自 lead 的 task：write ui',
+    '│       目標  做登入頁',
+    '└─▼ ○ qa · claude-code · 閒置',
+  ])
+})
+
+test('treeLines: the latest hand-off is yellow on its branch', () => {
+  const r = run({ wakes: [{ round: 1, agent: 'lead', ok: true, duration_ms: 1, output_tokens: 1, sent: [{ to: 'fe', type: 'task', subject: 's' }] }] })
+  const lines = treeLines(blocks(report(r), NOW))
+  expect(lines.find(l => l.text.includes('fe'))!.leadTone).toBe('warn')
+  expect(lines.find(l => l.text.includes('qa'))!.leadTone).toBe('dim')
 })
 
 test('leadLink shows the direction between the lead and a member', () => {
@@ -122,12 +125,13 @@ test('blockLines tell what the agent is doing and what it received', () => {
     '喚醒 1 次 · 12.3k tok',
     '→ fe ●, qa',
   ])
-  expect(blockLines(lead)[1]!.tone).toBe('ok')
+  expect(blockLines(lead)[0]!.tone).toBe('ok')
 })
 
 test('an idle block with nothing to say is short', () => {
   const fe = blocks(report(run()), NOW).find(b => b.name === 'fe')!
-  expect(blockLines(fe).map(l => l.text)).toEqual(['○ fe · codex', '閒置', '喚醒 0 次 · 0 tok', '→ lead'])
+  expect(blockLines(fe).map(l => l.text)).toEqual(['○ fe · codex · 閒置'])
+  expect(blockLines(fe, true).map(l => l.text)).toEqual(['○ fe · codex', '閒置', '喚醒 0 次 · 0 tok', '→ lead'])
 })
 
 test('collapsed, a mail shows its point, not the start of its text', () => {
@@ -139,13 +143,10 @@ test('collapsed, a mail shows its point, not the start of its text', () => {
   })
   const lead = blocks(report(r), NOW)[0]!
   expect(blockLines(lead).map(l => l.text)).toEqual([
-    '● lead ★ · claude-code',
-    '進行中 #3 1m05s',
+    '● lead ★ · claude-code · 進行中 #3 1m05s',
     '來自 fe 的 reply：UI done',
     '  變更  新增 login.tsx',
     '  待辦  尚未接真實 API',
-    '喚醒 0 次 · 0 tok',
-    '→ fe, qa',
   ])
   expect(blockLines(lead, true).map(l => l.text)).toContain('  驗證  tsc 通過')
 })
@@ -169,22 +170,10 @@ test('queued mail shows its point collapsed and everything expanded', () => {
   expect(blockLines(qa, true).map(l => l.text)).toContain('    驗收  x')
 })
 
-test('bar, padCenter and paneWidth', () => {
+test('bar fills in proportion', () => {
   expect(bar(1, 4, 8)).toBe('▓▓░░░░░░')
   expect(bar(0, 0, 4)).toBe('░░░░')
   expect(bar(9, 4, 4)).toBe('▓▓▓▓')
-  expect(padCenter('▼', 9)).toBe('    ▼')
-  expect(paneWidth(96)).toBe(96)
-  expect(paneWidth(30)).toBe(40)
-  expect(paneWidth(400)).toBe(400)
-  expect(paneWidth(0)).toBe(56)
-  expect(paneWidth(undefined)).toBe(56)
-})
-
-test('layout turns narrow below 70 cells', () => {
-  const bs = blocks(report(run()), NOW)
-  expect(layout(bs, 69).narrow).toBe(true)
-  expect(layout(bs, 70).narrow).toBe(false)
 })
 
 test('a report with no run shows everyone idle', () => {
@@ -193,7 +182,7 @@ test('a report with no run shows everyone idle', () => {
 
 test('a member-to-member target appears in the → line', () => {
   const qa = blocks(report(run()), NOW).find(b => b.name === 'qa')!
-  expect(blockLines(qa).some(l => l.text.startsWith('→') && l.text.includes('fe'))).toBe(true)
+  expect(blockLines(qa, true).some(l => l.text.startsWith('→') && l.text.includes('fe'))).toBe(true)
 })
 
 test('failed takes precedence over queued', () => {
@@ -204,12 +193,12 @@ test('failed takes precedence over queued', () => {
 
 test('a badge marks an agent that is running on a backup, and nothing else changes', () => {
   const plain = blocks(report(run()), NOW).find(b => b.name === 'fe')!
-  const before = blockLines(plain)
+  const before = blockLines(plain, true)
   const rep = report(run())
   rep.agents[0]!.fallback = { from: 'codex/gpt-5', kind: 'rate_limit' }
   const fb = blocks(rep, NOW).find(b => b.name === 'fe')!
-  const lines = blockLines(fb)
+  const lines = blockLines(fb, true)
   expect(lines[0]!.text).toBe(before[0]!.text + ' · 備援中')
   expect(lines.slice(1)).toEqual(before.slice(1))
-  expect(blockLines(plain)).toEqual(before)
+  expect(blockLines(plain, true)).toEqual(before)
 })

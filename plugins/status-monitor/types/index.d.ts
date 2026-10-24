@@ -47,6 +47,6 @@ export type Snapshots = Record<string, Snapshot>
 
 declare module 'claude-code' {
   interface PluginState {
-    'status-monitor': { snapshot: Snapshots; tab: string; view: 'graph' | 'text' }
+    'status-monitor': { snapshot: Snapshots; tab: string; view: 'graph' | 'text'; expanded: boolean; band: boolean }
   }
 }
