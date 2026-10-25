@@ -170,3 +170,29 @@ export function treeLines(bs: Block[], expanded = false): Line[] {
     g.lines.map((l, j) => (g.branch === undefined ? l : { ...l, lead: j === 0 ? g.branch : `${g.last ? ' ' : '│'}   `, leadTone: g.branchTone })),
   )
 }
+
+/** Terminal cells of a character: 2 for wide (CJK, full-width, emoji), else 1. */
+const cells = (ch: string) => {
+  const c = ch.codePointAt(0)!
+  return (c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xfe30 && c <= 0xfe6f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6) || c >= 0x1f300 ? 2 : 1
+}
+
+/** How many rows a line takes when wrapped to `width` cells: it breaks at the last space that fits, else mid-word. An estimate of what the terminal does. */
+export function wrapRows(text: string, width: number): number {
+  if (width <= 0) return 1
+  let rows = 1
+  let used = 0
+  let lastSpace = -1 // cells used up to and including the last space on this row
+  for (const ch of text) {
+    const w = cells(ch)
+    if (used + w > width) {
+      rows++
+      if (ch !== ' ' && lastSpace > 0) used -= lastSpace
+      else used = 0
+      lastSpace = -1
+    }
+    used += w
+    if (ch === ' ') lastSpace = used
+  }
+  return rows
+}

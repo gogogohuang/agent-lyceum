@@ -162,7 +162,7 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
               {s.done ? '[x]' : '[ ]'} {s.text}
             </Text>
           ))}
-          {mode === 'graph' ? graphView($.ui.resolve(e), report, now, open) : (
+          {mode === 'graph' ? graphView($.ui.resolve(e), report, now, open, e.props.bodyColumns) : (
             <Box flexDirection="column">
               {Object.entries(run.active).map(([name, w]) => (
                 <Box flexDirection="column">

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, blockLines, blocks, leadLink, pointSections, treeGroups, treeLines } from './graph'
+import { bar, blockLines, blocks, leadLink, pointSections, treeGroups, treeLines, wrapRows } from './graph'
 import type { Report, Run } from '../types'
 
 const NOW = Date.parse('2026-01-01T00:01:05Z')
@@ -243,4 +243,13 @@ test('treeGroups: the folded idle line is a note with its own branch', () => {
   const gs = treeGroups(blocks(rep, NOW))
   expect(gs.map(g => g.dot)).toEqual(['idle', undefined])
   expect(gs[1]!.branch).toBe('└── ')
+})
+
+test('wrapRows: counts rows with wide characters and breaks at spaces', () => {
+  expect(wrapRows('abc', 10)).toBe(1)
+  expect(wrapRows('', 10)).toBe(1)
+  expect(wrapRows('中文中文中', 10)).toBe(1)
+  expect(wrapRows('中文中文中文', 10)).toBe(2)
+  expect(wrapRows('hello world', 8)).toBe(2)
+  expect(wrapRows('aaaaaaaaaaaa', 5)).toBe(3)
 })
