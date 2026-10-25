@@ -136,11 +136,14 @@ export function bar(done: number, total: number, width = 10): string {
   return '▓'.repeat(filled) + '░'.repeat(width - filled)
 }
 
+/** One item of the tree: an agent's lines (boxed, `dot` says its state) or a note outside any box. `branch` is drawn beside the first line. */
+export type Group = { dot?: Dot; branch?: string; branchTone?: Tone; last?: boolean; lines: Line[] }
+
 /**
- * The agents as a tree: the lead on top, each member on a branch below it. The glyph on a branch says who may write to whom
+ * The agents as a tree, grouped: the lead on top, each member on a branch below it. The glyph on a branch says who may write to whom
  * (▼ the lead to the member, ▲ the member to the lead, ↕ both; ─ when neither); yellow while it is the latest hand-off.
  */
-export function treeLines(bs: Block[], expanded = false): Line[] {
+export function treeGroups(bs: Block[], expanded = false): Group[] {
   const lead = bs.find(b => b.lead)
   const members = bs.filter(b => !b.lead)
   const maxTokens = Math.max(0, ...bs.map(b => b.tokens))
@@ -149,17 +152,21 @@ export function treeLines(bs: Block[], expanded = false): Line[] {
   const idle = members.filter(b => b.dot === 'idle')
   const folded = !expanded && idle.length >= 3
   const shown = folded ? members.filter(b => b.dot !== 'idle') : members
-  const out: Line[] = []
-  if (failed.length) out.push({ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' })
-  if (lead) out.push(...blockLines(lead, expanded, maxTokens))
+  const out: Group[] = []
+  if (failed.length) out.push({ lines: [{ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' }] })
+  if (lead) out.push({ dot: lead.dot, lines: blockLines(lead, expanded, maxTokens) })
   shown.forEach((b, i) => {
-    const last = i === shown.length - 1 && !folded
     const link = leadLink(bs, b)
-    const leadTone: Tone = link?.hot ? 'warn' : 'dim'
-    blockLines(b, expanded, maxTokens).forEach((l, j) => {
-      out.push({ ...l, lead: j === 0 ? `${last ? '└─' : '├─'}${link?.glyph ?? '─'} ` : `${last ? ' ' : '│'}   `, leadTone })
-    })
+    const last = i === shown.length - 1 && !folded
+    out.push({ dot: b.dot, branch: `${last ? '└─' : '├─'}${link?.glyph ?? '─'} `, branchTone: link?.hot ? 'warn' : 'dim', last, lines: blockLines(b, expanded, maxTokens) })
   })
-  if (folded) out.push({ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim', lead: '└── ', leadTone: 'dim' })
+  if (folded) out.push({ branch: '└── ', branchTone: 'dim', last: true, lines: [{ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim' }] })
   return out
+}
+
+/** The tree as flat lines, the branch drawn before each: what the text view and the tests read. */
+export function treeLines(bs: Block[], expanded = false): Line[] {
+  return treeGroups(bs, expanded).flatMap(g =>
+    g.lines.map((l, j) => (g.branch === undefined ? l : { ...l, lead: j === 0 ? g.branch : `${g.last ? ' ' : '│'}   `, leadTone: g.branchTone })),
+  )
 }

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, blockLines, blocks, leadLink, pointSections, treeLines } from './graph'
+import { bar, blockLines, blocks, leadLink, pointSections, treeGroups, treeLines } from './graph'
 import type { Report, Run } from '../types'
 
 const NOW = Date.parse('2026-01-01T00:01:05Z')
@@ -226,4 +226,21 @@ test('expanded, the wake line carries a token bar relative to the busiest agent'
   const texts = (name: string) => blockLines(bs.find(b => b.name === name)!, true, 1000).map(l => l.text)
   expect(texts('fe')).toContain('喚醒 1 次 · 1.0k tok ▓▓▓▓▓▓')
   expect(texts('qa')).toContain('喚醒 1 次 · 500 tok ▓▓▓░░░')
+})
+
+test('treeGroups: one framed group per agent, its state as the dot; notes stay unframed', () => {
+  const rep = report(run({ queue: [{ agent: 'qa', from: 'lead', type: 'task', subject: 's' }] }))
+  rep.agents[0]!.last_wake = { at: 't', ok: false }
+  const gs = treeGroups(blocks(rep, NOW))
+  expect(gs.map(g => g.dot)).toEqual([undefined, 'idle', 'failed', 'queued'])
+  expect(gs.map(g => g.branch)).toEqual([undefined, undefined, '├─↕ ', '└─▼ '])
+  expect(gs.map(g => !!g.last)).toEqual([false, false, false, true])
+})
+
+test('treeGroups: the folded idle line is a note with its own branch', () => {
+  const rep = report(run())
+  rep.agents.push({ name: 'x', lead: false, unread: 0, runtime: 'codex', can_message: [] }, { name: 'y', lead: false, unread: 0, runtime: 'codex', can_message: [] })
+  const gs = treeGroups(blocks(rep, NOW))
+  expect(gs.map(g => g.dot)).toEqual(['idle', undefined])
+  expect(gs[1]!.branch).toBe('└── ')
 })
