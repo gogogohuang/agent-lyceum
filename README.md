@@ -82,6 +82,6 @@ Folder layout, every agent field and the rules `doctor` checks: [Configuration](
 | Run lifecycle, parallel agents, several runs at once, follow-ups, opening a PR | [How a run works](docs/how-it-works.md) |
 | What agents may write, sandbox levels, known gaps | [Write scope](docs/write-scope.md) |
 | Letting an agent search or fetch the web | [Web access](docs/web-access.md) |
-| Live run status inside Claude Code | [Monitor mod](docs/monitor.md) |
+| Live run status inside Claude Code (a framed, state-coloured tree of agents; pane or full-width band) | [Monitor mod](docs/monitor.md) |
 | All commands in full | [Commands](docs/commands.md) |
 | Coming from an older version | [Upgrading to run v2](docs/upgrading-run-v2.md) |
