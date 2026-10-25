@@ -136,11 +136,14 @@ export function bar(done: number, total: number, width = 10): string {
   return '▓'.repeat(filled) + '░'.repeat(width - filled)
 }
 
+/** One item of the tree: an agent's lines (boxed, `dot` says its state) or a note outside any box. `branch` is drawn beside the first line. */
+export type Group = { dot?: Dot; branch?: string; branchTone?: Tone; last?: boolean; lines: Line[] }
+
 /**
- * The agents as a tree: the lead on top, each member on a branch below it. The glyph on a branch says who may write to whom
+ * The agents as a tree, grouped: the lead on top, each member on a branch below it. The glyph on a branch says who may write to whom
  * (▼ the lead to the member, ▲ the member to the lead, ↕ both; ─ when neither); yellow while it is the latest hand-off.
  */
-export function treeLines(bs: Block[], expanded = false): Line[] {
+export function treeGroups(bs: Block[], expanded = false): Group[] {
   const lead = bs.find(b => b.lead)
   const members = bs.filter(b => !b.lead)
   const maxTokens = Math.max(0, ...bs.map(b => b.tokens))
@@ -149,17 +152,64 @@ export function treeLines(bs: Block[], expanded = false): Line[] {
   const idle = members.filter(b => b.dot === 'idle')
   const folded = !expanded && idle.length >= 3
   const shown = folded ? members.filter(b => b.dot !== 'idle') : members
-  const out: Line[] = []
-  if (failed.length) out.push({ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' })
-  if (lead) out.push(...blockLines(lead, expanded, maxTokens))
+  const out: Group[] = []
+  if (failed.length) out.push({ lines: [{ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' }] })
+  if (lead) out.push({ dot: lead.dot, lines: blockLines(lead, expanded, maxTokens) })
   shown.forEach((b, i) => {
-    const last = i === shown.length - 1 && !folded
     const link = leadLink(bs, b)
-    const leadTone: Tone = link?.hot ? 'warn' : 'dim'
-    blockLines(b, expanded, maxTokens).forEach((l, j) => {
-      out.push({ ...l, lead: j === 0 ? `${last ? '└─' : '├─'}${link?.glyph ?? '─'} ` : `${last ? ' ' : '│'}   `, leadTone })
-    })
+    const last = i === shown.length - 1 && !folded
+    out.push({ dot: b.dot, branch: `${last ? '└─' : '├─'}${link?.glyph ?? '─'} `, branchTone: link?.hot ? 'warn' : 'dim', last, lines: blockLines(b, expanded, maxTokens) })
   })
-  if (folded) out.push({ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim', lead: '└── ', leadTone: 'dim' })
+  if (folded) out.push({ branch: '└── ', branchTone: 'dim', last: true, lines: [{ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim' }] })
   return out
 }
+
+/** The tree as flat lines, the branch drawn before each: what the text view and the tests read. */
+export function treeLines(bs: Block[], expanded = false): Line[] {
+  return treeGroups(bs, expanded).flatMap(g =>
+    g.lines.map((l, j) => (g.branch === undefined ? l : { ...l, lead: j === 0 ? g.branch : `${g.last ? ' ' : '│'}   `, leadTone: g.branchTone })),
+  )
+}
+
+/** Terminal cells of a character: 2 for wide (CJK, full-width, emoji), else 1. */
+const cells = (ch: string) => {
+  const c = ch.codePointAt(0)!
+  return (c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xfe30 && c <= 0xfe6f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6) || c >= 0x1f300 ? 2 : 1
+}
+
+/** How many rows a line takes when wrapped to `width` cells: it breaks at the last space that fits, else mid-word. An estimate of what the terminal does. */
+export function wrapRows(text: string, width: number): number {
+  if (width <= 0) return 1
+  let rows = 1
+  let used = 0
+  let lastSpace = -1 // cells used up to and including the last space on this row
+  for (const ch of text) {
+    const w = cells(ch)
+    if (used + w > width) {
+      rows++
+      if (ch !== ' ' && lastSpace > 0) used -= lastSpace
+      else used = 0
+      lastSpace = -1
+    }
+    used += w
+    if (ch === ' ') lastSpace = used
+  }
+  return rows
+}
+
+/** Cut `text` to `max` terminal cells, ending in … when something was cut (wide characters count 2). */
+export function clipCells(text: string, max: number): string {
+  const all = [...text]
+  if (all.reduce((n, ch) => n + cells(ch), 0) <= max) return text
+  let used = 0
+  let out = ''
+  for (const ch of all) {
+    if (used + cells(ch) > max - 1) break
+    used += cells(ch)
+    out += ch
+  }
+  return `${out}…`
+}
+
+/** Cells a string takes. */
+export const textCells = (text: string) => [...text].reduce((n, ch) => n + cells(ch), 0)

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
 import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
-import { bar } from './graph'
+import { bar, clipCells, textCells } from './graph'
 import { graphView } from './graph-view'
 
 const PANE = 'agent-lyceum'
@@ -142,8 +142,8 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
             執行 {run.run_id} [{runLabel(run)}] 第 {roundsLabel(run.rounds, run.max_rounds)} 輪 · {run.output_tokens.toLocaleString('en-US')} tokens
             {cacheLabel(run.cache_read_tokens, run.cache_write_tokens) && ` · ${cacheLabel(run.cache_read_tokens, run.cache_write_tokens)}`}
           </Text>
-          <Text>
-            任務：{run.task_summary}
+          <Text wrap="truncate-end">
+            任務：{run.task_summary.replace(/\s+/g, ' ')}
             {run.task_source ? `（來源 ${run.task_source}）` : ''}
           </Text>
           {run.started_at && (
@@ -162,7 +162,7 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
               {s.done ? '[x]' : '[ ]'} {s.text}
             </Text>
           ))}
-          {mode === 'graph' ? graphView($.ui.resolve(e), report, now, open) : (
+          {mode === 'graph' ? graphView($.ui.resolve(e), report, now, open, e.props.bodyColumns) : (
             <Box flexDirection="column">
               {Object.entries(run.active).map(([name, w]) => (
                 <Box flexDirection="column">
@@ -234,7 +234,10 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
         if (!run || !isOpen(run)) return []
         const label = t.key || r.project.name || '目前'
         const mark = run.state === 'running' ? '' : `[${runLabel(run)}] `
-        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${clip(label, 10)}：` : ''}${mark}${clip(run.task_summary, 16)}`, body: () => section(t, r) }]
+        // The task name takes whatever is left of the line after the number ("1 "), the button's own chrome and the prefix.
+        const prefix = `${several ? `${clipCells(label, 20)}：` : ''}${mark}`
+        const room = Math.max(8, e.props.bodyColumns - 6 - textCells(prefix))
+        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${prefix}${clipCells(run.task_summary.replace(/\s+/g, ' '), room)}`, body: () => section(t, r) }]
       }),
     ),
     x => x.startedAt,
