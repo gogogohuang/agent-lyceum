@@ -142,8 +142,8 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
             執行 {run.run_id} [{runLabel(run)}] 第 {roundsLabel(run.rounds, run.max_rounds)} 輪 · {run.output_tokens.toLocaleString('en-US')} tokens
             {cacheLabel(run.cache_read_tokens, run.cache_write_tokens) && ` · ${cacheLabel(run.cache_read_tokens, run.cache_write_tokens)}`}
           </Text>
-          <Text>
-            任務：{run.task_summary}
+          <Text wrap="truncate-end">
+            任務：{run.task_summary.replace(/\s+/g, ' ')}
             {run.task_source ? `（來源 ${run.task_source}）` : ''}
           </Text>
           {run.started_at && (
