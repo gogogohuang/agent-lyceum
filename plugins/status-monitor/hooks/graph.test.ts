@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, blockLines, blocks, leadLink, pointSections, treeGroups, treeLines, wrapRows } from './graph'
+import { bar, blockLines, blocks, leadLink, pointSections, treeGroups, treeLines, wrapRows, clipCells } from './graph'
 import type { Report, Run } from '../types'
 
 const NOW = Date.parse('2026-01-01T00:01:05Z')
@@ -252,4 +252,11 @@ test('wrapRows: counts rows with wide characters and breaks at spaces', () => {
   expect(wrapRows('中文中文中文', 10)).toBe(2)
   expect(wrapRows('hello world', 8)).toBe(2)
   expect(wrapRows('aaaaaaaaaaaa', 5)).toBe(3)
+})
+
+test('clipCells: fits as is, else cut to the cells with an ellipsis', () => {
+  expect(clipCells('abc', 5)).toBe('abc')
+  expect(clipCells('abcdef', 5)).toBe('abcd…')
+  expect(clipCells('中文中文中', 10)).toBe('中文中文中')
+  expect(clipCells('中文中文中文', 10)).toBe('中文中文…')
 })

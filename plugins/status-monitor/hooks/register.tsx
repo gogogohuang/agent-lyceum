@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
 import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
-import { bar } from './graph'
+import { bar, clipCells, textCells } from './graph'
 import { graphView } from './graph-view'
 
 const PANE = 'agent-lyceum'
@@ -234,7 +234,10 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
         if (!run || !isOpen(run)) return []
         const label = t.key || r.project.name || '目前'
         const mark = run.state === 'running' ? '' : `[${runLabel(run)}] `
-        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${several ? `${clip(label, 10)}：` : ''}${mark}${clip(run.task_summary, 16)}`, body: () => section(t, r) }]
+        // The task name takes whatever is left of the line after the number ("1 "), the button's own chrome and the prefix.
+        const prefix = `${several ? `${clipCells(label, 20)}：` : ''}${mark}`
+        const room = Math.max(8, e.props.bodyColumns - 6 - textCells(prefix))
+        return [{ id: `${t.key}|${run.run_id}`, startedAt: run.started_at, label: `${prefix}${clipCells(run.task_summary.replace(/\s+/g, ' '), room)}`, body: () => section(t, r) }]
       }),
     ),
     x => x.startedAt,

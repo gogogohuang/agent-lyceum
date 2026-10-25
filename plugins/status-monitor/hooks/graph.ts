@@ -196,3 +196,20 @@ export function wrapRows(text: string, width: number): number {
   }
   return rows
 }
+
+/** Cut `text` to `max` terminal cells, ending in … when something was cut (wide characters count 2). */
+export function clipCells(text: string, max: number): string {
+  const all = [...text]
+  if (all.reduce((n, ch) => n + cells(ch), 0) <= max) return text
+  let used = 0
+  let out = ''
+  for (const ch of all) {
+    if (used + cells(ch) > max - 1) break
+    used += cells(ch)
+    out += ch
+  }
+  return `${out}…`
+}
+
+/** Cells a string takes. */
+export const textCells = (text: string) => [...text].reduce((n, ch) => n + cells(ch), 0)
