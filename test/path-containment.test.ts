@@ -54,6 +54,7 @@ describe("a relative path that merely starts with '..' is not an escape", () => 
 
   describe("worktree symlink containment", () => {
     const violationsFor = (link: string, target: string): string[] => {
+      env?.cleanup();
       env = makeEnv();
       initGitRepo(env.repo);
       makeConcurrent(env, 2);
