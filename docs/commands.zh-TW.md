@@ -192,6 +192,14 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 
 **`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
+範例：`team.yaml` 有 `model_tiers: { claude-code: [haiku, sonnet, opus] }`，且 `fe-member` 設為 `model: opus` 時，`agent-lyceum doctor --resolved -p demo` 會含有下列幾列（真實輸出的節錄，其餘列省略）：
+
+```
+model_tiers.claude-code = ["haiku","sonnet","opus"]                                 team.yaml
+agents.fe-member.model = opus                                                       team.yaml
+agents.fe-member.model_tiers = ["haiku","sonnet","opus"]                            team.yaml
+```
+
 ## demo
 
 **用法:** `demo [--dir path] [--runtime claude-code|codex] [--setup-only] [-y]`

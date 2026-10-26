@@ -8,6 +8,8 @@ import { formatWarning, missingSections, parseSteps, type Step } from "./format.
 import { atomicWrite, readRegularFileNoFollow } from "./fs-util.js";
 import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_REJECTIONS } from "./format-rejections.js";
 import { type InstanceCap, parallelFlag, roleOfName } from "./instances.js";
+import type { Tier } from "./schema.js";
+import { effectiveTier, tierFlag } from "./tiers.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
 import { activeRecordsBytes, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
@@ -29,6 +31,8 @@ export interface MessageMeta {
   created: string;
   /** The run this mail belongs to. Stamped by the dispatcher; absent on mail of legacy runs. */
   run_id?: string;
+  /** The lead-chosen difficulty tier, validated by the dispatcher at delivery (spec 24.5.3). Absent = the ceiling. */
+  tier?: Tier;
 }
 
 export interface Message {
@@ -84,6 +88,8 @@ export interface DeliverInput {
   body: string;
   thread?: string;
   reply_to?: string;
+  /** Written to the mail only when set (spec 24.5.3), so mail without it is unchanged. */
+  tier?: Tier;
 }
 
 /** Deliver a message into `to`'s inbox (dispatcher-side; senders other than agents allowed). */
@@ -99,6 +105,7 @@ export function deliver(project: ResolvedProject, input: DeliverInput & { id?: s
     subject: input.subject,
     created: input.created ?? new Date().toISOString(),
     ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
+    ...(input.tier ? { tier: input.tier } : {}),
   };
   const file = path.join(inboxDir(project, input.to), input.fileName ?? `${stamp()}-${input.from}-${id}.md`);
   atomicWrite(file, serialize(meta, input.body));
@@ -167,6 +174,7 @@ function deliveredMeta(project: ResolvedProject, input: DeliverInput, planned: {
     subject: input.subject,
     created: planned.created,
     ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
+    ...(input.tier ? { tier: input.tier } : {}),
   };
 }
 
@@ -233,6 +241,8 @@ export interface RouteResult {
   asks: { from: string; subject: string; body: string; file: string; source: string }[];
   /** Latest `## Steps` checklist the lead sent, if any. */
   steps?: Step[];
+  /** `tier` fields delivered without effect (spec 24.5.2); the caller logs `tier_ignored` and sends the notes. */
+  tierIgnored: { from: string; id: string; to: string; subject: string; type: string; reason: "not-lead" | "not-a-task" | "no-tiers" }[];
 }
 
 /** Move a handled `done` file out of the outbox (to `read/`). */
@@ -260,7 +270,7 @@ function sameText(body: string): string {
  * An earlier mail from `from` to `to` with the same type, the same reply target and the same text (unread or already read):
  * sending it again changes nothing and is how two agents end up in a loop. Texts too short to mean anything are never duplicates.
  */
-function earlierDuplicate(project: ResolvedProject, from: string, to: string, type: string, replyTo: string | undefined, body: string, held = false): Message | undefined {
+function earlierDuplicate(project: ResolvedProject, from: string, to: string, type: string, replyTo: string | undefined, body: string, held = false, tier: Tier = "high"): Message | undefined {
   const text = sameText(body);
   if (text.length < 20) return undefined;
   const dir = inboxDir(project, to);
@@ -273,7 +283,7 @@ function earlierDuplicate(project: ResolvedProject, from: string, to: string, ty
       if (!e.isFile() || !e.name.endsWith(".md") || e.name.startsWith(".")) continue;
       try {
         const m = readMessage(path.join(d, e.name));
-        if (m.meta.from === from && m.meta.type === type && (m.meta.reply_to ?? "") === (replyTo ?? "") && sameText(m.body) === text) return m;
+        if (m.meta.from === from && m.meta.type === type && (m.meta.reply_to ?? "") === (replyTo ?? "") && sameText(m.body) === text && effectiveTier(m.meta) === tier) return m;
       } catch {
         /* an unreadable file is not a duplicate of anything */
       }
@@ -296,7 +306,7 @@ export interface InstanceRouting {
 
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. Safe to run again after a crash. */
 export function routeOutboxes(project: ResolvedProject, routing?: InstanceRouting): RouteResult {
-  const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [] };
+  const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [], tierIgnored: [] };
   const journal = project.run ? new RouteJournal(project.run.dir) : undefined;
   for (const sender of Object.values(project.agents)) {
     const dir = outboxDir(project, sender.name);
@@ -410,6 +420,18 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         }
       }
 
+      // `tier` is judged per recipient like `parallel`, before the duplicate check, which needs the effective tier (spec 24.5.2, 24.5.4).
+      const tiers = new Map<string, ReturnType<typeof tierFlag>>();
+      for (const t of targets) tiers.set(t, tierFlag({ value: d.tier, senderIsLead: sender.name === project.lead, type, recipientTiers: project.agents[t]?.tiers }));
+      if ([...tiers.values()].includes("invalid")) {
+        reject(`tier must be low, mid or high, not ${JSON.stringify(d.tier)}. Write \`tier: low\` (or mid/high) on a task to run it on a cheaper model, or leave the line out to use the member's own model.`);
+        continue;
+      }
+      const tierOf = (to: string): Tier | undefined => {
+        const f = tiers.get(to);
+        return f === "low" || f === "mid" || f === "high" ? f : undefined;
+      };
+
       const missing = missingSections(type, parsed.body);
       if (missing.length && project.run?.layout === "run") {
         const key = formatRejectionKey(sender.name, type, subject);
@@ -427,7 +449,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
       const repeats = new Map<string, Message>();
       for (const to of targets) {
         if (journal?.get(source, to)) continue;
-        const earlier = earlierDuplicate(project, sender.name, to, type, replyTo, parsed.body, !!routing?.held(roleOf(to)));
+        const earlier = earlierDuplicate(project, sender.name, to, type, replyTo, parsed.body, !!routing?.held(roleOf(to)), tierOf(to) ?? "high");
         if (earlier) repeats.set(to, earlier);
       }
       const repeatNote = (): string =>
@@ -467,6 +489,8 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         if (repeats.has(to)) continue;
         const flag = flags.get(to);
         const role = roleOf(to);
+        const tf = tiers.get(to);
+        if (typeof tf === "object" && !journal?.get(source, to)) res.tierIgnored.push({ from: sender.name, id: deterministicId(source, to), to, subject, type, reason: tf.ignored });
         if (typeof flag === "object" && !journal?.get(source, to)) routing?.ignored(flag.ignored, { from: sender.name, id: deterministicId(source, to), to, subject });
         // The first valid parallel task makes the role's instances durable before a single file of this mail exists.
         if (routing && flag === "on" && !routing.held(role)) routing.enable(role);
@@ -475,7 +499,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           project,
           journal,
           source,
-          { from: sender.name, to, type, subject, body, thread, reply_to: replyTo },
+          { from: sender.name, to, type, subject, body, thread, reply_to: replyTo, ...(tierOf(to) ? { tier: tierOf(to) } : {}) },
           {
             ...(held ? { held: true } : {}),
             ...(held && flag === "on" ? { parallel: true } : {}),

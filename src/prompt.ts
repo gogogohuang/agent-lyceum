@@ -6,6 +6,7 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { senderLabel, slotName } from "./instances.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
+import { modelForTier } from "./tiers.js";
 import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
 import { commonFile, memoryDirs, outboxDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
@@ -38,6 +39,15 @@ export const PARALLEL_SECTION = (n: number): string =>
     "- Without `parallel: true`, mail goes to the member itself, one task at a time.",
     "- When rate limits hit, fewer instances may start; waiting tasks run when an instance is free.",
     "- After parallel work is back, have one member type-check and test the combined result before you report `done`.",
+  ].join("\n");
+
+/** The lead's system prompt ends with this when a member can run a task on a cheaper model (spec 24.10); `members` = [name, model of low, mid, high]. No trailing newline. */
+export const TIER_SECTION = (members: { name: string; low: string; mid: string; high: string }[]): string =>
+  [
+    "## Task tiers",
+    "Some members can run a task on a cheaper model than their own. Add the frontmatter line `tier: low`, `tier: mid` or `tier: high` to a `task` you send them; without it they use their own model. Pick by difficulty: `low` for mechanical work with an exact spec (renames, a one-line fix, running a given command), `mid` for routine changes in one module, `high` (or no tier) for design, debugging, reviews and anything unclear. A tier lasts for that one task: replies and later mail on the thread run on the member's own model, so put `tier` again on each follow-up task. Each model keeps its own session, so a member that resumes sessions does not see what it did on another model; say in the task what it needs. If a tiered task comes back poor, send it again with a higher tier.",
+    "Members and the models each tier uses:",
+    ...members.map((m) => `- ${m.name}: low ${m.low}, mid ${m.mid}, high ${m.high}`),
   ].join("\n");
 
 export const COMMON_LIMIT = 8 * 1024;
@@ -274,8 +284,16 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
-  const text = lines.join("\n");
-  return isLead && project.run?.instances ? `${text}\n\n${PARALLEL_SECTION(project.run.instances.max)}` : text;
+  let text = lines.join("\n");
+  if (isLead && project.run?.instances) text = `${text}\n\n${PARALLEL_SECTION(project.run.instances.max)}`;
+  if (isLead) {
+    const members = Object.values(project.agents)
+      .filter((a) => a.name !== project.lead && (!a.instance || a.instance.k === 1) && (a.tiers?.length ?? 0) >= 2)
+      .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
+      .map((a) => ({ name: a.name, low: modelForTier(a.tiers!, "low"), mid: modelForTier(a.tiers!, "mid"), high: modelForTier(a.tiers!, "high") }));
+    if (members.length) text = `${text}\n\n${TIER_SECTION(members)}`;
+  }
+  return text;
 }
 
 /** Messages one wake-up handles: the oldest one, or a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so the agent decides once on all of it; the lead takes any such run, other agents only same-thread ones. */

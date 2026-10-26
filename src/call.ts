@@ -84,6 +84,8 @@ export function callProject(home: string, agent: ResolvedAgent, dir: string, cal
     lead: agent.name,
     dispatcher: DISPATCHER_DEFAULTS,
     agents: { [agent.name]: agent },
+    modelTiers: {},
+    modelTiersFrom: {},
     paths,
     solo: "call",
   };

@@ -94,8 +94,20 @@ export const DispatcherPartial = z
 export const REMOVED_DISPATCHER_KEYS = ["max_parallel", "max_concurrent_runs", "workspace_mode"] as const;
 export const REMOVED_AGENT_KEYS = ["owns"] as const;
 
+/** One runtime's model ladder, lowest first; `[]` = no ladder for that runtime (overrides team.yaml). */
+export const ModelTiersPartial = z
+  .object({
+    "claude-code": z.array(z.string().trim().min(1)).optional(),
+    codex: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+
+export const TIERS = ["low", "mid", "high"] as const;
+export type Tier = (typeof TIERS)[number];
+
 export const GlobalConfig = z
   .object({
+    model_tiers: ModelTiersPartial.optional(),
     agents: z.record(z.string(), AgentPartial).default({}),
   })
   .strict();
@@ -104,6 +116,7 @@ export const ProjectConfig = z
   .object({
     dir: z.string(),
     team: z.object({ lead: z.string() }).strict(),
+    model_tiers: ModelTiersPartial.optional(),
     dispatcher: DispatcherPartial.default({}),
     agents: z.record(z.string(), AgentPartial).default({}),
   })

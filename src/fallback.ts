@@ -8,6 +8,8 @@ export interface Candidate {
   model?: string;
   effort?: Effort;
   primary: boolean;
+  /** The cheaper model a lead's `tier` picked (spec 24.7): not the primary, and not a fallback either. */
+  tiered?: true;
   /** `<runtime>/<model>`; the cooldown and session key. */
   key: string;
 }
@@ -19,12 +21,18 @@ const keyOf = (runtime: Runtime, model: string | undefined) => `${runtime}/${(mo
  * The primary model followed by the agent's fallback chain, in order. An entry with the same key as the primary or as an
  * earlier entry is dropped: a chain shared through `dispatcher.fallback` may list the agent's own primary (spec 20.12).
  */
-export function candidatesFor(agent: ResolvedAgent): Candidate[] {
+export function candidatesFor(agent: ResolvedAgent, tierModel?: string): Candidate[] {
   // `validate` refuses an agent without a runtime before anything is woken.
   const runtime = agent.runtime as Runtime;
   const primary: Candidate = { runtime, model: agent.model, effort: agent.effort, primary: true, key: keyOf(runtime, agent.model) };
   const out = [primary];
   const seen = new Set([primary.key]);
+  // A tier's cheaper model goes first (spec 24.7.1); one that is the ceiling itself adds nothing.
+  if (tierModel && keyOf(runtime, tierModel) !== primary.key) {
+    const key = keyOf(runtime, tierModel);
+    out.unshift({ runtime, model: tierModel, effort: agent.effort, primary: false, tiered: true, key });
+    seen.add(key);
+  }
   for (const f of agent.fallback) {
     const model = f.model || undefined;
     const key = keyOf(f.runtime, model);
@@ -42,6 +50,7 @@ export function candidatesFor(agent: ResolvedAgent): Candidate[] {
  */
 export function agentForCandidate(agent: ResolvedAgent, c: Candidate): ResolvedAgent {
   if (c.primary) return agent;
+  if (c.tiered) return { ...agent, model: c.model };
   const allowWeb = agent.allowWeb ?? (agent.runtime === "claude-code" && c.runtime === "codex" ? "none" : undefined);
   return { ...agent, runtime: c.runtime, model: c.model, effort: c.effort, allowWeb };
 }
@@ -80,10 +89,9 @@ export class Cooldowns {
 }
 
 /** The candidates for one wake: the chain minus those cooling down, or the whole chain when every one is (something must be tried). */
-export function planAttempts(agent: ResolvedAgent, cooldowns: Cooldowns, now: number): Candidate[] {
-  const all = candidatesFor(agent);
+export function planAttempts(all: readonly Candidate[], cooldowns: Cooldowns, now: number): Candidate[] {
   const warm = all.filter((c) => cooldowns.active(c.key, now) === 0);
-  return warm.length ? warm : all;
+  return warm.length ? warm : [...all];
 }
 
 export type Step = "retry-same" | "next-candidate" | "stop";

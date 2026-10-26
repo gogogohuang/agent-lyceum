@@ -71,7 +71,7 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 
 ## 喚醒失敗時
 
-沒有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備援模型)）時，喚醒失敗不論原因，都在同一個模型上重試最多 `retry` 次，之後停止 run，這部分不變。有備援鏈時，會先為失敗分類：
+一次喚醒只有一個候選模型時（沒有 `fallback` 備援鏈，見[備援模型](configuration.zh-TW.md#備援模型)，這次喚醒也沒有比上限便宜的 tier 模型），喚醒失敗不論原因，都在同一個模型上重試最多 `retry` 次，之後停止 run，這部分不變。有多個候選（有備援鏈，或有低於上限的 tier 模型）時，會先為失敗分類：
 
 | 種類 | 處理 |
 |---|---|
@@ -82,9 +82,24 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 
 細節：
 
-- **Backoff：** 只有在有備援鏈時，同一個模型上的重試才會等待：5 秒、15 秒、45 秒，上限 60 秒。沒有備援鏈就不等。
+- **Backoff：** 只有在候選模型多於一個時（較便宜的 tier 模型或 `fallback` 鏈；見 [Model tiers per task](#每個-task-的模型分級)），同一個模型上的重試才會等待：5 秒、15 秒、45 秒，上限 60 秒。只有一個候選就不等。
 - **全新 session：** 切換後在備用模型上開新的 session，prompt 附上一般的重試提示，未讀信件照常重新送達；失敗那次嘗試未投遞的 outbox 草稿會以未驗證草稿的形式交還給同一個 agent（見上），除此之外失敗模型的輸出不會帶過去。若備用模型已有自己的 session 且該 agent 設了 `resume: true`，切換會接續那個 session，而不是開新的。備用模型的 session 存在 `state.sessions` 的 `<agent>@<runtime>/<model>` 下；主要模型沿用 agent 名稱這個 key，備用模型不會拿到它的 id。
-- **每次喚醒都從主要模型開始，** 除非它正在冷卻。因 `rate_limit` 或 `quota` 失敗的模型，在 `fallback_cooldown_sec`（預設 300 秒）內會被這次 run 的所有喚醒略過，包括平行的喚醒。冷卻存在 `state.json`，所以 `resume` 會保留；新的 run 則從零開始。若備援鏈上每個模型都在冷卻，就整條鏈都試。只有設了備援鏈的 agent 才會記錄冷卻。
+- **候選順序是 tier 模型 → 上限 → 設定的 fallback。** 喚醒從第一個不在冷卻的候選開始（沒有 tier 時就是主要模型）。（Spec 24.13 R-3）
+- **冷卻：**因 `rate_limit` 或 `quota` 失敗的模型，在 `fallback_cooldown_sec`（預設 300 秒）內會被這次 run 的所有喚醒略過，包括平行的喚醒。冷卻存在 `state.json`，所以 `resume` 會保留；新的 run 則從零開始。若備援鏈上每個模型都在冷卻，就整條鏈都試。只有存在較便宜的 tier 候選或備援鏈時才會記錄冷卻。
 - **切換會被告知：** 切換時印出一行 `<agent> falling back to <runtime>/<model> (<kind>)`，並在 run 的 notes 加一筆，提醒失敗模型已產生的副作用沒有被還原、可能已經發生。
 - **全部失敗時** run 照舊以 `agent_failed` 或 `lead_failed` 停止。`failure.tried` 依序列出每個模型各一筆（取該模型最後一次的失敗），結束訊息會逐一列出，並仍然說明如何 `resume`。
 - **已知限制：** Codex 在網路斷線時會一直重連，直到喚醒逾時，所以結果是 `timeout` 而不是 `network`。它與其他逾時同樣處理：先重試，再切換。
+
+## 每個 task 的模型分級
+
+設了 `model_tiers` 階梯（見[設定](configuration.zh-TW.md#模型分級)）後，lead 可以讓某個 task 用成員 runtime 上較便宜的模型執行；成員的 `model` 仍是上限。沒有階梯、或沒寫 `tier`，喚醒與先前完全相同。（spec 24.1）
+
+- **標記 task：** lead 在 `task` 的 frontmatter 寫 `tier: low`、`tier: mid` 或 `tier: high`（新 thread 或後續 task 皆可），可與 `parallel: true` 並用。只有 lead 寄出的 `task` 會被採用（以 outbox 擁有者判定寄件人）。值不是這三者時，整封退回，與格式錯誤的信相同。其他情況（成員寄的信、非 task 的信、收件者沒有可降的 tier）信照常投遞但不帶 tier，原因記為 log 事件 `tier_ignored`（`{from, id, to, reason}`，reason 為 `not-lead`、`not-a-task` 或 `no-tiers`）。只有 `not-lead` 與 `not-a-task` 會在 run 的 notes 加一筆，每個寄件人與原因只一次；`no-tiers` 只寫 log。（24.5.1、24.5.2）
+- **作用範圍：** tier 只作用於處理那封信的那次喚醒，含其重試與 `resume` 後的重做。同 thread 之後的 reply 與 failure 用上限，所以 lead 要在每個後續 task 再寫一次 `tier`。（24.5.3）
+- **批次喚醒：** 一次喚醒處理多封信時，每封都有有效 tier 才降級，並取最高；任一封沒有就用上限。（D-07、24.5.3）
+- **嘗試的模型：** 先降級模型，再上限，再 `fallback` 鏈。降級模型遇 `rate_limit`／`quota` 會進冷卻並改用上限；`timeout`／`network`／`crash` 先重試；`auth` 立即停止；`unknown` 在同一模型重試後停止（`src/fallback.ts`）。候選清單只建一次，規則與[喚醒失敗時](#喚醒失敗時)相同。（24.7.1、24.7.2）
+- **不是備援：** 在降級模型上的喚醒不會被報成備援；從降級換到上限記為 `tier_step_up`（並附 note 說明失敗嘗試的副作用未還原），不是 fallback。（D-15、24.7.3）
+- **Session：** 每個模型各自一個 session（降級模型用 `<agent>@<runtime>/<model>`，上限用 agent 名稱），session 永不跨模型續接。因此 `resume: true` 的成員看不到它在另一個 tier 做過的事；成員預設 `resume: false`，沒有損失。（D-08、24.6）
+- **重寄：** 重複信判定納入有效 tier（沒寫算 `high`），所以 lead 在結果不佳後把同一個 task 改用較高 tier 重寄，不會被當重複退回。舊版程式不看 tier，會退回。（D-16、24.5.4、24.13 R-4）
+- **哪裡看得到：** 降級喚醒的行是 `waking <agent> (<runtime>/<model>, tier <tier>)`；`wake` log 事件與 `state.wakes[]` 多出 `tier` 與 `model`；某 agent 最後一次喚醒實際跑在低於上限的 tier 模型上時（升回上限或改用備援模型時不算），`status` 多一行 `<agent> tier <tier>（<runtime>/<model>）`（全形括號，前面無空格）。`status --json` 只增加這些選填欄位。（24.7.3、24.9）
+- **標錯的代價：** tier 設太低可能降低品質或多一次喚醒；lead 提示要求不確定時用 `high`。效果未量測。（24.13 R-2）

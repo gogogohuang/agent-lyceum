@@ -429,7 +429,13 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
   } catch {
     /* a hint only: never let it break status */
   }
-  return {
+  const wakes = run?.state.wakes ?? [];
+  const below = new Set<string>();
+  for (const a of Object.values(project.agents)) {
+    const last = wakes.filter((w) => w.agent === a.name).at(-1);
+    if (last?.tier && !last.fallback_from && last.runtime === a.runtime && !candidatesFor(a).some((c) => c.primary && c.key === `${last.runtime}/${(last.model ?? "").trim().toLowerCase()}`)) below.add(a.name);
+  }
+  const out: StatusReport = {
     schema_version: 1,
     project: projectInfo(base),
     agents: Object.values(project.agents).map((a) => ({
@@ -445,6 +451,8 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
     run: report,
     ...(advice.length ? { memory_advice: advice } : {}),
   };
+  belowCeiling.set(out, below);
+  return out;
 }
 
 /** Every run of the project, newest first. */
@@ -630,6 +638,20 @@ function fallbackLines(agents: AgentReport[], c: Paint): string[] {
   return out;
 }
 
+/** Agents whose latest wake ran on a tiered model below the ceiling; kept off the report so `status --json` is unchanged. */
+const belowCeiling = new WeakMap<StatusReport, Set<string>>();
+
+/** An agent whose latest wake ran on a model below its ceiling (spec 24.9): one line each, in agent order. */
+function tierLines(report: StatusReport, c: Paint): string[] {
+  const out: string[] = [];
+  const wakes = report.run?.wakes ?? [];
+  for (const a of report.agents) {
+    const last = wakes.filter((w) => w.agent === a.name).at(-1);
+    if (last?.tier && last.runtime && belowCeiling.get(report)?.has(a.name)) out.push(`  ${c.cyan(a.name)} ${c.yellow(`tier ${last.tier}`)}（${modelName(`${last.runtime}/${last.model ?? ""}`)}）`);
+  }
+  return out;
+}
+
 export function formatStatusReport(report: StatusReport, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = report.run;
@@ -656,6 +678,8 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   const lines = [`${c.bold("專案：")}${report.project.name}  ${c.dim(`（repo：${report.project.dir}）`)}`, "", ...summaryBlock(run, now, c), "", ...table];
   const fb = fallbackLines(report.agents, c);
   if (fb.length) lines.push("", ...fb);
+  const tl = tierLines(report, c);
+  if (tl.length) lines.push(...(fb.length ? [] : [""]), ...tl);
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}${cacheText(run.cache_read_tokens, run.cache_write_tokens) ? `　${cacheText(run.cache_read_tokens, run.cache_write_tokens)}` : ""}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
