@@ -27,7 +27,7 @@ Known limits:
 
 - Agent processes are not capped: every member with pending mail wakes at once, in every active run.
 - A lead with `can_edit_agent_md: true` edits the `CLAUDE.md`/`AGENTS.md` in its own worktree; the change reaches your repo only when you merge its branch.
-- `COMMON.md` and the `AGENT.md` files are shared by all runs of the project. Each run's guard only judges what changes while its own agents are working, so an edit by one run is kept; but if two runs' wake-ups overlap in time, a change one makes while the other's agents are working can be reverted by the other.
+- `COMMON.md` and the `AGENT.md` files are shared by all runs of the project. Each run's guard only judges what changes while its own agents are working, so an edit by one run is kept. If another run of the project is live during a batch and no agent of the batch may edit the file, the guard does not revert the change (it cannot attribute it) and logs `protected-change-unattributed` instead; see [Write scope](write-scope.md).
 - Two runs that edit the same file are for you to reconcile when merging; agent-lyceum never merges.
 
 ## Parallel instances of one member

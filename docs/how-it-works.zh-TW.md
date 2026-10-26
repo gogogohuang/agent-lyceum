@@ -27,7 +27,7 @@
 
 - agent 程序數量沒有上限：每個執行中的 run 裡，有待處理信件的成員會同時被喚醒。
 - `can_edit_agent_md: true` 的 lead 修改的是它自己 worktree 裡的 `CLAUDE.md`／`AGENTS.md`；這些修改要等你合併它的 branch 才會進到你的 repo。
-- `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留；但若兩個 run 的喚醒時間重疊，一個 run 在另一個 run 的 agent 工作期間所做的修改，可能被另一個 run 還原。
+- `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留。若該批喚醒期間同專案另一個 run 仍存活，且該批沒有任何 agent 可編輯該檔案，guard 不會還原這項變更（無法歸屬），改記 `protected-change-unattributed`；見[寫入範圍](write-scope.zh-TW.md)。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 
 ## 同一成員的平行實例
