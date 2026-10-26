@@ -188,6 +188,8 @@ Options:
 
 Exit 1 on configuration errors or when something the team needs is explicitly unsupported. It does not read credentials: login status is reported as unknown. `run` and `resume` do the same capability check first: they refuse to start on an explicit `no` and warn on `unknown`. A real end-to-end check against the live CLIs (a tiny task) spends tokens and is deliberately manual.
 
+The last line of the text output summarises the checks: no errors and no warnings prints "No problems found."; warnings only says there are no errors and how many warnings to review; any error prints "Problems found:" with the error count, plus the warning count only when there are warnings. `info` and `ok` lines never count. Warnings alone do not change the exit code (still `0`), and `--json` output is unchanged.
+
 **`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
 ## demo

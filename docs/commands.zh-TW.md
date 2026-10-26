@@ -188,6 +188,8 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 
 設定有錯誤，或團隊需要的功能被明確判定不支援時 exit 1。它不讀取憑證，登入狀態會回報為 unknown。`run` 與 `resume` 啟動前會先做同樣的能力檢查：明確 `no` 就拒絕啟動，`unknown` 則警告。要對真實 CLI 做端到端驗證（跑一個很小的任務）會花 token，刻意保留為手動。
 
+文字輸出的最後一行是檢查摘要：沒有錯誤也沒有警告時印出「No problems found.」；只有警告時，說明沒有錯誤以及有幾個警告需要檢視；有任何錯誤時印出「Problems found:」，一定附上錯誤數量，只有存在警告時才再附上警告數量。`info` 與 `ok` 行不計入。只有警告不會改變退出碼（仍為 `0`），`--json` 輸出不變。
+
 **`doctor --resolved`** 不做任何檢查，改為印出每一項生效的設定（全域 agent 庫、專案檔與預設值合併後的結果）與它的來源：檔案與 key、`default`，或在 runtime 是由 `model` 辨識出來時顯示 `inferred from <model 的 key>`。專案的值覆蓋全域；清單（`can_message`）是整個取代而非合併；相對路徑以寫它的那個檔案為基準解析。
 
 ## demo

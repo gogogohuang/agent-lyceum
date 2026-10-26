@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
-import { diagnoseProject, preflightRuntimes, probeRuntime } from "../src/doctor.js";
+import { diagnoseProject, formatDoctor, preflightRuntimes, probeRuntime, type DoctorReport } from "../src/doctor.js";
 import { recordsDir, setOsSandboxForTest } from "../src/policy.js";
 import { acquireProjectLock } from "../src/project-lock.js";
 import { initGitRepo, makeConcurrent, makeEnv, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
@@ -337,5 +337,33 @@ describe("diagnoseProject pull request hint", () => {
     fs.writeFileSync(path.join(bin, "gh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const ok = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
     expect(ok.checks.map((c) => `${c.level}:${c.subject}`)).toContain("ok:pr");
+  });
+});
+
+describe("formatDoctor footer", () => {
+  const report = (levels: Array<"ok" | "info" | "warn" | "error">): DoctorReport => ({
+    project: "p",
+    ok: !levels.includes("error"),
+    checks: levels.map((level) => ({ level, subject: "s", message: `m-${level}` })),
+    runtimes: [],
+  });
+  const footer = (levels: Array<"ok" | "info" | "warn" | "error">) => formatDoctor(report(levels)).split("\n").at(-1);
+
+  it("says no problems only when nothing is warn or error", () => {
+    expect(footer(["ok", "info"])).toBe("No problems found.");
+  });
+  it("counts warnings without claiming no problems", () => {
+    expect(footer(["ok", "warn"])).toBe("No errors; 1 warning to review (marked warn above).");
+    expect(footer(["warn", "warn", "info"])).toBe("No errors; 2 warnings to review (marked warn above).");
+  });
+  it("counts errors and warnings with singular and plural", () => {
+    expect(footer(["error"])).toBe("Problems found: 1 error (marked ERROR above).");
+    expect(footer(["error", "warn"])).toBe("Problems found: 1 error, 1 warning (marked ERROR / warn above).");
+    expect(footer(["error", "error", "warn", "warn"])).toBe("Problems found: 2 errors, 2 warnings (marked ERROR / warn above).");
+  });
+  it("reflects a check pushed after diagnoseProject (task-file error)", () => {
+    const r = report(["ok"]);
+    r.checks.push({ level: "error", subject: "task-file", message: "missing" });
+    expect(formatDoctor(r).split("\n").at(-1)).toBe("Problems found: 1 error (marked ERROR above).");
   });
 });

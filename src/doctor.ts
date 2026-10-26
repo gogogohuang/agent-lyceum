@@ -236,6 +236,19 @@ export function formatDoctor(r: DoctorReport): string {
   for (const c of r.runtimes) {
     lines.push(`  ${c.runtime}: ${c.binary === "missing" ? "not installed" : `${c.version ?? "version unknown"}; json ${c.json}, resume ${c.resume}, sandbox ${c.sandbox}, effort ${c.effort}`}`);
   }
-  lines.push("", r.ok ? "No problems found." : "Problems found.");
+  lines.push("", doctorFooter(r));
   return lines.join("\n");
+}
+
+/** One-line summary counted from the checks; `info` and `ok` never count. */
+export function doctorFooter(r: DoctorReport): string {
+  const errors = r.checks.filter((c) => c.level === "error").length;
+  const warns = r.checks.filter((c) => c.level === "warn").length;
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (errors > 0) {
+    const parts = [plural(errors, "error"), ...(warns > 0 ? [plural(warns, "warning")] : [])];
+    return `Problems found: ${parts.join(", ")} (marked ERROR${warns > 0 ? " / warn" : ""} above).`;
+  }
+  if (warns > 0) return `No errors; ${plural(warns, "warning")} to review (marked warn above).`;
+  return "No problems found.";
 }
