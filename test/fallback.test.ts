@@ -159,13 +159,13 @@ describe("planAttempts", () => {
   it("skips candidates in cooldown", () => {
     const c = new Cooldowns();
     c.mark("claude-code/opus", "rate_limit", 0, 60);
-    expect(planAttempts(agentWith(CHAIN), c, 1000).map((x) => x.key)).toEqual(["claude-code/sonnet", "codex/"]);
-    expect(planAttempts(agentWith(CHAIN), c, 61000).map((x) => x.key)).toEqual(["claude-code/opus", "claude-code/sonnet", "codex/"]);
+    expect(planAttempts(candidatesFor(agentWith(CHAIN)), c, 1000).map((x) => x.key)).toEqual(["claude-code/sonnet", "codex/"]);
+    expect(planAttempts(candidatesFor(agentWith(CHAIN)), c, 61000).map((x) => x.key)).toEqual(["claude-code/opus", "claude-code/sonnet", "codex/"]);
   });
   it("tries everything when everything is in cooldown", () => {
     const c = new Cooldowns();
     for (const x of candidatesFor(agentWith(CHAIN))) c.mark(x.key, "quota", 0, 60);
-    expect(planAttempts(agentWith(CHAIN), c, 0).map((x) => x.key)).toEqual(["claude-code/opus", "claude-code/sonnet", "codex/"]);
+    expect(planAttempts(candidatesFor(agentWith(CHAIN)), c, 0).map((x) => x.key)).toEqual(["claude-code/opus", "claude-code/sonnet", "codex/"]);
   });
 });
 
@@ -185,7 +185,7 @@ function harness(agent: ResolvedAgent, script: Record<string, R[]>, extra: Parti
   const sleeps: number[] = [];
   const switches: string[] = [];
   const cooldowns = extra.cooldowns ?? new Cooldowns();
-  const candidates = extra.candidates ?? planAttempts(agent, cooldowns, 0);
+  const candidates = extra.candidates ?? planAttempts(candidatesFor(agent), cooldowns, 0);
   const run = runWithFallback<R>({
     candidates,
     legacy: candidatesFor(agent).length === 1,

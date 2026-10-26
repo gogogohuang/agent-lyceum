@@ -101,3 +101,45 @@ agents:
 - 備用模型的防護比主要模型弱：在記憶、`AGENT.md`、其他 agent 的 context、交接筆記或 repo 的 `CLAUDE.md`／`AGENTS.md` 這幾項，備用模型是 `prompt-only` 而主要模型更強。例如沒有 OS 沙箱時，`claude-code` 退到 tool rules，但 `codex` 備援會是 prompt-only，這個切換會被拒絕。見 [Write scope](write-scope.zh-TW.md)。
 
 只要有任何 agent 設了備援，`doctor --resolved` 就會顯示生效的備援鏈與它的來源。
+
+## 模型分級
+
+agent 的 `model` 可以是「上限」而不是固定選擇：lead 在 task 上標 `tier: low|mid|high`，dispatcher 就用同一 runtime 上較便宜的模型喚醒成員，絕不超過它的 `model`。tier 如何選擇與套用見[每個 task 的模型分級](how-it-works.zh-TW.md#每個-task-的模型分級)。（spec 24.1）
+
+```yaml
+# team.yaml（全域）或 projects/<name>/project.yaml
+model_tiers:
+  claude-code: [claude-haiku-5-5, claude-sonnet-5-5, claude-opus-5-5]   # 低 → 高
+  codex: [gpt-6.1-mini, gpt-6.1-sol]
+agents:
+  node-engineer: { model: claude-opus-5-5 }    # 可用：haiku、sonnet、opus
+  docs-writer:   { model: claude-sonnet-5-5 }  # 可用：haiku、sonnet（上限 sonnet）
+  cli-reviewer:  { model: gpt-6.1-sol }        # 可用：gpt-6.1-mini、gpt-6.1-sol
+```
+
+- **寫在哪、如何合併：** `model_tiers` 是頂層鍵，每個 runtime（`claude-code`、`codex`）一條清單，由低到高排列；`team.yaml` 與 `project.yaml` 都可寫。同一 runtime 以 project 整條取代 team；在 `project.yaml` 寫 `model_tiers: { codex: [] }` 即在該專案關掉 Codex 階梯。（24.2 D-01、24.3）
+- **`model` 是上限：** agent 可用階梯上從最低到它的 `model`（含）的項目，更高的永遠不用。`model` 必須在它所屬 runtime 的階梯上。沒寫 `model`、或 `model` 就是最低項的 agent 沒有可降的，照舊運作。（D-02、24.3.3）
+- **runtime 互不影響：** agent 只在自己 runtime 的階梯上移動；與被審者在不同 runtime 的 reviewer 不受影響，tier 不會換 runtime。`effort` 不分級：每個 tier 都用 agent 自己的設定。（24.1、D-09）
+- **對應：** 可用項目 `A` 共 `n` 項（由低到高，`A[n-1]` 為上限）：`low` = `A[0]`、`high` = `A[n-1]`、`mid` = `A[floor(n/2)]`，所以 `n` 為偶數時 `mid` 取偏高者。（D-03、24.4）
+
+  | 可用項目數 | `low` | `mid` | `high` |
+  |---|---|---|---|
+  | 1 | 第 1 項 | 第 1 項 | 第 1 項（不適用分級） |
+  | 2 | 第 1 項 | 第 2 項 | 第 2 項 |
+  | 3 | 第 1 項 | 第 2 項 | 第 3 項 |
+
+- **預設關閉：** 沒有階梯、或 task 沒寫 `tier`，就用成員自己的 `model`，與先前完全相同。lead 自己的模型不分級。（24.1）
+
+下列情況設定載入失敗（`doctor` 與 `run` 回報錯誤）：（24.3.4）
+
+- 階梯項目不是該 runtime 的模型（`model_tiers.<rt>[<i>]: "<m>" is not a <rt> model ...`）；
+- 同一條階梯重複列出同一模型；
+- agent 的 `model` 不在它 runtime 的階梯上（`Agent "<a>": model "<m>" is not on model_tiers.<rt> ...`）。請把它加進階梯，或在 `project.yaml` 設 `model_tiers.<rt>: []`。
+
+`doctor` 在 agent 沒寫 `model`（階梯對它不適用）、以及沒有任何成員能低於自己的 `model`（分級沒有效果）時發出警告。
+
+`doctor --resolved` 會列出 `model_tiers.<runtime>` 與它的來源檔，以及 `agents.<name>.model_tiers`（該 agent 可用的項目）；沒設階梯時兩行都不出現。（24.9）
+
+**混用版本：** 舊版程式會拒絕載入含 `model_tiers` 的 `team.yaml` 或 `project.yaml`；見[降級（改用舊版）](../README.zh-TW.md#降級改用舊版)。（24.3.2、24.13 R-4）
+
+**Lead 指引：** 至少一個成員能低於自己的 `model` 時，harness 會在 lead 的系統提示加 `## Task tiers` 段落；沒有階梯時提示不變。續接的 Claude lead 可能保留舊系統提示，run 中途新增階梯時它可能看不到（未驗證）。（24.10）

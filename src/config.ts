@@ -10,6 +10,7 @@ import {
   type ProjectPaths,
 } from "./paths.js";
 import type { AgentWorkspace } from "./worktree.js";
+import { availableTiers } from "./tiers.js";
 import {
   DISPATCHER_DEFAULTS,
   GlobalConfig,
@@ -22,6 +23,7 @@ import {
   type FallbackEntry,
   type FallbackEntryPartialT,
   inferRuntime,
+  RUNTIMES,
   type Runtime,
   type WebLevel,
 } from "./schema.js";
@@ -52,6 +54,8 @@ export interface ResolvedAgent {
   fallbackInvalid: { index: number; reason: "empty" | "no-runtime" }[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
+  /** Spec 24: the tiers this agent can run on (its runtime's ladder up to and including `model`); unset when nothing is below `model`. */
+  tiers?: string[];
   /** Set when the run bound this agent as an instance of a role that has several (spec 23): which role, and the instance number. */
   instance?: { role: string; k: number };
   /** Instances 2 and up: the role's global/project memory, which only instance 1 may write. */
@@ -66,6 +70,10 @@ export interface ResolvedProject {
   lead: string;
   dispatcher: DispatcherSettings;
   agents: Record<string, ResolvedAgent>;
+  /** Spec 24: non-empty model ladders per runtime, lowest first (project.yaml replaces team.yaml's per runtime). */
+  modelTiers: Partial<Record<Runtime, string[]>>;
+  /** Which file each ladder in `modelTiers` came from. */
+  modelTiersFrom: Partial<Record<Runtime, "global" | "project">>;
   paths: ProjectPaths;
   /** Removed settings still present in config files (ignored); `validate` warns once per file. */
   ignoredSettings?: { file: string; keys: string[] }[];
@@ -131,6 +139,17 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
   const lead = p.team.lead;
   const { max_parallel: _mp, max_concurrent_runs: _mc, workspace_mode: _wm, fallback: dispatcherFallback, ...liveDispatcher } = p.dispatcher;
   const dispatcher: DispatcherSettings = { ...DISPATCHER_DEFAULTS, ...stripUndef(liveDispatcher) };
+
+  const modelTiers: Partial<Record<Runtime, string[]>> = {};
+  const modelTiersFrom: Partial<Record<Runtime, "global" | "project">> = {};
+  for (const rt of RUNTIMES) {
+    const fromProject = p.model_tiers?.[rt] !== undefined;
+    const ladder = fromProject ? p.model_tiers?.[rt] : g.model_tiers?.[rt];
+    if (ladder?.length) {
+      modelTiers[rt] = [...ladder];
+      modelTiersFrom[rt] = fromProject ? "project" : "global";
+    }
+  }
 
   const agents: Record<string, ResolvedAgent> = {};
   for (const agentName of Object.keys(p.agents)) {
@@ -216,6 +235,8 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     }
     const { entries: fallback, invalid: fallbackInvalid } = resolveFallback(rawFallback, runtime);
 
+    const tiers = runtime ? availableTiers(modelTiers[runtime], model) : undefined;
+
     const isLead = agentName === lead;
     const resume = pick("resume");
     const canMessage = pick("can_message");
@@ -247,6 +268,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       fallbackShared,
       fallbackInvalid,
       sources,
+      ...(tiers ? { tiers } : {}),
     };
   }
 
@@ -257,6 +279,8 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     lead,
     dispatcher,
     agents,
+    modelTiers,
+    modelTiersFrom,
     paths,
     ignoredSettings: collectIgnored(hp.globalConfig, g, paths.config, p),
   };
@@ -354,6 +378,10 @@ export function resolveProjectWithSources(home: string, name: string): { project
     sources[`dispatcher.${k}`] = raw.dispatcher[k] !== undefined ? { file: projectFile, key: `dispatcher.${k}` } : { default: true };
   }
   if (raw.dispatcher.max_instances !== undefined) sources["dispatcher.max_instances"] = { file: projectFile, key: "dispatcher.max_instances" };
+  for (const rt of RUNTIMES) {
+    const from = project.modelTiersFrom[rt];
+    if (from) sources[`model_tiers.${rt}`] = { file: from === "project" ? projectFile : globalFile, key: `model_tiers.${rt}` };
+  }
   for (const a of Object.values(project.agents)) {
     const at = (src: Source | undefined, field: string): SourceInfo => {
       const key = `agents.${a.name}.${field}`;
@@ -375,6 +403,9 @@ export function resolveProjectWithSources(home: string, name: string): { project
       else if (f === "fallback" && src === "project" && raw.agents[a.name]?.fallback === undefined) sources[`agents.${a.name}.${f}`] = { file: projectFile, key: "dispatcher.fallback" };
       else sources[`agents.${a.name}.${f}`] = at(src, f);
     }
+    // The ladder is the runtime's, so its source is the ladder's own key (spec 24.9).
+    const ladderSrc = a.tiers ? sources[`model_tiers.${a.runtime}`] : undefined;
+    if (ladderSrc) sources[`agents.${a.name}.model_tiers`] = ladderSrc;
   }
   return { project, sources };
 }
@@ -383,6 +414,7 @@ export function resolveProjectWithSources(home: string, name: string): { project
 export function flattenResolved(project: ResolvedProject): Record<string, unknown> {
   const v: Record<string, unknown> = { dir: project.dir, "team.lead": project.lead };
   const anyFallback = Object.values(project.agents).some((a) => a.fallback.length > 0);
+  for (const rt of RUNTIMES) if (project.modelTiers[rt]) v[`model_tiers.${rt}`] = project.modelTiers[rt];
   for (const [k, val] of Object.entries(project.dispatcher)) {
     if (k === "fallback_cooldown_sec" && !anyFallback) continue; // keep `doctor --resolved` unchanged without fallback
     v[`dispatcher.${k}`] = val;
@@ -401,6 +433,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
     if (a.fallback.length) v[`${p}.fallback`] = a.fallback;
+    if (a.tiers) v[`${p}.model_tiers`] = a.tiers;
   }
   return v;
 }

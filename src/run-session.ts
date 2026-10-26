@@ -23,6 +23,7 @@ import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRun
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
+import { modelForTier, wakeTier } from "./tiers.js";
 import { openPullRequest, prBody, prTitle, realRunner, type CommandRunner, type PrOutcome } from "./open-pr.js";
 
 export { newRunId };
@@ -45,6 +46,9 @@ function readIndex(file: string | undefined): string | undefined {
 
 /** The `state.sessions` key of the session an agent runs in on candidate `c`: a backup has a session of its own. */
 const sessionKeyOf = (agent: ResolvedAgent, c: Candidate): string => (c.primary ? agent.name : `${agent.name}@${c.key}`);
+
+/** Why `key` is cooling down, for a message. */
+const cooldownKind = (cd: Cooldowns, key: string): string => cd.toJSON()[key]?.kind ?? "unknown";
 
 /** `runtime/model`, or the runtime alone for its default model. */
 const modelLabel = (c: { runtime: string; model?: string }): string => (c.model ? `${c.runtime}/${c.model}` : c.runtime);
@@ -400,6 +404,22 @@ export class RunSession {
   }
 
 
+  /** Spec 24.5.2: log every tier that was dropped; tell the sender once per reason (`no-tiers` is log-only). */
+  private noteTierIgnored(route: RouteResult): void {
+    for (const t of route.tierIgnored) {
+      this.log("tier_ignored", { from: t.from, id: t.id, to: t.to, reason: t.reason });
+      if (t.reason === "no-tiers") continue;
+      const key = `tier\u0000${t.from}\u0000${t.reason}`;
+      if (this.ignoredNoted.has(key)) continue;
+      this.ignoredNoted.add(key);
+      this.note(
+        t.reason === "not-lead"
+          ? `${t.from}'s mail ${t.id} has \`tier\`, but only the lead (${this.project.lead}) can choose a member's tier: it was delivered without one.`
+          : `${t.from}'s mail ${t.id} ("${t.subject}") has \`tier\` but is a ${t.type}: tiers apply to tasks only, so it was delivered without one.`,
+      );
+    }
+  }
+
   /** Bind the project to this run again, after its slot table changed. */
   private rebind(): void {
     this.project = withCapability(bindRunProject(this.base, this.runDir, this.layout, this.state.instances), this.wsMode, this.instanceCheck, this.state.instances);
@@ -629,11 +649,21 @@ export class RunSession {
       timeoutSec: cfg.wake_timeout_sec,
     };
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
-    const all = candidatesFor(agent);
+    // A lead's `tier` (spec 24.5.3): only for an agent with a ladder, and only a valid value counts.
+    const tier = agent.tiers && agent.tiers.length >= 2 ? wakeTier(unread.map((m) => m.meta.tier)) : undefined;
+    const all = candidatesFor(agent, tier && agent.tiers ? modelForTier(agent.tiers, tier) : undefined);
     const chain = all.length > 1;
-    const candidates = chain ? planAttempts(agent, cooldowns, Date.now()) : all;
+    const candidates = chain ? planAttempts(all, cooldowns, Date.now()) : all;
+    const ceiling = must(all.find((c) => c.primary), "the agent's own model");
+    const tieredFirst = all[0]?.tiered ? all[0] : undefined;
     // The model a backup's calls stand in for: the one switched away from in this wake, or the cooling-down primary it started past.
-    let replaced: Candidate | undefined = candidates[0]?.primary ? undefined : all[0];
+    // A tier's cheaper model is not a fallback (spec 24.7.3): only chain entries have one.
+    let replaced: Candidate | undefined = candidates[0]?.primary || candidates[0]?.tiered ? undefined : ceiling;
+    if (tieredFirst && !candidates[0]?.tiered) {
+      const left = Math.ceil(cooldowns.active(tieredFirst.key, Date.now()) / 1000);
+      say(`  ${agent.name} tier ${tier} model ${modelLabel(tieredFirst)} is cooling down (${cooldownKind(cooldowns, tieredFirst.key)}, ${left}s left): starting on ${modelLabel(candidates[0] as Candidate)}`);
+      log("tier_step_up", { agent: agent.name, tier, from: modelLabel(tieredFirst), to: modelLabel(candidates[0] as Candidate), reason: "cooldown" });
+    }
     let calls = 0;
     let stoppedByCancel = false;
     const outcome = await runWithFallback<WakeResult>({
@@ -654,8 +684,19 @@ export class RunSession {
         return state.max_rounds > 0 && state.rounds >= state.max_rounds ? "stop" : undefined;
       },
       onSwitch: (from, to, kind) => {
-        replaced = from;
+        if (!from.tiered) replaced = from;
         this.syncCooldowns();
+        if (from.tiered) {
+          log("tier_step_up", { agent: agent.name, tier, from: modelLabel(from), to: modelLabel(to), reason: kind ?? "unknown" });
+          if (opts.signal?.aborted) return;
+          say(`  ${agent.name} stepping up from tier ${tier} (${modelLabel(from)}) to ${modelLabel(to)} (${kind ?? "unknown error"})`);
+          const resumesTo = agent.resume && !!state.sessions[sessionKeyOf(agent, to)];
+          this.note(
+            `${agent.name}'s tier ${tier} model ${modelLabel(from)} failed (${kind ?? "unknown error"}); it is woken again on ${modelLabel(to)}, which ${resumesTo ? "resumes its own earlier session" : "starts a fresh session"}, and redoes this wake-up. ` +
+              `Anything the failed attempts already did outside the mailbox (file edits, commands) was not undone: side effects may have happened.`,
+          );
+          return;
+        }
         if (opts.signal?.aborted) return;
         say(`  ${agent.name} falling back to ${modelLabel(to)} (${kind ?? "unknown error"})`);
         const resumes = agent.resume && !!state.sessions[sessionKeyOf(agent, to)];
@@ -678,7 +719,7 @@ export class RunSession {
         const redo = this.redoContext(agent.name, unread.map((m) => m.meta.id), att.id, attempt);
         const userPrompt = redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
         const retryN = chain ? ctx.candidateAttempt : attempt;
-        say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime})${retryN ? ` — retry ${retryN}` : ""}`);
+        say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime}${c.tiered ? `, tier ${tier}` : ""})${retryN ? ` — retry ${retryN}` : ""}`);
         const sessionId = agent.resume ? state.sessions[sessionKey] : undefined;
         const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
         // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
@@ -705,7 +746,7 @@ export class RunSession {
         state.cache_write_tokens += result.cacheWriteTokens ?? 0;
         delete state.active[agent.name];
         // With a chain only: which model ran, what it replaced, why it failed.
-        const which = chain ? { runtime: c.runtime, model: c.model, fallback_from: c.primary || !replaced ? undefined : modelLabel(replaced), kind: result.kind } : {};
+        const which = chain ? { runtime: c.runtime, model: c.model, fallback_from: c.primary || c.tiered ? undefined : modelLabel(replaced ?? ceiling), kind: result.kind } : {};
         state.wakes.push({
           round,
           agent: agent.name,
@@ -718,8 +759,9 @@ export class RunSession {
           handling,
           error: result.error,
           ...which,
+          ...(tier ? { tier } : {}),
         });
-        state.last_wake[agent.name] = { at: new Date().toISOString(), ok: result.ok, error: result.error, ...(chain ? { runtime: c.runtime, model: c.model } : {}) };
+        state.last_wake[agent.name] = { at: new Date().toISOString(), ok: result.ok, error: result.error, ...(chain ? { runtime: c.runtime, model: c.model } : {}), ...(tier ? { tier } : {}) };
         log("wake", {
           agent: agent.name,
           runtime: c.runtime,
@@ -732,6 +774,7 @@ export class RunSession {
           error: result.error,
           ...(redo.prior.length ? { redo_of: redo.prior.map((a) => a.id) } : {}),
           ...(chain ? { model: c.model, fallback_from: which.fallback_from, kind: result.kind } : {}),
+          ...(tier ? { tier } : {}),
         });
         this.saveState();
         if (result.ok) {
@@ -937,6 +980,7 @@ export class RunSession {
         contract = undefined;
       }
     }
+    this.noteTierIgnored(route);
     const askAccepted = this.handleAsks(route);
     for (const d of route.delivered) log("route", d);
     const handedOff = (from: string, t: SentTopic) => {

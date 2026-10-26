@@ -6,7 +6,7 @@ import type { ResolvedProject } from "./config.js";
 import { synthesizeSlots } from "./instances.js";
 import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
-import { ERROR_KINDS, RUNTIMES, type ErrorKind, type Runtime, type RunOutcome } from "./schema.js";
+import { ERROR_KINDS, RUNTIMES, type ErrorKind, type Runtime, type RunOutcome, type Tier } from "./schema.js";
 import type { ResultBranch } from "./worktree.js";
 
 export const STATE_FILE = "state.json";
@@ -68,6 +68,8 @@ export interface WakeRecord {
   fallback_from?: string;
   /** With a fallback chain only: why the call failed. */
   kind?: ErrorKind;
+  /** The tier this wake ran at (spec 24): set only when every mail it handled carried a valid one. */
+  tier?: Tier;
 }
 
 /** A model given up on during a wake with a fallback chain, for `failure.tried`. */
@@ -132,7 +134,7 @@ export interface RunState {
   cache_read_tokens: number;
   cache_write_tokens: number;
   /** `runtime`/`model` only for agents with a fallback chain. */
-  last_wake: Record<string, { at: string; ok: boolean; error?: string; runtime?: Runtime; model?: string }>;
+  last_wake: Record<string, { at: string; ok: boolean; error?: string; runtime?: Runtime; model?: string; tier?: Tier }>;
   /** Process running this dispatcher, so a monitor can tell "running" from "interrupted". */
   pid: number;
   /** One line describing the run's task. */

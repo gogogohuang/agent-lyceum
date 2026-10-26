@@ -75,6 +75,10 @@ agents:
 
 資料夾結構、所有 agent 欄位與 `doctor` 檢查的規則：[設定](docs/configuration.zh-TW.md)。
 
+## 降級（改用舊版）
+
+舊版程式會拒絕載入含 `model_tiers` 的 `team.yaml` 或 `project.yaml`（載入錯誤，「Unrecognized key」）。改用舊版前，請先從每個 `project.yaml` 與 `team.yaml` 拿掉 `model_tiers`。其他信件與 run 狀態不受影響：舊版會忽略信件中的 `tier` 行。見[模型分級](docs/configuration.zh-TW.md#模型分級)。（spec 24.3.2、24.13）
+
 ## 主題
 
 | 主題 | 閱讀 |

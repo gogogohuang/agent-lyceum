@@ -99,3 +99,45 @@ Config fails to load (`doctor` and `run` report an error) when:
 - the backup would protect less than the primary: for memory, `AGENT.md`, other agents' context, the handoff notes or the repo's `CLAUDE.md`/`AGENTS.md`, the backup's enforcement is `prompt-only` where the primary's is stronger. For example, without an OS sandbox `claude-code` falls back to tool rules, but a `codex` backup would be prompt-only, so that switch is refused. See [Write scope](write-scope.md).
 
 `doctor --resolved` shows the effective chain and where it came from once any agent has one.
+
+## Model tiers
+
+An agent's `model` can be a ceiling instead of a fixed choice: the lead marks a task `tier: low|mid|high` and the dispatcher wakes the member on a cheaper model of the same runtime, never above its `model`. See [Model tiers per task](how-it-works.md#model-tiers-per-task) for how a tier is chosen and applied. (Spec 24.1)
+
+```yaml
+# team.yaml (global) or projects/<name>/project.yaml
+model_tiers:
+  claude-code: [claude-haiku-5-5, claude-sonnet-5-5, claude-opus-5-5]   # lowest → highest
+  codex: [gpt-6.1-mini, gpt-6.1-sol]
+agents:
+  node-engineer: { model: claude-opus-5-5 }    # tiers: haiku, sonnet, opus
+  docs-writer:   { model: claude-sonnet-5-5 }  # tiers: haiku, sonnet (ceiling = sonnet)
+  cli-reviewer:  { model: gpt-6.1-sol }        # tiers: gpt-6.1-mini, gpt-6.1-sol
+```
+
+- **Where and merging:** `model_tiers` is a top-level key with one list per runtime (`claude-code`, `codex`), ordered lowest to highest. It may be written in `team.yaml` and in `project.yaml`. For each runtime the project's list replaces the team's whole; `model_tiers: { codex: [] }` in `project.yaml` turns the Codex ladder off for that project. (24.2 D-01, 24.3)
+- **`model` is the ceiling:** an agent can use the ladder entries from the lowest up to and including its `model`; anything above is never used. The `model` must be on its runtime's ladder. An agent without a `model`, or whose `model` is the lowest entry, has nothing to lower and runs as before. (D-02, 24.3.3)
+- **Runtimes stay apart:** an agent only moves on the ladder of its own runtime. A reviewer on the other runtime than the member it reviews is unaffected; tiers never switch runtime. `effort` is not tiered: the agent's setting is used at every tier. (24.1, D-09)
+- **Mapping:** with `n` usable entries `A` (lowest first, `A[n-1]` = the ceiling), `low` = `A[0]`, `high` = `A[n-1]`, `mid` = `A[floor(n/2)]`, so `mid` rounds up when `n` is even. (D-03, 24.4)
+
+  | usable entries | `low` | `mid` | `high` |
+  |---|---|---|---|
+  | 1 | 1st | 1st | 1st (no tiers apply) |
+  | 2 | 1st | 2nd | 2nd |
+  | 3 | 1st | 2nd | 3rd |
+
+- **Off by default:** no ladder, or a task without `tier`, means the member's own `model`, exactly as before. The lead's own model is never tiered. (24.1)
+
+Config fails to load (`doctor` and `run` report an error) when: (24.3.4)
+
+- a ladder entry is not a model of that runtime (`model_tiers.<rt>[<i>]: "<m>" is not a <rt> model ...`);
+- a ladder lists the same model twice;
+- an agent's `model` is not on its runtime's ladder (`Agent "<a>": model "<m>" is not on model_tiers.<rt> ...`). Add it to the ladder, or set `model_tiers.<rt>: []` in `project.yaml`.
+
+`doctor` warns when an agent has no `model` (the ladder does not apply to it), and when no member can run below its `model` (tiers have no effect).
+
+`doctor --resolved` lists `model_tiers.<runtime>` with the file it came from, and `agents.<name>.model_tiers` (the entries that agent can use). Neither line appears when no ladder is set. (24.9)
+
+**Mixed versions:** older binaries refuse a `team.yaml` or `project.yaml` that contains `model_tiers`; see [Downgrading](../README.md#downgrading). (24.3.2, 24.13 R-4)
+
+**Lead guidance:** when at least one member can run below its `model`, the harness adds a `## Task tiers` section to the lead's system prompt; without a ladder the prompt is unchanged. A resumed Claude lead may keep its old system prompt, so a ladder added mid-run may not reach it (unverified). (24.10)

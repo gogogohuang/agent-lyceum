@@ -2,7 +2,8 @@ import fs from "node:fs";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from "./policy.js";
 import { isInside } from "./paths.js";
-import { inferRuntime, RUNTIME_EFFORTS } from "./schema.js";
+import { inferRuntime, RUNTIME_EFFORTS, RUNTIMES } from "./schema.js";
+import { ladderIndex } from "./tiers.js";
 import { must } from "./assert.js";
 
 export interface Issue {
@@ -28,7 +29,27 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     err(`Project dir does not exist: ${project.dir}`);
   }
 
+  for (const rt of RUNTIMES) {
+    const ladder = project.modelTiers[rt];
+    if (!ladder) continue;
+    const seen = new Set<string>();
+    ladder.forEach((m, i) => {
+      const other = inferRuntime(m);
+      if (other !== rt) err(`model_tiers.${rt}[${i}]: "${m}" is not a ${rt} model (recognised as ${other ?? "nothing"}). List only ${rt} models, lowest first.`);
+      const k = m.trim().toLowerCase();
+      if (seen.has(k)) err(`model_tiers.${rt}: "${m}" is listed twice.`);
+      seen.add(k);
+    });
+  }
+
   for (const a of Object.values(project.agents)) {
+    const ladder = a.runtime ? project.modelTiers[a.runtime] : undefined;
+    if (a.runtime && ladder) {
+      if (!a.model) warn(`Agent "${a.name}" has no model, so model_tiers.${a.runtime} does not apply to it: it always runs on its runtime's default model.`);
+      else if (ladderIndex(ladder, a.model) < 0) {
+        err(`Agent "${a.name}": model "${a.model}" is not on model_tiers.${a.runtime} (${ladder.join(", ")}). Add it to the ladder, or set model_tiers.${a.runtime}: [] in project.yaml to turn the ladder off for this project.`);
+      }
+    }
     if (!a.runtime) err(`Agent "${a.name}" has no runtime (set runtime, or a recognizable model such as opus/sonnet/haiku/claude-* or gpt-*/codex-*).`);
     const modelRuntime = inferRuntime(a.model);
     if (a.runtime && modelRuntime && modelRuntime !== a.runtime) {
@@ -46,6 +67,10 @@ export function validateProject(project: ResolvedProject): ValidationResult {
         if (t === a.name) warn(`Agent "${a.name}" lists itself in can_message.`);
       }
     }
+  }
+
+  if (Object.keys(project.modelTiers).length > 0 && !Object.values(project.agents).some((a) => a.name !== project.lead && a.tiers)) {
+    warn("model_tiers is set, but no member can run below its model (each member's model is the lowest entry of its ladder): tiers have no effect.");
   }
 
   // Memory directories must not overlap between agents (or equal each other).

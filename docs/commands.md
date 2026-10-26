@@ -192,6 +192,14 @@ The last line of the text output summarises the checks: no errors and no warning
 
 **`doctor --resolved`** runs no check and prints every effective setting (global library, project file and defaults merged) and where it came from: the file and key, `default`, or `inferred from <model key>` when the runtime was recognised from `model`. Project values replace global ones; lists (`can_message`) are replaced, not merged; relative paths are resolved against the file they were written in.
 
+Example: with `model_tiers: { claude-code: [haiku, sonnet, opus] }` in `team.yaml` and `fe-member` set to `model: opus`, `agent-lyceum doctor --resolved -p demo` includes these rows (excerpt of real output; the other rows are omitted):
+
+```
+model_tiers.claude-code = ["haiku","sonnet","opus"]                                 team.yaml
+agents.fe-member.model = opus                                                       team.yaml
+agents.fe-member.model_tiers = ["haiku","sonnet","opus"]                            team.yaml
+```
+
 ## demo
 
 **Usage:** `demo [--dir path] [--runtime claude-code|codex] [--setup-only] [-y]`
