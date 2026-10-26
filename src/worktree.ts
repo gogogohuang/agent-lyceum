@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
+import { escapesParent } from "./paths.js";
 import type { RunState } from "./run-store.js";
 
 export type WorkspaceMode = "shared" | "worktree";
@@ -544,7 +545,7 @@ export function collectAgentChanges(workspace: AgentWorkspace): ChangeSet {
       const target = agentGit(workspace, ["show", `${head}:${f.path}`]);
       const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(p), target));
       if (path.posix.isAbsolute(target)) violations.push(`${f.path}: symlink to an absolute path (${target})`);
-      else if (resolved.startsWith("..")) violations.push(`${f.path}: symlink leaves the project directory (${target})`);
+      else if (escapesParent(resolved, "/")) violations.push(`${f.path}: symlink leaves the project directory (${target})`);
     }
   }
   return { workspace, base, head, files, violations };
