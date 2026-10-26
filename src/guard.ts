@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { readRegularFileNoFollow } from "./fs-util.js";
+import { escapesParent } from "./paths.js";
 import { mayEditProtected, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
 
 export interface Violation {
@@ -138,7 +139,7 @@ export class ProtectedGuard {
    */
   private realDirs(root: string, dir: string, done: Set<string>, suspects: string[], violations: Violation[]): boolean {
     const rel = path.relative(root, dir);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
+    if (escapesParent(rel)) return false;
     let cur = root;
     for (const part of ["", ...(rel ? rel.split(path.sep) : [])]) {
       cur = part ? path.join(cur, part) : cur;
@@ -169,7 +170,7 @@ function isLink(p: string): boolean {
 function insideRoot(root: string, dir: string): boolean {
   try {
     const r = path.relative(fs.realpathSync(root), fs.realpathSync(dir));
-    return !r.startsWith("..") && !path.isAbsolute(r);
+    return !escapesParent(r);
   } catch {
     return false;
   }

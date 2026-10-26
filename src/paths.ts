@@ -69,10 +69,14 @@ export function projectPaths(home: string, project: string): ProjectPaths {
   };
 }
 
+/** True when a relative path leaves its base: it is `..`, starts with a `..` segment, or is absolute. A name like `..x` is not an escape. */
+export function escapesParent(rel: string, sep: string = path.sep): boolean {
+  return rel === ".." || rel.startsWith(`..${sep}`) || path.isAbsolute(rel);
+}
+
 /** True when `child` is `parent` or inside it. */
 export function isInside(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+  return !escapesParent(path.relative(parent, child));
 }
 
 /**

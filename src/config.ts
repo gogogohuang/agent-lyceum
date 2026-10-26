@@ -4,6 +4,7 @@ import YAML from "yaml";
 import { z } from "zod";
 import {
   absPath,
+  escapesParent,
   homePaths,
   projectPaths,
   type ProjectPaths,
@@ -320,7 +321,7 @@ export function findProjectForCwd(home: string, cwd: string): string | undefined
   let best: { name: string; len: number } | undefined;
   for (const pr of listProjects(home)) {
     const rel = path.relative(pr.dir, cwd);
-    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+    if (!escapesParent(rel)) {
       if (!best || pr.dir.length > best.len) best = { name: pr.name, len: pr.dir.length };
     }
   }
