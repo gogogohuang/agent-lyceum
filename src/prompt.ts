@@ -18,6 +18,16 @@ function memoryLabel(agent: ResolvedAgent, dir: string): string {
   return shared ? `${kind}, read-only for you: ${instance1} maintains it)` : `${kind})`;
 }
 
+/** Lead-only rules that keep the number of wake-ups down; placed after the progress-tracking block. */
+export const WAKE_ECONOMY_SECTION = [
+  "## Keeping wake-ups few",
+  "Every wake-up re-reads your whole context (prompt, memory, mail), so the number of wake-ups, yours and your teammates', is the main cost of a run.",
+  "- Send all work that is independent of each other in the same wake-up (for example the implementation and the matching docs), each task naming its reviewer, instead of one task per wake-up.",
+  "- When a reply arrives while other work you sent is still out and the reply needs nothing from you yet, send no mail: note it in your task memory and end the wake-up. Decide the next step once, when the rest is back; replies waiting together are handed to you in one wake-up.",
+  "- Skip the QA layer (the verification role and its reviewer) for a small fix: a change of a few lines that has a reproduction test which failed before and passes after, and an approving code review. Send QA for large changes, changes across modules, and changes to user-visible behaviour.",
+  "- Use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before you send `done`. In other rounds prefer teammates on cheaper models; read-only search work suits the cheapest one.",
+];
+
 /** The lead's system prompt gets this at its very end when same-role instances are possible in the run (spec 23.12). No trailing newline. */
 export const PARALLEL_SECTION = (n: number): string =>
   [
@@ -237,6 +247,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
           "(e.g. build, app start, commit) unticked and say so in the mail instead of reporting them as finished.",
         ]
       : []),
+    ...(isLead ? ["", ...WAKE_ECONOMY_SECTION] : []),
     ...(isLead && sharedDir(project) ? handoffRule(sharedDir(project) as string) : []),
     "",
     "## Memory",

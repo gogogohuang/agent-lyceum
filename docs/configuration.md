@@ -141,3 +141,39 @@ Config fails to load (`doctor` and `run` report an error) when: (24.3.4)
 **Mixed versions:** older binaries refuse a `team.yaml` or `project.yaml` that contains `model_tiers`; see [Downgrading](../README.md#downgrading). (24.3.2, 24.13 R-4)
 
 **Lead guidance:** when at least one member can run below its `model`, the harness adds a `## Task tiers` section to the lead's system prompt; without a ladder the prompt is unchanged. A resumed Claude lead may keep its old system prompt, so a ladder added mid-run may not reach it (unverified). (24.10)
+
+## Saving tokens
+
+Each wake-up re-reads the agent's whole context, so the number of wake-ups is the main cost of a run. The user measured this over 3 runs: about 156k output tokens against about 12.5M cache-read tokens, with each wake-up re-reading roughly 300k tokens of context. In one run, 6 of 13 rounds were lead re-dispatch or receive wakes, and for a one-line change the code review, docs review, QA and QA review ran; QA plus its review (about 14.6k output tokens) cost twice the implementation. These are one user's measurements, not a benchmark.
+
+### Lead prompt rules
+
+The lead's prompt has a lead-only `## Keeping wake-ups few` section. In summary, it tells the lead to:
+
+- send all independent work in the same wake-up (for example an implementation and its matching docs), and decide once when the replies are back;
+- skip the QA layer (the verification role and its reviewer) for a small fix: a few lines, a reproduction test that failed before and passes after, and an approving code review. Send QA for large, cross-module or user-visible changes;
+- use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before `done`.
+
+These are prompt rules. Whether models follow them is not measured. The dispatcher does not hold wake-ups back: it still wakes the lead for each reply that arrives alone. Replies that are waiting together are batched (up to 5, `LEAD_BATCH_LIMIT` in `src/prompt.ts`), so the saving comes from fewer mails, not from the dispatcher delaying wake-ups.
+
+### Choosing models per role
+
+Models are set in your own `team.yaml` or `project.yaml`; the repo does not change your config. The aliases `opus`, `sonnet` and `haiku` are accepted and infer the `claude-code` runtime (`inferRuntime` in `src/schema.ts`). The Claude CLI resolves an alias to a concrete model, which depends on your provider and CLI version (on the Anthropic API `haiku` is Haiku 5.5, `claude-haiku-5-5`; see [Model aliases](https://code.claude.com/docs/en/model-config#model-aliases)); write the full model ID if you need a fixed one.
+
+```yaml
+# team.yaml (or agents: in project.yaml)
+agents:
+  tech-lead:      { runtime: claude-code, model: opus }
+  cli-architect:  { runtime: claude-code, model: opus }
+  node-engineer:  { runtime: claude-code, model: sonnet }
+  code-explorer:  { runtime: claude-code, model: haiku }   # read-only search
+```
+
+A cheaper search model may miss things. Keep the role's reviewer when its answer drives a decision.
+
+For Codex, keep reviewers on the other runtime (`codex`) and search and implementation on Claude. No cheap Codex model id is verified here, so leave Codex on its CLI default and use the existing [`fallback`](#fallback-models) chain unchanged.
+
+### Not done
+
+- `claude --advisor`: `claude --help` of the local claude 2.1.310 lists no such flag.
+- "JEV": not found in the repo or the CLI, so it cannot be verified.

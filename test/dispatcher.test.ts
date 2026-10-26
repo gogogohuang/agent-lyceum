@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { MAX_KEEP_BYTES, ProtectedGuard } from "../src/guard.js";
+import { acquireProjectLock } from "../src/project-lock.js";
 import { bindRunProject } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
@@ -215,6 +216,39 @@ describe("dispatcher", () => {
     expect(leadPrompt).toContain("kept at");
     expect(fs.readdirSync(path.join(s.runDir, "violations"))).toHaveLength(2);
     expect(events(s.runDir).filter((e) => e.event === "violation").every((e) => typeof e.saved === "string" && typeof e.sha256 === "string")).toBe(true);
+  });
+
+  it("keeps a shared-file edit made while another run is live, and mails the lead nothing", async () => {
+    env = makeEnv();
+    const p = env.project();
+    const common = path.join(p.paths.shared, "common", "COMMON.md");
+    const rec = path.join(p.paths.shared, "common", "records", "decisions", "other.md");
+    const other = acquireProjectLock(p.paths.root, "other-run");
+    let leadPrompt = "";
+    let step = 0;
+    try {
+      const s = await run(async (i) => {
+        step++;
+        if (i.agent.name === "lead" && step === 1) mail(i, "fe-member", "go", "task");
+        else if (i.agent.name === "fe-member") {
+          fs.writeFileSync(common, "# by the other run's lead\n");
+          fs.mkdirSync(path.dirname(rec), { recursive: true });
+          fs.writeFileSync(rec, "other run record\n");
+        } else if (i.agent.name === "lead") {
+          leadPrompt = i.userPrompt;
+          mail(i, "lead", "bye", "done");
+        }
+        return OK;
+      });
+      expect(fs.readFileSync(common, "utf8")).toBe("# by the other run's lead\n");
+      expect(fs.existsSync(rec)).toBe(true);
+      expect(leadPrompt).not.toContain("Protected file");
+      const ev = events(s.runDir);
+      expect(ev.some((e) => e.event === "violation")).toBe(false);
+      expect(ev.filter((e) => e.event === "protected-change-unattributed").map((e) => e.file).sort()).toEqual([common, rec].sort());
+    } finally {
+      other.release();
+    }
   });
 
   it("allows the lead to edit COMMON.md and AGENT.md, and accepts that as the new baseline", async () => {
