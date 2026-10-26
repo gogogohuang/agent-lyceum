@@ -15,6 +15,8 @@
 - **Codex**：`-s workspace-write` 搭配 `-c sandbox_workspace_write.writable_roots=[...]`（由 OS 強制）。Codex 無法禁止 repo 內的單一檔案，所以 repo 的 `CLAUDE.md`/`AGENTS.md` 只能靠**事後偵測**保護。
 - **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead；被寫入的內容會先留存在 `runs/<run-id>/violations/`。
 
+**guard 無法歸屬的變更。** `COMMON.md`、紀錄目錄 `shared/common/records/` 與團隊的 `AGENT.md` 由專案的所有 run 共用。若一批喚醒中沒有任何 agent 可編輯某個這類檔案，而同專案的另一個 run 在該批開始或結束時仍存活（它的 run lock 被存活的行程持有），這個檔案的變更就無法歸屬到本 run。此時 guard 不還原、不在 `violations/` 留副本、也不寄信給 lead；該變更成為新的基準，run 日誌會記一筆 `protected-change-unattributed` 事件（另印一行主控台訊息）。原因：另一個 run 的 lead 本來就會合法編輯這些檔案，還原它們只會白白喚醒本 run 的 lead。這只略過 guard 無法歸屬的部分：本 run 自己的 agent 在該時段內的違規也不會被還原，那時只剩上述 runtime／OS 沙箱擋得住。每個 run 專屬的檔案（run 的交接筆記、repo 的 `CLAUDE.md`/`AGENTS.md`），以及沒有其他 run 存活時的任何變更，仍照原樣還原並通報。見[同時多個 run](how-it-works.zh-TW.md#同時執行多個-task)。
+
 `doctor` 與 `run` 會依類別（`os`、`tool-rules`、`post-hoc`、`prompt-only`）印出每個 agent 的防護等級，以及它能寫入 repo 之外的哪些路徑。設定 `dispatcher.strict: true` 時，除非記憶、`AGENT.md`、其他 agent 的 context 與（非 lead 的 agent 的）交接筆記都由 OS 強制保護，否則拒絕執行。
 
 agent worktree 內的 git:agent 能寫它 worktree 的 `.git` 指標檔與私有 git 目錄,可能讓 git 去讀 agent 埋的設定或 hook。因此 dispatcher 對 agent worktree 的每一次 git 呼叫,都釘住 worktree 建立當下記錄的 git dir、common dir 與 work tree,關閉 hook、fsmonitor、external diff 與 textconv,並拒絕使用 git 檔案被改向或連到別處、HEAD 不是它自己的分支、或內含巢狀 repository 的 worktree。Claude 另外不得寫那幾個指標檔(`denyWrite`);Codex 無法禁止單一檔案,只靠釘住。殘留風險列在 [spec 15](specs/15-worktree-git-isolation.md#156-殘留風險)。這**不**表示 dispatcher 絕不會執行 agent 埋下的程式碼。使用 `reftable` ref 後端的 repository 在 worktree 模式下會被拒絕。

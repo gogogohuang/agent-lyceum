@@ -6,6 +6,7 @@ import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, planAttempts
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
+import { listRunLocks, lockHolderAlive } from "./project-lock.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureAgentDirs, ensureProjectDirs, finishDone, listUnread, PENDING_DIR, readMessageNoFollow, rejectDone, routeOutboxes, unreadFiles, type InstanceRouting, type RouteResult } from "./mailbox.js";
 import { type InstanceContainment, instanceContainment } from "./instance-containment.js";
@@ -314,7 +315,8 @@ export class RunSession {
     const saveState = () => saveRunState(runDir, state);
 
     // Concurrent runs: the repo's instruction files the run can touch are the lead worktree's copies; your own tree is never watched (or restored).
-    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project);
+    const otherLiveRuns = () => listRunLocks(project.paths.root).filter((l) => l.run_id !== runId && lockHolderAlive(l)).map((l) => l.run_id);
+    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project, otherLiveRuns);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
       if (opts.followup) {
@@ -905,6 +907,12 @@ export class RunSession {
           `\`${v.file}\` was changed without permission and has been ${v.action}. Agents active at the time: ${v.suspects.join(", ")}.` +
           (v.saved ? `\n\nWhat was written is kept at \`${v.saved}\` (sha256 ${v.sha256}${v.truncated ? ", truncated to 1 MiB" : ""}). If it is worth keeping, have an agent that may edit this file redo it.` : ""),
       });
+    }
+
+    // Another run's lead edited a cross-run shared file: kept, not a violation of this batch, nobody is woken for it.
+    for (const u of guard.takeUnattributed()) {
+      say(`  shared file changed by another live run (${u.otherRuns.join(", ")}); kept: ${u.file}`);
+      log("protected-change-unattributed", { ...u });
     }
 
     // Crash seam: every wake of the batch is finished and marked output_ready; nothing of it is integrated or routed yet.

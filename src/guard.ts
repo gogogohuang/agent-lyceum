@@ -17,6 +17,13 @@ export interface Violation {
   truncated?: boolean;
 }
 
+/** A change to a cross-run shared file that no agent of the batch may make, while another run of the project was live. */
+export interface Unattributed {
+  file: string;
+  agents: string[];
+  otherRuns: string[];
+}
+
 export const MAX_KEEP_BYTES = 1024 * 1024;
 
 function safeName(file: string): string {
@@ -32,8 +39,30 @@ export class ProtectedGuard {
   /** Regular files of the records tree (including `.archive/`); only the lead may change them. */
   private records = new Map<string, Buffer>();
 
-  constructor(private project: ResolvedProject) {
+  /** Changes kept (not reverted) because another live run may have made them; see `takeUnattributed`. */
+  private unattributed: Unattributed[] = [];
+  /** Other runs that were live at the last `rebase()` (or at `check()` time); computed once per batch. */
+  private liveAtBase: string[] = [];
+
+  /** `otherLiveRuns`: ids of the project's other runs that have a live lock holder right now. */
+  constructor(
+    private project: ResolvedProject,
+    private otherLiveRuns: () => string[] = () => [],
+  ) {
     this.rebase();
+  }
+
+  /** The unattributed changes since the last call (they were kept and adopted as the baseline). */
+  takeUnattributed(): Unattributed[] {
+    const out = this.unattributed;
+    this.unattributed = [];
+    return out;
+  }
+
+  /** Files shared by every run of the project: only these can be changed by another run's lead. */
+  private crossRunShared(file: string): boolean {
+    if (sharedContextFiles(this.project).includes(file)) return true;
+    return Object.values(this.project.agents).some((a) => a.agentMd === file);
   }
 
   /**
@@ -41,6 +70,7 @@ export class ProtectedGuard {
    * judged: edits made in between (you, or another run of the project) are not the batch's doing.
    */
   rebase(): void {
+    this.liveAtBase = this.otherLiveRuns();
     for (const f of ProtectedGuard.protectedFiles(this.project)) this.baseline.set(f, read(f));
     this.records = readTree(recordsDir(this.project));
   }
@@ -82,12 +112,18 @@ export class ProtectedGuard {
   /** Compare against the baseline after `running` agents finished; revert unauthorized changes. */
   check(running: ResolvedAgent[]): Violation[] {
     const violations: Violation[] = [];
+    const other = [...new Set([...this.liveAtBase, ...this.otherLiveRuns()])];
     for (const [file, before] of this.baseline) {
       const now = read(file);
       if (same(before, now)) continue;
       const authorized = running.some((a) => mayEditProtected(this.project, a, file));
       if (authorized) {
         this.baseline.set(file, now);
+        continue;
+      }
+      if (other.length && this.crossRunShared(file)) {
+        this.baseline.set(file, now);
+        this.unattributed.push({ file, agents: running.map((a) => a.name), otherRuns: other });
         continue;
       }
       if (before === null) {
@@ -101,11 +137,11 @@ export class ProtectedGuard {
         violations.push({ file, action: "restored", suspects: running.map((a) => a.name), ...kept });
       }
     }
-    this.checkRecords(running, violations);
+    this.checkRecords(running, violations, other);
     return violations;
   }
 
-  private checkRecords(running: ResolvedAgent[], violations: Violation[]): void {
+  private checkRecords(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
     const root = recordsDir(this.project);
     // Never write through a symlinked parent of the records tree: skip its protection for this batch.
     if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
@@ -118,6 +154,10 @@ export class ProtectedGuard {
       const cur = now.get(file) ?? null;
       if (same(before, cur)) continue;
       if (lead) continue;
+      if (other.length) {
+        this.unattributed.push({ file, agents: suspects, otherRuns: other });
+        continue;
+      }
       const kept = this.keep(file, cur);
       if (before === null) {
         if (!insideRoot(root, path.dirname(file))) continue;
@@ -130,7 +170,7 @@ export class ProtectedGuard {
         violations.push({ file, action: "restored", suspects, ...kept });
       }
     }
-    if (lead) this.records = now;
+    if (lead || other.length) this.records = now;
   }
 
   /**
