@@ -109,6 +109,23 @@ describe("dispatcher", () => {
     expect(s.rounds).toBe(4);
   });
 
+  it("ends as idle, not in a loop, when an agent keeps re-sending the same mail with max_rounds 0", async () => {
+    env = makeEnv();
+    let feWakes = 0;
+    const s = await run(async (i) => {
+      if (i.agent.name === "lead") {
+        if (!feWakes) mail(i, "fe-member", "implement the login page", "task");
+        return OK;
+      }
+      if (++feWakes > 30) throw new Error("fe-member woken too often: duplicate-rejection loop");
+      mail(i, "lead", "login page is implemented");
+      mail(i, "lead", "login page is implemented");
+      return OK;
+    });
+    expect(feWakes).toBeLessThanOrEqual(4);
+    expect(s.endReason).toBe("idle");
+  });
+
   it("calls a failing teammate again twice, then stops the run instead of telling the lead", async () => {
     env = makeEnv();
     let feCalls = 0;

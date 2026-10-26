@@ -133,3 +133,26 @@ describe("run-scoped mailboxes", () => {
     expect(loadRunState(runDir).mail_layout).toBe("legacy");
   });
 });
+
+describe("duplicate rejection cap", () => {
+  it("sends a failure mail for the first two repeats of one mail, then only sets the repeat aside", () => {
+    env = makeEnv();
+    const base = env.project();
+    const a = bindRunProject(base, path.join(base.paths.runs, "run-a"), "run");
+    fs.mkdirSync(inboxDir(a, "lead"), { recursive: true });
+    send(a, "fe-member", "lead", "login page is implemented");
+    expect(routeOutboxes(a).delivered).toHaveLength(1);
+    const failures = () => listUnread(a, "fe-member").filter((m) => m.meta.type === "failure").length;
+    for (const n of [1, 2, 3, 4]) {
+      send(a, "fe-member", "lead", "login page is implemented");
+      const res = routeOutboxes(a);
+      expect(res.delivered).toHaveLength(0);
+      expect(res.rejected).toHaveLength(1);
+      expect(res.rejected[0].reason).toMatch(/duplicate/);
+      expect(fs.existsSync(res.rejected[0].file)).toBe(true);
+      expect(res.rejected[0].file).toContain(`${path.sep}rejected${path.sep}`);
+      expect(failures()).toBe(Math.min(n, 2));
+    }
+    expect(listUnread(a, "lead")).toHaveLength(1);
+  });
+});
