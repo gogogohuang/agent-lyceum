@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
+import { duplicateNoticeKey, shouldNotifyDuplicate } from "./duplicate-notices.js";
 import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
 import { atomicWrite, readRegularFileNoFollow } from "./fs-util.js";
 import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_REJECTIONS } from "./format-rejections.js";
@@ -308,14 +309,15 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
 
     for (const file of files) {
       const source = sourceIdOf(sender.name, file);
-      const reject = (reason: string) => {
-        deliverOnce(project, journal, `reject:${source}`, {
-          from: "dispatcher",
-          to: sender.name,
-          type: "failure",
-          subject: `Message ${path.basename(file)} was rejected`,
-          body: `Your outbox message \`${path.basename(file)}\` was not delivered: ${reason}\n\nIt was moved to \`rejected/\`.`,
-        });
+      const reject = (reason: string, notify = true) => {
+        if (notify)
+          deliverOnce(project, journal, `reject:${source}`, {
+            from: "dispatcher",
+            to: sender.name,
+            type: "failure",
+            subject: `Message ${path.basename(file)} was rejected`,
+            body: `Your outbox message \`${path.basename(file)}\` was not delivered: ${reason}\n\nIt was moved to \`rejected/\`.`,
+          });
         const dest = path.join(dir, "rejected", path.basename(file));
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(file, dest);
@@ -434,18 +436,26 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           .join("; ");
       const REPEAT_HELP =
         "Do not send it again: if that mail has not been answered yet, wait for the reply; if you need something different, change what you ask for; if the work is finished, the lead sends `done`.";
+      // A failure mail wakes the sender; an agent that answers with the same text again would be woken forever, so after
+      // MAX_DUPLICATE_NOTICES notices for the same repeated mail the repeat is still set aside and logged, but not announced.
+      // Bound to a run directory (either layout); a project-only mailbox has no place to count and stays unbounded.
+      const notifyRepeat =
+        !repeats.size ||
+        !project.run ||
+        shouldNotifyDuplicate(project.run.dir, duplicateNoticeKey(sender.name, [...repeats].map(([to, m]) => [to, m.meta.id])), source);
       if (repeats.size === targets.length) {
-        reject(`it is a duplicate: ${repeatNote()}, so it was not sent again. ${REPEAT_HELP}`);
+        reject(`it is a duplicate: ${repeatNote()}, so it was not sent again. ${REPEAT_HELP}`, notifyRepeat);
         continue;
       }
       if (repeats.size) {
-        deliverOnce(project, journal, `dup:${source}`, {
-          from: "dispatcher",
-          to: sender.name,
-          type: "failure",
-          subject: `Part of ${path.basename(file)} was not sent`,
-          body: `Your outbox message \`${path.basename(file)}\` was delivered, except that ${repeatNote()}. ${REPEAT_HELP}`,
-        });
+        if (notifyRepeat)
+          deliverOnce(project, journal, `dup:${source}`, {
+            from: "dispatcher",
+            to: sender.name,
+            type: "failure",
+            subject: `Part of ${path.basename(file)} was not sent`,
+            body: `Your outbox message \`${path.basename(file)}\` was delivered, except that ${repeatNote()}. ${REPEAT_HELP}`,
+          });
         res.rejected.push({ from: sender.name, file, reason: `duplicate: ${repeatNote()}` });
       }
       const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
