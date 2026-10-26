@@ -1,0 +1,143 @@
+=== mail/inbox/fe-member/read/<STAMP>-lead-<ID1>.md
+---
+id: <ID1>
+from: lead
+to: fe-member
+thread: <ID1>
+type: task
+subject: first job
+created: <ISO>
+run_id: run-1
+---
+
+body of first job
+
+## Goal
+x
+## Acceptance criteria
+None
+## Scope
+None
+## Upstream
+None
+
+=== mail/inbox/fe-member/read/<STAMP>-lead-<ID2>.md
+---
+id: <ID2>
+from: lead
+to: fe-member
+thread: <ID2>
+type: task
+subject: retry job
+created: <ISO>
+run_id: run-1
+---
+
+body of retry job
+
+## Goal
+x
+## Acceptance criteria
+None
+## Scope
+None
+## Upstream
+None
+
+=== mail/inbox/lead/read/<STAMP>-user-<ID3>.md
+---
+id: <ID3>
+from: user
+to: lead
+thread: <ID3>
+type: task
+subject: build it
+created: <ISO>
+run_id: run-1
+---
+
+build it
+
+=== mail/inbox/lead/read/<STAMP>-dispatcher-<ID4>.md
+---
+id: <ID4>
+from: dispatcher
+to: lead
+thread: <ID4>
+type: failure
+subject: fe-member's changes could not be brought into the repo
+created: <ISO>
+run_id: run-1
+---
+
+fe-member finished, but its changes could not be brought into the repo, and nothing was applied.
+
+src/web/a.txt changed since the snapshot the agent started from (the file in the repo now differs from both the agent's start and its result), so none of its changes were applied.
+
+Its work is kept: branch `agent-lyceum/run-1/fe-member`, worktree `<ROOT>/home/projects/demo/worktrees/run-1/fe-member`, report `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md`, patch `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.patch`.
+You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. Do not report the job `completed` while this work is missing from the repo.
+
+=== mail/inbox/lead/read/<STAMP>-fe-member-<ID5>.md
+---
+id: <ID5>
+from: fe-member
+to: lead
+thread: <ID5>
+type: reply
+subject: finished 1
+created: <ISO>
+run_id: run-1
+---
+
+body of finished 1
+
+## Changes
+None
+## Verification
+None
+## Open items
+None
+## Risks
+None
+
+=== mail/inbox/lead/read/<STAMP>-dispatcher-<ID6>.md
+---
+id: <ID6>
+from: dispatcher
+to: lead
+thread: <ID6>
+type: failure
+subject: fe-member's changes could not be brought into the repo
+created: <ISO>
+run_id: run-1
+---
+
+fe-member finished, but its changes could not be brought into the repo, and nothing was applied.
+
+src/web/a.txt changed since the snapshot the agent started from (the file in the repo now differs from both the agent's start and its result), so none of its changes were applied.
+
+Its work is kept: branch `agent-lyceum/run-1/fe-member`, worktree `<ROOT>/home/projects/demo/worktrees/run-1/fe-member`, report `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md`, patch `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.patch`.
+You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. Do not report the job `completed` while this work is missing from the repo.
+
+=== mail/inbox/lead/read/<STAMP>-fe-member-<ID7>.md
+---
+id: <ID7>
+from: fe-member
+to: lead
+thread: <ID7>
+type: reply
+subject: finished 2
+created: <ISO>
+run_id: run-1
+---
+
+body of finished 2
+
+## Changes
+None
+## Verification
+None
+## Open items
+None
+## Risks
+None

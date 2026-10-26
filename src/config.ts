@@ -51,6 +51,10 @@ export interface ResolvedAgent {
   fallbackInvalid: { index: number; reason: "empty" | "no-runtime" }[];
   /** Where each field's value came from (for `validate` output). */
   sources: Record<string, Source>;
+  /** Set when the run bound this agent as an instance of a role that has several (spec 23): which role, and the instance number. */
+  instance?: { role: string; k: number };
+  /** Instances 2 and up: the role's global/project memory, which only instance 1 may write. */
+  sharedMemory?: { global?: string; project?: string };
 }
 
 export interface ResolvedProject {
@@ -65,7 +69,7 @@ export interface ResolvedProject {
   /** Removed settings still present in config files (ignored); `validate` warns once per file. */
   ignoredSettings?: { file: string; keys: string[] }[];
   /** Set once the project is bound to one run (see `bindRunProject`): which run, and where its mail lives. */
-  run?: { id: string; dir: string; layout: "run" | "legacy" };
+  run?: { id: string; dir: string; layout: "run" | "legacy"; /** Set by the run when same-role instances are possible: the lead's prompt then explains `parallel: true`. */ instances?: { max: number } };
   /** Agents working in their own git worktree instead of `dir` (set by the dispatcher for the wake-ups in progress). */
   workspaces?: Record<string, AgentWorkspace>;
   /** Set for a single agent working alone: "run" = inside a run of this project (`run --agent`), "call" = outside any project (`call`). */
@@ -348,6 +352,7 @@ export function resolveProjectWithSources(home: string, name: string): { project
     if (k === "fallback_cooldown_sec" && !anyFallback) continue;
     sources[`dispatcher.${k}`] = raw.dispatcher[k] !== undefined ? { file: projectFile, key: `dispatcher.${k}` } : { default: true };
   }
+  if (raw.dispatcher.max_instances !== undefined) sources["dispatcher.max_instances"] = { file: projectFile, key: "dispatcher.max_instances" };
   for (const a of Object.values(project.agents)) {
     const at = (src: Source | undefined, field: string): SourceInfo => {
       const key = `agents.${a.name}.${field}`;

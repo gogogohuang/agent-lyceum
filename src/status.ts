@@ -2,12 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type RunFailure, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type InstanceTable, type RunFailure, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { candidatesFor } from "./fallback.js";
 import { briefOf, digestOf, type DigestSection, type Step } from "./format.js";
-import { listUnread } from "./mailbox.js";
+import { PENDING_DIR, listUnread, readMessageNoFollow } from "./mailbox.js";
+import { parseSlotName } from "./instances.js";
+import { inboxDir } from "./policy.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { inspectRunLock, lockHolderAlive } from "./project-lock.js";
 
@@ -174,6 +176,8 @@ function stepsLine(steps: Step[] | undefined, c: Paint, finished = false): strin
 
 export interface QueueItem {
   agent: string;
+  /** Mail waiting for a free instance of the role in `agent` (spec 23.7): not woken yet, placed by the dispatcher. Only for roles with instances. */
+  held?: true;
   from: string;
   type: string;
   subject: string;
@@ -223,6 +227,8 @@ export interface RunReport {
   mail_layout: "run" | "legacy";
   workspace_mode?: "shared" | "worktree";
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
+  /** Only when the run has same-role instances: each role's open instances, the role itself first. */
+  instances?: Record<string, string[]>;
   /** Present while the run waits for the user: the file to fill in and how many questions are still open. */
   ask?: { path: string; total: number; unanswered: number };
 }
@@ -231,6 +237,9 @@ export interface AgentReport {
   name: string;
   runtime?: string;
   lead: boolean;
+  /** Only for the rows of a role that has instances (the role itself is instance 1): the role and the instance number. */
+  role?: string;
+  instance?: number;
   unread: number;
   /** Who this agent may send mail to (`all` expanded, itself left out). */
   can_message: string[];
@@ -259,7 +268,7 @@ export interface TaskListReport {
 }
 
 /** Order the dispatcher will wake agents: the lead first, otherwise the oldest mail. */
-function queueOf(project: ResolvedProject): QueueItem[] {
+function queueOf(project: ResolvedProject, instances?: InstanceTable): QueueItem[] {
   const rows = Object.values(project.agents)
     .map((a) => ({ agent: a.name, msg: listUnread(project, a.name)[0] }))
     .flatMap((r) => (r.msg ? [{ agent: r.agent, msg: r.msg }] : []));
@@ -267,7 +276,7 @@ function queueOf(project: ResolvedProject): QueueItem[] {
     if ((x.agent === project.lead) !== (y.agent === project.lead)) return x.agent === project.lead ? -1 : 1;
     return path.basename(x.msg.file).localeCompare(path.basename(y.msg.file));
   });
-  return rows.map((r) => ({
+  const items: QueueItem[] = rows.map((r) => ({
     agent: r.agent,
     from: r.msg.meta.from,
     type: r.msg.meta.type,
@@ -275,7 +284,37 @@ function queueOf(project: ResolvedProject): QueueItem[] {
     brief: briefOf(r.msg.body),
     digest: digestOf(r.msg.meta.type, r.msg.body),
   }));
+  return [...items, ...heldQueue(project, instances)];
 }
+
+/** Mail the assigner still holds for roles with instances, oldest first per role. Unreadable files are skipped. */
+function heldQueue(project: ResolvedProject, instances?: InstanceTable): QueueItem[] {
+  const out: QueueItem[] = [];
+  for (const role of Object.keys(instances?.roles ?? {}).sort()) {
+    const dir = path.join(inboxDir(project, role), PENDING_DIR);
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith(".")).sort();
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      try {
+        const m = readMessageNoFollow(path.join(dir, f));
+        out.push({ agent: role, held: true, from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) });
+      } catch {
+        /* a half-written file: the next poll sees it */
+      }
+    }
+  }
+  return out;
+}
+
+/** How an agent is named on the text pages: an instance of a role shows as `role #k`. */
+const shownName = (name: string, slots?: Record<string, string[]>): string => {
+  const i = parseSlotName(name);
+  return i && slots?.[i.role]?.[i.k - 1] === name ? `${i.role} #${i.k}` : name;
+};
 
 /** One run as `status` sees it. Without `project`, liveness falls back to the recorded pid and there is no queue. */
 export function buildRunReport(run: { dir: string; state: RunState }, project?: ResolvedProject, opts: { detail?: boolean } = {}): RunReport {
@@ -283,7 +322,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   const detail = opts.detail ?? true;
   const live = runIsAlive(s, project) && !s.end_reason;
   const o = outcomeOf(s);
-  const bound = project ? bindRunProject(project, run.dir, s.mail_layout) : undefined;
+  const bound = project ? bindRunProject(project, run.dir, s.mail_layout, s.instances) : undefined;
   const result = path.join(run.dir, RESULT_FILE);
   const hasResult = detail && s.end_reason === "done" && fs.existsSync(result);
   const cur = s.steps?.find((x) => !x.done);
@@ -325,7 +364,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     current_step: cur?.text ?? null,
     active: s.active,
     // mail still waiting is what `resume` will pick up, so it is shown for every run that did not finish with a done
-    queue: detail && bound && s.end_reason !== "done" ? queueOf(bound) : [],
+    queue: detail && bound && s.end_reason !== "done" ? queueOf(bound, s.instances) : [],
     wakes: s.wakes,
     notes: s.notes ?? [],
     blocked_integrations: s.blocked_integrations ?? [],
@@ -334,6 +373,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     mail_layout: s.mail_layout,
     workspace_mode: s.workspace_mode,
     last_wake: s.last_wake,
+    ...(s.instances ? { instances: s.instances.roles } : {}),
     ...(ask ? { ask } : {}),
   };
 }
@@ -381,7 +421,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
     run = { dir, state: loadRunState(dir) };
   } else run = currentRun(base);
   // Mail is per run: count the unread mail of the run being shown.
-  const project = run ? bindRunProject(base, run.dir, run.state.mail_layout) : base;
+  const project = run ? bindRunProject(base, run.dir, run.state.mail_layout, run.state.instances) : base;
   const report = run ? buildRunReport(run, base) : undefined;
   let advice: string[] = [];
   try {
@@ -396,6 +436,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
       name: a.name,
       runtime: a.runtime,
       lead: a.name === project.lead,
+      ...(a.instance ? { role: a.instance.role, instance: a.instance.k } : {}),
       unread: listUnread(project, a.name).length,
       can_message: (a.canMessage === "all" ? Object.keys(project.agents) : a.canMessage).filter((n) => n !== a.name),
       last_wake: run?.state.last_wake[a.name],
@@ -415,10 +456,10 @@ export function buildTaskListReport(project: ResolvedProject): TaskListReport {
 
 /** Agents in wake order, newest last; the ones working now are bracketed. */
 function flowLine(r: RunReport, c: Paint): string {
-  const names = (r.wakes ?? []).map((w) => w.agent);
+  const names = (r.wakes ?? []).map((w) => shownName(w.agent, r.instances));
   const shown = names.slice(-7);
   const parts = shown.map((n) => c.cyan(n));
-  const activeNames = r.live ? Object.keys(r.active ?? {}) : [];
+  const activeNames = r.live ? Object.keys(r.active ?? {}).map((n) => shownName(n, r.instances)) : [];
   const out = (names.length > shown.length ? "… → " : "") + parts.join(" → ");
   if (!activeNames.length) return out || "（尚無）";
   return `${out}${out ? " → " : ""}${c.green(`[${activeNames.join(", ")}]`)}`;
@@ -426,7 +467,7 @@ function flowLine(r: RunReport, c: Paint): string {
 
 /** The state label of a report: an outcome that was only inferred (old runs) is not shown as a checked result. */
 const reportLabel = (r: RunReport) => runStateLabel({ end_reason: r.end_reason, outcome: r.outcome_verified ? r.outcome : undefined }, r.live);
-const mailText = (m: QueueItem) => `來自 ${m.from} 的 ${m.type}：「${clip(m.subject, 60)}」`;
+const mailText = (m: QueueItem, slots?: Record<string, string[]>) => `來自 ${shownName(m.from, slots)} 的 ${m.type}：「${clip(m.subject, 60)}」${m.held ? "（保留中，等待空閒實例）" : ""}`;
 const taskText = (s: RunReport) => s.task_summary ?? (s.task_source === "file" ? `檔案 ${s.task_path}` : "文字");
 
 /** The readable top block: what is happening, what is next, how far along the task is. */
@@ -447,14 +488,14 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   if (active.length) {
     for (const [i, [agent, a]] of active.entries()) {
       lines.push(
-        `${i === 0 ? L("現在：") : "          "}${c.cyan(agent)} ${live ? c.green(`工作中 ${since(a.since, now)}`) : c.yellow("曾在工作（已中斷）")}，處理 ${handlingText(a.handling)}`,
+        `${i === 0 ? L("現在：") : "          "}${c.cyan(shownName(agent, s.instances))} ${live ? c.green(`工作中 ${since(a.since, now)}`) : c.yellow("曾在工作（已中斷）")}，處理 ${handlingText(a.handling)}`,
       );
     }
   } else lines.push(`${L("現在：")}${c.dim(`閒置${s.end_reason ? `（執行已結束：${s.end_reason}）` : live ? "" : "（執行未在運作）"}`)}`);
 
   const queue = s.queue;
   if (queue.length) {
-    for (const [i, q] of queue.slice(0, 3).entries()) lines.push(`${i === 0 ? L("下一個：") : "          "}${c.cyan(q.agent)} ← ${mailText(q)}`);
+    for (const [i, q] of queue.slice(0, 3).entries()) lines.push(`${i === 0 ? L("下一個：") : "          "}${c.cyan(q.agent)} ← ${mailText(q, s.instances)}`);
     if (queue.length > 3) lines.push(c.dim(`          … 還有 ${queue.length - 3} 筆`));
   } else if (active.length && live) lines.push(`${L("下一個：")}${c.dim("等工作中的 agent 完成後，再轉送其信件")}`);
   else lines.push(`${L("下一個：")}${c.dim(s.end_reason === "done" ? "無 — lead 已完成任務" : "無待處理")}`);
@@ -490,12 +531,12 @@ function describeRun(s: RunReport, now: number, c: Paint, limit = Infinity): str
   if (wakes.length > limit) lines.push(c.dim(`  … 省略較早的 ${wakes.length - limit} 筆（不帶 --monitor 可看完整紀錄）`));
   for (const w of limit < wakes.length ? wakes.slice(-limit) : wakes) {
     lines.push(
-      `  #${w.round} ${c.cyan(w.agent)} ${okText(c, w.ok)} (${Math.round(w.duration_ms / 1000)}s, ${tokens(w.output_tokens)} tok) — ${handlingText(w.handling)}`,
+      `  #${w.round} ${c.cyan(shownName(w.agent, s.instances))} ${okText(c, w.ok)} (${Math.round(w.duration_ms / 1000)}s, ${tokens(w.output_tokens)} tok) — ${handlingText(w.handling)}`,
       `      → ${sentText(w.sent)}`,
     );
   }
   for (const [agent, a] of Object.entries(s.active ?? {})) {
-    lines.push(`  #${a.round} ${c.cyan(agent)} ${c.green(`工作中 ${since(a.since, now)}`)} — ${handlingText(a.handling)}`);
+    lines.push(`  #${a.round} ${c.cyan(shownName(agent, s.instances))} ${c.green(`工作中 ${since(a.since, now)}`)} — ${handlingText(a.handling)}`);
   }
   return lines;
 }
@@ -596,7 +637,7 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   const rows = [header];
   for (const a of report.agents) {
     const lw = a.last_wake;
-    rows.push([a.name + (a.lead ? " (lead)" : ""), a.runtime ?? "?", String(a.unread), lw ? `${lw.ok ? "成功" : "失敗"} ${lw.at}` : "-"]);
+    rows.push([(a.instance && a.instance >= 2 && a.role ? `${a.role} #${a.instance}` : a.name) + (a.lead ? " (lead)" : ""), a.runtime ?? "?", String(a.unread), lw ? `${lw.ok ? "成功" : "失敗"} ${lw.at}` : "-"]);
   }
   const w = header.map((_, i) => Math.max(...rows.map((r) => cols(r[i] ?? ""))));
   // Pad on the plain text first so ANSI codes never skew the column widths.

@@ -40,7 +40,7 @@ npx agent-lyceum status
 3. agent 把回信寫進自己的 `outbox/`，dispatcher 檢查 `can_message` 後投遞。
 4. lead 寄出 `done` 時，run 結束。
 
-工具自己的資料（設定、信箱、log、記憶、worktree）放在 `~/agent-lyceum-config/`，不放進你的 repo。並行不需要任何設定。在有 commit 的 git repo 裡，每個 run 都在自己的 git worktree 工作，並結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒，同時也可有任意多個 run；結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`，且 run 從 `HEAD` 起跑，看不到你未提交的修改。在非 git 資料夾、沒有 commit 的 repo 或使用 reftable 的 repo，run 直接在該資料夾工作、一次只跑一個 agent（會有一行說明原因），且同時只能有一個這樣的 run。agent-lyceum 不會幫你合併。從有 `owns`、`max_parallel`、`max_concurrent_runs` 或 `workspace_mode` 的版本升級：見[升級](docs/upgrading-run-v2.md)。詳見[一次執行如何運作](docs/how-it-works.zh-TW.md)、[設定](docs/configuration.zh-TW.md)。
+工具自己的資料（設定、信箱、log、記憶、worktree）放在 `~/agent-lyceum-config/`，不放進你的 repo。並行不需要任何設定。在有 commit 的 git repo 裡，每個 run 都在自己的 git worktree 工作，並結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒，同時也可有任意多個 run；結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`，且 run 從 `HEAD` 起跑，看不到你未提交的修改。在非 git 資料夾、沒有 commit 的 repo 或使用 reftable 的 repo，run 直接在該資料夾工作、一次只跑一個 agent（會有一行說明原因），且同時只能有一個這樣的 run。lead 可以把互不相依的 task 標成 `parallel: true`，讓一位成員同時處理多件，各在自己的 worktree（僅 worktree 模式、由 lead 決定、每位成員最多 `dispatcher.max_instances` 個，預設 4）；見[一次執行如何運作](docs/how-it-works.zh-TW.md#同一成員的平行實例)。agent-lyceum 不會幫你合併。從有 `owns`、`max_parallel`、`max_concurrent_runs` 或 `workspace_mode` 的版本升級：見[升級](docs/upgrading-run-v2.md)。詳見[一次執行如何運作](docs/how-it-works.zh-TW.md)、[設定](docs/configuration.zh-TW.md)。
 
 ## 指令
 

@@ -274,3 +274,38 @@ describe("fallback resolution", () => {
     expect(withFb["dispatcher.fallback_cooldown_sec"]).toBe(300);
   });
 });
+
+describe("dispatcher.max_instances (spec 23.4)", () => {
+  const withKey = (v: string) => (t: string) => t.replace("dispatcher:\n", `dispatcher:\n  max_instances: ${v}\n`);
+
+  it("is optional: a project.yaml without it loads as before and `doctor --resolved` does not list it", () => {
+    env = makeEnv();
+    const r = resolveProjectWithSources(env.home, "demo");
+    expect(r.project.dispatcher).not.toHaveProperty("max_instances");
+    expect(r.project.dispatcher).toEqual(expect.objectContaining({ max_rounds: 0, retry: 2 }));
+    expect(Object.keys(r.sources).filter((k) => k.includes("max_instances"))).toEqual([]);
+    expect(Object.keys(flattenResolved(r.project)).filter((k) => k.includes("max_instances"))).toEqual([]);
+  });
+
+  it("accepts 1..8 and reports the key with its file when written", () => {
+    for (const v of ["1", "2", "8"]) {
+      env = makeEnv();
+      env.editProjectYaml(withKey(v));
+      const r = resolveProjectWithSources(env.home, "demo");
+      expect(r.project.dispatcher.max_instances).toBe(Number(v));
+      expect(r.sources["dispatcher.max_instances"]).toEqual({ file: path.join(env.home, "projects/demo/project.yaml"), key: "dispatcher.max_instances" });
+      expect(flattenResolved(r.project)["dispatcher.max_instances"]).toBe(Number(v));
+      env.cleanup();
+    }
+  });
+
+  it("rejects 0, 9, a fraction and a string, naming the key and the file", () => {
+    for (const v of ["0", "9", "2.5", '"2"', "-1"]) {
+      env = makeEnv();
+      env.editProjectYaml(withKey(v));
+      expect(() => env.project(), v).toThrow(/dispatcher\.max_instances/);
+      expect(() => env.project(), v).toThrow(/project\.yaml/);
+      env.cleanup();
+    }
+  });
+});

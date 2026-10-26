@@ -24,12 +24,35 @@ export interface JournalEntry {
   file: string;
   created: string;
   delivered: boolean;
+  /** Same-role instances (spec 23): the mail waits in `inbox/<role>/pending/` for the assigner. Only written for an activated role. */
+  held?: true;
+  /** The lead marked it `parallel: true` (read only from here, never from the mail file). */
+  parallel?: true;
+  /** The instance of an activated role that sent it. */
+  from?: string;
+  /** The instance a dispatcher notice is about. */
+  about?: string;
+  /** Position of the intent among the journal's records (a line cut short by a crash does not count). */
+  seq?: number;
+}
+
+/** What the journal knows about one message id: where the assigner put it, who sent it or what it is about, and its delivery line. */
+export interface Ownership {
+  assign?: string;
+  from?: string;
+  about?: string;
+  intent?: { seq: number; to: string; file: string; source: string; msg_id: string };
 }
 
 /** Append-only log of deliveries. A delivery is identified by `(source, recipient)`, never by a random id. */
 export class RouteJournal {
   private readonly file: string;
   private readonly entries = new Map<string, JournalEntry>();
+  private readonly byMsg = new Map<string, JournalEntry>();
+  private readonly byFileName = new Map<string, JournalEntry>();
+  private readonly assigns = new Map<string, { slot: string; file: string; role: string }>();
+  private readonly firstHeldSeq = new Map<string, number>();
+  private seqNext = 0;
 
   constructor(runDir: string) {
     this.file = path.join(mailDir(runDir), "journal.jsonl");
@@ -44,15 +67,39 @@ export class RouteJournal {
       try {
         const j = JSON.parse(line);
         const key = `${j.source}\u0000${j.to}`;
-        if (j.t === "intent") this.entries.set(key, { source: j.source, to: j.to, msg_id: j.msg_id, file: j.file, created: j.created, delivered: false });
-        else if (j.t === "delivered") {
+        if (j.t === "intent") {
+          this.index({
+            source: j.source,
+            to: j.to,
+            msg_id: j.msg_id,
+            file: j.file,
+            created: j.created,
+            delivered: false,
+            ...(j.held === true ? { held: true as const } : {}),
+            ...(j.parallel === true ? { parallel: true as const } : {}),
+            ...(typeof j.from === "string" ? { from: j.from } : {}),
+            ...(typeof j.about === "string" ? { about: j.about } : {}),
+          });
+        } else if (j.t === "delivered") {
           const e = this.entries.get(key);
           if (e) e.delivered = true;
+        } else if (j.t === "assign" && typeof j.msg_id === "string" && typeof j.slot === "string") {
+          this.assigns.set(j.msg_id, { slot: j.slot, file: String(j.file), role: String(j.role) });
         }
       } catch {
         /* a line cut short by a crash: ignore it */
       }
     }
+  }
+
+  /** Enter an intent in every index; `seq` is its position among the records read or appended. */
+  private index(e: JournalEntry): JournalEntry {
+    e.seq = this.seqNext++;
+    this.entries.set(`${e.source}\u0000${e.to}`, e);
+    this.byMsg.set(e.msg_id, e);
+    this.byFileName.set(e.file, e);
+    if (e.held && !this.firstHeldSeq.has(e.to)) this.firstHeldSeq.set(e.to, e.seq);
+    return e;
   }
 
   get(source: string, to: string): JournalEntry | undefined {
@@ -61,20 +108,60 @@ export class RouteJournal {
 
   private append(obj: Record<string, unknown>): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const fd = fs.openSync(this.file, "a");
+    const fd = fs.openSync(this.file, "a+");
     try {
-      fs.writeSync(fd, JSON.stringify(obj) + "\n");
+      let text = `${JSON.stringify(obj)}\n`;
+      // A crash or a short write can leave the last line without its newline; appending straight after it would glue the two into one
+      // unreadable line. The real tail is read on every append (one byte), so no cached check can go stale, even with another writer.
+      const size = fs.fstatSync(fd).size;
+      if (size > 0) {
+        const last = Buffer.alloc(1);
+        fs.readSync(fd, last, 0, 1, size - 1);
+        if (last[0] !== 0x0a) text = `\n${text}`;
+      }
+      const bytes = Buffer.from(text);
+      const written = fs.writeSync(fd, bytes);
+      if (written < bytes.length) throw new Error(`Short write to ${this.file}: ${written} of ${bytes.length} bytes (disk full?). Resume the run after freeing space.`);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
   }
 
-  intent(e: Omit<JournalEntry, "delivered">): JournalEntry {
+  intent(e: Omit<JournalEntry, "delivered" | "seq">): JournalEntry {
     this.append({ t: "intent", ...e });
-    const entry = { ...e, delivered: false };
-    this.entries.set(`${e.source}\u0000${e.to}`, entry);
-    return entry;
+    return this.index({ ...e, delivered: false });
+  }
+
+  /** The assigner's decision for a held mail, made durable before the file moves (spec 23.7.2). */
+  assign(a: { msg_id: string; file: string; role: string; slot: string }): void {
+    this.append({ t: "assign", ...a });
+    this.assigns.set(a.msg_id, { slot: a.slot, file: a.file, role: a.role });
+  }
+
+  assigned(msgId: string): { slot: string; file: string; role: string } | undefined {
+    return this.assigns.get(msgId);
+  }
+
+  byFile(file: string): JournalEntry | undefined {
+    return this.byFileName.get(file);
+  }
+
+  /** Position of the first held intent addressed to `name`; undefined when there is none. */
+  firstHeld(name: string): number | undefined {
+    return this.firstHeldSeq.get(name);
+  }
+
+  ownership(msgId: string): Ownership | undefined {
+    const intent = this.byMsg.get(msgId);
+    const assign = this.assigns.get(msgId)?.slot;
+    if (!intent && assign === undefined) return undefined;
+    return {
+      ...(assign !== undefined ? { assign } : {}),
+      ...(intent?.from ? { from: intent.from } : {}),
+      ...(intent?.about ? { about: intent.about } : {}),
+      ...(intent ? { intent: { seq: intent.seq as number, to: intent.to, file: intent.file, source: intent.source, msg_id: intent.msg_id } } : {}),
+    };
   }
 
   delivered(source: string, to: string): void {

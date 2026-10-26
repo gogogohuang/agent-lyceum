@@ -1,0 +1,143 @@
+{
+  "values": {
+    "dir": "<ROOT>/repo",
+    "team.lead": "lead",
+    "dispatcher.max_rounds": 0,
+    "dispatcher.wake_timeout_sec": 600,
+    "dispatcher.retry": 2,
+    "dispatcher.strict": false,
+    "dispatcher.log_max_bytes": 8388608,
+    "agents.lead.runtime": "claude-code",
+    "agents.lead.agent_md": "<ROOT>/home/agents/lead/AGENT.md",
+    "agents.lead.memory.global": "<ROOT>/home/agents/lead/memory",
+    "agents.lead.resume": true,
+    "agents.lead.can_message": "all",
+    "agents.lead.can_edit_agent_md": true,
+    "agents.lead.can_ask_user": true,
+    "agents.fe-member.runtime": "claude-code",
+    "agents.fe-member.agent_md": "<ROOT>/home/agents/fe-member/AGENT.md",
+    "agents.fe-member.memory.global": "<ROOT>/home/agents/fe-member/memory",
+    "agents.fe-member.resume": false,
+    "agents.fe-member.can_message": [
+      "lead"
+    ],
+    "agents.fe-member.can_edit_agent_md": false,
+    "agents.fe-member.can_ask_user": false,
+    "agents.qa-member.runtime": "claude-code",
+    "agents.qa-member.agent_md": "<ROOT>/home/agents/qa-member/AGENT.md",
+    "agents.qa-member.memory.global": "<ROOT>/home/agents/qa-member/memory",
+    "agents.qa-member.resume": false,
+    "agents.qa-member.can_message": [
+      "lead"
+    ],
+    "agents.qa-member.can_edit_agent_md": false,
+    "agents.qa-member.can_ask_user": false
+  },
+  "sources": {
+    "dir": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dir"
+    },
+    "team.lead": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "team.lead"
+    },
+    "dispatcher.max_rounds": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dispatcher.max_rounds"
+    },
+    "dispatcher.wake_timeout_sec": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dispatcher.wake_timeout_sec"
+    },
+    "dispatcher.retry": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dispatcher.retry"
+    },
+    "dispatcher.strict": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dispatcher.strict"
+    },
+    "dispatcher.log_max_bytes": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "dispatcher.log_max_bytes"
+    },
+    "agents.lead.runtime": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.lead.runtime"
+    },
+    "agents.lead.agent_md": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.lead.agent_md"
+    },
+    "agents.lead.memory.global": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.lead.memory.global"
+    },
+    "agents.lead.resume": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "agents.lead.resume"
+    },
+    "agents.lead.can_message": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "agents.lead.can_message"
+    },
+    "agents.lead.can_edit_agent_md": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "agents.lead.can_edit_agent_md"
+    },
+    "agents.lead.can_ask_user": {
+      "default": true
+    },
+    "agents.fe-member.runtime": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.fe-member.runtime"
+    },
+    "agents.fe-member.agent_md": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.fe-member.agent_md"
+    },
+    "agents.fe-member.memory.global": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.fe-member.memory.global"
+    },
+    "agents.fe-member.resume": {
+      "default": true
+    },
+    "agents.fe-member.can_message": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "agents.fe-member.can_message"
+    },
+    "agents.fe-member.can_edit_agent_md": {
+      "default": true
+    },
+    "agents.fe-member.can_ask_user": {
+      "default": true
+    },
+    "agents.qa-member.runtime": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.qa-member.runtime"
+    },
+    "agents.qa-member.agent_md": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.qa-member.agent_md"
+    },
+    "agents.qa-member.memory.global": {
+      "file": "<ROOT>/home/team.yaml",
+      "key": "agents.qa-member.memory.global"
+    },
+    "agents.qa-member.resume": {
+      "default": true
+    },
+    "agents.qa-member.can_message": {
+      "file": "<ROOT>/home/projects/demo/project.yaml",
+      "key": "agents.qa-member.can_message"
+    },
+    "agents.qa-member.can_edit_agent_md": {
+      "default": true
+    },
+    "agents.qa-member.can_ask_user": {
+      "default": true
+    }
+  }
+}

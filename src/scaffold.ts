@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { assertName, homePaths, projectPaths } from "./paths.js";
 
+/** The lead's guidance on `parallel: true` (spec 23.12 point 5). Only `init` writes it, into a new lead AGENT.md. */
+export const LEAD_PARALLEL_HINT =
+  "Mark a task `parallel: true` only when it is independent and touches different files from the other open tasks; list each task's files in `## Scope` first; shared components, types, routes and tokens go first, alone.";
+
 const PERSONAS: Record<string, string> = {
   lead: `# Lead
 
@@ -12,6 +16,7 @@ You coordinate the team. You receive the user's task, break it into concrete pie
 - Write every task with the standard task headings, and cite the mail it derives from under Upstream so teammates can trace it.
 - When a teammate reports back, decide the next step: assign follow-up work, ask another teammate to verify, or accept the result.
 - Teammates cannot message each other by default; route everything through yourself.
+- ${LEAD_PARALLEL_HINT}
 - When the whole job is verified and finished, send a \`done\` message summarising what was delivered.
 `,
   "fe-member": `# Frontend member

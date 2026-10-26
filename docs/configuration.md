@@ -34,6 +34,36 @@ Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template h
 
 Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 
+## Parallel instances
+
+A lead can run one member as several instances at once; see [Parallel instances of one member](how-it-works.md#parallel-instances-of-one-member). The only setting is optional:
+
+```yaml
+# project.yaml
+dispatcher:
+  max_instances: 2   # optional, 1–8; unset = 4; 1 = no parallel instances
+```
+
+- `max_instances` is the most instances one member can have in a run. It is `1`–`8` (a whole number); anything else fails to load and names `dispatcher.max_instances`. It is not shown by `doctor --resolved` unless you write it. (Spec 23.4, 23.13)
+- The effective cap is 1 whatever you set when the run is not in worktree mode (see [How a run works](how-it-works.md#several-runs-at-once)), for the lead, for a solo run, for a run that uses the legacy mailbox layout, and for a member whose name is not a valid branch name. Two cases lower the cap instead of setting it to 1: a configured agent whose name an instance would get (see Names), and, in a given run, an instance that could write the member's shared memory (below). Instances are checked from 2 upward and the cap stops just before the first one that collides or conflicts (cap `k-1`). (`instanceCap` in `src/instances.ts`)
+- **Mixed versions:** older binaries reject a `project.yaml` that contains `dispatcher.max_instances` ("Unrecognized key"), like any new key, and cannot see a run that has used instances (state `schema_version: 3`); see [Upgrading](upgrading-run-v2.md#parallel-instances-run-state-v3). If you switch between versions, leave the key out (the default is 4). (23.4, 23.10)
+- **Memory paths:** a member's `memory.global` / `memory.project` must not be inside, or contain, the run data folders (`task-memory/`, `runs/`, `worktrees/`, the repo's git dir), because the member's other instances write there. The cap drops only in a run where the shared memory actually overlaps a writable path of that instance (its worktree, git dir or run folders): the check is made per run and per instance, and a conflicting instance is not opened (cap `k-1`). `doctor` checks more broadly and its warning is advisory: a certain conflict (the memory contains a folder) is worded "runs one task at a time", a memory inside one of those folders is worded "may prevent extra instances for some runs". A run that already has instances is refused by `resume` if one of them would now be able to write the shared memory. Other `doctor` lines about instances (all under the subject `instances`): a warning when you wrote `max_instances` above 1 but runs here take turns in the checkout; an info line when a member's name is not a valid branch name; for a member on Codex without an OS sandbox, an info line (a warning if you wrote `max_instances`) saying that only the member itself writes its memory and its other instances are only told not to. (`src/instance-containment.ts`, `src/instances.ts`, `src/doctor-instances.ts`)
+- **Names:** a configured agent named like an instance (`frontend--2` when `frontend` is also a role) limits `frontend` to fewer instances and gets a `doctor` warning that names the colliding agent. (`src/doctor-instances.ts`)
+
+### Lead AGENT.md guidance for parallel tasks
+
+When the feature is available the harness adds a `## Parallel tasks` section to the lead's system prompt. `init` also puts a short rule into the lead persona it creates. It does not change existing `AGENT.md` files: the text the harness adds is `PARALLEL_SECTION` in `src/prompt.ts`, and the line `init` writes is `LEAD_PARALLEL_HINT` in `src/scaffold.ts`. To give your own lead a similar rule, the section below is an example you can adapt (a shorter paraphrase, not the exact harness text). (23.12)
+
+```markdown
+## Parallel tasks
+- Mark a task `parallel: true` only when it is independent of the other open tasks and changes different files.
+- Before sending tasks you want in parallel, list in each task's `## Scope` the files it will touch. If two lists overlap, do not mark them parallel.
+- Work on shared components, types, routes, configuration or design tokens goes first, alone and without the flag; send the dependent tasks after it is integrated.
+- Send each parallel task as its own new `task` (not a reply). Instance 1 keeps the member's name; the others are `<member>--2`, `<member>--3`.
+- Send revisions as a reply (`reply_to`) to the mail of the instance that did the work. An instance whose work is blocked takes no new task until that work is in the repo: reply to the failure about it to redo it.
+- After parallel work is back, have one member type-check and test the combined result before you send `done`.
+```
+
 ## Fallback models
 
 When a model keeps failing for a temporary reason, a run can switch to a backup instead of stopping; see [When a wake-up fails](how-it-works.md#when-a-wake-up-fails). Backups are an ordered list, `fallback`, of entries with these fields:

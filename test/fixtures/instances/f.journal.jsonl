@@ -1,0 +1,12 @@
+{"t":"intent","source":"<SRC1>","to":"fe-member","msg_id":"<ID1>","file":"<STAMP>-lead-<ID1>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC1>","to":"fe-member"}
+{"t":"intent","source":"integration:<CLAIM1>","to":"lead","msg_id":"<ID2>","file":"<STAMP>-dispatcher-<ID2>.md","created":"<ISO>"}
+{"t":"delivered","source":"integration:<CLAIM1>","to":"lead"}
+{"t":"intent","source":"<SRC2>","to":"lead","msg_id":"<ID3>","file":"<STAMP>-fe-member-<ID3>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC2>","to":"lead"}
+{"t":"intent","source":"<SRC3>","to":"fe-member","msg_id":"<ID4>","file":"<STAMP>-lead-<ID4>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC3>","to":"fe-member"}
+{"t":"intent","source":"integration:<CLAIM2>","to":"lead","msg_id":"<ID5>","file":"<STAMP>-dispatcher-<ID5>.md","created":"<ISO>"}
+{"t":"delivered","source":"integration:<CLAIM2>","to":"lead"}
+{"t":"intent","source":"<SRC4>","to":"lead","msg_id":"<ID6>","file":"<STAMP>-fe-member-<ID6>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC4>","to":"lead"}

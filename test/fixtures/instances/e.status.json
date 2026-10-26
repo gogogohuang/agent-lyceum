@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "demo",
+    "dir": "<ROOT>/repo",
+    "lead": "lead"
+  },
+  "agents": [
+    {
+      "name": "lead",
+      "runtime": "claude-code",
+      "lead": true,
+      "unread": 0,
+      "can_message": [
+        "fe-member",
+        "qa-member",
+        "fe--x"
+      ],
+      "last_wake": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    },
+    {
+      "name": "fe-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ]
+    },
+    {
+      "name": "qa-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ]
+    },
+    {
+      "name": "fe--x",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 1,
+      "can_message": [
+        "lead"
+      ],
+      "last_wake": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    }
+  ],
+  "run": {
+    "run_id": "run-1",
+    "dir": "<ROOT>/home/projects/demo/runs/run-1",
+    "state": "ended",
+    "live": false,
+    "end_reason": "done",
+    "outcome": "completed",
+    "outcome_verified": true,
+    "verification": "npm test: passed",
+    "started_at": "<ISO>",
+    "ended_at": "<ISO>",
+    "rounds": 3,
+    "max_rounds": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "task_source": "text",
+    "task_summary": "build it",
+    "current_step": null,
+    "active": {},
+    "queue": [],
+    "wakes": [
+      {
+        "round": 1,
+        "agent": "lead",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "user",
+            "type": "task",
+            "subject": "build it",
+            "brief": "build it",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "build it"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "fe--x",
+            "type": "task",
+            "subject": "first job"
+          },
+          {
+            "to": "fe--x",
+            "type": "task",
+            "subject": "second job"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "agent": "fe--x",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "lead",
+            "type": "task",
+            "subject": "first job",
+            "brief": "x",
+            "digest": [
+              {
+                "label": "目標",
+                "lines": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "lead",
+            "type": "reply",
+            "subject": "finished 1"
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "agent": "lead",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "fe--x",
+            "type": "reply",
+            "subject": "finished 1",
+            "brief": "body of finished 1",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "body of finished 1"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "(done)",
+            "type": "done",
+            "subject": "bye"
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session.",
+      "shared-not-updated: the lead did not write handoff notes (<ROOT>/home/projects/demo/task-memory/run-1/_shared/MEMORY.md) in this segment, so a follow-up will start without handoff notes."
+    ],
+    "blocked_integrations": [],
+    "result_path": "<ROOT>/home/projects/demo/runs/run-1/result.md",
+    "result_head": [
+      "# bye",
+      "**Outcome:** completed",
+      "## Result",
+      "Shipped."
+    ],
+    "mail_layout": "run",
+    "workspace_mode": "worktree",
+    "last_wake": {
+      "lead": {
+        "at": "<ISO>",
+        "ok": true
+      },
+      "fe--x": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    }
+  }
+}

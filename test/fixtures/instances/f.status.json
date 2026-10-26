@@ -1,0 +1,280 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "demo",
+    "dir": "<ROOT>/repo",
+    "lead": "lead"
+  },
+  "agents": [
+    {
+      "name": "lead",
+      "runtime": "claude-code",
+      "lead": true,
+      "unread": 0,
+      "can_message": [
+        "fe-member",
+        "qa-member"
+      ],
+      "last_wake": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    },
+    {
+      "name": "fe-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ],
+      "last_wake": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    },
+    {
+      "name": "qa-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ]
+    }
+  ],
+  "run": {
+    "run_id": "run-1",
+    "dir": "<ROOT>/home/projects/demo/runs/run-1",
+    "state": "ended",
+    "live": false,
+    "end_reason": "done",
+    "outcome": "blocked",
+    "outcome_verified": true,
+    "outcome_note": "Not completed: work of fe-member (branch agent-lyceum/run-1/fe-member) was never brought into the repo; see <ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md.",
+    "verification": "npm test: passed",
+    "started_at": "<ISO>",
+    "ended_at": "<ISO>",
+    "rounds": 5,
+    "max_rounds": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "task_source": "text",
+    "task_summary": "build it",
+    "current_step": null,
+    "active": {},
+    "queue": [],
+    "wakes": [
+      {
+        "round": 1,
+        "agent": "lead",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "user",
+            "type": "task",
+            "subject": "build it",
+            "brief": "build it",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "build it"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "fe-member",
+            "type": "task",
+            "subject": "first job"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "agent": "fe-member",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "lead",
+            "type": "task",
+            "subject": "first job",
+            "brief": "x",
+            "digest": [
+              {
+                "label": "目標",
+                "lines": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "lead",
+            "type": "reply",
+            "subject": "finished 1"
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "agent": "lead",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "dispatcher",
+            "type": "failure",
+            "subject": "fe-member's changes could not be brought into the repo",
+            "brief": "fe-member finished, but its changes could not be brought into the repo, and nothing was applied.",
+            "digest": [
+              {
+                "label": "訊息",
+                "lines": [
+                  "fe-member finished, but its changes could not be brought into the repo, and not…"
+                ]
+              }
+            ]
+          },
+          {
+            "from": "fe-member",
+            "type": "reply",
+            "subject": "finished 1",
+            "brief": "body of finished 1",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "body of finished 1"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "fe-member",
+            "type": "task",
+            "subject": "retry job"
+          }
+        ]
+      },
+      {
+        "round": 4,
+        "agent": "fe-member",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "lead",
+            "type": "task",
+            "subject": "retry job",
+            "brief": "x",
+            "digest": [
+              {
+                "label": "目標",
+                "lines": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "lead",
+            "type": "reply",
+            "subject": "finished 2"
+          }
+        ]
+      },
+      {
+        "round": 5,
+        "agent": "lead",
+        "at": "<ISO>",
+        "duration_ms": 1,
+        "ok": true,
+        "handling": [
+          {
+            "from": "dispatcher",
+            "type": "failure",
+            "subject": "fe-member's changes could not be brought into the repo",
+            "brief": "fe-member finished, but its changes could not be brought into the repo, and nothing was applied.",
+            "digest": [
+              {
+                "label": "訊息",
+                "lines": [
+                  "fe-member finished, but its changes could not be brought into the repo, and not…"
+                ]
+              }
+            ]
+          },
+          {
+            "from": "fe-member",
+            "type": "reply",
+            "subject": "finished 2",
+            "brief": "body of finished 2",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "body of finished 2"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "(done)",
+            "type": "done",
+            "subject": "bye"
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session.",
+      "shared-not-updated: the lead did not write handoff notes (<ROOT>/home/projects/demo/task-memory/run-1/_shared/MEMORY.md) in this segment, so a follow-up will start without handoff notes."
+    ],
+    "blocked_integrations": [
+      {
+        "agent": "fe-member",
+        "branch": "agent-lyceum/run-1/fe-member",
+        "reason": "src/web/a.txt changed since the snapshot the agent started from (the file in the repo now differs from both the agent's start and its result), so none of its changes were applied.",
+        "report": "<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md"
+      }
+    ],
+    "result_path": "<ROOT>/home/projects/demo/runs/run-1/result.md",
+    "result_head": [
+      "# bye",
+      "**Outcome:** blocked (Not completed: work of fe-member (branch agent-lyceum/run-1/fe-member) was never brought into the repo; see <ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md.)",
+      "## Result",
+      "Shipped."
+    ],
+    "mail_layout": "run",
+    "workspace_mode": "worktree",
+    "last_wake": {
+      "lead": {
+        "at": "<ISO>",
+        "ok": true
+      },
+      "fe-member": {
+        "at": "<ISO>",
+        "ok": true
+      }
+    }
+  }
+}

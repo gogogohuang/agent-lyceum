@@ -1,0 +1,12 @@
+[
+  "<ROOT>/home/agents/lead/memory",
+  "<ROOT>/home/projects/demo/task-memory/run-1/lead",
+  "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/lead",
+  "<ROOT>/repo/.git/worktrees/lead",
+  "<ROOT>/home/projects/demo/task-memory/run-1/_shared",
+  "<ROOT>/home/projects/demo/shared/common/records",
+  "<ROOT>/home/projects/demo/shared/common",
+  "<ROOT>/home/agents/lead",
+  "<ROOT>/home/agents/fe-member",
+  "<ROOT>/home/agents/qa-member"
+]

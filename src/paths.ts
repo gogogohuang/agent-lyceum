@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -71,5 +72,25 @@ export function projectPaths(home: string, project: string): ProjectPaths {
 /** True when `child` is `parent` or inside it. */
 export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
+ * `p` with symlinks resolved as far as it exists: the real path of its deepest existing ancestor plus the rest. A path that does not exist
+ * yet (a directory about to be made) still compares equal to the same place reached through a symlink.
+ */
+export function canonicalPath(p: string): string {
+  const abs = path.resolve(p);
+  const rest: string[] = [];
+  let head = abs;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(head), ...rest);
+    } catch {
+      const up = path.dirname(head);
+      if (up === head) return abs;
+      rest.unshift(path.basename(head));
+      head = up;
+    }
+  }
 }

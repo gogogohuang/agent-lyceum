@@ -334,7 +334,7 @@ interface WorkspaceMeta {
   worktreeConfig?: string;
 }
 
-const workspaceRoot = (project: ResolvedProject, runId: string, agent: string): string => path.join(project.paths.root, "worktrees", runId, agent);
+export const workspaceRoot = (project: ResolvedProject, runId: string, agent: string): string => path.join(project.paths.root, "worktrees", runId, agent);
 
 /** The user's repo's git common dir, as a real absolute path. Asked of the user's repo, never of a worktree. */
 const commonDirOf = (top: string): string => fs.realpathSync(git(top, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
@@ -671,6 +671,19 @@ export function existingAgentWorkspace(project: ResolvedProject, runId: string, 
     return undefined;
   }
   return fs.existsSync(root) ? describeWorkspace(project, root, agent, meta) : undefined;
+}
+
+/**
+ * The git dir recorded in an agent's worktree metadata, read-only (never completes or rewrites legacy metadata). undefined when there
+ * is no readable metadata or it predates recording the git dir.
+ */
+export function recordedGitDir(project: ResolvedProject, runId: string, agent: string): string | undefined {
+  try {
+    const meta = JSON.parse(fs.readFileSync(`${workspaceRoot(project, runId, agent)}.json`, "utf8")) as WorkspaceMeta;
+    return typeof meta.gitDir === "string" && meta.gitDir ? meta.gitDir : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface WorkspaceWork {

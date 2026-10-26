@@ -1,0 +1,6 @@
+{"t":"intent","source":"<SRC1>","to":"fe-member","msg_id":"<ID1>","file":"<STAMP>-lead-<ID1>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC1>","to":"fe-member"}
+{"t":"intent","source":"<SRC2>","to":"fe-member","msg_id":"<ID2>","file":"<STAMP>-lead-<ID2>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC2>","to":"fe-member"}
+{"t":"intent","source":"<SRC3>","to":"lead","msg_id":"<ID3>","file":"<STAMP>-fe-member-<ID3>.md","created":"<ISO>"}
+{"t":"delivered","source":"<SRC3>","to":"lead"}
