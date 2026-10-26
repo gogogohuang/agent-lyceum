@@ -2,22 +2,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { agentForCandidate, candidatesFor, Cooldowns, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
+import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
-import { deliver, deliverOnce, ensureProjectDirs, finishDone, listUnread, rejectDone, routeOutboxes, unreadFiles, type RouteResult } from "./mailbox.js";
-import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
+import { deliver, deliverOnce, ensureAgentDirs, ensureProjectDirs, finishDone, listUnread, PENDING_DIR, readMessageNoFollow, rejectDone, routeOutboxes, unreadFiles, type InstanceRouting, type RouteResult } from "./mailbox.js";
+import { type InstanceContainment, instanceContainment } from "./instance-containment.js";
+import { DEFAULT_MAX_INSTANCES, assertInstancesResumable, heldStallKey, instanceCap, ownersOf, parseSlotName, planAssignments, roleOfName, type HeldMsg } from "./instances.js";
+import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { outboxDir, sharedIndex } from "./policy.js";
+import { inboxDir, outboxDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type RunFailure, type RunState, type SentTopic, type TriedModel } from "./run-store.js";
+import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
@@ -109,7 +111,45 @@ export interface RunOptions {
   log?: (line: string) => void;
   /** The wait between retries of a model with a fallback chain; tests pass one that does not wait. Default: a timer cut short by `signal`. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Containment check for an instance (spec 23.11 D-17): returns why instance `k` of `role` must not be opened (it could write the role's
+   * shared memory), or undefined. Asked before activation, after an instance is created and when a run is resumed. Tests inject one.
+   */
+  instanceCheck?: (role: string, k: number) => string | undefined;
 }
+
+/**
+ * Whether same-role instances are possible in this run, decided once from configuration and paths (spec 23.11 preflight, reads only): when
+ * some member could run as several, the lead's prompt explains `parallel: true`. Writes nothing.
+ */
+function withCapability(project: ResolvedProject, mode: WorkspaceMode, check: (role: string, k: number) => string | undefined, table: InstanceTable | undefined): ResolvedProject {
+  if (!project.run) return project;
+  const possible = Object.keys(project.agents).some((role) => {
+    if (project.agents[role]?.instance && project.agents[role]?.instance?.k !== 1) return false;
+    return instanceCap(project, mode, role, check, table?.roles[role] ?? []).n > 1;
+  });
+  return possible ? { ...project, run: { ...project.run, instances: { max: project.dispatcher.max_instances ?? DEFAULT_MAX_INSTANCES } } } : project;
+}
+
+/** A held mail the assigner could not place this round. */
+interface WaitingMail {
+  id: string;
+  role: string;
+  to: string;
+  subject: string;
+  reason: string;
+}
+
+const WAIT_TEXT: Record<string, string> = {
+  blocked: "its earlier work is blocked: reply to the failure about it to redo it",
+  refused: "its worktree was refused",
+  cap: "it is above the instance limit",
+  busy: "every instance is busy",
+  cooldown: "waiting for a rate-limited model to recover",
+  collision: "its name is already an agent of the project",
+  containment: "an instance there could write the role's shared memory",
+  "unknown-slot": "no such instance",
+};
 
 
 export class RunSession {
@@ -122,9 +162,21 @@ export class RunSession {
   private readonly cfg: DispatcherSettings;
   private readonly runId: string;
   private readonly runDir: string;
-  /** The project bound to this run (own memory dirs and mailboxes). */
-  private readonly project: ResolvedProject;
+  /** The project bound to this run (own memory dirs and mailboxes). Bound again when the run gets instances (spec 23.6). */
+  private project: ResolvedProject;
+  /** The project as configured (solo-narrowed), before it is bound to this run. */
+  private readonly base: ResolvedProject;
+  private readonly layout: "run" | "legacy";
+  /** Roles that get no new instance in this process: a check after an instance was created found a conflict. */
+  private readonly noMoreInstances = new Set<string>();
+  private readonly heldLogged = new Set<string>();
+  private readonly ignoredNoted = new Set<string>();
+  /** Held mail the assigner left in `pending/` this round (read by the stall check). */
+  private waiting: WaitingMail[] = [];
   private readonly wsMode: WorkspaceMode;
+  /** D-17: the paths an instance would get against the shared memory of its role (writes nothing). */
+  private readonly containment: InstanceContainment;
+  private readonly instanceCheck: (role: string, k: number) => string | undefined;
   private readonly log: ReturnType<typeof createRunLog>;
   private readonly guard: ProtectedGuard;
   private readonly state: RunState;
@@ -156,6 +208,12 @@ export class RunSession {
   constructor(opts: RunOptions) {
 
     const { task, resume, runDir } = opts;
+    // A run whose slot table no longer fits the configuration is refused before anything is written.
+    if (resume?.instances) {
+      const soloOf = resume.solo_agent;
+      const cfgBase = soloOf ? soloProject(opts.project, soloOf) : opts.project;
+      assertInstancesResumable(cfgBase, resume.instances, path.basename(runDir), cfgBase.name, opts.instanceCheck ?? instanceContainment(cfgBase, runDir, resume.mail_layout).check);
+    }
     if (resume?.end_reason === "waiting") RunSession.assertAnswered(runDir, resume.run_id);
     if (opts.followup && resume?.end_reason !== "done") throw new Error("followup needs a finished (done) run");
     if (!task && !resume) throw new Error("runTeam needs a task or a run to resume");
@@ -167,7 +225,7 @@ export class RunSession {
     const runId = path.basename(runDir);
     const layout = resume ? resume.mail_layout : "run";
     // Each run gets its own memory directory per agent and (new runs) its own mailboxes.
-    const project = bindRunProject(base, runDir, layout);
+    const project = bindRunProject(base, runDir, layout, resume?.instances);
     // Where agents work was decided before the lock was taken and is kept for the run's resumes. A resumed run that uses worktrees
     // is refused early (before anything is written) when its repo can no longer give them.
     const { plan } = opts;
@@ -295,7 +353,11 @@ export class RunSession {
     this.cfg = cfg;
     this.runId = runId;
     this.runDir = runDir;
-    this.project = project;
+    this.containment = instanceContainment(base, runDir, layout);
+    this.instanceCheck = opts.instanceCheck ?? this.containment.check;
+    this.project = withCapability(project, wsMode, opts.instanceCheck ?? this.containment.check, resume?.instances);
+    this.base = base;
+    this.layout = layout;
     this.wsMode = wsMode;
     this.log = log;
     this.guard = guard;
@@ -335,6 +397,194 @@ export class RunSession {
     state.notes.push(text);
     log("note", { text });
     say(`  ${text}`);
+  }
+
+
+  /** Bind the project to this run again, after its slot table changed. */
+  private rebind(): void {
+    this.project = withCapability(bindRunProject(this.base, this.runDir, this.layout, this.state.instances), this.wsMode, this.instanceCheck, this.state.instances);
+  }
+
+  /** What the router needs to hold and place mail for roles with several instances (spec 23.7.1). */
+  private routing(): InstanceRouting {
+    const { state, log } = this;
+    return {
+      cap: (role) => instanceCap(this.project, this.wsMode, role, this.instanceCheck, state.instances?.roles[role] ?? []),
+      held: (role) => !!state.instances?.roles[role],
+      enable: (role) => {
+        // Durable before any file of the mail that opens the role's instances exists; a crash after this replays into `pending/`.
+        state.schema_version = 3;
+        state.instances = { roles: { ...(state.instances?.roles ?? {}), [role]: [role] } };
+        this.saveState();
+        fault("instances:enabled");
+        this.rebind();
+        log("instances", { role, enabled: true });
+      },
+      ignored: (reason, m) => {
+        log("parallel_ignored", { from: m.from, id: m.id, to: m.to, reason });
+        const key = `${m.from}\u0000${reason}`;
+        if (this.ignoredNoted.has(key)) return;
+        this.ignoredNoted.add(key);
+        this.note(
+          reason === "not-lead"
+            ? `${m.from}'s mail ${m.id} has \`parallel: true\`, but only the lead (${this.project.lead}) can start parallel instances: it was delivered as an ordinary task.`
+            : `${m.from}'s mail ${m.id} ("${m.subject}") has \`parallel: true\` but was delivered as an ordinary mail: ${reason}`,
+        );
+      },
+    };
+  }
+
+  /** Make a new instance durable and give it its folders; false (and the role gets no more instances in this process) when a check refuses it. */
+  private openInstance(role: string, slot: string): boolean {
+    const { state, log } = this;
+    const table = must(state.instances?.roles[role], `slot table of ${role}`);
+    if (this.noMoreInstances.has(role)) return false;
+    table.push(slot);
+    this.saveState();
+    fault("instances:opened");
+    this.rebind();
+    ensureAgentDirs(this.project, slot);
+    const agent = must(this.project.agents[slot], `instance ${slot}`);
+    const refuse = (why: string): boolean => {
+      this.noMoreInstances.add(role);
+      this.refused.add(slot); // listed in the slot table, but never given mail or woken
+      log("instances", { role, slot, refused: why });
+      this.note(`${slot} was opened but cannot be used: ${why}. ${role} gets no further instances in this run process.`);
+      return false;
+    };
+    for (const dir of [outboxDir(this.project, slot), agent.memory.task]) {
+      if (!dir) continue;
+      const st = fs.lstatSync(dir, { throwIfNoEntry: false });
+      if (!st || st.isSymbolicLink() || !st.isDirectory()) return refuse(`${dir} is not a plain directory`);
+    }
+    const k = parseSlotName(slot)?.k ?? 2;
+    const conflict = this.instanceCheck?.(role, k);
+    if (conflict) return refuse(conflict);
+    log("instances", { role, slot, opened: true });
+    return true;
+  }
+
+  /** The one round of placing held mail, at the top of the loop (spec 23.7.2). Leaves what it could not place in `this.waiting`. */
+  private assignHeld(): void {
+    this.waiting = [];
+    for (const role of Object.keys(this.state.instances?.roles ?? {}).sort()) this.assignRole(role);
+  }
+
+  private assignRole(role: string): void {
+    const { state, log, runDir } = this;
+    const opened = [...must(state.instances?.roles[role], `slot table of ${role}`)];
+    const pendingDir = path.join(inboxDir(this.project, role), PENDING_DIR);
+    if (!fs.existsSync(pendingDir)) return;
+    const files = fs.readdirSync(pendingDir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith(".md") && !e.name.startsWith(".")).map((e) => e.name).sort();
+    if (!files.length) return;
+    const journal = this.journal();
+    const msgs: HeldMsg[] = [];
+    const subjects = new Map<string, string>();
+    for (const f of files) {
+      const entry = journal.byFile(f);
+      // Only the dispatcher's own held deliveries count: a file put here by anyone else is left alone.
+      if (!entry?.held) {
+        if (!this.heldLogged.has(`unknown:${f}`)) {
+          this.heldLogged.add(`unknown:${f}`);
+          log("held_unknown", { role, file: f });
+        }
+        continue;
+      }
+      let replyTo: string | undefined;
+      let thread: string | undefined;
+      try {
+        const m = readMessageNoFollow(path.join(pendingDir, f));
+        replyTo = m.meta.reply_to ? String(m.meta.reply_to) : undefined;
+        thread = m.meta.thread ? String(m.meta.thread) : undefined;
+        subjects.set(entry.msg_id, String(m.meta.subject ?? ""));
+      } catch {
+        /* unreadable mail has no thread: it is placed as a new one */
+      }
+      msgs.push({ file: f, id: entry.msg_id, to: entry.to, replyTo, thread, parallel: entry.parallel === true });
+    }
+    if (!msgs.length) return;
+    const mark = opened.map((n) => journal.firstHeld(n)).filter((x): x is number => x !== undefined).reduce<number | undefined>((a, b) => (a === undefined ? b : Math.min(a, b)), undefined);
+    const claimAgent = (id: string): string | undefined => {
+      try {
+        return loadClaim(runDir, id).agent;
+      } catch {
+        return undefined;
+      }
+    };
+    const cap = instanceCap(this.project, this.wsMode, role, this.instanceCheck, opened);
+    const roleAgent = must(this.project.agents[role], `agent ${role}`);
+    const primary = must(candidatesFor(roleAgent)[0], `model of ${role}`);
+    const plan = planAssignments({
+      role,
+      held: msgs,
+      opened,
+      cap: cap.n,
+      owners: (id) => ownersOf(id, role, { opened, rec: (x) => journal.ownership(x), mark, claimAgent }),
+      recorded: (id) => journal.assigned(id)?.slot,
+      acceptsNew: (slot) => {
+        if (this.refused.has(slot)) return "refused";
+        if (state.blocked_integrations?.some((b) => b.agent === slot)) return "blocked";
+        return (parseSlotName(slot)?.k ?? 1) > cap.n ? "cap" : true;
+      },
+      busy: (slot) => unreadFiles(this.project, slot).length > 0,
+      coolingDown: this.cooldowns.active(primary.key, Date.now()) > 0,
+      mayOpen: (name) => (this.noMoreInstances.has(role) ? "containment" : name in this.base.agents ? "collision" : true),
+    });
+    const byFile = new Map(msgs.map((m) => [m.file, m]));
+    const wait = (m: HeldMsg, reason: string) => {
+      this.waiting.push({ id: m.id, role, to: m.to, subject: subjects.get(m.id) ?? "", reason });
+      const key = `${m.id}:${reason}`;
+      if (!this.heldLogged.has(key)) {
+        this.heldLogged.add(key);
+        log("held", { id: m.id, role, reason });
+      }
+    };
+    // The plan is applied one mail at a time, in plan order: a slot that could not be opened takes nothing later in this plan either.
+    const unusable = new Set<string>();
+    for (const a of plan.assign) {
+      const m = must(byFile.get(a.file), `held mail ${a.file}`);
+      if (unusable.has(a.slot) || (a.open && !this.openInstance(role, a.open))) {
+        unusable.add(a.slot);
+        wait(m, "containment");
+        continue;
+      }
+      if (a.rule !== "recorded") journal.assign({ msg_id: m.id, file: a.file, role, slot: a.slot });
+      fault("assign:recorded");
+      fs.mkdirSync(inboxDir(this.project, a.slot), { recursive: true });
+      fs.renameSync(path.join(pendingDir, a.file), path.join(inboxDir(this.project, a.slot), a.file));
+      fault("assign:moved");
+      log("assign", { id: m.id, role, slot: a.slot, rule: a.rule, ...(a.addressed ? { addressed: a.addressed } : {}) });
+    }
+    for (const w of plan.waiting) wait(must(byFile.get(w.file), `held mail ${w.file}`), w.reason);
+  }
+
+  /**
+   * The run is about to end idle but mail is still held (spec D-16). Only a cooldown in the way: wait for it (cut short by a cancel) and
+   * return true to go round again. Otherwise tell the lead once per set of waiting mails; true when that mail is new (the lead has work).
+   */
+  private async stallHeld(): Promise<"retry" | "notified" | "idle"> {
+    const { log, project, opts } = this;
+    const held = this.waiting;
+    if (held.length === 0) return "idle";
+    if (held.every((w) => w.reason === "cooldown")) {
+      const now = Date.now();
+      const ms = Math.min(...[...new Set(held.map((w) => w.role))].map((r) => this.cooldowns.active(must(candidatesFor(must(this.project.agents[r], `agent ${r}`))[0], "model").key, now)).filter((x) => x > 0));
+      if (Number.isFinite(ms)) {
+        log("held_wait", { until: new Date(now + ms).toISOString() });
+        await (opts.sleep ?? defaultSleep)(ms, opts.signal);
+        return "retry";
+      }
+      return "retry";
+    }
+    const list = held.map((w) => `${w.id} "${w.subject}" for ${w.to} (${WAIT_TEXT[w.reason] ?? w.reason})`).join(", ");
+    const { fresh } = deliverOnce(project, this.journal(), heldStallKey(held.map((w) => w.id)), {
+      from: "dispatcher",
+      to: project.lead,
+      type: "failure",
+      subject: "Tasks are waiting and nothing is running",
+      body: `${held.length} task(s) are waiting and nothing else is running: ${list}. They are assigned as soon as that work is in the repo.`,
+    });
+    return fresh ? "notified" : "idle";
   }
 
 
@@ -593,17 +843,26 @@ export class RunSession {
     }
     state.blocked_integrations = [...blocked, { agent: agent.name, branch: r.branch, reason: r.reason, report: r.report }];
     say(`  ${agent.name}: changes NOT brought into the repo (${r.reason.split("\n")[0]})`);
-    deliverOnce(project, this.journal(), `integration:${key}`, {
-      from: "dispatcher",
-      to: project.lead,
-      type: "failure",
-      subject: `${agent.name}'s changes could not be brought into the repo`,
-      body:
-        `${agent.name} finished, but its changes could not be brought into the repo, and nothing was applied.\n\n${r.reason}\n\n` +
-        `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
-        `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. ` +
-        `Do not report the job \`completed\` while this work is missing from the repo.`,
-    });
+    // A role with instances: the notice is about one of them, so the lead's reply to it goes back to that instance (spec 23.9).
+    const instanced = !!state.instances?.roles[roleOfName(project.agents, agent.name)];
+    deliverOnce(
+      project,
+      this.journal(),
+      `integration:${key}`,
+      {
+        from: "dispatcher",
+        to: project.lead,
+        type: "failure",
+        subject: `${agent.name}'s changes could not be brought into the repo`,
+        body:
+          `${agent.name} finished, but its changes could not be brought into the repo, and nothing was applied.\n\n${r.reason}\n\n` +
+          `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
+          `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. ` +
+          (instanced ? `New tasks are not given to ${agent.name} while this work is not in the repo. To redo or adjust it, reply to this message (or to ${agent.name}'s last mail): only replies reach ${agent.name} now. ` : "") +
+          `Do not report the job \`completed\` while this work is missing from the repo.`,
+      },
+      instanced ? { about: agent.name } : {},
+    );
     this.saveState();
   }
 
@@ -613,13 +872,19 @@ export class RunSession {
     const { project, runId } = this;
     this.refused.add(agent.name);
     this.note(`${agent.name} was not woken: ${reason.split("\n")[0]}`);
-    deliverOnce(project, this.journal(), `refused:${runId}:${agent.name}`, {
-      from: "dispatcher",
-      to: project.lead,
-      type: "failure",
-      subject: `${agent.name} cannot be woken: its worktree was refused`,
-      body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nDo its work yourself or give it to another agent; do not wait for ${agent.name}.`,
-    });
+    deliverOnce(
+      project,
+      this.journal(),
+      `refused:${runId}:${agent.name}`,
+      {
+        from: "dispatcher",
+        to: project.lead,
+        type: "failure",
+        subject: `${agent.name} cannot be woken: its worktree was refused`,
+        body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nDo its work yourself or give it to another agent; do not wait for ${agent.name}.`,
+      },
+      this.state.instances?.roles[roleOfName(project.agents, agent.name)] ? { about: agent.name } : {},
+    );
     this.saveState();
   }
 
@@ -642,11 +907,13 @@ export class RunSession {
       });
     }
 
+    // Crash seam: every wake of the batch is finished and marked output_ready; nothing of it is integrated or routed yet.
+    fault("wake:ready");
     batch.forEach((a, i) => {
       const ws = this.batchSpaces[a.name];
       if (ws && results[i]?.ok) this.integrateMember(a, ws, claims.get(a.name)?.id ?? `${a.name}-${state.rounds}`);
     });
-    const route = routeOutboxes(project);
+    const route = routeOutboxes(project, this.routing());
     // A done that breaks the completion contract goes back to the lead (a limited number of times).
     let contract: DoneContract | undefined;
     if (route.done) {
@@ -905,7 +1172,8 @@ export class RunSession {
   async run(): Promise<RunSummary> {
     if (this.resume) this.recover();
 
-    const { say, runId, runDir, project, wsMode, log, state, opts } = this;
+    const { say, runId, runDir, wsMode, log, state, opts } = this;
+    let project = this.project;
     // When the lead was the last one woken and left every mailbox empty without a `done`, remind it once instead of ending silently.
     let leadWasLast = false;
     let nudged = false;
@@ -914,6 +1182,8 @@ export class RunSession {
         this.endReason = "cancelled";
         break;
       }
+      this.assignHeld();
+      project = this.project;
       let pending = this.pendingAgents();
       if (pending.length === 0 && leadWasLast && !nudged) {
         nudged = true;
@@ -927,6 +1197,15 @@ export class RunSession {
           body: `All mailboxes are empty and you have not sent a \`done\` message, so the run would end without a final report. If the job is finished and verified, send \`type: done\` now (with \`outcome: completed|partial|blocked|failed\` in the frontmatter and \`## Result\`, \`## Files\`, \`## Verification\`, \`## Not done\`${state.steps ? " and the full `## Steps` checklist" : ""}). If work remains, send the \`task\` that continues it. Writing a summary in your reply text does not count: only mail is delivered.`,
         });
         pending = this.pendingAgents();
+      }
+      if (pending.length === 0) {
+        const stalled = await this.stallHeld();
+        if (opts.signal?.aborted) {
+          this.endReason = "cancelled";
+          break;
+        }
+        if (stalled === "retry") continue;
+        if (stalled === "notified") pending = this.pendingAgents();
       }
       if (pending.length === 0) {
         this.endReason = "idle";
@@ -953,7 +1232,12 @@ export class RunSession {
         }
         for (const a of members) {
           try {
-            this.batchSpaces[a.name] = prepareAgentWorkspace(project, runId, a.name, ref);
+            const ws = prepareAgentWorkspace(project, runId, a.name, ref);
+            // An instance gets one more containment check with the worktree it really got (spec 23.11 point 3).
+            const inst = a.instance;
+            const conflict = inst ? (opts.instanceCheck ? opts.instanceCheck(inst.role, inst.k) : this.containment.checkWorkspace(inst.role, inst.k, ws)) : undefined;
+            if (conflict) throw new Error(`${a.name} ${conflict}`);
+            this.batchSpaces[a.name] = ws;
           } catch (e) {
             this.refuseMember(a, (e as Error).message);
           }

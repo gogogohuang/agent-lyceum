@@ -3,13 +3,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { ResolvedProject } from "./config.js";
+import { synthesizeSlots } from "./instances.js";
 import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
 import { ERROR_KINDS, RUNTIMES, type ErrorKind, type Runtime, type RunOutcome } from "./schema.js";
 import type { ResultBranch } from "./worktree.js";
 
 export const STATE_FILE = "state.json";
-export const STATE_SCHEMA_VERSION = 2;
+/** The newest state format this version reads. */
+export const STATE_SCHEMA_VERSION = 3;
+/** What a new run is written as: v3 only appears when the first parallel task opens instances (spec 23.6). */
+export const NEW_RUN_SCHEMA_VERSION = 2;
+
+/** Refuse a state newer than `supported`, before anything is written (the failure an older binary gives a v3 run). */
+export function assertSupportedVersion(version: number | undefined, supported: number, file: string): void {
+  if ((version ?? 1) > supported) {
+    throw new Error(`Run state ${file} uses schema_version ${version}, newer than this agent-lyceum understands (${supported}). Upgrade agent-lyceum.`);
+  }
+}
 
 export type EndReason = "done" | "idle" | "max_rounds" | "lead_failed" | "agent_failed" | "cancelled" | "waiting";
 export type MailLayout = "run" | "legacy";
@@ -144,6 +155,13 @@ export interface RunState {
   reopened?: { at: string }[];
   /** `rounds` at the last reopen; the round limit counts from here. */
   round_floor?: number;
+  /** Same-role instances opened in this run (spec 23.6); present only from the first parallel task on, together with `schema_version` 3. */
+  instances?: InstanceTable;
+}
+
+/** `roles[<role>]`: the role's open instances in number order, `[0]` is the role itself. Only grows. */
+export interface InstanceTable {
+  roles: Record<string, string[]>;
 }
 
 /** `20261006T010203456Z-<128 random bits>`: sorts by start time and cannot collide, even for two starts in one millisecond. */
@@ -208,12 +226,13 @@ const WireState = z
     name: z.string().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),
     round_floor: nonNeg.optional(),
+    instances: z.object({ roles: z.record(z.string(), z.array(z.string()).min(1)) }).optional(),
   })
   .passthrough();
 
 /** A fresh v2 state; every collection present. */
 export function newRunState(init: Partial<RunState> & { run_id: string }): RunState {
-  return normalize({ ...init, schema_version: STATE_SCHEMA_VERSION, mail_layout: init.mail_layout ?? "run" });
+  return normalize({ ...init, schema_version: NEW_RUN_SCHEMA_VERSION, mail_layout: init.mail_layout ?? "run" });
 }
 
 function normalize(w: z.infer<typeof WireState>): RunState {
@@ -260,11 +279,7 @@ export function loadRunState(runDir: string): RunState {
     const msg = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
     throw new Error(`Run state is invalid (${file}): ${msg}`);
   }
-  if ((parsed.data.schema_version ?? 1) > STATE_SCHEMA_VERSION) {
-    throw new Error(
-      `Run state ${file} uses schema_version ${parsed.data.schema_version}, newer than this agent-lyceum understands (${STATE_SCHEMA_VERSION}). Upgrade agent-lyceum.`,
-    );
-  }
+  assertSupportedVersion(parsed.data.schema_version, STATE_SCHEMA_VERSION, file);
   return normalize(parsed.data);
 }
 
@@ -276,11 +291,12 @@ export function saveRunState(runDir: string, state: RunState): void {
  * The project as one run sees it. Per-task memory is always private to the run. With the "run" layout the
  * mailboxes live inside the run dir; with "legacy" they stay the shared project mailboxes older versions used.
  */
-export function bindRunProject(project: ResolvedProject, runDir: string, layout: MailLayout): ResolvedProject {
+export function bindRunProject(project: ResolvedProject, runDir: string, layout: MailLayout, instances?: InstanceTable): ResolvedProject {
   const runId = path.basename(runDir);
-  const agents = Object.fromEntries(
+  const bound = Object.fromEntries(
     Object.entries(project.agents).map(([n, a]) => [n, { ...a, memory: { ...a.memory, task: path.join(project.paths.taskMemory, runId, n) } }]),
   );
+  const agents = instances ? synthesizeSlots(bound, instances, (slot) => path.join(project.paths.taskMemory, runId, slot)) : bound;
   const paths =
     layout === "run"
       ? { ...project.paths, inboxRoot: path.join(runDir, "mail", "inbox"), outboxRoot: path.join(runDir, "mail", "outbox") }

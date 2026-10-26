@@ -24,6 +24,7 @@
 | [20](20-llm-fallback.md) | LLM 備援（主要模型失敗時切換備用） | 中 | 中（錯誤分類、權限一致性） | [plan](../plans/2026-10-16-20-llm-fallback.md) |
 | [21](21-launcher-exit.md) | wrapper 消失時取消 run／call／tidy | 中 | 低（只在 wrapper 底下武裝） | — |
 | [22](22-context-continuity-fixes.md) | context 連續性修正（C 類處置、重做脈絡） | 中 | 中（prompt 與 attempt 編號） | — |
+| [23](23-dynamic-instances.md) | 同角色動態多實例（lead 標 `parallel: true`） | 中 | 高（state v3、路由重播、memory 寫入範圍） | — |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 

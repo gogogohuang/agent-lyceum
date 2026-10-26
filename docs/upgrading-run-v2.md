@@ -43,6 +43,14 @@ A lead's `done` mail must carry `outcome: completed|partial|blocked|failed` in i
 - **Mixing old and new binaries:** while a new run works directly in the checkout, binaries ≥ 0.12.0 refuse everything with a message saying the run "needs the project to itself (a memory tidy or restore)"; that is expected, the wording is inexact but safe. Versions < 0.12.0 do not read `locks/` and are not covered.
 - **Known limit:** if the old `max_concurrent_runs` was > 1, two older binaries can still both resume legacy shared runs and write the same checkout; that gap is in the old versions. Keep at most one old shared run during the switch.
 
+### Parallel instances (run state v3)
+
+A run that has used same-role parallel instances (see [How a run works](how-it-works.md#parallel-instances-of-one-member)) is written as `schema_version: 3` with an `instances` table. Runs that never use them stay `schema_version: 2` and are read by older binaries as before. (Spec 23.6, 23.10)
+
+- **Older binaries cannot see a v3 run.** They skip it in `status`; `resume <run>` and `clear <run>` print `Run "…" not found` and change nothing; `resume` without a run may pick another unfinished run; a path that loads the state directly says it is newer than that version understands and to upgrade. The "not found" wording is unclear but cannot be changed in released versions. This follows from reading the 0.25.1 source; the published package was not run. Finish or `resume` such a run with the new version.
+- **Older binaries reject a `project.yaml` with `dispatcher.max_instances`** ("Unrecognized key"). Leave the key out while mixing versions (the default is 4).
+- **Journal repair (all runs):** the mail delivery journal now repairs a torn last line (power loss, short write) on its next write. Before, the next record was glued to the torn line and both were lost. A well-formed journal is written byte-for-byte as before; a journal already damaged is not repaired retroactively.
+
 ### Recovery: what is and is not promised
 
 Mail handling is **at least once**. After a crash or Ctrl-C, mail that was routed is not routed twice (deliveries are journaled), and an input message whose wake-up never finished is handled again. What an agent already did *outside its mailbox* (edited files, ran commands, pushed, called a service) is not undone and can happen again on the redo; the run's notes (`status --task-id`) say when that may have happened. A failed or interrupted attempt's outbox is set aside under `runs/<run-id>/mail/attempts/<attempt>/outbox/` and is never taken for the next attempt's result.
@@ -103,6 +111,14 @@ lead 的 `done` 信 frontmatter 必須有 `outcome: completed|partial|blocked|fa
 - **升級前：** 先停掉舊版的 run。
 - **混用新舊版本：** 新版 run 直接在 checkout 工作期間，≥ 0.12.0 的舊 binary 會拒絕一切操作，訊息說它「needs the project to itself (a memory tidy or restore)」；這是預期行為，原因字樣不準但是安全。< 0.12.0 的版本不看 `locks/`，不在保證內。
 - **已知限制：** 若舊設定的 `max_concurrent_runs` > 1，兩個舊 binary 仍可同時續跑舊的共用 run，並同時寫同一個 checkout；這是舊版既有缺口。切換期間舊版的共用 run 至多保留一個。
+
+### 平行實例（run state v3）
+
+用過同角色平行實例的 run（見[一次執行如何運作](how-it-works.zh-TW.md#同一成員的平行實例)）會以 `schema_version: 3` 寫入，並帶有 `instances` 表。從不使用的 run 仍是 `schema_version: 2`，舊版 binary 照舊讀得到。（規格 23.6、23.10）
+
+- **舊版 binary 看不到 v3 的 run。** 它們在 `status` 會略過它；`resume <run>` 與 `clear <run>` 會印 `Run "…" not found` 且什麼都不改；不指定 run 的 `resume` 可能改挑另一個未完成的 run；直接載入 state 的路徑會說它比該版本能讀的新、請升級。「not found」的字樣不夠清楚，但已發佈的版本無法修改。這是讀 0.25.1 原始碼推得的結果，沒有實際執行已發佈的套件。請用新版完成或 `resume` 這類 run。
+- **舊版 binary 會拒絕含 `dispatcher.max_instances` 的 `project.yaml`**（「Unrecognized key」）。混用版本期間請不要寫這個鍵（預設是 4）。
+- **Journal 修復（所有 run）：** 信件投遞 journal 現在會在下一次寫入時修復寫斷的最後一行（斷電、短寫入）。以前下一筆紀錄會黏在斷行後面，兩筆一起遺失。格式正常的 journal 寫出的位元組與以前完全相同；已經損壞的 journal 不會事後修復。
 
 ### 復原：保證什麼、不保證什麼
 

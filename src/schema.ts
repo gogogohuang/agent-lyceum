@@ -85,6 +85,8 @@ export const DispatcherPartial = z
     log_max_bytes: z.number().int().min(0).optional(),
     fallback: z.array(FallbackEntryPartial).optional(),
     fallback_cooldown_sec: z.number().int().min(0).optional(),
+    /** Most instances of one role at a time (spec 23); 1 turns parallel tasks off. Unset = `DEFAULT_MAX_INSTANCES`. */
+    max_instances: z.number().int().min(1).max(8).optional(),
   })
   .strict();
 
@@ -116,6 +118,8 @@ export interface DispatcherSettings {
   log_max_bytes: number;
   /** How long a primary that hit rate_limit/quota is skipped within a run, unless the CLI says when to come back. */
   fallback_cooldown_sec: number;
+  /** Most instances of one role at a time. Not in `DISPATCHER_DEFAULTS`, so `doctor --resolved` lists it only when written; the default lives in `instances.ts`. */
+  max_instances?: number;
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {

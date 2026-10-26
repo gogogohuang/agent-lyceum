@@ -32,3 +32,5 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 **快取用量。** 執行那一行也會顯示這個 run 讀取與寫入的 prompt 快取輸入 token，以及讀取所占比例（`快取 讀 … 寫 … 命中 …%`），`agent-lyceum status` 的顯示相同。只記錄 `claude` agent；這項記錄出現之前的 run 與 codex agent 不顯示。
 
 **如何保持最新。** mod 對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個未完成 task 各一份）；剛完成的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。
+
+**平行實例。** 當一位成員以多個實例執行（見[同一成員的平行實例](how-it-works.zh-TW.md#同一成員的平行實例)），每個實例在樹狀圖裡都是獨立的一塊，與所有成員區塊一起依狀態（working、failed、waiting、idle）排序，不會緊鄰它的成員，狀態顯示和一般 agent 相同。編號 2 以上的實例標題為 `frontend #2`；實例 1 沿用成員本名。等待實例的 task 是標有 `held` 的佇列項目，顯示在成員名稱下。把實例收在成員底下分組的樹狀檢視還沒做；文字頁面只對真正的實例顯示 `role #k`，名稱剛好以 `--k` 結尾的設定 agent 不算。這些欄位（`status --json` 的 `role`、`instance`、`held`、每個 run report 的 `instances`；`role`、`instance` 在有實例的成員的 agent 列上，`held` 在它等待中的佇列項目上）只在 run 用過實例之後才出現；其他 run 的輸出與以前相同。文字頁面把編號 2 以上的實例顯示為 `role #k`，並在保留中的信件後標示「（保留中，等待空閒實例）」。（`src/status.ts`、`plugins/status-monitor/hooks/graph.ts`）

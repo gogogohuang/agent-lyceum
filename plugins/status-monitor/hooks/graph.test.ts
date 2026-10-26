@@ -260,3 +260,20 @@ test('clipCells: fits as is, else cut to the cells with an ellipsis', () => {
   expect(clipCells('中文中文中', 10)).toBe('中文中文中')
   expect(clipCells('中文中文中文', 10)).toBe('中文中文…')
 })
+
+test('an instance of a role is its own block, shown as `role #k`, matched to its own wake and queue', () => {
+  const r = run({
+    active: { 'fe--2': { since: '2026-01-01T00:00:00Z', round: 2, handling: [] } },
+    queue: [{ agent: 'fe', held: true, from: 'lead', type: 'task', subject: 'third job' }],
+    instances: { fe: ['fe', 'fe--2'] },
+  })
+  const rep = report(r)
+  rep.agents.splice(1, 0, { name: 'fe--2', lead: false, unread: 0, runtime: 'codex', can_message: ['lead'], role: 'fe', instance: 2 })
+  rep.agents[0] = { ...rep.agents[0]!, role: 'fe', instance: 1 }
+  const bs = blocks(rep, NOW)
+  const two = bs.find(b => b.name === 'fe--2')!
+  expect(two.label).toBe('fe #2')
+  expect(two.dot).toBe('active')
+  expect(bs.find(b => b.name === 'fe')!.label).toBe('fe')
+  expect(bs.find(b => b.name === 'fe')!.queued[0]!.head).toContain('保留中')
+})

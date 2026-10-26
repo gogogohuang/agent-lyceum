@@ -9,6 +9,8 @@ export type MailView = { head: string; type: string; sections: DigestSection[] }
 export type Target = { name: string; hot: boolean }
 export type Block = {
   name: string
+  /** What is shown: `role #k` for instance 2 and up, else the name. */
+  label: string
   runtime: string
   lead: boolean
   /** True while the agent's latest wake ran on a backup model. */
@@ -23,11 +25,11 @@ export type Block = {
   tokens: number
 }
 export type Edge = { from: string; to: string }
-type MailLike = { from: string; type: string; subject: string; brief?: string; digest?: DigestSection[] }
+type MailLike = { from: string; type: string; subject: string; brief?: string; digest?: DigestSection[]; held?: boolean }
 
 /** One message as a head line plus all its readable sections (digest, else brief, else nothing). What is shown of them is decided by `mailLines`. */
 export function mailView(m: MailLike): MailView {
-  const head = `來自 ${m.from} 的 ${m.type}：${m.subject}`
+  const head = `來自 ${m.from} 的 ${m.type}：${m.subject}${m.held ? '（保留中，等待空閒實例）' : ''}`
   const sections: DigestSection[] = m.digest?.length ? m.digest : m.brief ? [{ label: '摘要', lines: [m.brief] }] : []
   return { head, type: m.type, sections }
 }
@@ -72,6 +74,7 @@ export function blocks(report: Report, now: number): Block[] {
     const dot: Dot = act ? 'active' : live && a.last_wake?.ok === false ? 'failed' : queued.length ? 'queued' : 'idle'
     return {
       name: a.name,
+      label: a.instance !== undefined && a.instance >= 2 && a.role ? `${a.role} #${a.instance}` : a.name,
       runtime: a.runtime ?? '?',
       lead: a.lead,
       ...(a.fallback ? { backup: true } : {}),
@@ -120,7 +123,7 @@ export function blockLines(b: Block, expanded = false, maxTokens = 0): Line[] {
     : { text: '閒置', tone: 'dim' }
   // Collapsed, the glyph already says idle / waiting / working: only what it cannot say stays (the round and time, the count, the failure).
   const brief = b.dot === 'idle' ? '' : b.dot === 'active' ? `${b.working?.round ? `#${b.working.round}` : ''} ${b.working?.elapsed ?? ''}`.trim() : b.dot === 'queued' ? `${b.queued.length} 封` : '失敗'
-  const title = `${DOT[b.dot]} ${b.name}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`
+  const title = `${DOT[b.dot]} ${b.label}${b.lead ? ' ★' : ''} · ${b.runtime}${b.backup ? ' · 備援中' : ''}`
   // Collapsed, the status shares the title's line (and its colour); the wake count and the hand-off targets wait for `e`.
   const lines: Line[] = expanded ? [{ text: title, tone: 'bold' }, status] : [{ text: brief ? `${title} · ${brief}` : title, tone: status.tone }]
   for (const m of b.handling) lines.push(...mailLines(m, 'bold', '', expanded))
@@ -153,14 +156,14 @@ export function treeGroups(bs: Block[], expanded = false): Group[] {
   const folded = !expanded && idle.length >= 3
   const shown = folded ? members.filter(b => b.dot !== 'idle') : members
   const out: Group[] = []
-  if (failed.length) out.push({ lines: [{ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.name).join('、')}`, tone: 'bad' }] })
+  if (failed.length) out.push({ lines: [{ text: `✖ ${failed.length} 個 agent 上次喚醒失敗：${failed.map(b => b.label).join('、')}`, tone: 'bad' }] })
   if (lead) out.push({ dot: lead.dot, lines: blockLines(lead, expanded, maxTokens) })
   shown.forEach((b, i) => {
     const link = leadLink(bs, b)
     const last = i === shown.length - 1 && !folded
     out.push({ dot: b.dot, branch: `${last ? '└─' : '├─'}${link?.glyph ?? '─'} `, branchTone: link?.hot ? 'warn' : 'dim', last, lines: blockLines(b, expanded, maxTokens) })
   })
-  if (folded) out.push({ branch: '└── ', branchTone: 'dim', last: true, lines: [{ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.name).join('、')}`, tone: 'dim' }] })
+  if (folded) out.push({ branch: '└── ', branchTone: 'dim', last: true, lines: [{ text: `○ 另有 ${idle.length} 個閒置：${idle.map(b => b.label).join('、')}`, tone: 'dim' }] })
   return out
 }
 

@@ -10,6 +10,7 @@ import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
+import { diagnoseInstances } from "./doctor-instances.js";
 import { dirtyPaths, git, isolationBlocker } from "./worktree.js";
 
 export type Cap = "yes" | "no" | "unknown";
@@ -175,6 +176,8 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       );
     }
   }
+
+  if (fs.existsSync(project.dir)) checks.push(...diagnoseInstances(project, blocker));
 
   if (fs.existsSync(project.dir) && !blocker) {
     const missing: string[] = [];

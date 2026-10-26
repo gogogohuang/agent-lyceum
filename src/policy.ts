@@ -163,14 +163,14 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)])],
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...Object.values(agent.sharedMemory ?? {})],
     allowFiles,
     deny: [...new Set(deny)],
   };
 }
 
 let sandboxProbe: boolean | undefined;
-function osSandboxAvailable(): boolean {
+export function osSandboxAvailable(): boolean {
   if (sandboxProbe !== undefined) return sandboxProbe;
   if (process.platform === "darwin") sandboxProbe = true;
   else if (process.platform === "linux") sandboxProbe = findOnPath("bwrap");

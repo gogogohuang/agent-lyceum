@@ -1,0 +1,50 @@
+{
+  "allowDirs": [
+    "<ROOT>/home/agents/lead/memory",
+    "<ROOT>/home/projects/demo/task-memory/run-1/lead",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/lead",
+    "<ROOT>/repo/.git/worktrees/lead",
+    "<ROOT>/home/projects/demo/task-memory/run-1/_shared",
+    "<ROOT>/home/projects/demo/shared/common/records"
+  ],
+  "readDirs": [],
+  "allowFiles": [
+    "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+    "<ROOT>/home/projects/demo/task-memory/run-1/_shared/MEMORY.md",
+    "<ROOT>/home/agents/lead/AGENT.md",
+    "<ROOT>/home/agents/fe-member/AGENT.md",
+    "<ROOT>/home/agents/qa-member/AGENT.md",
+    "<ROOT>/home/projects/demo/worktrees/run-1/lead/CLAUDE.md",
+    "<ROOT>/home/projects/demo/worktrees/run-1/lead/AGENTS.md"
+  ],
+  "deny": [
+    "<ROOT>/home/projects/demo/runs/run-1/mail/inbox/lead",
+    "<ROOT>/home/agents/fe-member/memory",
+    "<ROOT>/home/projects/demo/task-memory/run-1/fe-member",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/inbox/fe-member",
+    "<ROOT>/home/agents/qa-member/memory",
+    "<ROOT>/home/projects/demo/task-memory/run-1/qa-member",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/inbox/qa-member",
+    "<ROOT>/home/projects/demo/runs/run-1/state.json",
+    "<ROOT>/home/projects/demo/runs/run-1/log.jsonl",
+    "<ROOT>/home/projects/demo/runs/run-1/log.1.jsonl",
+    "<ROOT>/home/projects/demo/runs/run-1/result.md",
+    "<ROOT>/home/projects/demo/runs/run-1/task.md",
+    "<ROOT>/home/projects/demo/runs/run-1/snapshots",
+    "<ROOT>/home/projects/demo/runs/run-1/violations",
+    "<ROOT>/home/projects/demo/runs/run-1/agents",
+    "<ROOT>/home/projects/demo/runs/run-1/integration",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/inbox",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/claims",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/attempts",
+    "<ROOT>/home/projects/demo/runs/run-1/mail/journal.jsonl",
+    "<ROOT>/home/projects/demo/project.yaml",
+    "<ROOT>/home/team.yaml",
+    "<ROOT>/home/projects/demo/worktrees/run-1/lead/.git",
+    "<ROOT>/repo/.git/worktrees/lead/commondir",
+    "<ROOT>/repo/.git/worktrees/lead/config.worktree",
+    "<ROOT>/repo/.git/worktrees/lead/gitdir"
+  ]
+}

@@ -3,6 +3,7 @@ import { cutUtf8, readFileCapped } from "./fs-util.js";
 import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
+import { senderLabel, slotName } from "./instances.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
@@ -10,8 +11,24 @@ import { commonFile, memoryDirs, outboxDir, recordsKindDir, repoDirFor, sharedDi
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
-  return dir === agent.memory.global ? "global (all projects)" : "project (all tasks of this project)";
+  const shared = agent.sharedMemory && Object.values(agent.sharedMemory).includes(dir);
+  const instance1 = agent.instance ? slotName(agent.instance.role, 1) : "";
+  const kind = dir === (agent.memory.global ?? agent.sharedMemory?.global) ? "global (all projects" : "project (all tasks of this project";
+  return shared ? `${kind}, read-only for you: ${instance1} maintains it)` : `${kind})`;
 }
+
+/** The lead's system prompt gets this at its very end when same-role instances are possible in the run (spec 23.12). No trailing newline. */
+export const PARALLEL_SECTION = (n: number): string =>
+  [
+    "## Parallel tasks",
+    `A member can work on up to ${n} tasks at the same time, each in its own instance with its own worktree. To use this, send each independent task as its own new \`task\` (not a reply, no \`reply_to\`) with the frontmatter line \`parallel: true\`. Only your own mail can do this. Instance 1 keeps the member's name; the others are named \`<member>--2\`, \`<member>--3\`, and their mail reaches you from those names.`,
+    "- Mark tasks parallel only when they are independent of each other and change different files. Before you send them, list in each task's `## Scope` the files it will touch; if two lists overlap, do not mark them parallel.",
+    "- Never run in parallel work that changes shared components, types, routes, configuration or design tokens: send that first, without the flag, and send the dependent tasks after it is integrated. Changes to the same file are not merged: the later one is blocked and comes back to you as a failure.",
+    "- Revisions go back to the instance that did the work: reply to its mail (`reply_to`). An instance whose work is blocked takes no new task, also not one addressed to it by name, until that work is in the repo; to redo it, reply to the failure about it.",
+    "- Without `parallel: true`, mail goes to the member itself, one task at a time.",
+    "- When rate limits hit, fewer instances may start; waiting tasks run when an instance is free.",
+    "- After parallel work is back, have one member type-check and test the combined result before you report `done`.",
+  ].join("\n");
 
 export const COMMON_LIMIT = 8 * 1024;
 export const MEMORY_INDEX_LIMIT = 4 * 1024;
@@ -122,14 +139,25 @@ export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string 
 export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
   if (project.solo) return buildSoloSystemPrompt(project, agent);
   const outbox = outboxDir(project, agent.name);
-  const mates = Object.keys(project.agents).filter((n) => n !== agent.name);
+  // Instances 2 and up are not listed (the lead is told their names separately), and an instance does not list its own role's other instances.
+  const mates = Object.keys(project.agents).filter((n) => n !== agent.name && (project.agents[n]?.instance?.k ?? 1) < 2 && (!agent.instance || project.agents[n]?.instance?.role !== agent.instance.role));
   const recipients =
     agent.canMessage === "all" ? mates : agent.canMessage.filter((n) => project.agents[n] && n !== agent.name);
   const isLead = agent.name === project.lead;
   const lines: string[] = [];
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-lyceum)", "");
   lines.push(
-    `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    agent.instance && agent.instance.k >= 2
+      ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
+      : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    ...(agent.instance?.k === 1
+      ? [
+          `Other instances of you${(() => {
+            const names = Object.values(project.agents).filter((a) => a.instance?.role === agent.name && a.instance.k >= 2).map((a) => a.name);
+            return names.length ? ` (${names.join(", ")})` : "";
+          })()} may work in parallel; only you write your global/project memory.`,
+        ]
+      : []),
     ...(project.workspaces?.[agent.name]
       ? [
           `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
@@ -204,8 +232,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     "## Memory",
   );
   const mems = memoryDirs(agent);
+  const sharedMems = Object.values(agent.sharedMemory ?? {});
   if (mems.length === 0) lines.push("You have no long-term memory directory.");
-  for (const m of mems) {
+  for (const m of [...sharedMems, ...mems]) {
     const label = memoryLabel(agent, m);
     lines.push(`- ${label}: \`${m}\``);
   }
@@ -215,7 +244,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       "on every wake-up; read other memory files on demand; you can write only inside these directories.",
       "Put anything specific to the current task (decisions, progress, findings, branch names) in the **task** memory: it is private to this task and starts empty for every new task.",
       "Also record approaches you considered but rejected, with the reason, so they can be revisited or reversed later.",
-      "Use the global/project memory only for durable lessons that stay true across tasks; never record task-specific details there.",
+      ...(sharedMems.length
+        ? ["You cannot write the shared memory: put lessons worth keeping in your reply to the lead."]
+        : ["Use the global/project memory only for durable lessons that stay true across tasks; never record task-specific details there."]),
     );
   }
   lines.push("", "## Rules");
@@ -232,7 +263,8 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
-  return lines.join("\n");
+  const text = lines.join("\n");
+  return isLead && project.run?.instances ? `${text}\n\n${PARALLEL_SECTION(project.run.instances.max)}` : text;
 }
 
 /** Messages one wake-up handles: the oldest one, or a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so the agent decides once on all of it; the lead takes any such run, other agents only same-thread ones. */
@@ -279,7 +311,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     parts.push("The other files in that folder are there to read on demand.");
   }
 
-  for (const dir of memoryDirs(agent)) {
+  for (const dir of [...Object.values(agent.sharedMemory ?? {}), ...memoryDirs(agent)]) {
     const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
     const label = memoryLabel(agent, dir).split(" ")[0];
     parts.push("", `# Your ${label} memory index (${dir}/MEMORY.md)`);
@@ -307,7 +339,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
         : `${shown.toString("utf8")}\n[agent-lyceum: this message was cut at ${shown.length} of ${raw.length} bytes; read the whole message in \`${m.file}\` (it moves to \`read/\` in the same folder after this wake-up)]`;
     parts.push(
       `id: ${m.meta.id}`,
-      `from: ${m.meta.from}`,
+      `from: ${senderLabel(m.meta.from, project.agents)}`,
       `type: ${m.meta.type}`,
       `thread: ${m.meta.thread}`,
       `subject: ${m.meta.subject}`,
@@ -317,7 +349,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   });
   if (queued.length) {
     parts.push("", "# Queued messages (not handled in this wake-up; each gets its own wake-up later, titles only)");
-    for (const m of queued) parts.push(`- from ${m.meta.from} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
+    for (const m of queued) parts.push(`- from ${senderLabel(m.meta.from, project.agents)} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
   }
   return parts.join("\n");
 }

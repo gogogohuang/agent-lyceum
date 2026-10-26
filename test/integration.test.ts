@@ -601,7 +601,8 @@ describe("dispatcher integration", () => {
       } else {
         write(path.join(i.workspace!.dir, "src/web/feature.txt"), "feature\n");
         mail(i.project, i.agent.name, "lead", "finished");
-        setFaultHook(() => {
+        setFaultHook((step) => {
+          if (step === "wake:ready") return; // the crash this test wants is after the integration, while routing
           throw new Error("killed while routing the member's mail");
         });
       }

@@ -1,0 +1,12 @@
+mail/claims/<CLAIM1>.json
+mail/claims/<CLAIM2>.json
+mail/claims/<CLAIM3>.json
+mail/inbox/fe-member/<STAMP>-lead-<ID1>.md
+mail/inbox/fe-member/read/<STAMP>-lead-<ID2>.md
+mail/inbox/lead/read/<STAMP>-user-<ID3>.md
+mail/inbox/lead/read/<STAMP>-fe-member-<ID4>.md
+mail/journal.jsonl
+mail/outbox/fe-member/sent/finished-1.md
+mail/outbox/lead/read/bye.md
+mail/outbox/lead/sent/first-job.md
+mail/outbox/lead/sent/second-job.md

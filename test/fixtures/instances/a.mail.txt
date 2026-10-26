@@ -1,0 +1,82 @@
+=== mail/inbox/fe-member/<STAMP>-lead-<ID1>.md
+---
+id: <ID1>
+from: lead
+to: fe-member
+thread: <ID1>
+type: task
+subject: second job
+created: <ISO>
+run_id: run-1
+---
+
+body of second job
+
+## Goal
+x
+## Acceptance criteria
+None
+## Scope
+None
+## Upstream
+None
+
+=== mail/inbox/fe-member/read/<STAMP>-lead-<ID2>.md
+---
+id: <ID2>
+from: lead
+to: fe-member
+thread: <ID2>
+type: task
+subject: first job
+created: <ISO>
+run_id: run-1
+---
+
+body of first job
+
+## Goal
+x
+## Acceptance criteria
+None
+## Scope
+None
+## Upstream
+None
+
+=== mail/inbox/lead/read/<STAMP>-user-<ID3>.md
+---
+id: <ID3>
+from: user
+to: lead
+thread: <ID3>
+type: task
+subject: build it
+created: <ISO>
+run_id: run-1
+---
+
+build it
+
+=== mail/inbox/lead/read/<STAMP>-fe-member-<ID4>.md
+---
+id: <ID4>
+from: fe-member
+to: lead
+thread: <ID4>
+type: reply
+subject: finished 1
+created: <ISO>
+run_id: run-1
+---
+
+body of finished 1
+
+## Changes
+None
+## Verification
+None
+## Open items
+None
+## Risks
+None

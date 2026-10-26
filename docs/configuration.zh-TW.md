@@ -34,6 +34,38 @@ Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可�
 
 並行不需要設定：在有 commit 的 git repo 裡，每個 run 與每個 agent 都有自己的 worktree；否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
 
+## 平行實例
+
+lead 可以讓一位成員同時以多個實例執行；見[同一成員的平行實例](how-it-works.zh-TW.md#同一成員的平行實例)。唯一的設定是選填的：
+
+```yaml
+# project.yaml
+dispatcher:
+  max_instances: 2   # 選填，1–8；沒寫 = 4；1 = 不平行
+```
+
+- `max_instances` 是一位成員在一個 run 裡最多可有的實例數，值為 `1`–`8` 的整數；其他值會載入失敗並指出 `dispatcher.max_instances`。除非你明寫，`doctor --resolved` 不會顯示它。（規格 23.4、23.13）
+- 不論怎麼設定，下列情況有效上限都是 1：run 不在 worktree 模式（見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)）、lead、solo run、使用舊版 mailbox 配置的 run、以及名稱不能當 branch 名稱的成員。下列兩種情況則是調低上限而非設為 1：設定中有 agent 取了實例會得到的名字（見「名稱」），以及在特定 run 中某個實例可能寫入成員的共用記憶（見下）。實例從 2 起依序檢查，上限停在第一個衝突實例之前（上限 `k-1`）。（`src/instances.ts` 的 `instanceCap`）
+- **混用版本：** 舊版 binary 會以「Unrecognized key」拒絕含 `dispatcher.max_instances` 的 `project.yaml`（和任何新鍵一樣），也看不到用過實例的 run（state `schema_version: 3`）；見[升級](upgrading-run-v2.md#parallel-instances-run-state-v3)。若會在版本之間切換，請不要寫這個鍵（預設是 4）。（23.4、23.10）
+- **記憶路徑：** 成員的 `memory.global`／`memory.project` 不可在 run 資料資料夾（`task-memory/`、`runs/`、`worktrees/`、repo 的 git dir）之內或包含它們，因為該成員的其他實例會在那裡寫入。只有在某個 run 裡共用記憶確實與該實例的可寫路徑（其 worktree、git dir 或 run 資料夾）重疊時，上限才會降低：這是逐 run、逐實例判斷，有衝突的實例不會被開啟（上限 `k-1`）。`doctor` 的檢查範圍較廣，其警告僅供參考：確定衝突（記憶包含某個資料夾）的措辭是「runs one task at a time」，記憶位在其中一個資料夾之內則是「may prevent extra instances for some runs」。已有實例的 run，若其中某實例現在會有寫入共用記憶的能力，`resume` 會拒絕。`doctor` 還有其他關於實例的訊息（主體都是 `instances`）：你明寫 `max_instances` 大於 1、但這裡的 run 在 checkout 內輪流執行時給警告；成員名稱不是有效 branch 名稱時給 info；Codex 且沒有 OS sandbox 的成員，給 info（若你明寫了 `max_instances` 則是警告），說明只有成員本身會寫它的記憶，其他實例只是被告知不要寫。（`src/instance-containment.ts`、`src/instances.ts`、`src/doctor-instances.ts`）
+- **名稱：** 設定中有 agent 取了實例的名字（`frontend` 也是角色時的 `frontend--2`），會讓 `frontend` 的實例數受限，並產生指出衝突 agent 的 `doctor` 警告。（`src/doctor-instances.ts`）
+
+### Lead AGENT.md 平行 task 指引
+
+功能可用時，harness 會在 lead 的系統提示加上 `## Parallel tasks` 段落。`init` 也會在它建立的 lead persona 放一條簡短規則，但不會改動現有的 `AGENT.md`：harness 加入的原文是 `src/prompt.ts` 的 `PARALLEL_SECTION`，`init` 寫入的那行是 `src/scaffold.ts` 的 `LEAD_PARALLEL_HINT`。要讓你自己的 lead 有類似規則，下面的段落是可自行調整的範例（較短的改寫，不是 harness 的原文）。（23.12）
+
+```markdown
+## Parallel tasks
+- Mark a task `parallel: true` only when it is independent of the other open tasks and changes different files.
+- Before sending tasks you want in parallel, list in each task's `## Scope` the files it will touch. If two lists overlap, do not mark them parallel.
+- Work on shared components, types, routes, configuration or design tokens goes first, alone and without the flag; send the dependent tasks after it is integrated.
+- Send each parallel task as its own new `task` (not a reply). Instance 1 keeps the member's name; the others are `<member>--2`, `<member>--3`.
+- Send revisions as a reply (`reply_to`) to the mail of the instance that did the work. An instance whose work is blocked takes no new task until that work is in the repo: reply to the failure about it to redo it.
+- After parallel work is back, have one member type-check and test the combined result before you send `done`.
+```
+
+（上面的範例是給 agent 讀的 AGENT.md 內容，所以保留英文。）
+
 ## 備援模型
 
 模型因暫時性原因持續失敗時，run 可以改用備用模型繼續，而不是直接停下來；見[喚醒失敗時](how-it-works.zh-TW.md#喚醒失敗時)。備用模型是一個有順序的清單 `fallback`，每個項目的欄位如下：
