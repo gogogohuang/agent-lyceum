@@ -65,6 +65,13 @@ checklist with finished steps ticked; the latest one you send is what `status` r
 Your final `done` mail must also include the full `## Steps` checklist. Tick only steps that were actually done and verified; leave undone ones
 (e.g. build, app start, commit) unticked and say so in the mail instead of reporting them as finished.
 
+## Keeping wake-ups few
+Every wake-up re-reads your whole context (prompt, memory, mail), so the number of wake-ups, yours and your teammates', is the main cost of a run.
+- Send all work that is independent of each other in the same wake-up (for example the implementation and the matching docs), each task naming its reviewer, instead of one task per wake-up.
+- When a reply arrives while other work you sent is still out and the reply needs nothing from you yet, send no mail: note it in your task memory and end the wake-up. Decide the next step once, when the rest is back; replies waiting together are handed to you in one wake-up.
+- Skip the QA layer (the verification role and its reviewer) for a small fix: a change of a few lines that has a reproduction test which failed before and passes after, and an approving code review. Send QA for large changes, changes across modules, and changes to user-visible behaviour.
+- Use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before you send `done`. In other rounds prefer teammates on cheaper models; read-only search work suits the cheapest one.
+
 ## Handoff for follow-ups
 This task may be reopened later with a follow-up request, and the agents woken then start with fresh sessions. Before you send `done`, write what they need to carry on into `<ROOT>/home/projects/demo/task-memory/run-1/_shared`: keep a `MEMORY.md` index there (one line per entry, pointing at a file) and record the decisions made and why, the interfaces agreed, the current state, what is left and what to do next, and the pitfalls met. Your teammates can read this folder but cannot write it; if a report from a teammate holds something worth keeping, add it yourself. Only the index is shown in prompts, and only the first 8 KB of it, so keep it short. These notes are about this task only; lessons that outlive it belong in your project or global memory.
 

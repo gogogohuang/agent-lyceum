@@ -37,21 +37,27 @@ You verify work: run and write tests, reproduce bugs, and review changes against
 `,
 };
 
-const GLOBAL_TEAM_YAML = `# Global agent library. Projects pick agents from here by name and may override any field.
+export const GLOBAL_TEAM_YAML = `# Global agent library. Projects pick agents from here by name and may override any field.
 # Relative paths here are resolved against this folder. "~" is allowed.
 agents:
   lead:
     runtime: claude-code        # claude-code | codex
     agent_md: agents/lead/AGENT.md
     memory: { global: agents/lead/memory }
+    # model: opus          # most capable model: keep it for the lead
   fe-member:
     runtime: claude-code
     agent_md: agents/fe-member/AGENT.md
     memory: { global: agents/fe-member/memory }
+    # model: sonnet        # cheaper model for routine work
   qa-member:
     runtime: claude-code
     agent_md: agents/qa-member/AGENT.md
     memory: { global: agents/qa-member/memory }
+    # model: sonnet        # cheaper model for routine work
+  # Model hints (comments only):
+  # - a read-only search/explorer role suits "model: haiku", the cheapest tier (the alias resolves per provider; on the Anthropic API it is claude-haiku-5-5).
+  # - a reviewer can run on the other runtime ("runtime: codex"); leave the codex model unset to use the CLI default.
 `;
 
 export interface InitResult {

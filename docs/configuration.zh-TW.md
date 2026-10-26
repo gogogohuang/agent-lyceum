@@ -101,3 +101,39 @@ agents:
 - 備用模型的防護比主要模型弱：在記憶、`AGENT.md`、其他 agent 的 context、交接筆記或 repo 的 `CLAUDE.md`／`AGENTS.md` 這幾項，備用模型是 `prompt-only` 而主要模型更強。例如沒有 OS 沙箱時，`claude-code` 退到 tool rules，但 `codex` 備援會是 prompt-only，這個切換會被拒絕。見 [Write scope](write-scope.zh-TW.md)。
 
 只要有任何 agent 設了備援，`doctor --resolved` 就會顯示生效的備援鏈與它的來源。
+
+## 節省 token
+
+每次喚醒都會重讀 agent 的整個 context，所以喚醒次數是一次 run 的主要成本。使用者在 3 次 run 上的實測：輸出約 156k token、cache 讀取約 12.5M token，每次喚醒約重讀 300k token 的 context。其中一次 run 的 13 輪裡有 6 輪是 lead 重新派工或收信的喚醒；一行的修改跑了 code review、docs review、QA 與 QA review，QA 加其 review（輸出約 14.6k token）的花費是實作的兩倍。以上是單一使用者的量測，不是 benchmark。
+
+### Lead 的 prompt 規則
+
+lead 的 prompt 有只給 lead 的 `## Keeping wake-ups few` 段落。摘要如下，它要求 lead：
+
+- 把彼此獨立的工作在同一次喚醒送出（例如實作與對應的文件），回覆都回來後只決定一次；
+- 小修改跳過 QA 層（驗證角色與其 reviewer）：幾行程式、一個修改前失敗修改後通過的重現測試、加上 code review 核可。大型、跨模組或使用者可見的變更才送 QA；
+- 只在三個時刻使用最強（最貴）的模型：計畫定稿前、同一個錯誤第二次出現時、`done` 之前。
+
+這些是 prompt 規則，模型是否遵守並未量測。dispatcher 不會延後喚醒：單獨抵達的每封回覆仍會喚醒 lead。同時在等的回覆會被合併（最多 5 封，見 `src/prompt.ts` 的 `LEAD_BATCH_LIMIT`），所以節省來自信件變少，而不是 dispatcher 壓住喚醒。
+
+### 模型分級
+
+模型寫在你自己的 `team.yaml` 或 `project.yaml`；repo 不會改你的設定。別名 `opus`、`sonnet`、`haiku` 都接受並推斷為 `claude-code` runtime（`src/schema.ts` 的 `inferRuntime`）。別名由 Claude CLI 解析成實際模型，結果取決於你的供應商與 CLI 版本（在 Anthropic API 上 `haiku` 是 Haiku 5.5，即 `claude-haiku-5-5`；見 [Model aliases](https://code.claude.com/docs/en/model-config#model-aliases)）；需要固定模型時請寫完整 model ID。
+
+```yaml
+# team.yaml（或 project.yaml 的 agents:）
+agents:
+  tech-lead:      { runtime: claude-code, model: opus }
+  cli-architect:  { runtime: claude-code, model: opus }
+  node-engineer:  { runtime: claude-code, model: sonnet }
+  code-explorer:  { runtime: claude-code, model: haiku }   # 唯讀搜尋
+```
+
+較便宜的搜尋模型可能漏掉東西；當它的回答會影響決策時，保留該角色的 reviewer。
+
+Codex：reviewer 放在另一個 runtime（`codex`），搜尋與實作用 Claude。這裡沒有查證過的便宜 Codex model id，所以 Codex 維持 CLI 預設，並照原樣使用現有的 [`fallback`](#備援模型) 備援鏈。
+
+### 未做
+
+- `claude --advisor`：本機 claude 2.1.310 的 `claude --help` 沒有這個旗標。
+- 「JEV」：repo 與 CLI 裡都找不到，無法查證。
