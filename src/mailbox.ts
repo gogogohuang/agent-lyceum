@@ -57,12 +57,28 @@ export function serialize(meta: MessageMeta, body: string): string {
   return `---\n${fm}\n---\n\n${body.trim()}\n`;
 }
 
+const ID_KEYS = new Set(["id", "reply_to", "thread", "about", "run_id"]);
+
 export function parseRaw(text: string): { data: Record<string, unknown>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) throw new Error("missing frontmatter (--- ... ---)");
-  const data = YAML.parse(m[1] ?? "");
+  const fm = m[1] ?? "";
+  const data = YAML.parse(fm);
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("frontmatter is not a mapping");
-  return { data: data as Record<string, unknown>, body: (m[2] ?? "").trim() };
+  const out = data as Record<string, unknown>;
+  // Ids are 8 hex characters: `79e76911` parses as Infinity and `01234567` as 1234567.
+  // Only an id key that came out as a number is re-read from its source text; everything else stays as YAML.parse returned it.
+  if (Object.entries(out).some(([k, v]) => ID_KEYS.has(k) && typeof v === "number")) {
+    const doc = YAML.parseDocument(fm);
+    if (YAML.isMap(doc.contents)) {
+      for (const pair of doc.contents.items) {
+        const key = YAML.isScalar(pair.key) ? String(pair.key.value) : "";
+        if (!ID_KEYS.has(key) || typeof out[key] !== "number" || !YAML.isScalar(pair.value)) continue;
+        if (pair.value.type === "PLAIN" && typeof pair.value.source === "string") out[key] = pair.value.source;
+      }
+    }
+  }
+  return { data: out, body: (m[2] ?? "").trim() };
 }
 
 export function ensureProjectDirs(project: ResolvedProject): void {

@@ -2,10 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { missingSections } from "../src/format.js";
-import { deliver, ensureProjectDirs, listUnread, markRead, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
+import { deliver, ensureProjectDirs, listUnread, markRead, parseRaw, readMessage, routeOutboxes, unreadFiles } from "../src/mailbox.js";
 import { inboxDir, outboxDir, recordsKindDir } from "../src/policy.js";
 import { bindRunProject } from "../src/run-store.js";
-import { makeEnv, REPLY_BODY, write, type TestEnv } from "./helpers.js";
+import { makeEnv, REPLY_BODY, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -29,6 +29,64 @@ describe("mailbox routing", () => {
     expect(m.meta.subject).toBe("done");
     expect(m.body).toBe(REPLY_BODY);
     expect(fs.existsSync(path.join(outboxDir(p, "fe-member"), "a.md"))).toBe(false);
+  });
+
+  it.each(["79e76911", "01234567", "12345678", "1e5"])("keeps an unquoted numeric-looking id %s as a string", (id) => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "fe-member", "n.md", `to: lead\nsubject: rev\nreply_to: ${id}\nthread: ${id}`, REPLY_BODY);
+    expect(routeOutboxes(p).rejected).toEqual([]);
+    const [m] = listUnread(p, "lead");
+    expect(m.meta.reply_to).toBe(id);
+    expect(m.meta.thread).toBe(id);
+  });
+
+  it.each(["null", "~", ""])("keeps reply_to and thread `%s` as null: delivered without reply_to, self-threaded", (v) => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "fe-member", "n.md", `to: lead\nsubject: rev\nreply_to: ${v}\nthread: ${v}`, REPLY_BODY);
+    expect(routeOutboxes(p).rejected).toEqual([]);
+    const [m] = listUnread(p, "lead");
+    expect(m.meta.reply_to).toBeUndefined();
+    expect(m.meta.thread).toBe(m.meta.id);
+    expect(parseRaw(`---\nreply_to: ${v}\n---\nx`).data.reply_to).toBeNull();
+  });
+
+  it.each(["null", "~", ""])("a lead task with `parallel: true` and `reply_to: %s` is still a new parallel task", (v) => {
+    env = makeEnv();
+    const p = bindRunProject(env.project(), path.join(env.project().paths.runs, "run-1"), "run", { roles: { "fe-member": ["fe-member", "fe-member--2"] } });
+    ensureProjectDirs(p);
+    const ignored: string[] = [];
+    const enabled: string[] = [];
+    const held = new Set<string>();
+    send(p, "lead", "t.md", `to: fe-member\ntype: task\nsubject: job\nreply_to: ${v}\nparallel: true`, withSections("task", "do it"));
+    routeOutboxes(p, { cap: () => ({ n: 4 }), held: (r) => held.has(r), enable: (r) => {
+        enabled.push(r);
+        held.add(r);
+      }, ignored: (reason) => ignored.push(reason) });
+    expect(ignored).toEqual([]);
+    expect(enabled).toEqual(["fe-member"]);
+  });
+
+  it("an unknown YAML tag still emits one warning, as with YAML.parse", () => {
+    const seen: string[] = [];
+    const on = (w: Error) => seen.push(w.message);
+    process.on("warning", on);
+    return new Promise<void>((resolve) => {
+      parseRaw("---\nsubject: !unknown hello\n---\nx");
+      setImmediate(() => {
+        process.off("warning", on);
+        expect(seen.filter((s) => /unknown/i.test(s))).toHaveLength(1);
+        resolve();
+      });
+    });
+  });
+
+  it("keeps core-schema typing for other keys (parallel stays a boolean)", () => {
+    expect(parseRaw("---\nid: 79e76911\nparallel: true\ntier: low\n---\nx").data).toMatchObject({ id: "79e76911", parallel: true, tier: "low" });
+    expect(parseRaw('---\nid: "79e76911"\nn: 12\n---\nx').data).toMatchObject({ id: "79e76911", n: 12 });
   });
 
   it("rejects recipients outside can_message and tells the sender", () => {

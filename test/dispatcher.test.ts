@@ -15,8 +15,9 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
+let mailSeq = 0;
 const mail = (i: WakeInput, to: string, subject: string, type = "reply") =>
-  write(path.join(outboxDir(i.project, i.agent.name), `${Date.now()}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : withSections(type, `body of ${subject}`)}\n`);
+  write(path.join(outboxDir(i.project, i.agent.name), `${String(++mailSeq).padStart(6, "0")}-${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : withSections(type, `body of ${subject}`)}\n`);
 
 async function run(invoker: Invoker, opts: { task?: string; file?: string } = {}): Promise<RunSummary> {
   const project = env.project();
