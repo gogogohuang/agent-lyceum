@@ -66,7 +66,7 @@ When the feature is available the harness adds a `## Parallel tasks` section to 
 
 ## Sandbox allowances
 
-Per-agent opt-in widening of the OS sandbox. Everything is off unless set; an agent without `sandbox` gets exactly the settings it got before. Design: [spec 25](specs/25-sandbox-allowances.md). Spec 25 is implemented on this branch, not yet released; end-to-end effects marked "unverified" have not been tested.
+Per-agent opt-in widening of the OS sandbox. Everything is off unless set; an agent without `sandbox` gets exactly the settings it got before. Design: [spec 25](specs/25-sandbox-allowances.md). Spec 25 is implemented in 0.28.0; end-to-end effects marked "unverified" have not been tested.
 
 ```yaml
 # project.yaml (or team.yaml)
