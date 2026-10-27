@@ -173,6 +173,28 @@ A cheaper search model may miss things. Keep the role's reviewer when its answer
 
 For Codex, keep reviewers on the other runtime (`codex`) and search and implementation on Claude. No cheap Codex model id is verified here, so leave Codex on its CLI default and use the existing [`fallback`](#fallback-models) chain unchanged.
 
+### When you do not need the whole team
+
+Cost is counted in wake-ups, and a team run is multi-agent from the start (in one user's run of 65 wake-ups the lead took 27). Solo mode already exists. Ask four questions about the task:
+
+1. Do you need maker-checker review on the other runtime?
+2. Can the work be split into independent, parallel parts?
+3. Does it need different expertise?
+4. Would a single agent run out of context?
+
+If all four answers are "no", give the task to one member with `run --agent <name>` (see [run](commands.md#run), the `--agent` option); outside any project use [call](commands.md#call).
+
+This is a rule of thumb adapted for this project. It is not copied from the "Graph Engineering" article's rule ("answer no to any question: keep a single loop"): the questions differ, and so does the rule (here solo only when all four are "no"). Its effect on cost and quality is not measured, so there is no guarantee and no saving percentage. In this project the first question is usually "yes", because cross-runtime review is deliberate.
+
+### What max_rounds limits
+
+`dispatcher.max_rounds` caps wake-up attempts, retries and fallback attempts included: `state.rounds` is incremented once per invoke attempt (`const round = ++state.rounds;` in `src/run-session.ts`) and checked before each attempt and before each batch. It can be used to bound how much work a run does.
+
+It is not a token or money budget and guarantees no spending cap: the cost of a wake-up varies with the model, retries, output length and cache hits. The ~300k-token figure above is one user's measurement, not a benchmark.
+
+- At the limit the run ends `partial` ("Stopped at the round limit before the lead sent done.", `src/run-outcome.ts`), and [`resume`](commands.md#resume) refuses until you raise the limit (`src/cli.ts`). After a reopen the limit counts from the reopen; see `resume` in the same page.
+- The default is `0`, which means no limit (`src/schema.ts`; validated as an integer of at least 0).
+
 ### Not done
 
 - `claude --advisor`: `claude --help` of the local claude 2.1.310 lists no such flag.
