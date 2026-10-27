@@ -68,7 +68,7 @@ dispatcher:
 
 ## Sandbox 放寬
 
-以 agent 為單位、需明確開啟的 OS sandbox 放寬。預設全關；沒寫 `sandbox` 的 agent 拿到的設定與以前完全相同。設計見 [spec 25](specs/25-sandbox-allowances.md)。spec 25 已在此分支實作，尚未發佈；標「未驗證」的端到端效果尚未實測。
+以 agent 為單位、需明確開啟的 OS sandbox 放寬。預設全關；沒寫 `sandbox` 的 agent 拿到的設定與以前完全相同。設計見 [spec 25](specs/25-sandbox-allowances.md)。spec 25 已在 0.28.0 實作；標「未驗證」的端到端效果尚未實測。
 
 ```yaml
 # project.yaml（或 team.yaml）

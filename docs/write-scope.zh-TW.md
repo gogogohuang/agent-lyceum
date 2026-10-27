@@ -25,7 +25,7 @@ agent worktree 內的 git:agent 能寫它 worktree 的 `.git` 指標檔與私有
 
 ## Sandbox 放寬
 
-agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；欄位說明見 [設定](configuration.zh-TW.md#sandbox-放寬)，設計見 [spec 25](specs/25-sandbox-allowances.md)）只在有設定時，才只對該 agent 放寬 OS sandbox。這已在此分支實作，尚未發佈；各鍵在真實喚醒中的端到端效果**未驗證**。
+agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；欄位說明見 [設定](configuration.zh-TW.md#sandbox-放寬)，設計見 [spec 25](specs/25-sandbox-allowances.md)）只在有設定時，才只對該 agent 放寬 OS sandbox。這已在 0.28.0 實作；各鍵在真實喚醒中的端到端效果**未驗證**。
 
 - **`write`** 把目錄加進該 agent 的寫入範圍，就是給 Claude `Edit` 規則、`allowWrite`、`--add-dir`，以及給 Codex `writable_roots` 的同一份清單。受保護路徑永遠不能加，例如：設定資料夾或 repo 內的任何位置、所有 `AGENT.md`、記憶資料夾、inbox 與 outbox、`COMMON.md`、紀錄資料夾、該 run 的資料、其他 agent 的 worktree 與 git 目錄、git common dir、worktrees 根目錄、repo 的 `CLAUDE.md`／`AGENTS.md`、`~/.claude`、`~/.codex`，以及它們的祖先。完整清單見[設定](configuration.zh-TW.md#sandbox-放寬)；被拒絕的 invocation 會記為 `sandbox-refused`，不重試。
 - **`unix_sockets`** 允許所列路徑下的 Unix socket **bind 與 connect**，不只是測試裡的 listen。該資料夾內的服務都連得到，所以不要把 Docker、ssh-agent 之類的 socket 放進去。只有 Claude Code 有作用；Codex 什麼都不會得到，`doctor` 會警告。
