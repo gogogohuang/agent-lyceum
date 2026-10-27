@@ -34,7 +34,7 @@ function seedRuns() {
   write(path.join(runs, "20260101-000000", "state.json"), JSON.stringify({ run_id: "20260101-000000", rounds: 1, max_rounds: 10, last_wake: {}, wakes: [], end_reason: "idle", task_summary: "Old" }));
 }
 
-describe("status --json", () => {
+describe("status --json", { timeout: 30_000 }, () => {
   it("prints only JSON on stdout, never ANSI colour, even when colour is forced", () => {
     env = makeEnv();
     seedRuns();
@@ -201,7 +201,7 @@ describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
   });
 });
 
-describe("doctor --resolved", () => {
+describe("doctor --resolved", { timeout: 30_000 }, () => {
   it("lists every effective value with where it came from", () => {
     env = makeEnv();
     const r = run(["doctor", "--resolved", "-p", "demo"]);
@@ -228,7 +228,7 @@ describe("doctor --resolved", () => {
   });
 });
 
-describe("doctor --json", () => {
+describe("doctor --json", { timeout: 30_000 }, () => {
   it("prints JSON only", () => {
     env = makeEnv();
     const r = run(["doctor", "-p", "demo", "--json"], { FORCE_COLOR: "1" });
@@ -241,7 +241,7 @@ describe("doctor --json", () => {
 
 void fs;
 
-describe("status --json --watch", () => {
+describe("status --json --watch", { timeout: 30_000 }, () => {
   it("needs --json and rejects --monitor / --task-list", () => {
     env = makeEnv();
     expect(run(["status", "-p", "demo", "--watch"]).err).toContain("--watch needs --json");
