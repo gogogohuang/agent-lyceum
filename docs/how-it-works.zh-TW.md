@@ -85,7 +85,7 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 - **Backoff：** 只有在候選模型多於一個時（較便宜的 tier 模型或 `fallback` 鏈；見 [Model tiers per task](#每個-task-的模型分級)），同一個模型上的重試才會等待：5 秒、15 秒、45 秒，上限 60 秒。只有一個候選就不等。
 - **全新 session：** 切換後在備用模型上開新的 session，prompt 附上一般的重試提示，未讀信件照常重新送達；失敗那次嘗試未投遞的 outbox 草稿會以未驗證草稿的形式交還給同一個 agent（見上），除此之外失敗模型的輸出不會帶過去。若備用模型已有自己的 session 且該 agent 設了 `resume: true`，切換會接續那個 session，而不是開新的。備用模型的 session 存在 `state.sessions` 的 `<agent>@<runtime>/<model>` 下；主要模型沿用 agent 名稱這個 key，備用模型不會拿到它的 id。
 - **候選順序是 tier 模型 → 上限 → 設定的 fallback。** 喚醒從第一個不在冷卻的候選開始（沒有 tier 時就是主要模型）。（Spec 24.13 R-3）
-- **冷卻：**因 `rate_limit` 或 `quota` 失敗的模型，在 `fallback_cooldown_sec`（預設 300 秒）內會被這次 run 的所有喚醒略過，包括平行的喚醒。冷卻存在 `state.json`，所以 `resume` 會保留；新的 run 則從零開始。若備援鏈上每個模型都在冷卻，就整條鏈都試。只有存在較便宜的 tier 候選或備援鏈時才會記錄冷卻。
+- **冷卻：**因 `rate_limit` 或 `quota` 失敗的模型，在 `fallback_cooldown_sec`（預設 300 秒）內會被這次 run 的所有喚醒略過，包括平行的喚醒。冷卻存在 `state.json`，所以 `resume` 會保留；新的 run 則從零開始。若備援鏈上每個模型都在冷卻，就整條鏈都試。喚醒開始時在冷卻中的模型不會被永久排除：若原本可用的模型都失敗，喚醒會等最近一個冷卻結束（最久 `fallback_cooldown_sec`）再最後試那個模型，而不是讓 run 失敗。等待會記錄為 `cooldown_wait` 事件。只有存在較便宜的 tier 候選或備援鏈時才會記錄冷卻。
 - **切換會被告知：** 切換時印出一行 `<agent> falling back to <runtime>/<model> (<kind>)`，並在 run 的 notes 加一筆，提醒失敗模型已產生的副作用沒有被還原、可能已經發生。
 - **全部失敗時** run 照舊以 `agent_failed` 或 `lead_failed` 停止。`failure.tried` 依序列出每個模型各一筆（取該模型最後一次的失敗），結束訊息會逐一列出，並仍然說明如何 `resume`。
 - **已知限制：** Codex 在網路斷線時會一直重連，直到喚醒逾時，所以結果是 `timeout` 而不是 `network`。它與其他逾時同樣處理：先重試，再切換。

@@ -8,6 +8,7 @@ import {
   Cooldowns,
   defaultSleep,
   nextStep,
+  deferredAttempts,
   planAttempts,
   runWithFallback,
   type RunWithFallbackOptions,
@@ -207,6 +208,16 @@ function harness(agent: ResolvedAgent, script: Record<string, R[]>, extra: Parti
   });
   return { run, calls, sleeps, switches, cooldowns };
 }
+
+describe("deferredAttempts", () => {
+  it("lists the cooling candidates, soonest to recover first", () => {
+    const c = new Cooldowns();
+    c.mark("claude-code/opus", "quota", 0, 100);
+    c.mark("claude-code/sonnet", "rate_limit", 0, 30);
+    expect(deferredAttempts(candidatesFor(agentWith(CHAIN)), c, 1000).map((x) => x.key)).toEqual(["claude-code/sonnet", "claude-code/opus"]);
+    expect(deferredAttempts(candidatesFor(agentWith(CHAIN)), c, 200000)).toEqual([]);
+  });
+});
 
 describe("runWithFallback", () => {
   it("returns the first success without retrying", async () => {
@@ -410,5 +421,48 @@ describe("defaultSleep", () => {
     const t = Date.now();
     await defaultSleep(20);
     expect(Date.now() - t).toBeGreaterThanOrEqual(15);
+  });
+});
+
+describe("runWithFallback with deferred candidates", () => {
+  it("waits for a cooling backup to recover after the warm models fail on quota", async () => {
+    const cooldowns = new Cooldowns();
+    cooldowns.mark("claude-code/sonnet", "quota", 0, 30);
+    const all = candidatesFor(agentWith(CHAIN));
+    const waits: number[] = [];
+    const h = harness(
+      agentWith(CHAIN),
+      { "claude-code/opus": [fail("quota")], "codex/": [fail("quota")], "claude-code/sonnet": [ok()] },
+      { cooldowns, candidates: planAttempts(all, cooldowns, 0), deferred: deferredAttempts(all, cooldowns, 0), onCooldownWait: (_c, ms) => waits.push(ms) },
+    );
+    const out = await h.run;
+    expect(out.result).toEqual(ok());
+    expect(out.used.key).toBe("claude-code/sonnet");
+    expect(h.calls.map((x) => x.key)).toEqual(["claude-code/opus", "codex/", "claude-code/sonnet"]);
+    expect(h.sleeps).toEqual([30000]);
+    expect(waits).toEqual([30000]);
+  });
+  it("does not wait when the deferred candidate has already recovered", async () => {
+    const cooldowns = new Cooldowns();
+    const all = candidatesFor(agentWith(CHAIN));
+    const h = harness(agentWith(CHAIN), { "claude-code/opus": [fail("quota")], "claude-code/sonnet": [ok()] }, { cooldowns, candidates: [all[0] as Candidate], deferred: [all[1] as Candidate] });
+    expect((await h.run).result).toEqual(ok());
+    expect(h.sleeps).toEqual([]);
+  });
+  it("stops when the signal aborts during the wait", async () => {
+    const cooldowns = new Cooldowns();
+    cooldowns.mark("claude-code/sonnet", "quota", 0, 30);
+    const all = candidatesFor(agentWith(CHAIN));
+    const ac = new AbortController();
+    const h = harness(agentWith(CHAIN), { "claude-code/opus": [fail("quota")] }, {
+      cooldowns,
+      candidates: [all[0] as Candidate],
+      deferred: [all[1] as Candidate],
+      signal: ac.signal,
+      sleep: async () => ac.abort(),
+    });
+    const out = await h.run;
+    expect(out.stopped).toBe("aborted");
+    expect(h.calls.map((x) => x.key)).toEqual(["claude-code/opus"]);
   });
 });

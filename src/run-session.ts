@@ -3,7 +3,7 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
-import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
+import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings } from "./schema.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
@@ -657,6 +657,8 @@ export class RunSession {
     const all = candidatesFor(agent, tier && agent.tiers ? modelForTier(agent.tiers, tier) : undefined);
     const chain = all.length > 1;
     const candidates = chain ? planAttempts(all, cooldowns, Date.now()) : all;
+    // Models cooling down at the start are not dropped for good: when the warm ones fail they are tried last, once recovered.
+    const deferred = chain && candidates.length < all.length ? deferredAttempts(all, cooldowns, Date.now()).filter((c) => !candidates.includes(c)) : [];
     const ceiling = must(all.find((c) => c.primary), "the agent's own model");
     const tieredFirst = all[0]?.tiered ? all[0] : undefined;
     // The model a backup's calls stand in for: the one switched away from in this wake, or the cooling-down primary it started past.
@@ -671,6 +673,7 @@ export class RunSession {
     let stoppedByCancel = false;
     const outcome = await runWithFallback<WakeResult>({
       candidates,
+      deferred,
       legacy: !chain,
       retry: cfg.retry,
       cooldowns,
@@ -685,6 +688,11 @@ export class RunSession {
         }
         // The round limit (when one is set) ends the run; this message stays unread for the resume.
         return state.max_rounds > 0 && state.rounds >= state.max_rounds ? "stop" : undefined;
+      },
+      onCooldownWait: (c, ms) => {
+        if (opts.signal?.aborted) return;
+        say(`  ${agent.name}: no other model is available; waiting ${Math.ceil(ms / 1000)}s for ${modelLabel(c)} to recover`);
+        log("cooldown_wait", { agent: agent.name, model: modelLabel(c), wait_ms: ms });
       },
       onSwitch: (from, to, kind) => {
         if (!from.tiered) replaced = from;
