@@ -265,3 +265,12 @@ doctor 列 requested/generated allowances，**不是完整 merged effective poli
 3. Codex `network_access` 是全有全無；使用者可能誤以為是逐網域，靠 doctor 警告與 fallback 拒絕緩解。
 4. 舊 binary 讀到新設定會載入失敗（fail closed，訊息指名鍵）。
 5. `--settings` 與使用者 `~/.claude/settings.json` 的 sandbox 鍵合併規則未驗證：使用者層若已有 `allowedDomains`，實際可達範圍可能是兩者之聯集（未驗證），doctor 列出 requested/generated allowances，不是完整 merged effective policy；適用所有 sandbox 欄位。
+
+## 25.19 Lead 決議（設計審查第二輪後）
+
+第二輪設計審查（9b5cd00b）留下一個 major，已達審查上限，由 lead 決定：
+
+1. **前置檢查失敗不可進 retry／fallback（M1）**。目前兩個呼叫點（`src/run-session.ts:731-742`、`src/call.ts:~197`）會把丟出的錯誤 `.catch` 成一般失敗，`nextStep`（`src/fallback.ts:104-120`）再拿它 retry。決議：`AttemptResult` 加一個終止型 `kind: "config"`，`nextStep` 在檢查 `legacy` 之前就把它對應到 `stop`。前置檢查的包裝器在拒絕時**回傳**這個結果，不丟例外，所以不會 spawn、不 backoff、不換 backup。run：這次 wake 以具名錯誤結束，寫 `sandbox-refused` log 事件（欄位 `agent`、`runtime`、`reason`、`path`），寄給 lead 的 failure 信要寫出原因。`call`：非零 exit，stderr 印出同一個原因。測試：在 run、resume、call 三條路徑上，被拒的前置檢查都只檢查一次、spawn 零次、沒有 backoff、也沒有換 backup。`state.rounds` 是否已遞增照目前程式碼的順序，但要在測試裡寫明。
+2. **m1**：`src/memory-tidy.ts:378` 傳入明確的 `policy` override，allowances 不會套用，所以不需要前置檢查；在 25.4.3／25.5 註明「override 呼叫點不需前置檢查」。
+3. **m2**：動態實例 `<role>--<k>` 的 `ResolvedAgent` 如何繼承 role 的 `sandbox`：node-engineer 確認並加測試（未驗證）。
+4. **m3**：agent 自己的 `ws.root`／`ws.gitDir` 在受保護集合裡，但本來就可寫；錯誤訊息要說「已在 agent 自身寫入範圍內，不需列入」，不要說成「受保護、agent 不可寫」。

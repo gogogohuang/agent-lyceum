@@ -45,7 +45,7 @@ tcp 127.0.0.1:0 listen: EPERM listen EPERM: operation not permitted 127.0.0.1
 | worktree protections (`src/worktree.ts`) | ruled out | unrelated to sockets |
 | Codex `workspace-write` | unverified | not run. Codex's workspace-write sandbox is documented to disable network by default; whether Unix-socket listen is included was not checked |
 
-**Minimal allowance (Claude):** the reviewed Claude Code 2.1.311 macOS profile evidence distinguishes IP sockets from Unix sockets. In [`generateSandboxProfile`](https://github.com/anthropic-experimental/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts), `sandbox.network.allowLocalBinding: true` emits:
+**Minimal allowance (Claude):** the sandbox-runtime source, and the reviewer's own check of the installed Claude Code 2.1.311 binary, distinguish IP sockets from Unix sockets. In [`generateSandboxProfile`](https://github.com/anthropic-experimental/sandbox-runtime/blob/main/src/sandbox/macos-sandbox-utils.ts), `sandbox.network.allowLocalBinding: true` emits:
 
 ```scheme
 (allow network-bind (local ip "*:*"))
