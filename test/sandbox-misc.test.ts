@@ -31,13 +31,20 @@ const errors = (): string[] => validateProject(env.project()).issues.filter((i) 
 
 describe("fallback capability parity (spec 25.9)", () => {
   it("refuses a claude backup for a codex primary with local_binding, allows the opposite direction", () => {
-    env = makeEnv();
-    member({ runtime: "codex", sandbox: ["local_binding: true"], fallback: "claude-code" });
-    expect(errors().some((m) => m.includes("fallback claude-code") && m.includes("local_binding"))).toBe(true);
-    env.cleanup();
-    env = makeEnv();
-    member({ runtime: "claude-code", sandbox: ["local_binding: true"], fallback: "codex" });
-    expect(errors().filter((m) => m.includes("more sandbox allowance"))).toEqual([]);
+    // Claude only applies local_binding on macOS, so on other hosts the backup reaches no more than the primary.
+    const platform = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    try {
+      env = makeEnv();
+      member({ runtime: "codex", sandbox: ["local_binding: true"], fallback: "claude-code" });
+      expect(errors().some((m) => m.includes("fallback claude-code") && m.includes("local_binding"))).toBe(true);
+      env.cleanup();
+      env = makeEnv();
+      member({ runtime: "claude-code", sandbox: ["local_binding: true"], fallback: "codex" });
+      expect(errors().filter((m) => m.includes("more sandbox allowance"))).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   });
 
   it("still reports the existing write-protection fallback check (no sandbox block involved)", () => {
