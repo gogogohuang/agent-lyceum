@@ -27,7 +27,7 @@ export const WEB_LEVELS = ["none", "search", "fetch"] as const;
 export type WebLevel = (typeof WEB_LEVELS)[number];
 
 /** Why a wake failed, as far as the CLI's output reveals; decides whether to retry, fall back, or stop. */
-export const ERROR_KINDS = ["rate_limit", "quota", "timeout", "network", "crash", "auth", "unknown"] as const;
+export const ERROR_KINDS = ["rate_limit", "quota", "timeout", "network", "crash", "auth", "config", "unknown"] as const;
 export type ErrorKind = (typeof ERROR_KINDS)[number];
 
 /** One link of a fallback chain after resolution: runtime and model are filled in (model "" = the runtime's own default). */
@@ -54,6 +54,21 @@ export const FallbackEntryPartial = z
   .strict();
 export type FallbackEntryPartialT = z.infer<typeof FallbackEntryPartial>;
 
+const DOMAIN_RE = /^(\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** Per-agent sandbox allowances (spec 25); every key is optional and absent = none. */
+export const SandboxPartial = z
+  .object({
+    write: z.array(z.string().trim().min(1)).optional(),
+    network: z
+      .array(z.string().trim().toLowerCase().regex(DOMAIN_RE, "expected a host name like registry.npmjs.org or *.example.com (no scheme, port, path or IP)"))
+      .optional(),
+    local_binding: z.boolean().optional(),
+    unix_sockets: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+export type SandboxPartialT = z.infer<typeof SandboxPartial>;
+
 export const AgentPartial = z
   .object({
     runtime: z.enum(RUNTIMES).optional(),
@@ -67,6 +82,7 @@ export const AgentPartial = z
     can_ask_user: z.boolean().optional(),
     allow_web: z.enum(WEB_LEVELS).optional(),
     fallback: z.array(FallbackEntryPartial).optional(),
+    sandbox: SandboxPartial.optional(),
     /** Removed setting: still accepted (any value) so old files load; ignored, with a warning from `validate`. */
     owns: z.unknown().optional(),
   })

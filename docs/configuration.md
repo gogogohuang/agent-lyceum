@@ -28,7 +28,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below).
+Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)).
 
 Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, and memory dirs don't overlap. Settings removed in the zero-config concurrency change (see [Upgrading](upgrading-run-v2.md)) still load and only produce a warning.
 
@@ -64,6 +64,47 @@ When the feature is available the harness adds a `## Parallel tasks` section to 
 - After parallel work is back, have one member type-check and test the combined result before you send `done`.
 ```
 
+## Sandbox allowances
+
+Per-agent opt-in widening of the OS sandbox. Everything is off unless set; an agent without `sandbox` gets exactly the settings it got before. Design: [spec 25](specs/25-sandbox-allowances.md). Spec 25 is implemented on this branch, not yet released; end-to-end effects marked "unverified" have not been tested.
+
+```yaml
+# project.yaml (or team.yaml)
+agents:
+  fe-member:
+    sandbox:
+      write: [~/.cache/foo, /tmp/bar]        # extra paths outside the repo this agent may write
+      network: [registry.npmjs.org]          # hosts Bash may reach
+      local_binding: true                    # bind ports / accept connections locally
+      unix_sockets: [/private/tmp/tsx-501]   # Unix sockets under this path (bind and connect)
+```
+
+All four keys are optional; `[]` and `false` mean the same as leaving them out. Unknown keys under `sandbox` are a config error. A `sandbox` in `project.yaml` replaces the one in `team.yaml` as a whole; keys are not merged, so a project can narrow what the team file allows. The lead is treated like any other agent.
+
+**Path rules** (`write` and `unix_sockets`):
+
+- `~` is expanded. `$TMPDIR` and other environment variables are **not** expanded: resolve it yourself, for example `printf '%s\n' "$TMPDIR/tsx-$(id -u)"`, and paste the absolute result.
+- The path must be absolute after `~` expansion; relative paths are refused.
+- Pattern characters `* ? [ ] { } ( ) !`, backslashes and control characters are refused.
+- A path may not equal, sit inside, or contain a protected path. Banned (from `protectedPathsFor`, `src/sandbox-invocation.ts`): the agent-lyceum config home and the repo (including your own memory), every agent's `AGENT.md`, memory folder, inbox and outbox, `COMMON.md` and other shared context files, the repo's `CLAUDE.md`/`AGENTS.md`, the records folder, `~/.claude`, `$CODEX_HOME` (`~/.codex` if unset), and any ancestor of these such as `~`. At invocation time the check also covers the run's folder, the worktrees root, other agents' worktrees and git dirs, the git common dir, and the agent's write-protected paths. The error names the key, the index and the protected path. The same check runs before every invocation on the real paths (symlinks resolved).
+- **Refusal.** A refused invocation never starts the runtime. It logs a `sandbox-refused` event (`agent`, `runtime`, `reason`, and `path` when there is one) and returns a `config` failure: no retry, no backoff, no switch to a backup. In a run, the refused wake still counts as a round and the run ends as `agent_failed` (`lead_failed` if the lead was refused), with the reason in the run's failure record (`state.failure.error`); the lead is not woken. `agent-lyceum call` runs the same checks, prints `sandbox` and `sandbox-refused` events as JSON lines on stderr, and a refusal exits non-zero (`Call failed: …`, `src/cli.ts:607`).
+- A path that does not exist yet is allowed (`doctor` prints an info line); agent-lyceum does not create it.
+
+`network` takes dotted host names such as `registry.npmjs.org` (lower-cased; one leading `*.` allowed; no scheme, port, path, IP or bare `*`; single-label hosts such as `localhost` are rejected, `DOMAIN_RE` in `src/schema.ts`). Whether Claude accepts `*.` is unverified.
+
+**What each runtime gets:**
+
+| Key | Claude Code | Codex |
+|---|---|---|
+| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` |
+| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns |
+| `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns |
+| `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns |
+
+A wake-up that runs with a policy override (such as the memory tidy) gets none of the allowances. With no OS sandbox (Windows, Linux without `bwrap`): Claude's `write` only widens the `Edit` tool rules and Bash can bypass them, the other keys have no effect; Codex is prompt-only, so no allowance is enforced. `doctor` says so per agent. What each key really allows is in [Write scope](write-scope.md#sandbox-allowances).
+
+`doctor` lists the requested allowances per agent (`writes outside repo`, `network`, `local_binding`, `unix_sockets`, with whether the runtime applies them) and the warnings above; `doctor --resolved` shows `agents.<name>.sandbox` only for agents that set it. It shows what agent-lyceum generates, not the merged policy the runtime computes (a user-level Claude `settings.json` may add to it; unverified). Each wake-up with allowances writes a `sandbox` event to the run log, requested and applied values side by side.
+
 ## Fallback models
 
 When a model keeps failing for a temporary reason, a run can switch to a backup instead of stopping; see [When a wake-up fails](how-it-works.md#when-a-wake-up-fails). Backups are an ordered list, `fallback`, of entries with these fields:
@@ -97,6 +138,7 @@ Config fails to load (`doctor` and `run` report an error) when:
 - an entry's `effort` is not valid for its runtime;
 - an entry is the same runtime and model as the agent's own, for the agent's own list. A shared `dispatcher.fallback` that contains an agent's own model is not an error: that entry is skipped for that agent;
 - the backup would protect less than the primary: for memory, `AGENT.md`, other agents' context, the handoff notes or the repo's `CLAUDE.md`/`AGENTS.md`, the backup's enforcement is `prompt-only` where the primary's is stronger. For example, without an OS sandbox `claude-code` falls back to tool rules, but a `codex` backup would be prompt-only, so that switch is refused. See [Write scope](write-scope.md).
+- the backup would be allowed more than the primary through `sandbox`: only what the runtime and platform actually apply counts, compared as `network` (none < domains < all), `local_binding` (off < on) and `unix_sockets` (off < on). For example a `claude-code` primary with `network: [registry.npmjs.org]` and a `codex` backup is refused, because Codex would reach all hosts; a Codex primary with `local_binding: true` (not applied) and a Claude Code backup on macOS is refused too. The chain is re-checked before every invocation. See [Sandbox allowances](#sandbox-allowances).
 
 `doctor --resolved` shows the effective chain and where it came from once any agent has one.
 
