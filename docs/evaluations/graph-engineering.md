@@ -16,7 +16,7 @@
 - 這三個缺口現在都不建議補。原因是成本和風險，不是做不到：
   - 由 dispatcher 用目前的權限直接跑專案指令，會讓 agent 寫的程式碼在 sandbox 外執行；另建隔離的指令執行器（runner）成本高。
   - adapter 目前沒有解析費用欄位。
-  - 逐角色的寫入限制和進行中的 spec 25 是同一塊。
+  - 逐角色的寫入限制和 spec 25（per-agent sandbox allowances）是同一塊。spec 25 在另一個 run 的分支上已完成，尚未併入 `main`。
 - 最值得做的兩件事都只改文件，而且要另外派工：
   1. 在 `## Saving tokens` 加入「什麼時候不需要整個團隊」的判斷。這是依本專案改寫文章 B 的版本，語意和原文不同，見 §3.1。
   2. 寫明 `max_rounds` 是**喚醒嘗試次數**上限，可以用來限制工作量，但**不是**金額預算。
@@ -41,7 +41,7 @@
 | （區分）fallback chain | 依錯誤類型決定，和難度無關。有 chain 時：rate limit／quota 換下一個；timeout／network／crash 先重試同一個，用完再換；auth 錯誤直接停。沒有 chain（legacy）時，所有錯誤都重試 `retry` 次，包括 auth。 | 另一套機制 | `src/fallback.ts:99-120`；`docs/specs/20-llm-fallback.md` |
 | E 硬約束寫在程式 | 由程式強制的有：寫入範圍（deny 規則；有 OS sandbox 時由 OS 強制）、只有 lead 能送 `done`、`ask` 需要 `can_ask_user`、tier 驗證、records 超出預算時擋下 `done`、worktree 衝突時拒絕整合。強制的強度依平台和 runtime 而定，分為 os／tool-rules／prompt-only／post-hoc。 | 已有 [code]，強度依平台 | `src/policy.ts:119-168,186-203`；`src/mailbox.ts:358-377,397-411`；`src/worktree.ts:633-655`；`docs/write-scope.md:9-14` |
 | E 事後還原 | guard 只在事後還原這幾類檔案：各 agent 的 AGENT.md、COMMON 等共享 context、repo 的 CLAUDE.md／AGENTS.md、handoff 索引（records 另有處理）。其他被 policy 擋寫的路徑（例如他人的 memory 或信箱）不在還原範圍。 | 部分 [code] | `src/guard.ts:78-85` |
-| E 只靠 prompt 的規則 | 包括：不在前景啟動 server、審查最多 2 輪、reviewer／debugger 不修改、送 `done` 前要跑 DoD 指令。 | prompt-only | `src/prompt.ts:70-72`；lead AGENT.md〈Standard flow〉〈Definition of Done〉 |
+| E 只靠 prompt 的規則 | 包括：不在前景啟動 server、審查最多 2 輪、reviewer／debugger 不修改、送 `done` 前要跑 DoD 指令。 | prompt-only | 不啟動 server：`src/prompt.ts:70-72`；其餘三項：lead AGENT.md〈Standard flow〉〈Definition of Done〉 |
 | E 信心 < 0.7 就升級給人 | 沒有信心值。人工升級靠 `ask`，需要 `can_ask_user`。 | 部分 | `src/mailbox.ts:358-360`；`src/run-outcome.ts:42` |
 | F state 白名單 | 一次喚醒只給一封信（lead 可一次收多封 reply）。COMMON 和 records 給所有 agent，不分角色。 | 部分 [code] | `docs/how-it-works.md:5`；`src/prompt.ts:314-330` |
 | F 跨 run：讀取端 | records 會注入 prompt，只放有效的條目，每類上限 6 KB，超過就擋 `done`。 | 已有 [code] | `src/records.ts:8-12`；`src/mailbox.ts:371-377` |
@@ -60,7 +60,7 @@
 | I 重試上限、單次時間上限 | `retry` 預設 2；`wake_timeout_sec` 預設 600 秒，逾時就終止整個 process group。 | 已有 [code] | `src/schema.ts:138-142`；`src/process-runner.ts:238` |
 | I 最大輪數 | `max_rounds` 計算的是喚醒嘗試次數，重試也算（`src/run-session.ts:717`）。每次嘗試前和外層迴圈都會檢查（`:679-686`、`:1266-1268`）。預設 0，代表不限。達到上限時以 `partial` 結束，調高上限後可以 `resume`。 | 已有（預設關閉） | `src/schema.ts:139`；`src/run-outcome.ts:47-48`；`src/cli.ts:404-405` |
 | I 金額預算（超額就停並告警） | 沒有。adapter 只解析 output token 和 cache 讀寫；input token 和費用都沒解析。runtime 有沒有輸出這些欄位：未確認。 | 缺口 | `src/adapters/claude.ts:149-151`；`src/adapters/codex.ts:33-38` |
-| I 至少 5 次可靠的手動 run 才升級 | 沒有這類規定或統計。agent-lyceum 本身沒有「升級到排程」這個階段。 | 不適用 | 同下一列 |
+| I 至少 5 次可靠的手動 run 才升級 | 沒有這類規定或統計。agent-lyceum 本身沒有「升級到排程」這個階段。 | 不適用 | 見下一列「I 排程／webhook／雲端 routine」 |
 | I 排程／webhook／雲端 routine | 沒有，只能手動 `run`／`resume`。 | 缺口（建議不做，見 §4） | `grep -rn "createServer\|node:http" src` 無結果 |
 | J 理解債、cognitive surrender | 文件沒有直接討論。現有設計把「讀 diff」留給人：不自動 merge，並寫明 lead 的完成是自己回報。 | 部分 | `docs/how-it-works.md:9,21,31`；`README.md:15` |
 | J 圖只用在小而可機器驗證的任務、和同事一起設計（pair-design） | 沒有任務大小或可驗證性的限制。跨 runtime 配對審查和 pair-design 類似，但對象是另一個模型，不是同事。 | 部分 [prompt] | 本專案 COMMON〈Roles〉 |
@@ -97,8 +97,8 @@
 ### 3.3（延後評估，不提設計）reviewer／debugger 變更的整合政策
 - **現況**：「reviewer 只審」「debugger 不修」只寫在 prompt；整合時不看角色（`src/run-session.ts:871-890`）。
 - **要分清兩件事**：「這個角色的變更不整合」和「這個角色的 repo 是唯讀」是兩種不同的政策。前者仍然允許 reviewer 在自己的 checkout 編輯和執行指令，所以不能保證後者。如果拿既有的 blocked-integration 路徑來實作前者，還會讓 `completed` 降為 `blocked`（`src/run-outcome.ts:21-23`）。另外，合法的診斷產出（例如 debugger 寫的報告文件）怎麼處理，也必須先定義清楚。
-- **觀察**：現存資料中沒有 reviewer 帶檔案的 integrate 事件；但進行中的 spec 25 run 裡，`runtime-debugger` 整合過 `docs/sandbox-blocks.md`（附錄 A）。那是該任務要求的診斷文件，不算違規。
-- **建議**：現在不做，也不提新欄位。spec 25（per-agent sandbox allowances）在同一塊 schema 與政策區域，等它落地後再看。可能的重新評估條件：出現**不該被整合**的 reviewer 或 debugger 變更。
+- **觀察**：現存資料中沒有 reviewer 帶檔案的 integrate 事件；但 spec 25 的 run（`20261027T031319310Z`）裡，`runtime-debugger` 整合過 `docs/sandbox-blocks.md`（附錄 A）。那是該任務要求的診斷文件，不算違規。
+- **建議**：現在不做，也不提新欄位。spec 25（per-agent sandbox allowances）在同一塊 schema 與政策區域，等它併入 `main` 後再看。可能的重新評估條件：出現**不該被整合**的 reviewer 或 debugger 變更。
 
 ## 4. 不建議採納的項目與理由
 
@@ -155,7 +155,7 @@ if(/reviewer|debugger/.test(e.agent||"")&&(e.files||[]).length)console.log(d,e.a
 
 當時的結果：
 - `20261025T072434377Z-…`：rounds 65、wakes 65、lead 27、output 853,648、cache_read 94,694,908。
-- 已結束的 run 都是 rounds = wakes。兩個進行中的 run 差 1，因為當下正有一次喚醒在執行。
+- 已結束的 run 都是 rounds = wakes。只有本次評估的 run 仍在進行，差 1，因為當下正有一次喚醒在執行。
 - 第二段只列出 `20261027T031319310Z-…`（spec 25 run）的 `runtime-debugger`：`A docs/sandbox-blocks.md`、`M docs/sandbox-blocks.md`；沒有任何 reviewer。
 
 這些數字只代表這台機器上現存的 run，不是通則。
