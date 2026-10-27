@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
@@ -184,17 +185,23 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
         if (o.signal?.aborted) return;
         say(`  ${agent.name} falling back to ${to.model ? `${to.runtime}/${to.model}` : to.runtime} (${kind ?? "unknown error"})`);
       },
-      invoke: (c) =>
-        invoke({
-          project,
-          agent: agentForCandidate(agent, c),
-          workDir: callDir,
-          systemPrompt: buildSoloSystemPrompt(project, agent),
-          userPrompt: buildCallUserPrompt(agent, o.task),
-          timeoutSec: project.dispatcher.wake_timeout_sec,
-          signal: o.signal,
-          logDir: logDirFor(c),
-        }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message })),
+      invoke: (c, ctx) =>
+        invokeWithSandboxChecks(
+          invoke,
+          {
+            project,
+            agent: agentForCandidate(agent, c),
+            workDir: callDir,
+            systemPrompt: buildSoloSystemPrompt(project, agent),
+            userPrompt: buildCallUserPrompt(agent, o.task),
+            timeoutSec: project.dispatcher.wake_timeout_sec,
+            signal: o.signal,
+            logDir: logDirFor(c),
+          },
+          agent,
+          { event: (name, fields) => say(JSON.stringify({ event: name, ...fields })) },
+          ctx.attempt,
+        ).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message })),
     });
     const result = must(outcome.result, "the call's result");
     const tried = chain ? outcome.tried : undefined;

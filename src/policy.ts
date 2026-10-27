@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
+import { canonicalPath } from "./paths.js";
 
 export type Level = "os" | "tool-rules" | "post-hoc" | "prompt-only" | "n/a";
 
@@ -129,6 +130,8 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
     ...(isLead ? [recordsDir(project)] : []),
+    // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
+    ...(agent.sandbox?.write ?? []).map(canonicalPath),
   ];
   const allowFiles: string[] = [];
   if (isLead) allowFiles.push(...sharedContextFiles(project));
@@ -203,6 +206,8 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
     if (agent.canEditAgentMd) notes.push("can_edit_agent_md widens Codex writable roots to whole agent directories.");
   }
 
+  if (agent.sandbox) notes.push(...sandboxNotes(agent, os));
+
   return {
     agent: agent.name,
     runtime: agent.runtime ?? "?",
@@ -212,7 +217,98 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
   };
 }
 
+/** Doctor lines for an agent's sandbox allowances (spec 25.7, 25.10): what is requested and what its runtime really applies. */
+function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
+  const s = agent.sandbox;
+  if (!s) return [];
+  const claude = agent.runtime === "claude-code";
+  const notes: string[] = [];
+  if (!os) {
+    notes.push(
+      claude
+        ? "no OS sandbox; sandbox.write changes Edit tool rules only; network/local_binding/unix_sockets have no effect."
+        : "no OS sandbox; enforcement is prompt-only; sandbox allowances provide no OS enforcement.",
+    );
+  }
+  if (s.network.length) {
+    notes.push(`network: ${s.network.join(", ")} (${claude ? "claude-code: per-domain" : "codex: all hosts"})`);
+    if (!claude) notes.push(`warn: sandbox.network is all-or-nothing on Codex: this agent may reach any host, not only ${s.network.join(", ")}.`);
+  }
+  if (s.localBinding) {
+    notes.push(claude ? (process.platform === "darwin" ? "local_binding: on" : "local_binding: requested, no effect on this platform (macOS only)") : "local_binding: requested, not supported by codex");
+    if (!claude) notes.push("warn: sandbox.local_binding has no Codex setting; whether a workspace-write sandbox lets it bind ports is unverified. sandbox.network turns on all network access, not only binding.");
+  }
+  if (s.unixSockets.length) {
+    notes.push(`unix_sockets: ${s.unixSockets.map(canonicalPath).join(", ")} (${claude ? "applied" : "not applied by codex"})`);
+    if (!claude) notes.push("warn: sandbox.unix_sockets has no per-socket Codex control; no setting emitted.");
+  }
+  for (const [key, list] of [["write", s.write], ["unix_sockets", s.unixSockets]] as const) {
+    list.forEach((p, i) => {
+      if (!fs.existsSync(p)) notes.push(`info: sandbox.${key}[${i}] ${p} does not exist yet`);
+    });
+  }
+  return notes;
+}
+
 /** Can `agent` legitimately change this protected file? */
 export function mayEditProtected(project: ResolvedProject, agent: ResolvedAgent, file: string): boolean {
   return writePolicy(project, agent).allowFiles.includes(file);
+}
+
+export type SandboxRelation = "equal" | "inside" | "contains";
+
+export interface SandboxPathConflict {
+  key: "write" | "unix_sockets";
+  index: number;
+  path: string;
+  protectedPath: string;
+  reason: string;
+  relation: SandboxRelation;
+}
+
+const within = (parent: string, p: string) => p === parent || p.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+
+/** Pure (spec 25.4.3): which canonical sandbox paths equal, sit inside or contain a protected path. Callers canonicalize. */
+export function sandboxPathConflicts(entries: { key: "write" | "unix_sockets"; index: number; path: string }[], protectedPaths: { path: string; reason: string }[]): SandboxPathConflict[] {
+  const out: SandboxPathConflict[] = [];
+  for (const e of entries) {
+    for (const pp of protectedPaths) {
+      const relation: SandboxRelation | undefined = e.path === pp.path ? "equal" : within(pp.path, e.path) ? "inside" : within(e.path, pp.path) ? "contains" : undefined;
+      if (relation) out.push({ ...e, protectedPath: pp.path, reason: pp.reason, relation });
+    }
+  }
+  return out;
+}
+
+/** What a runtime really applies of an agent's allowances (spec 25.9): the tuple a fallback must not exceed. */
+export interface SandboxCaps {
+  network: "none" | "domains" | "all";
+  localBinding: boolean;
+  unixSockets: boolean;
+}
+
+export const NETWORK_RANK = { none: 0, domains: 1, all: 2 } as const;
+
+/** Without an OS sandbox nothing is applied, so every runtime is equal there. */
+export function sandboxCaps(agent: ResolvedAgent, runtime: string | undefined = agent.runtime): SandboxCaps {
+  const s = agent.sandbox;
+  const none: SandboxCaps = { network: "none", localBinding: false, unixSockets: false };
+  if (!s || !osSandboxAvailable()) return none;
+  if (runtime === "claude-code") {
+    return {
+      network: s.network.length ? "domains" : "none",
+      localBinding: s.localBinding && process.platform === "darwin",
+      unixSockets: s.unixSockets.length > 0,
+    };
+  }
+  return { ...none, network: s.network.length ? "all" : "none" };
+}
+
+/** Components in which `backup` applies more than `primary`, as `name: primary -> backup`. */
+export function sandboxCapExcess(primary: SandboxCaps, backup: SandboxCaps): string[] {
+  const out: string[] = [];
+  if (NETWORK_RANK[backup.network] > NETWORK_RANK[primary.network]) out.push(`network: ${primary.network} -> ${backup.network}`);
+  if (backup.localBinding && !primary.localBinding) out.push("local_binding: off -> on");
+  if (backup.unixSockets && !primary.unixSockets) out.push("unix_sockets: off -> on");
+  return out;
 }

@@ -4,7 +4,9 @@ import YAML from "yaml";
 import { z } from "zod";
 import {
   absPath,
+  canonicalPath,
   escapesParent,
+  expandHome,
   homePaths,
   projectPaths,
   type ProjectPaths,
@@ -22,6 +24,7 @@ import {
   type Effort,
   type FallbackEntry,
   type FallbackEntryPartialT,
+  type SandboxPartialT,
   inferRuntime,
   RUNTIMES,
   type Runtime,
@@ -31,6 +34,13 @@ import {
 export class ConfigError extends Error {}
 
 export type Source = "global" | "project" | "default" | "model";
+
+export interface SandboxAllowances {
+  write: string[];
+  network: string[];
+  localBinding: boolean;
+  unixSockets: string[];
+}
 
 export interface ResolvedAgent {
   name: string;
@@ -46,6 +56,8 @@ export interface ResolvedAgent {
   canAskUser: boolean;
   /** Web access for this agent; undefined = not configured, so the runtime keeps its own default. */
   allowWeb?: WebLevel;
+  /** Spec 25 allowances; unset when none is requested (the only switch that keeps output identical). Paths are absolute, `~` expanded, not yet canonical. */
+  sandbox?: SandboxAllowances;
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
   fallback: FallbackEntry[];
   /** True when the chain came from `dispatcher.fallback` rather than the agent's own setting. */
@@ -243,6 +255,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     const canEdit = pick("can_edit_agent_md");
     const canAsk = pick("can_ask_user");
     const allowWeb = pick("allow_web");
+    const sandbox = resolveSandbox(agentName, pick("sandbox"));
     for (const [k, v] of [
       ["resume", resume],
       ["can_message", canMessage],
@@ -264,6 +277,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canEditAgentMd: canEdit ?? isLead,
       canAskUser: canAsk ?? isLead,
       allowWeb,
+      ...(sandbox ? { sandbox } : {}),
       fallback,
       fallbackShared,
       fallbackInvalid,
@@ -360,7 +374,35 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback", "sandbox"] as const;
+
+/** Claude pattern metacharacters and control characters: refused in sandbox paths instead of escaped (spec 25.4.1). */
+const PATH_CHARS = /[*?[\]{}()!\\]/;
+const PATH_META = { test: (p: string) => PATH_CHARS.test(p) || [...p].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) };
+
+function sandboxPath(agent: string, key: "write" | "unix_sockets", i: number, raw: string): string {
+  const at = `agents.${agent}.sandbox.${key}.${i}`;
+  if (PATH_META.test(raw)) throw new ConfigError(`${at}: must not contain pattern characters (* ? [ ] { } ( ) !), backslashes or control characters (got ${JSON.stringify(raw)})`);
+  if (/^\$|\$\{?[A-Za-z_]/.test(raw)) throw new ConfigError(`${at}: environment variables are not expanded; write the absolute path (got "${raw}")`);
+  const expanded = expandHome(raw);
+  if (!path.isAbsolute(expanded)) throw new ConfigError(`${at}: must be an absolute path or start with ~/ (got "${raw}")`);
+  const resolved = path.resolve(expanded);
+  const canon = canonicalPath(resolved);
+  for (const p of [resolved, canon]) if (PATH_META.test(p)) throw new ConfigError(`${at}: resolved path contains pattern characters (${JSON.stringify(p)})`);
+  return resolved;
+}
+
+/** Spec 25.4.2: validated, deduplicated allowances; undefined when nothing is requested. */
+export function resolveSandbox(agent: string, s: SandboxPartialT | undefined): SandboxAllowances | undefined {
+  if (!s) return undefined;
+  const uniq = (xs: string[]) => [...new Set(xs)];
+  const write = uniq((s.write ?? []).map((p, i) => sandboxPath(agent, "write", i, p)));
+  const unixSockets = uniq((s.unix_sockets ?? []).map((p, i) => sandboxPath(agent, "unix_sockets", i, p)));
+  const network = uniq(s.network ?? []);
+  const localBinding = s.local_binding === true;
+  if (!write.length && !unixSockets.length && !network.length && !localBinding) return undefined;
+  return { write, network, localBinding, unixSockets };
+}
 
 /** The resolved project plus, for every setting, the file and key it was taken from (or "default"). */
 export function resolveProjectWithSources(home: string, name: string): { project: ResolvedProject; sources: Record<string, SourceInfo> } {
@@ -433,6 +475,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
     if (a.fallback.length) v[`${p}.fallback`] = a.fallback;
+    if (a.sandbox) v[`${p}.sandbox`] = { write: a.sandbox.write, network: a.sandbox.network, local_binding: a.sandbox.localBinding, unix_sockets: a.sandbox.unixSockets };
     if (a.tiers) v[`${p}.model_tiers`] = a.tiers;
   }
   return v;

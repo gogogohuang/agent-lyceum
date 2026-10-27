@@ -102,6 +102,8 @@ export type Step = "retry-same" | "next-candidate" | "stop";
  * keeps the old loop: every kind is retried `retry` times, then the wake fails.
  */
 export function nextStep(kind: ErrorKind | undefined, attemptsOnCurrent: number, retry: number, hasNext: boolean, legacy: boolean): Step {
+  // A refused configuration cannot get better by trying again or on another model (spec 25.19.1).
+  if (kind === "config") return "stop";
   const retriesLeft = attemptsOnCurrent <= retry;
   if (legacy) return retriesLeft ? "retry-same" : "stop";
   switch (kind) {

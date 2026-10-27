@@ -23,6 +23,20 @@ agent worktree 內的 git:agent 能寫它 worktree 的 `.git` 指標檔與私有
 
 已知缺口：Claude Code 內建的 Edit/Write 工具不在沙箱內（由 `Edit` 規則涵蓋）；Codex 的 MCP 工具與 hooks 在其沙箱之外執行；`--dangerously-bypass-approvals-and-sandbox` / `danger-full-access` 會停用所有防護。啟用 `can_edit_agent_md` 時，Codex lead 的可寫根目錄會擴大到整個 agent 目錄。
 
+## Sandbox 放寬
+
+agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；欄位說明見 [設定](configuration.zh-TW.md#sandbox-放寬)，設計見 [spec 25](specs/25-sandbox-allowances.md)）只在有設定時，才只對該 agent 放寬 OS sandbox。這已在此分支實作，尚未發佈；各鍵在真實喚醒中的端到端效果**未驗證**。
+
+- **`write`** 把目錄加進該 agent 的寫入範圍，就是給 Claude `Edit` 規則、`allowWrite`、`--add-dir`，以及給 Codex `writable_roots` 的同一份清單。受保護路徑永遠不能加，例如：設定資料夾或 repo 內的任何位置、所有 `AGENT.md`、記憶資料夾、inbox 與 outbox、`COMMON.md`、紀錄資料夾、該 run 的資料、其他 agent 的 worktree 與 git 目錄、git common dir、worktrees 根目錄、repo 的 `CLAUDE.md`／`AGENTS.md`、`~/.claude`、`~/.codex`，以及它們的祖先。完整清單見[設定](configuration.zh-TW.md#sandbox-放寬)；被拒絕的 invocation 會記為 `sandbox-refused`，不重試。
+- **`unix_sockets`** 允許所列路徑下的 Unix socket **bind 與 connect**，不只是測試裡的 listen。該資料夾內的服務都連得到，所以不要把 Docker、ssh-agent 之類的 socket 放進去。只有 Claude Code 有作用；Codex 什麼都不會得到，`doctor` 會警告。
+- **`local_binding`**（只有 Claude Code）允許在**任何本機 IP**（不只 loopback）bind 與接受連入連線，以及連出到 localhost 上的服務。它不是「只在 localhost 提供服務」。依 Claude Code 文件，它在 Linux 上無效果（[sandboxing](https://code.claude.com/docs/en/sandboxing)）。它不涵蓋 Unix socket。
+- **`network`**：Claude Code 逐網域；Codex 全有全無（列任何網域就開放所有主機）。
+- **不變：** `allowUnsandboxedCommands` 維持 `false`，Codex 維持 `workspace-write`，沒有任何鍵能讓任何 agent（含 lead）在 sandbox 外執行。非 lead 的 agent 永遠不會在 sandbox 外執行。（lead 的 `done` 被接受且要求時，推分支與開 PR 的是 dispatcher，不是 agent。）
+- **是寫入範圍，不是讀取隔離：** 這些鍵放寬的是 agent 可寫入或可連線的範圍，不限制讀取，也不會讓某個 agent 無法讀其他 agent 的記憶。
+- **沒有 OS sandbox：** Claude 的 `write` 只擴大 `Edit` 工具規則（Bash 可繞過），其他鍵無作用；Codex 只靠提示。路徑在每次 invocation 前檢查，但檢查與 spawn 之間被換掉的路徑無法防禦；邊界是 OS sandbox。
+
+**會啟動子行程的測試。** 在 Claude 的 sandbox 下，`tsx` 子行程開不了 IPC socket 時 `npm test` 會失敗（`listen EPERM .../tsx-<uid>/*.pipe`）；診斷見 [Sandbox 阻擋](sandbox-blocks.md)。`unix_sockets: [<你的 $TMPDIR>/tsx-<uid>]`（請自行解出 `$TMPDIR`，不會自動展開）是預期的修法，但端到端**未驗證**，且有 Claude Code 2.1.89 的回報指出限定路徑的 Unix 放行只涵蓋 connect（[claude-code#41817](https://github.com/anthropics/claude-code/issues/41817)）。已知的替代做法仍是用 `NODE_OPTIONS="--import stub.mjs"` 的 stub，讓 `*.pipe` 路徑的 `net.Server.listen` 變成 no-op。
+
 ## 平行實例的共用記憶
 
 當一位成員以多個實例執行（見[同一成員的平行實例](how-it-works.zh-TW.md#同一成員的平行實例)），只有實例 1（成員本名）會寫該成員的共用記憶（`memory.global`、`memory.project`）。編號 2 以上的實例把那份記憶當唯讀的背景資料，只寫自己的 task memory（`task-memory/<run-id>/<member>--2`）與 outbox；提示會要求它們把值得保留的教訓寫在給 lead 的回信裡。編號 2 以上的實例 `can_edit_agent_md` 一律是 `false`。（規格 23.11、23.12）

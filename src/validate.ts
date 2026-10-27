@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from "./policy.js";
+import { describeConflict, fallbackCapExcess, sandboxConflictsOf } from "./sandbox-invocation.js";
 import { isInside } from "./paths.js";
 import { inferRuntime, RUNTIME_EFFORTS, RUNTIMES } from "./schema.js";
 import { ladderIndex } from "./tiers.js";
@@ -59,6 +60,8 @@ export function validateProject(project: ResolvedProject): ValidationResult {
       err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
     }
     validateFallback(project, a, err);
+    for (const c of sandboxConflictsOf(project, a, false)) err(describeConflict(a.name, c, "load"));
+    for (const f of fallbackCapExcess(a)) err(`agent ${a.name}: fallback ${f.label} would apply more sandbox allowance than the primary (${f.excess.join("; ")}).`);
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {

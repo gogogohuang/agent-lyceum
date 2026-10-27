@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
@@ -728,14 +729,20 @@ export class RunSession {
         const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
         state.active[agent.name] = { round, since: new Date(started).toISOString(), handling: activeHandling };
         this.saveState();
-        const result: WakeResult = await invoke({
-          ...base,
-          agent: runAs,
-          signal: opts.signal,
-          logDir: attemptLogDir(runDir, att.id),
-          userPrompt,
-          sessionId,
-        }).catch((e: Error) => ({
+        const result: WakeResult = await invokeWithSandboxChecks(
+          invoke,
+          {
+            ...base,
+            agent: runAs,
+            signal: opts.signal,
+            logDir: attemptLogDir(runDir, att.id),
+            userPrompt,
+            sessionId,
+          },
+          agent,
+          { event: (name, fields) => log(name, fields) },
+          attempt,
+        ).catch((e: Error) => ({
           ok: false,
           text: "",
           exitCode: null,
@@ -799,6 +806,10 @@ export class RunSession {
         fault("park:before-finish");
         finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
         say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
+        if (result.kind === "config" && result.error?.startsWith("sandbox refused")) {
+          this.note(`${agent.name} attempt ${att.n} was refused before it started (${result.error}); nothing was run, so there are no side effects to undo.`);
+          return result;
+        }
         this.note(
           `${agent.name} attempt ${att.n} failed (${result.error ?? "unknown error"})${parked.length ? `; ${parked.length} output file(s) set aside in ${path.join("mail", "attempts", att.id, "outbox")}` : ""}. ` +
             `Anything it already did outside its mailbox (file edits, commands) was not undone: side effects may have happened.`,

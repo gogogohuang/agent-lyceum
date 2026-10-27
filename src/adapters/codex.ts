@@ -65,6 +65,8 @@ export function buildCodexInvocation(input: WakeInput): Invocation {
     'approval_policy="never"',
     "-c",
     `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`,
+    // Codex has one switch for all network access; spec 25 never uses it under a policy override.
+    ...(!input.policy && agent.sandbox?.network.length ? ["-c", "sandbox_workspace_write.network_access=true"] : []),
     "--json",
     "-o",
     lastFile,

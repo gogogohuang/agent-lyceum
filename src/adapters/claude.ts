@@ -3,6 +3,7 @@ import path from "node:path";
 import { repoDirFor, scratchCwd, writePolicy, type WritePolicy } from "../policy.js";
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { ErrorKind } from "../schema.js";
+import { canonicalPath } from "../paths.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 /** Claude Code path rules: `//abs/path` — a leading "/" plus the absolute path. */
@@ -36,6 +37,13 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
 
   const deny = pol.deny.flatMap(denyRules);
 
+  // Spec 25: network allowances; never with a policy override (a minimal-authority wake).
+  const sb = override ? undefined : agent.sandbox;
+  const network: Record<string, unknown> = {};
+  if (sb?.network.length) network.allowedDomains = sb.network;
+  if (sb?.localBinding) network.allowLocalBinding = true;
+  if (sb?.unixSockets.length) network.allowUnixSockets = sb.unixSockets.map(canonicalPath);
+
   return {
     // The user's own and plugin hooks (e.g. a hook that asks the user a question) would block every tool call of a headless wake-up.
     disableAllHooks: true,
@@ -47,6 +55,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
         allowWrite: [override?.cwd ?? ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
         denyWrite: pol.deny,
       },
+      ...(Object.keys(network).length ? { network } : {}),
     },
   };
 }

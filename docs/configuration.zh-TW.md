@@ -28,7 +28,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）。
+Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）。
 
 `doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在，以及記憶資料夾互不重疊。零設定並行變更中移除的設定（見[升級](upgrading-run-v2.md)）仍可載入，只會產生警告。
 
@@ -66,6 +66,47 @@ dispatcher:
 
 （上面的範例是給 agent 讀的 AGENT.md 內容，所以保留英文。）
 
+## Sandbox 放寬
+
+以 agent 為單位、需明確開啟的 OS sandbox 放寬。預設全關；沒寫 `sandbox` 的 agent 拿到的設定與以前完全相同。設計見 [spec 25](specs/25-sandbox-allowances.md)。spec 25 已在此分支實作，尚未發佈；標「未驗證」的端到端效果尚未實測。
+
+```yaml
+# project.yaml（或 team.yaml）
+agents:
+  fe-member:
+    sandbox:
+      write: [~/.cache/foo, /tmp/bar]        # repo 之外額外可寫的路徑
+      network: [registry.npmjs.org]          # Bash 可連的主機
+      local_binding: true                    # 在本機 bind 連接埠／接受連線
+      unix_sockets: [/private/tmp/tsx-501]   # 此路徑下的 Unix socket（bind 與 connect）
+```
+
+四個鍵都可省略；`[]` 與 `false` 等同不寫。`sandbox` 底下的未知鍵是設定錯誤。`project.yaml` 的 `sandbox` 整個取代 `team.yaml` 的，不逐鍵合併，所以專案可以收窄團隊檔允許的範圍。lead 與其他 agent 同樣處理。
+
+**路徑規則**（`write` 與 `unix_sockets`）：
+
+- 會展開 `~`。**不會**展開 `$TMPDIR` 與其他環境變數：請自行解出，例如 `printf '%s\n' "$TMPDIR/tsx-$(id -u)"`，把結果的絕對路徑貼進去。
+- 展開 `~` 後必須是絕對路徑；相對路徑會被拒絕。
+- 拒絕 pattern 字元 `* ? [ ] { } ( ) !`、反斜線與控制字元。
+- 路徑不得等於、位於或包含受保護路徑。禁止範圍（來自 `src/sandbox-invocation.ts` 的 `protectedPathsFor`）：agent-lyceum 設定資料夾與 repo（含自己的記憶）、所有 agent 的 `AGENT.md`、記憶資料夾、inbox 與 outbox、`COMMON.md` 等共用情境檔、repo 的 `CLAUDE.md`／`AGENTS.md`、紀錄資料夾、`~/.claude`、`$CODEX_HOME`（未設為 `~/.codex`），以及這些路徑的任何祖先（例如 `~`）。invocation 當下的檢查還涵蓋該 run 的資料夾、worktrees 根目錄、其他 agent 的 worktree 與 git 目錄、git common dir，以及該 agent 的寫入保護路徑。錯誤訊息會指出鍵、索引與受保護路徑。每次 invocation 前會在真實路徑（解開 symlink）上再檢查一次。
+- **拒絕。** 被拒絕的 invocation 不會啟動 runtime。它寫一筆 `sandbox-refused` 事件（`agent`、`runtime`、`reason`，有路徑時加 `path`），並回傳 `config` 失敗：不重試、不 backoff、不換備援。在 run 裡，被拒的喚醒仍佔一個 round，run 以 `agent_failed` 結束（被拒的是 lead 則為 `lead_failed`），原因寫在 run 的失敗紀錄（`state.failure.error`），不會喚醒 lead。`agent-lyceum call` 做同樣的檢查，把 `sandbox` 與 `sandbox-refused` 事件以 JSON 行印在 stderr，被拒時以非零 exit 結束（`Call failed: …`，`src/cli.ts:607`）。
+- 尚不存在的路徑允許（`doctor` 印 info）；agent-lyceum 不會替你建立。
+
+`network` 填含點的主機名，如 `registry.npmjs.org`（轉小寫；最多一個開頭的 `*.`；不可有 scheme、port、路徑、IP 或單獨的 `*`；`localhost` 這類單一標籤主機會被拒絕，見 `src/schema.ts` 的 `DOMAIN_RE`）。Claude 是否支援 `*.` 未驗證。
+
+**各 runtime 實際拿到的：**
+
+| 鍵 | Claude Code | Codex |
+|---|---|---|
+| `write` | 加進 `Edit` 規則、sandbox `allowWrite` 與 `--add-dir` | 加進 `sandbox_workspace_write.writable_roots` |
+| `network` | `sandbox.network.allowedDomains`（逐網域） | 只要有任何網域就開 `network_access=true`：**所有主機**，不只列出的；`doctor` 警告 |
+| `local_binding` | `sandbox.network.allowLocalBinding: true` | 不套用；`doctor` 警告 |
+| `unix_sockets` | `sandbox.network.allowUnixSockets` | 不套用；`doctor` 警告 |
+
+帶 policy override 的喚醒（例如記憶整理）不會套用任何放寬。沒有 OS sandbox（Windows、沒有 `bwrap` 的 Linux）時：Claude 的 `write` 只擴大 `Edit` 工具規則，Bash 可繞過，其他鍵無作用；Codex 只靠提示，沒有任何放寬被強制。`doctor` 會逐 agent 說明。各鍵真正放行的範圍見 [寫入範圍](write-scope.zh-TW.md#sandbox-放寬)。
+
+`doctor` 逐 agent 列出要求的放寬（`writes outside repo`、`network`、`local_binding`、`unix_sockets`，以及 runtime 是否套用）和上述警告；`doctor --resolved` 只對有設定的 agent 顯示 `agents.<name>.sandbox`。它顯示的是 agent-lyceum 產生的內容，不是 runtime 算出的合併後 policy（使用者層級的 Claude `settings.json` 可能再疊加；未驗證）。每次帶放寬的喚醒會在 run log 寫一筆 `sandbox` 事件，並列要求值與實際套用值。
+
 ## 備援模型
 
 模型因暫時性原因持續失敗時，run 可以改用備用模型繼續，而不是直接停下來；見[喚醒失敗時](how-it-works.zh-TW.md#喚醒失敗時)。備用模型是一個有順序的清單 `fallback`，每個項目的欄位如下：
@@ -99,6 +140,7 @@ agents:
 - 項目的 `effort` 不適用於它的 runtime；
 - agent 自己的清單裡，項目與該 agent 自己的 runtime 和 model 都相同。共用的 `dispatcher.fallback` 若剛好含有某個 agent 自己的模型則不算錯誤，該項目對這個 agent 會直接略過；
 - 備用模型的防護比主要模型弱：在記憶、`AGENT.md`、其他 agent 的 context、交接筆記或 repo 的 `CLAUDE.md`／`AGENTS.md` 這幾項，備用模型是 `prompt-only` 而主要模型更強。例如沒有 OS 沙箱時，`claude-code` 退到 tool rules，但 `codex` 備援會是 prompt-only，這個切換會被拒絕。見 [Write scope](write-scope.zh-TW.md)。
+- 備援透過 `sandbox` 被允許的比主要的更多：只計 runtime 與平台實際會套用的部分，依 `network`（none < domains < all）、`local_binding`（off < on）、`unix_sockets`（off < on）比較。例如 `claude-code` 主要模型設了 `network: [registry.npmjs.org]` 而備援是 `codex`，會被拒絕，因為 Codex 會連所有主機；Codex 主要模型的 `local_binding: true`（未套用）搭配 macOS 上的 Claude Code 備援也會被拒絕。每次 invocation 前會重查整條備援鏈。見 [Sandbox 放寬](#sandbox-放寬)。
 
 只要有任何 agent 設了備援，`doctor --resolved` 就會顯示生效的備援鏈與它的來源。
 

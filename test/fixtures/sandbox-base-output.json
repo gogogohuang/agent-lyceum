@@ -1,0 +1,107 @@
+{
+ "claude": {
+  "disableAllHooks": true,
+  "permissions": {
+   "allow": [
+    "Bash",
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit(/<ROOT>/repo/**)",
+    "Edit(/<ROOT>/home/agents/fe-member/memory/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/fe-member/**)"
+   ],
+   "deny": [
+    "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
+    "Edit(/<ROOT>/home/agents/lead/memory)",
+    "Edit(/<ROOT>/home/agents/lead/memory/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/lead)",
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/lead/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/lead)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/lead/**)",
+    "Edit(/<ROOT>/home/agents/fe-member/AGENT.md)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/fe-member)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/fe-member/**)",
+    "Edit(/<ROOT>/home/agents/qa-member/AGENT.md)",
+    "Edit(/<ROOT>/home/agents/qa-member/memory)",
+    "Edit(/<ROOT>/home/agents/qa-member/memory/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/qa-member)",
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/qa-member/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/qa-member)",
+    "Edit(/<ROOT>/home/projects/demo/shared/inbox/qa-member/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/common/COMMON.md)",
+    "Edit(/<ROOT>/repo/CLAUDE.md)",
+    "Edit(/<ROOT>/repo/CLAUDE.md/**)",
+    "Edit(/<ROOT>/repo/AGENTS.md)",
+    "Edit(/<ROOT>/repo/AGENTS.md/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/common/records)",
+    "Edit(/<ROOT>/home/projects/demo/shared/common/records/**)",
+    "Edit(/<ROOT>/home/projects/demo/runs)",
+    "Edit(/<ROOT>/home/projects/demo/runs/**)",
+    "Edit(/<ROOT>/home/projects/demo/project.yaml)",
+    "Edit(/<ROOT>/home/team.yaml)"
+   ]
+  },
+  "sandbox": {
+   "enabled": true,
+   "allowUnsandboxedCommands": false,
+   "filesystem": {
+    "allowWrite": [
+     "<ROOT>/repo",
+     "<ROOT>/home/agents/fe-member/memory",
+     "<ROOT>/home/projects/demo/shared/outbox/fe-member"
+    ],
+    "denyWrite": [
+     "<ROOT>/home/agents/lead/AGENT.md",
+     "<ROOT>/home/agents/lead/memory",
+     "<ROOT>/home/projects/demo/shared/outbox/lead",
+     "<ROOT>/home/projects/demo/shared/inbox/lead",
+     "<ROOT>/home/agents/fe-member/AGENT.md",
+     "<ROOT>/home/projects/demo/shared/inbox/fe-member",
+     "<ROOT>/home/agents/qa-member/AGENT.md",
+     "<ROOT>/home/agents/qa-member/memory",
+     "<ROOT>/home/projects/demo/shared/outbox/qa-member",
+     "<ROOT>/home/projects/demo/shared/inbox/qa-member",
+     "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+     "<ROOT>/repo/CLAUDE.md",
+     "<ROOT>/repo/AGENTS.md",
+     "<ROOT>/home/projects/demo/shared/common/records",
+     "<ROOT>/home/projects/demo/runs",
+     "<ROOT>/home/projects/demo/project.yaml",
+     "<ROOT>/home/team.yaml"
+    ]
+   }
+  }
+ },
+ "codexFresh": [
+  "exec",
+  "-C",
+  "<ROOT>/repo",
+  "-s",
+  "workspace-write",
+  "--skip-git-repo-check",
+  "-c",
+  "approval_policy=\"never\"",
+  "-c",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "--json",
+  "-o",
+  "<ROOT>/work/codex-last-message.txt",
+  "-"
+ ],
+ "codexResume": [
+  "exec",
+  "resume",
+  "sid",
+  "-c",
+  "sandbox_mode=\"workspace-write\"",
+  "-c",
+  "approval_policy=\"never\"",
+  "-c",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "--json",
+  "-o",
+  "<ROOT>/work/codex-last-message.txt",
+  "-"
+ ]
+}
