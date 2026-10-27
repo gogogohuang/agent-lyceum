@@ -217,6 +217,28 @@ agents:
 
 Codex：reviewer 放在另一個 runtime（`codex`），搜尋與實作用 Claude。這裡沒有查證過的便宜 Codex model id，所以 Codex 維持 CLI 預設，並照原樣使用現有的 [`fallback`](#備援模型) 備援鏈。
 
+### 什麼時候不需要整個團隊
+
+成本以喚醒次數計，而團隊 run 一開始就是多 agent（單一使用者的一次 65 次喚醒的 run 裡，lead 佔了 27 次）。單人模式已經存在。對任務問四個問題：
+
+1. 是否需要另一個 runtime 上的 maker-checker review？
+2. 工作是否能切成獨立、可平行的部分？
+3. 是否需要不同的專長？
+4. 單一 agent 的 context 是否會不夠用？
+
+四題都是「否」時，用 `run --agent <name>` 把任務交給單一成員（見 [run](commands.zh-TW.md#run) 的 `--agent` 選項）；不在任何專案內時用 [call](commands.zh-TW.md#call)。
+
+這是為本專案改寫的經驗法則，不是照抄「Graph Engineering」文章的規則（「任何一題答否就維持單一迴圈」）：問題不同，規則也不同（這裡是四題都答「否」才用單人）。它對成本與品質的影響沒有量測，所以不保證任何結果，也沒有節省比例。在本專案中第一題通常是「是」，因為跨 runtime review 是刻意的設計。
+
+### max_rounds 能限制什麼
+
+`dispatcher.max_rounds` 限制的是喚醒嘗試次數，重試與備援嘗試都算在內：每次 invoke 嘗試 `state.rounds` 加一（`src/run-session.ts` 的 `const round = ++state.rounds;`），在每次嘗試前與每個批次前檢查。可以用它來限制一次 run 做多少工作。
+
+它不是 token 或金額預算，也不保證花費上限：每次喚醒的成本隨模型、重試、輸出長度與 cache 命中而不同。上面約 300k token 的數字是單一使用者的量測，不是 benchmark。
+
+- 到達上限時 run 以 `partial` 結束（「Stopped at the round limit before the lead sent done.」，`src/run-outcome.ts`），[`resume`](commands.zh-TW.md#resume) 在調高上限前會拒絕執行（`src/cli.ts`）。重開之後，上限從重開時起算；見同一頁的 `resume`。
+- 預設是 `0`，代表不限（`src/schema.ts`；驗證為不小於 0 的整數）。
+
 ### 未做
 
 - `claude --advisor`：本機 claude 2.1.310 的 `claude --help` 沒有這個旗標。
