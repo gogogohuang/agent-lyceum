@@ -94,6 +94,17 @@ export function planAttempts(all: readonly Candidate[], cooldowns: Cooldowns, no
   return warm.length ? warm : [...all];
 }
 
+/**
+ * The candidates `planAttempts` left out because they are cooling down, soonest to recover first. They are tried last, after
+ * waiting for their cooldown to end, so a wake-up whose warm models all fail is not lost to a cooldown that ends moments later.
+ * A tier's cheaper model is not one of them: stepping back down to it after the ceiling failed would be wrong.
+ */
+export function deferredAttempts(all: readonly Candidate[], cooldowns: Cooldowns, now: number): Candidate[] {
+  return all
+    .filter((c) => !c.tiered && cooldowns.active(c.key, now) > 0)
+    .sort((a, b) => cooldowns.active(a.key, now) - cooldowns.active(b.key, now));
+}
+
 export type Step = "retry-same" | "next-candidate" | "stop";
 
 /**
@@ -169,6 +180,8 @@ export interface Tried {
 export interface RunWithFallbackOptions<R extends AttemptResult> {
   /** From `planAttempts`; tried in order. */
   candidates: Candidate[];
+  /** From `deferredAttempts`: tried after `candidates`, each one only once its cooldown has ended. */
+  deferred?: Candidate[];
   /** The agent has no fallback chain (see `nextStep`): no backoff, no cooldowns. */
   legacy: boolean;
   /** Retries per candidate (`dispatcher.retry`). */
@@ -182,6 +195,8 @@ export interface RunWithFallbackOptions<R extends AttemptResult> {
   /** Runs after each call, awaited before the next decision. */
   afterAttempt?(candidate: Candidate, result: R, ctx: AttemptCtx<R>): void | Promise<void>;
   onSwitch?(from: Candidate, to: Candidate, kind: ErrorKind | undefined, result: R): void;
+  /** Runs before the loop sleeps `ms` for `candidate`'s cooldown to end. */
+  onCooldownWait?(candidate: Candidate, ms: number): void;
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
   now?(): number;
   signal?: AbortSignal;
@@ -202,7 +217,8 @@ export interface FallbackOutcome<R> {
  * retry it or move on as `nextStep` says, back off between retries. Success and cancellation end the loop as they are.
  */
 export async function runWithFallback<R extends AttemptResult>(o: RunWithFallbackOptions<R>): Promise<FallbackOutcome<R>> {
-  const first = o.candidates[0];
+  const list = [...o.candidates, ...(o.deferred ?? [])];
+  const first = list[0];
   if (!first) throw new Error("runWithFallback needs at least one candidate");
   const sleep = o.sleep ?? defaultSleep;
   const now = o.now ?? Date.now;
@@ -218,7 +234,7 @@ export async function runWithFallback<R extends AttemptResult>(o: RunWithFallbac
     if (result.ok || result.cancelled) return { result, tried, used };
     tried.push({ runtime: used.runtime, model: used.model, kind: result.kind, error: result.error });
     if (!o.legacy && (result.kind === "rate_limit" || result.kind === "quota")) o.cooldowns.mark(used.key, result.kind, now(), o.cooldownSec);
-    const next = o.candidates[index + 1];
+    const next = list[index + 1];
     const step = nextStep(result.kind, ctx.candidateAttempt + 1, o.retry, !!next, o.legacy);
     if (step === "stop") return { result, tried, used };
     if (step === "retry-same") {
@@ -231,6 +247,12 @@ export async function runWithFallback<R extends AttemptResult>(o: RunWithFallbac
     }
     const to = next as Candidate;
     o.onSwitch?.(used, to, result.kind, result);
+    const wait = o.legacy ? 0 : o.cooldowns.active(to.key, now());
+    if (wait > 0) {
+      o.onCooldownWait?.(to, wait);
+      await sleep(wait, o.signal);
+      if (o.signal?.aborted) return { result, tried, used, stopped: "aborted" };
+    }
     ctx = { attempt: ctx.attempt + 1, candidateAttempt: 0, previous: result, switchedFrom: used };
     index++;
     used = to;
