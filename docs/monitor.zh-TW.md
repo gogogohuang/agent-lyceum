@@ -21,7 +21,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 |---|---|---|
 | `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | 已註冊的專案名稱（`-p`）；用逗號分隔可同時監看多個；留空則依 session 所在目錄推斷 | 空 |
-| `intervalSeconds` | 只有 `status --watch` 起不來（舊版 CLI）時才用：改成每隔這麼久輪詢一次 | `1` |
+| `intervalSeconds` | `status --watch` 啟動失敗或結束後，改用的輪詢間隔 | `1` |
 | `maxColumns` | 面板開啟寬度（終端的一半）與樹狀圖繪製寬度的上限 | `250` |
 | `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
 
@@ -32,5 +32,9 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 **快取用量。** 執行那一行也會顯示這個 run 讀取與寫入的 prompt 快取輸入 token，以及讀取所占比例（`快取 讀 … 寫 … 命中 …%`），`agent-lyceum status` 的顯示相同。只記錄 `claude` agent；這項記錄出現之前的 run 與 codex agent 不顯示。
 
 **如何保持最新。** mod 對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個未完成 task 各一份）；剛完成的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。
+
+**監看程序升級。** 安裝新版 CLI **與** mod 後，必須先重開 Claude Code session 一次：既有的舊程序無法自行更新。監看程序會在 heartbeat 檢查自己現有的程式碼目錄；指紋改變後，連續兩次讀取相同便以 `75` 結束，並向 stderr 寫出標記 `status --watch: agent-lyceum code changed on disk; restart to load it`。這是 debounce，不代表 build 已完成。mod 只在子程序以該標記結束後依序重啟，每個滾動的一分鐘內最多五次。替代程序失敗、其他結束原因或達到重啟上限，都會改為輪詢，直到重開 session。替換期間完成的任務可能漏掉通知。`npx agent-lyceum@latest` 更新若使用另一個快取目錄，也必須重開 session。
+
+**存活判斷範圍。** 修正保留 C／中文啟動時間辨識，並對一般以一刻鐘為單位的 UTC 時差加入保守辨識；目標是不新增把存活程序誤判為死亡的情況。寫入端與讀取端使用不同時區時，任意非一刻鐘的 POSIX `TZ` 時差仍是既有的限制，並非保證支援所有時區。在 macOS 與 Linux 備援路徑上，鎖的寫入端把 `pid_started` 記錄為行程繼承的語系與時區下的 `ps -o lstart=` 文字，與 agent-lyceum 0.29.0 之前相同；Linux 上 `/proc` 可讀時則改記錄 `proc:<ticks>`（`src/project-lock.ts:74–80`）（v0.29.0 寫入 C 語系文字，較舊、使用中文語系的 agent-lyceum 可能因此判定存活者已死亡）。相同語系／時區的舊版讀取端接受該鎖；v0.29.0 讀取端接受 C 與中文文字，但遇到以其他語系（例如日文）寫入的鎖可能誤判。此修正尚未在真實 macOS `ps` 上驗證。詳見[核准契約與相容性限制](decisions/status-liveness-watch-restart.md)。
 
 **平行實例。** 當一位成員以多個實例執行（見[同一成員的平行實例](how-it-works.zh-TW.md#同一成員的平行實例)），每個實例在樹狀圖裡都是獨立的一塊，與所有成員區塊一起依狀態（working、failed、waiting、idle）排序，不會緊鄰它的成員，狀態顯示和一般 agent 相同。編號 2 以上的實例標題為 `frontend #2`；實例 1 沿用成員本名。等待實例的 task 是標有 `held` 的佇列項目，顯示在成員名稱下。把實例收在成員底下分組的樹狀檢視還沒做；文字頁面只對真正的實例顯示 `role #k`，名稱剛好以 `--k` 結尾的設定 agent 不算。這些欄位（`status --json` 的 `role`、`instance`、`held`、每個 run report 的 `instances`；`role`、`instance` 在有實例的成員的 agent 列上，`held` 在它等待中的佇列項目上）只在 run 用過實例之後才出現；其他 run 的輸出與以前相同。文字頁面把編號 2 以上的實例顯示為 `role #k`，並在保留中的信件後標示「（保留中，等待空閒實例）」。（`src/status.ts`、`plugins/status-monitor/hooks/graph.ts`）

@@ -3,13 +3,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-import { acquireProjectLock as acquireOld } from "./fixtures/lock-v0.17.3.js";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, samePidStart, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { acquireProjectLock as acquireOld, lockHolderAlive as oldLockHolderAlive } from "./fixtures/lock-v0.17.3.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, readerPs, readerPsUtc, samePidStart, writerPs, type LivenessIo, sameStartAnyZone, signalAlive, utcPsEnv, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
 const tsx = path.join(here, "..", "node_modules", ".bin", "tsx");
+
+const realPs = (pid: number, zone?: string) => {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LANG: "C", LC_ALL: "C", ...(zone === undefined ? {} : { TZ: zone }) } });
+  return r.status === 0 ? r.stdout.trim() : "";
+};
+const inheritedPs = (pid: number) => {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "";
+};
+const psAvailable = !!realPs(process.pid, "UTC0");
+
+const holderAvailable = spawnSync(tsx, ["--eval", ""], { encoding: "utf8" }).status === 0;
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -44,7 +56,7 @@ function startHolder(root: string, runId: string, holdMs: number, kind = "checko
 }
 
 describe("run locks", () => {
-  it("lets exactly one of two processes start when both need the checkout", async () => {
+  it.skipIf(!holderAvailable)("lets exactly one of two processes start when both need the checkout", async () => {
     const root = tmp();
     const a = startHolder(root, "run-a", 1500);
     const b = startHolder(root, "run-b", 1500);
@@ -55,7 +67,7 @@ describe("run locks", () => {
     expect(listRunLocks(root)).toEqual([]);
   }, 20_000);
 
-  it("lets any number of worktree processes run at the same time", async () => {
+  it.skipIf(!holderAvailable)("lets any number of worktree processes run at the same time", async () => {
     const root = tmp();
     const a = startHolder(root, "run-a", 2000, "worktree");
     const b = startHolder(root, "run-b", 2000, "worktree");
@@ -146,7 +158,7 @@ describe("run locks", () => {
     l.release();
   });
 
-  it("treats a reused pid (different start time) as a dead holder", () => {
+  it.skipIf(process.platform !== "linux" && !psAvailable)("treats a reused pid (different start time) as a dead holder", () => {
     // the start time is in the format this platform writes: `proc:<ticks>` on Linux, `ps` text elsewhere
     const root = tmp();
     writeLock(runLockFile(root, "old"), { run_id: "old", pid_started: process.platform === "linux" ? "proc:1" : "Thu Jan  1 00:00:00 1970" });
@@ -253,7 +265,7 @@ describe("pid start time", () => {
     expect(samePidStart("proc:1", "proc:2")).toBe(false);
   });
 
-  it("calls a holder dead when the same-format start time differs (pid reused)", () => {
+  it("calls a holder dead when the same-format start time differs (pid reused)", (context) => {
     const read = (p: string) => {
       try {
         return fs.readFileSync(p, "utf8");
@@ -266,7 +278,7 @@ describe("pid start time", () => {
       return r.status === 0 ? r.stdout.trim() || undefined : undefined;
     };
     const now = pidStartFrom(process.pid, { platform: process.platform, readFile: read, ps });
-    if (!now) return; // no way to read a start time on this machine
+    if (!now) context.skip(); // explicitly unverified when the real start time is unavailable
     const wrong = now.startsWith("proc:") ? "proc:1" : "Mon Jan  1 00:00:00 2001";
     const info: LockInfo = { token: "t", hostname: "h", pid: process.pid, pid_started: wrong, run_id: "r", acquired_at: "", heartbeat_at: "" };
     expect(lockHolderAlive(info)).toBe(false);
@@ -354,5 +366,206 @@ describe("lock kinds", () => {
     const o2 = acquireOld(root, "O2", { maxConcurrent: 3 });
     expect(listRunLocks(root)).toHaveLength(3);
     for (const l of [w, o1, o2]) l.release();
+  });
+});
+
+describe("conservative cross-zone liveness", () => {
+  const utc = "Wed Oct 28 05:43:17 2026";
+  function io(over: Partial<LivenessIo> = {}): LivenessIo {
+    return { platform: "darwin", signal0: () => true, readFile: () => undefined, ps: () => utc, psUtc: () => utc, ...over };
+  }
+  const info = (pid_started?: string): Pick<LockInfo, "pid" | "pid_started"> => ({ pid: 123, pid_started });
+  const text = (ms: number, zh = false): string => {
+    const d = new Date(ms);
+    const parts = d.toUTCString().split(" ");
+    return zh ? `三 ${d.getUTCMonth() + 1}月/${d.getUTCDate()} ${parts[4]} ${parts[3]}` : `${parts[0]?.slice(0, 3)} ${parts[2]} ${parts[1]} ${parts[4]} ${parts[3]}`;
+  };
+  const instant = Date.parse("2026-10-28T05:43:17Z");
+  it.each([420, 345, -570, 825, 840, -720])("accepts conventional offset %i in C and zh text", offset => {
+    for (const zh of [false, true]) expect(lockHolderAlive(info(text(instant + offset * 60_000, zh)), io())).toBe(true);
+  });
+  it("does not read acquired_at, even a throwing getter", () => {
+    for (const acquired_at of ["2026-10-28T03:43:17Z", "2026-10-30T05:43:17Z", ""]) {
+      expect(lockHolderAlive({ ...info("Wed Oct 28 12:43:17 2026"), acquired_at } as LockInfo, io())).toBe(true);
+    }
+    const lock = Object.defineProperty(info("Wed Oct 28 12:43:17 2026"), "acquired_at", { get() { throw new Error("must not read"); } });
+    expect(lockHolderAlive(lock, io())).toBe(true);
+  });
+  it("detects 37-second and 34-hour reuse but conservatively accepts exact-hour reuse", () => {
+    for (const [delta, alive] of [[37_000, false], [3600_000, true], [34 * 3600_000, false]] as const) {
+      const current = text(instant + delta);
+      expect(lockHolderAlive(info("Wed Oct 28 12:43:17 2026"), io({ ps: () => current, psUtc: () => current }))).toBe(alive);
+    }
+  });
+  it("accepts inclusive ±26 hours, rejects outside and handles ignored TZ", () => {
+    for (const sign of [-1, 1]) {
+      expect(sameStartAnyZone(text(instant + sign * 26 * 3600_000), utc)).toBe(true);
+      expect(sameStartAnyZone(text(instant + sign * (26 * 3600_000 + 900_000)), utc)).toBe(false);
+    }
+    expect(lockHolderAlive(info(text(instant + 14 * 3600_000)), io({ ps: () => text(instant - 12 * 3600_000), psUtc: () => text(instant - 12 * 3600_000) }))).toBe(true);
+  });
+  it.each(["garbage", "Wed Feb 30 05:43:17 2026", "三 13月/28 05:43:17 2026", "Wed Oct 28 25:43:17 2026", "Wed Xxx 28 05:43:17 2026"])("treats invalid or unknown fields as unknown: %s", written => {
+    expect(sameStartAnyZone(written, utc)).toBeUndefined();
+    expect(lockHolderAlive(info(written), io())).toBe(true);
+  });
+  it("keeps local equality as a fast path, including odd POSIX offsets", () => {
+    for (const written of [utc, "Wed Oct 28 05:44:17 2026", "三 10月/28 05:43:17 2026"]) {
+      expect(lockHolderAlive(info(written), io({ ps: () => written, psUtc: () => { throw new Error("unexpected UTC read"); } }))).toBe(true);
+    }
+  });
+  it("keeps missing, empty and non-string identities alive without ps", () => {
+    for (const written of [undefined, "", 42]) {
+      expect(lockHolderAlive(info(written as string), io({ ps: () => { throw new Error("unexpected ps"); } }))).toBe(true);
+    }
+  });
+  it("fails toward alive on missing local or UTC observations", () => {
+    expect(lockHolderAlive(info("different"), io({ ps: () => undefined, psUtc: () => { throw new Error("unexpected UTC read"); } }))).toBe(true);
+    for (const psUtc of [undefined, "", "garbage"]) expect(lockHolderAlive(info("Wed Oct 28 12:43:17 2026"), io({ psUtc: () => psUtc }))).toBe(true);
+  });
+  it("supports pid-only callers and treats only ESRCH as dead", () => {
+    for (const alive of [true, false]) expect(lockHolderAlive({ pid: 123 }, io({ signal0: () => alive, ps: () => { throw new Error("unexpected ps"); } }))).toBe(alive);
+    for (const code of ["EPERM", "EUNKNOWN", undefined, "ESRCH"]) expect(signalAlive(123, () => { throw Object.assign(new Error("signal"), { code }); })).toBe(code !== "ESRCH");
+    expect(signalAlive(123, () => { throw null; })).toBe(true);
+    expect(lockHolderAlive(info(utc), io({ signal0: () => false, ps: () => { throw new Error("unexpected ps"); } }))).toBe(false);
+  });
+  it("preserves Linux ticks and avoids ps for Linux text and non-Linux proc identities", () => {
+    const noPs = () => { throw new Error("unexpected ps"); };
+    for (const [ticks, alive] of [["55", true], ["56", false], [undefined, true]] as const) {
+      const stat = ticks ? `1 (process) ${[...Array(19).fill("0"), ticks].join(" ")}` : undefined;
+      expect(lockHolderAlive(info("proc:55"), io({ platform: "linux", readFile: () => stat, ps: noPs, psUtc: noPs }))).toBe(alive);
+    }
+    expect(lockHolderAlive(info(utc), io({ platform: "linux", ps: noPs, psUtc: noPs }))).toBe(true);
+    expect(lockHolderAlive(info("proc:55"), io({ ps: noPs, psUtc: noPs }))).toBe(true);
+  });
+  it("forces C/UTC0 without mutating the inherited environment", () => {
+    const base = { TZ: "Asia/Taipei", LANG: "zh_TW.UTF-8", OTHER: "kept" };
+    expect(utcPsEnv(base)).toEqual({ TZ: "UTC0", LANG: "C", LC_ALL: "C", OTHER: "kept" });
+    expect(base.TZ).toBe("Asia/Taipei");
+  });
+  it("never adds a dead verdict over legacy text comparisons (seeded offset/reuse table)", () => {
+    let seed = 12345;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
+    const offsets = [...Array.from({ length: 40 }, (_, i) => -720 + i * 40).map(v => Math.round(v / 15) * 15), 197, -73, 1];
+    for (let i = 0; i < 2000; i++) {
+      const written = text(instant + offsets[random() % offsets.length]! * 60_000, !!(random() % 2));
+      const local = text(instant + (random() % (48 * 3600)) * 1000);
+      const reading = text(instant + (random() % (48 * 3600)) * 1000);
+      if (!lockHolderAlive(info(written), io({ ps: () => local, psUtc: () => reading }))) expect(samePidStart(written, local)).toBe(false);
+    }
+  });
+});
+
+
+it.skipIf(!psAvailable)("real other-zone writer stays alive with a differing UTC negative control", () => {
+  const written = realPs(process.pid, "Asia/Kathmandu");
+  expect(written).not.toBe(realPs(process.pid, "UTC0"));
+  expect(lockHolderAlive({ pid: process.pid, pid_started: written })).toBe(true);
+});
+it.skipIf(!psAvailable)("old reader accepts new lock and writer bytes equal pidStartFrom", () => {
+  const lease = acquireProjectLock(tmp(), "compat");
+  try {
+    expect(oldLockHolderAlive(lease.info)).toBe(true);
+    expect(lease.info.pid_started).toBe(pidStartFrom(process.pid, {
+      platform: process.platform,
+      readFile: p => { try { return fs.readFileSync(p, "utf8"); } catch { return undefined; } },
+      ps: pid => inheritedPs(pid),
+    }));
+  } finally { lease.release(); }
+});
+it.skipIf(!psAvailable || !holderAvailable)("does not take over a live child's rewritten cross-zone lock", async () => {
+  const root = tmp();
+  const holder = startHolder(root, "cross-zone", 10_000);
+  try {
+    expect(await holder.first).toBe("ACQUIRED");
+    const file = runLockFile(root, "cross-zone");
+    const lock = JSON.parse(fs.readFileSync(file, "utf8"));
+    lock.pid_started = realPs(lock.pid, "Asia/Bangkok");
+    expect(lock.pid_started).not.toBe("");
+    fs.writeFileSync(file, JSON.stringify(lock));
+    expect(() => acquireProjectLock(root, "cross-zone")).toThrow(/still running/);
+  } finally {
+    holder.child.kill();
+    await holder.exited;
+  }
+}, 20_000);
+
+describe("writer stays readable by old readers (fake ps, always runs)", () => {
+  const instant = 1_793_000_000; // fixed epoch seconds
+  const fakePsScript = `#!/bin/sh
+# Fake macOS \`ps -o lstart= -p PID\`: prints the instant recorded in $FAKE_PS_DIR/PID in local time (honours TZ); zh text for a zh locale unless LC_ALL=C.
+for a; do pid=$a; done
+f="$FAKE_PS_DIR/$pid"; [ -f "$f" ] || exit 1
+e=$(cat "$f")
+fmt() { date -r "$e" "$1" 2>/dev/null || date -d "@$e" "$1"; }
+loc=\${LC_ALL:-\${LC_TIME:-$LANG}}
+case "$loc" in
+  zh*) w=$(fmt +%u); set -- 一 二 三 四 五 六 日; eval wd=\\\${$w}; echo "$wd $(fmt '+%-m月/%e %H:%M:%S %Y')";;
+  *) fmt '+%a %b %e %H:%M:%S %Y';;
+esac
+`;
+  const keys = ["PATH", "FAKE_PS_DIR", "TZ", "LANG", "LC_ALL"] as const;
+  const saved: Partial<Record<(typeof keys)[number], string | undefined>> = {};
+  let psDir = "";
+  const setEnv = (tz: string, lang: string) => {
+    process.env.TZ = tz;
+    process.env.LANG = lang;
+    delete process.env.LC_ALL;
+  };
+  const setInstant = (epoch: number) => fs.writeFileSync(path.join(psDir, String(process.pid)), String(epoch));
+  const darwinIo = (ps: PidStartIo["ps"]): PidStartIo => ({ platform: "darwin", readFile: () => undefined, ps });
+  const readerIo = (): LivenessIo => ({ ...darwinIo(readerPs), signal0: signalAlive, psUtc: readerPsUtc });
+  const write = () => pidStartFrom(process.pid, darwinIo(writerPs))!;
+  const bangkokOrUtc = ["UTC", "Asia/Bangkok"];
+  const langs = ["C", "zh_TW.UTF-8", "zh_CN.UTF-8"];
+  const combos = langs.flatMap((l) => bangkokOrUtc.map((tz) => [l, tz] as const));
+
+  beforeEach(() => {
+    for (const k of keys) saved[k] = process.env[k];
+    psDir = fs.mkdtempSync(path.join(os.tmpdir(), "fake-ps-"));
+    dirs.push(psDir);
+    const bin = path.join(psDir, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "ps"), fakePsScript, { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+    process.env.FAKE_PS_DIR = psDir;
+    setInstant(instant);
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it.each(combos)("lock written under %s / %s is alive for the old and the current reader", (lang, tz) => {
+    setEnv(tz, lang);
+    const written = write();
+    const lock = { pid: process.pid, pid_started: written };
+    expect(oldLockHolderAlive(lock as LockInfo)).toBe(true);
+    expect(lockHolderAlive(lock, readerIo())).toBe(true);
+    for (const [l2, tz2] of combos) {
+      setEnv(tz2, l2);
+      expect(lockHolderAlive(lock, readerIo())).toBe(true);
+    }
+  });
+
+  it("the writer records the locale text as ps prints it, not a pinned C text", () => {
+    setEnv("UTC", "zh_TW.UTF-8");
+    expect(write()).toMatch(/月\//);
+  });
+
+  it.each(combos)("reused pid (different instant, +37 s) is dead for both readers under %s / %s", (lang, tz) => {
+    setEnv(tz, lang);
+    const lock = { pid: process.pid, pid_started: write() };
+    setInstant(instant + 37);
+    expect(lockHolderAlive(lock, readerIo())).toBe(false);
+    if (process.platform !== "linux") expect(oldLockHolderAlive(lock as LockInfo)).toBe(false); // old reader compares /proc ticks on Linux
+  });
+
+  it("a gone pid is dead for both readers", () => {
+    setEnv("Asia/Bangkok", "zh_TW.UTF-8");
+    const lock = { pid: deadPid(), pid_started: write() };
+    expect(lockHolderAlive(lock, readerIo())).toBe(false);
+    expect(oldLockHolderAlive(lock as LockInfo)).toBe(false);
   });
 });

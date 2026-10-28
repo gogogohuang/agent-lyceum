@@ -24,6 +24,7 @@ import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { runMonitor } from "./monitor-lifecycle.js";
+import { codeFingerprint, watchCodeChange, WATCH_RESTART_EXIT, WATCH_RESTART_MESSAGE } from "./code-change.js";
 import { createStatusWatcher } from "./status-watch.js";
 import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
@@ -778,8 +779,21 @@ program
           write: (line) => process.stdout.write(`${line}\n`),
           debounceMs: 100,
         });
+        const codeFile = fileURLToPath(import.meta.url);
+        const changed = watchCodeChange(() => codeFingerprint(path.dirname(codeFile), path.extname(codeFile)));
         runMonitor({
-          draw: watcher.beat,
+          draw: () => {
+            if (changed()) {
+              try {
+                fs.writeSync(2, `${WATCH_RESTART_MESSAGE}\n`);
+              } catch {
+                // A closed stderr must not prevent replacement.
+              }
+              watcher.close();
+              process.exit(WATCH_RESTART_EXIT);
+            }
+            watcher.beat();
+          },
           intervalMs: beat * 1000,
           stdout: process.stdout,
           stdin: process.stdin,
