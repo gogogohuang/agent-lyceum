@@ -1,6 +1,6 @@
 # Status liveness and watcher restart contract
 
-Status: implemented against the approved revision 1 contract (2026-10-28); automated implementation review and QA are pending. Source inspection below does not certify real Claude Code mod/macOS behavior. See the [monitor guide](../monitor.md) and [繁體中文指南](../monitor.zh-TW.md).
+Status: implemented against the approved revision 1 contract and reviewed (2026-10-28). Source inspection below does not certify real Claude Code mod/macOS behavior. See the [monitor guide](../monitor.md) and [繁體中文指南](../monitor.zh-TW.md).
 
 ## Liveness
 
@@ -22,7 +22,7 @@ Since v0.29.0 (`fd09848`) the writer recorded C-locale `ps` text. An older agent
 
 - Older readers in the same locale/TZ accept the lock; v0.29.0 readers accept C and zh text.
 - Accepted trade-off: a v0.29.0 reader against a lock written in another locale (e.g. Japanese) can misjudge it.
-- The user's real-Mac run found the original bug; the fix on real macOS `ps` is not yet verified.
+- The user's real-Mac run found the original bug. The fix was then run on that Mac (timezone +07, Chinese locale, real `ps`): `test/project-lock.test.ts`, `test/code-change.test.ts`, `test/status-watch.test.ts` and the plugin tests pass under `TZ=Asia/Bangkok` and `TZ=UTC` (134 tests).
 
 ## Watch replacement
 
