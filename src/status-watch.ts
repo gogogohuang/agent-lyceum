@@ -1,22 +1,22 @@
 import fs from "node:fs";
 import type { ResolvedProject } from "./config.js";
-import { buildStatusReport, buildTaskListReport, isCompletedRun, type StatusReport } from "./status.js";
+import { buildStatusReport, buildTaskListReport, isFinishedRun, type StatusReport } from "./status.js";
 
-/** What `status --json --watch` prints, one JSON object per line: the project's report plus one per task that is not completed. */
+/** What `status --json --watch` prints, one JSON object per line: the project's report plus one per task that is not finished (completed or partial). */
 export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Record<string, StatusReport>; error?: string };
 
 /**
- * The frame for now. Every task that is not completed (running, interrupted, waiting for answers, or ended partial,
- * blocked, failed or cancelled) gets its own report, so it stays listed until it is resumed to completion or cleared.
- * A task that was running in the previous frame and has completed since is included once more, so the reader sees
+ * The frame for now. Every task that is not finished (running, interrupted, waiting for answers, or ended blocked,
+ * failed or cancelled) gets its own report, so it stays listed until it is resumed or cleared.
+ * A task that was running in the previous frame and has finished (completed or partial) since is included once more, so the reader sees
  * it finish (and can toast) before it is dropped. `tracked` is that previous set; it is replaced by the ids running now.
  */
 export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>, opts?: { allTasks?: boolean }): WatchFrame {
   const all = buildTaskListReport(project).runs;
   const running = all.filter((r) => r.state === "running").map((r) => r.run_id);
-  const open = all.filter((r) => !isCompletedRun(r)).map((r) => r.run_id);
+  const open = all.filter((r) => !isFinishedRun(r)).map((r) => r.run_id);
   const runs: Record<string, StatusReport> = {};
-  // The web page keeps every task. The terminal watch drops one after it has completed, once the finish has been seen.
+  // The web page keeps every task. The terminal watch drops one after it has finished, once the finish has been seen.
   const ids = opts?.allTasks ? all.map((r) => r.run_id) : [...open, ...tracked];
   for (const id of new Set(ids)) runs[id] = buildStatusReport(project, id);
   const report = buildStatusReport(project);

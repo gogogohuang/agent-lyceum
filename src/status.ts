@@ -378,8 +378,8 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   };
 }
 
-/** A run that ended with a verified-or-inferred `completed` outcome: the only kind the monitor stops listing. */
-export const isCompletedRun = (r: Pick<RunReport, "state" | "outcome">): boolean => r.state === "ended" && r.outcome === "completed";
+/** A run that ended with a `completed` or `partial` outcome: the only kinds the monitor stops listing (blocked, failed and cancelled stay). */
+export const isFinishedRun = (r: Pick<RunReport, "state" | "outcome">): boolean => r.state === "ended" && (r.outcome === "completed" || r.outcome === "partial");
 
 const projectInfo = (p: ResolvedProject) => ({ name: p.name, dir: p.dir, lead: p.lead });
 

@@ -9,9 +9,9 @@ export function runLabel(r: Run): string {
   return OUTCOME[r.outcome ?? ''] ?? r.outcome ?? '結束'
 }
 
-/** A task stays on the pane until it completed: running, interrupted, waiting, or ended any other way. */
+/** A task stays on the pane until it finished: running, interrupted, waiting, or ended blocked, failed or cancelled. Ended completed or partial leaves the pane. */
 export function isOpen(r: Run): boolean {
-  return !(r.state === 'ended' && r.outcome === 'completed')
+  return !(r.state === 'ended' && (r.outcome === 'completed' || r.outcome === 'partial'))
 }
 
 /** "快取 讀 288.1k 寫 21.4k 命中 93%"; empty when nothing was recorded (codex, older runs). */
