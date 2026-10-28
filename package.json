@@ -27,7 +27,9 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.map"
+    "!dist/**/*.map",
+    "web/dist",
+    "!web/dist/**/*.map"
   ],
   "engines": {
     "node": ">=20"
@@ -41,7 +43,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:plugin",
     "test": "vitest run",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && pnpm --dir web install --frozen-lockfile && pnpm --dir web typecheck && pnpm --dir web build",
     "release": "bash scripts/release.sh",
     "typecheck:plugin": "tsc -p plugins/status-monitor/tsconfig.ci.json",
     "check:pack": "node scripts/check-pack.mjs",

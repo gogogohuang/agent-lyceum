@@ -11,12 +11,14 @@ export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Reco
  * A task that was running in the previous frame and has completed since is included once more, so the reader sees
  * it finish (and can toast) before it is dropped. `tracked` is that previous set; it is replaced by the ids running now.
  */
-export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>): WatchFrame {
+export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>, opts?: { allTasks?: boolean }): WatchFrame {
   const all = buildTaskListReport(project).runs;
   const running = all.filter((r) => r.state === "running").map((r) => r.run_id);
   const open = all.filter((r) => !isCompletedRun(r)).map((r) => r.run_id);
   const runs: Record<string, StatusReport> = {};
-  for (const id of new Set([...open, ...tracked])) runs[id] = buildStatusReport(project, id);
+  // The web page keeps every task. The terminal watch drops one after it has completed, once the finish has been seen.
+  const ids = opts?.allTasks ? all.map((r) => r.run_id) : [...open, ...tracked];
+  for (const id of new Set(ids)) runs[id] = buildStatusReport(project, id);
   const report = buildStatusReport(project);
   tracked.clear();
   for (const id of running) tracked.add(id);
@@ -30,6 +32,8 @@ export interface WatchDeps {
   dir: (project: ResolvedProject) => string;
   write: (line: string) => void;
   debounceMs: number;
+  /** Include finished tasks. The browser page uses this; `status --json --watch` does not. */
+  allTasks?: boolean;
   watch?: (dir: string, onChange: () => void) => { close: () => void };
 }
 
@@ -55,7 +59,7 @@ export function createStatusWatcher(d: WatchDeps): { beat: () => void; close: ()
     let project: ResolvedProject | undefined;
     try {
       project = d.load();
-      frame = buildWatchFrame(project, tracked);
+      frame = buildWatchFrame(project, tracked, { allTasks: d.allTasks });
     } catch (e) {
       frame = { schema_version: 1, error: (e as Error).message };
     }

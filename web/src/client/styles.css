@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-ink: #1a2330;
+  --color-paper: #f7f8f9;
+  --color-wall: #e4e7ea;
+  --color-signal: #0f6f6a;
+  --color-working: #0f6f6a;
+  --color-failed: #8e3434;
+  --color-line: #c5cad1;
+  --font-sans: Futura, "Century Gothic", "Avenir Next", "Trebuchet MS", sans-serif;
+  --font-serif: "Hoefler Text", "Iowan Old Style", Baskerville, "Palatino Linotype", serif;
+}
+
+@utility enter {
+  --tw-ease: ease-out;
+}
+
+@utility inset-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-wall);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter {
+    animation: none;
+  }
+}

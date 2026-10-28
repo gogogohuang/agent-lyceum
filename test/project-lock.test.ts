@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProjectLock as acquireOld } from "./fixtures/lock-v0.17.3.js";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, samePidStart, type LockInfo, type PidStartIo } from "../src/project-lock.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -244,6 +244,13 @@ describe("pid start time", () => {
     const other = process.platform === "linux" ? "Tue Oct  7 11:00:00 2026" : "proc:1";
     const info: LockInfo = { token: "t", hostname: "h", pid: process.pid, pid_started: other, run_id: "r", acquired_at: "", heartbeat_at: "" };
     expect(lockHolderAlive(info)).toBe(true);
+  });
+
+  it("treats a Chinese ps start time and an English one as the same instant", () => {
+    expect(samePidStart("三 10月/28 12:43:17 2026", "Wed Oct 28 12:43:17 2026")).toBe(true);
+    expect(samePidStart("三 10月/ 8 09:05:01 2026", "Wed Oct  8 09:05:01 2026")).toBe(true);
+    expect(samePidStart("Wed Oct 28 12:43:17 2026", "Wed Oct 28 12:43:18 2026")).toBe(false);
+    expect(samePidStart("proc:1", "proc:2")).toBe(false);
   });
 
   it("calls a holder dead when the same-format start time differs (pid reused)", () => {

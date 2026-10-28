@@ -248,6 +248,12 @@ describe("status --json --watch", { timeout: 30_000 }, () => {
     expect(run(["status", "-p", "demo", "--json", "--watch", "--task-list"]).err).toContain("cannot be combined");
   });
 
+  it("status --web rejects other status modes and --project", () => {
+    env = makeEnv();
+    expect(run(["status", "--web", "--json"]).err).toContain("cannot be combined");
+    expect(run(["status", "--web", "-p", "demo"]).err).toContain("does not take --project");
+  });
+
   it("prints a frame at start and another when a run starts, without polling", async () => {
     env = makeEnv();
     const { spawn } = await import("node:child_process");

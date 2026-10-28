@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
@@ -27,6 +28,7 @@ import { createStatusWatcher } from "./status-watch.js";
 import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
+import { claudeQuota, codexQuota, type QuotaReport } from "./quota.js";
 
 const program = new Command();
 program
@@ -703,9 +705,67 @@ program
   .option("--interval <sec>", "refresh interval for --monitor", "2")
   .option("--json", "print the report as JSON (no colour); works with --task-list and --task-id")
   .option("--watch", "with --json: keep running and print one JSON line (the project report plus one per running task) whenever it changes (Ctrl-C to quit)")
-  .option("--heartbeat <sec>", "with --watch: how often to re-check when no file event came", "5")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; watch?: boolean; heartbeat: string }) => {
+  .option("--heartbeat <sec>", "with --watch or --web: how often to re-check when no file event came", "5")
+  .option("--web", "open a local page for every registered project")
+  .option("--port <n>", "with --web: TCP port", "8787")
+  .option("--host <addr>", "with --web: bind address", "127.0.0.1")
+  .option("--no-open", "with --web: do not open a browser")
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; watch?: boolean; heartbeat: string; web?: boolean; port: string; host: string; open?: boolean }) => {
     try {
+      if (opts.web) {
+        if (opts.json || opts.watch || opts.monitor || opts.taskList || opts.taskId !== undefined) fail("--web cannot be combined with --json, --watch, --monitor, --task-list or --task-id.");
+        if (opts.project) fail("--web shows every registered project; it does not take --project.");
+        const port = Number(opts.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port must be a TCP port.");
+        const beat = Number(opts.heartbeat);
+        if (!(beat > 0)) fail("--heartbeat must be a positive number of seconds.");
+        const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+        const entry = path.join(root, "web", "dist", "start.js");
+        const staticDir = path.join(root, "web", "dist", "public");
+        if (!fs.existsSync(entry) || !fs.existsSync(path.join(staticDir, "index.html"))) {
+          fail(`The web monitor is not built.\nFrom the repo: pnpm --dir web install && pnpm --dir web build\nExpected ${entry}`);
+        }
+        const mod = (await import(pathToFileURL(entry).href)) as {
+          startWebServer: (options: {
+            port: number;
+            host: string;
+            open: boolean;
+            staticDir: string;
+            heartbeatMs: number;
+            factory: {
+              list: () => string[];
+              watch: (name: string, onFrame: (frame: unknown) => void) => { beat: () => void; close: () => void };
+              quota?: () => Promise<QuotaReport[]>;
+            };
+          }) => Promise<{ url: string; close: () => Promise<void> }>;
+        };
+        const page = await mod.startWebServer({
+          port,
+          host: opts.host,
+          open: opts.open !== false,
+          staticDir,
+          heartbeatMs: beat * 1000,
+          factory: {
+            list: () => listProjects(home()).map((item) => item.name),
+            watch: (name, onFrame) =>
+              createStatusWatcher({
+                load: () => resolveProject(home(), name),
+                dir: (project) => project.paths.runs,
+                write: (line) => onFrame(JSON.parse(line) as unknown),
+                debounceMs: 100,
+                allTasks: true,
+              }),
+            quota: () => Promise.all([claudeQuota(), codexQuota()]),
+          },
+        });
+        console.log(page.url);
+        const stop = (code: number) => {
+          void page.close().finally(() => process.exit(code));
+        };
+        process.on("SIGINT", () => stop(130));
+        process.on("SIGTERM", () => stop(143));
+        await new Promise(() => {});
+      }
       if (opts.watch) {
         if (!opts.json) fail("--watch needs --json.");
         if (opts.monitor || opts.taskList || opts.taskId !== undefined) fail("--watch cannot be combined with --monitor, --task-list or --task-id.");
