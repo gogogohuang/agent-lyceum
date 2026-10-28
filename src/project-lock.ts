@@ -80,29 +80,31 @@ export function pidStartFrom(pid: number, io: PidStartIo): string | undefined {
   return io.ps(pid);
 }
 
-const realIo: PidStartIo = {
-  platform: process.platform,
-  readFile: (p) => {
-    try {
-      return fs.readFileSync(p, "utf8");
-    } catch {
-      return undefined;
-    }
-  },
-  ps: (pid) => {
-    // C locale: `ps` start times stay in one language. A lock written from a Chinese terminal would otherwise look like a different process.
-    const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LANG: "C", LC_ALL: "C" } });
-    const out = r.status === 0 ? r.stdout.trim() : "";
-    return out || undefined;
-  },
+const psLstart = (pid: number, env: NodeJS.ProcessEnv): string | undefined => {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env });
+  return (r.status === 0 ? r.stdout.trim() : "") || undefined;
 };
 
-function pidStart(pid: number): string | undefined {
-  return pidStartFrom(pid, realIo);
-}
+/** Reader side: C locale, so `ps` start times stay in one language and `samePidStart` can compare them. */
+export const readerPs = (pid: number): string | undefined => psLstart(pid, { ...process.env, LANG: "C", LC_ALL: "C" });
 
-/** Two start times can only be compared when they were taken the same way. */
-const sameKind = (a: string, b: string) => a.startsWith("proc:") === b.startsWith("proc:");
+/** Writer side: the inherited environment, exactly what versions before 0.29.0 wrote and compare against raw; never pin it, or an older reader in a non-C locale judges the lock dead and takes the run over. */
+export const writerPs = (pid: number): string | undefined => psLstart(pid, process.env);
+
+const fileReader = (p: string): string | undefined => {
+  try {
+    return fs.readFileSync(p, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+const realIo: PidStartIo = { platform: process.platform, readFile: fileReader, ps: readerPs };
+const writerIo: PidStartIo = { ...realIo, ps: writerPs };
+
+function pidStart(pid: number): string | undefined {
+  return pidStartFrom(pid, writerIo);
+}
 
 const MONTHS: Record<string, string> = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
 
@@ -128,21 +130,65 @@ export function samePidStart(a: string, b: string): boolean {
   return !!left && left === right;
 }
 
+export interface LivenessIo extends PidStartIo {
+  signal0(pid: number): boolean;
+  psUtc(pid: number): string | undefined;
+}
+
+export const utcPsEnv = (base: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({ ...base, LANG: "C", LC_ALL: "C", TZ: "UTC0" });
+
+export const readerPsUtc = (pid: number): string | undefined => psLstart(pid, utcPsEnv(process.env));
+
+/** Only ESRCH proves absence; permissions and unknown signal errors are conservative. */
+export function signalAlive(pid: number, kill: (pid: number, signal: 0) => unknown = process.kill): boolean {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException | null)?.code !== "ESRCH";
+  }
+}
+
+const realLivenessIo: LivenessIo = {
+  ...realIo,
+  signal0: signalAlive,
+  psUtc: readerPsUtc,
+};
+
+function lstartFieldsMs(text: string): number | undefined {
+  const c = canonicalLstart(text);
+  const ms = c === undefined ? NaN : Date.parse(`${c}Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 19) === c ? ms : undefined;
+}
+
+/** Conventional quarter-hour offsets only; arbitrary POSIX TZ offsets remain a limitation. */
+export function sameStartAnyZone(written: string, utc: string): boolean | undefined {
+  const a = lstartFieldsMs(written);
+  const b = lstartFieldsMs(utc);
+  if (a === undefined || b === undefined) return undefined;
+  const d = (a - b) / 1000;
+  return Number.isInteger(d) && d % 900 === 0 && Math.abs(d) <= 26 * 3600;
+}
+
 /**
  * Is the process that wrote this lock still the same running process? Judged by pid and its start time,
  * never by hostname (macOS changes it with the network) or by heartbeat age (a busy holder may be late).
  */
-export function lockHolderAlive(info: LockInfo): boolean {
-  try {
-    process.kill(info.pid, 0);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EPERM") return false;
+export function lockHolderAlive(info: Pick<LockInfo, "pid" | "pid_started">, io: LivenessIo = realLivenessIo): boolean {
+  if (!io.signal0(info.pid)) return false;
+  const written = info.pid_started;
+  if (typeof written !== "string" || !written) return true;
+  if (io.platform === "linux") {
+    if (!written.startsWith("proc:")) return true;
+    const ticks = parseProcStat(io.readFile(`/proc/${info.pid}/stat`) ?? "");
+    return !ticks || `proc:${ticks}` === written;
   }
-  if (info.pid_started) {
-    const now = pidStart(info.pid);
-    if (now && sameKind(now, info.pid_started) && !samePidStart(info.pid_started, now)) return false;
-  }
-  return true;
+  if (written.startsWith("proc:")) return true;
+  const local = io.ps(info.pid);
+  if (!local || samePidStart(written, local)) return true;
+  const utc = io.psUtc(info.pid);
+  if (!utc) return true;
+  return sameStartAnyZone(written, utc) !== false;
 }
 
 type Read = { kind: "none" } | { kind: "unreadable" } | { kind: "ok"; info: LockInfo };

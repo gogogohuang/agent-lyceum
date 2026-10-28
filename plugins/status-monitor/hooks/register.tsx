@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Report, Snapshots } from '../types'
 import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, clipCells, textCells } from './graph'
+import { superviseWatch } from './watch-restart'
 import { graphView } from './graph-view'
 
 const PANE = 'agent-lyceum'
@@ -106,13 +107,15 @@ async function follow($: EngineInterface, t: Target): Promise<string> {
 /** Watch every target; a target whose watcher ends is polled every `every` ms instead. */
 function watchAll($: EngineInterface, targets: Target[], every: number) {
   for (const t of targets) {
-    void follow($, t)
-      .catch(e => (e instanceof Error ? e.message : String(e)))
-      .then(why => {
-        $.ui.log(`status-monitor: ${t.key || '(inferred project)'}: ${why}; polling every ${every / 1000}s`, { to: 'debug' })
+    void superviseWatch({
+      follow: () => follow($, t),
+      startPolling: () => {
         void poll($, t)
         $.clock.every(every, () => void poll($, t))
-      })
+      },
+      log: line => $.ui.log(`status-monitor: ${t.key || '(inferred project)'}: ${line}`, { to: 'debug' }),
+      now: () => performance.now(),
+    })
   }
 }
 

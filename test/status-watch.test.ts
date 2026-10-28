@@ -143,3 +143,32 @@ describe("createStatusWatcher", () => {
     expect(m.lines).toHaveLength(1);
   });
 });
+
+it("beat recomputes lock liveness without a file event, including malformed-lock recovery", () => {
+  env = makeEnv();
+  const id = "20260101-000000";
+  writeRun(id, { schema_version: 2 });
+  const lock = path.join(env.project().paths.root, "locks", `${id}.json`);
+  const frames: WatchFrame[] = [];
+  const watcher = createStatusWatcher({
+    load: () => env.project(), dir: p => p.paths.runs,
+    write: line => frames.push(JSON.parse(line)),
+    watch: () => ({ close() {} }),
+  });
+  const state = () => frames.at(-1)?.runs?.[id]?.run?.state;
+  try {
+    write(lock, '{"token":');
+    watcher.beat();
+    expect(state()).toBe("running");
+    write(lock, JSON.stringify({ token: "test", pid: process.pid, run_id: id, acquired_at: "", heartbeat_at: "", hostname: "test" }));
+    watcher.beat();
+    expect(state()).toBe("running");
+    expect(frames.every(f => f.runs?.[id]?.run?.state !== "interrupted")).toBe(true);
+    write(lock, JSON.stringify({ token: "test", pid: 2 ** 22 + 1, run_id: id }));
+    watcher.beat();
+    expect(state()).toBe("interrupted");
+    write(lock, JSON.stringify({ token: "test", pid: process.pid, run_id: id }));
+    watcher.beat();
+    expect(state()).toBe("running");
+  } finally { watcher.close(); }
+});
