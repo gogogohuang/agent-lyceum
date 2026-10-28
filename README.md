@@ -49,7 +49,7 @@ Its own data (config, mailboxes, logs, memory, worktrees) lives in `~/agent-lyce
 | `init` | Create the home and the global agent library. [details](docs/commands.md#init) |
 | `project add` / `project` / `project remove` | Register, list or remove projects. [details](docs/commands.md#project-add) |
 | `doctor` | Check config, git, lock and runtime CLIs without running agents. [details](docs/commands.md#doctor) |
-| `status` | Show agents, mail, the current wake-up and past runs. [details](docs/commands.md#status) |
+| `status` | Show agents, mail, the current wake-up and past runs. `status --web` opens every registered project in a browser. [details](docs/commands.md#status) |
 | `run` | Give the task to the lead and run until done. [details](docs/commands.md#run) |
 | `resume` | Continue an interrupted run, or reopen a finished one with a follow-up. [details](docs/commands.md#resume) |
 | `clear` | Delete a run, or remove a stale lock. [details](docs/commands.md#clear) |

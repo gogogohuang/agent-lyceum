@@ -90,7 +90,8 @@ const realIo: PidStartIo = {
     }
   },
   ps: (pid) => {
-    const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+    // C locale: `ps` start times stay in one language. A lock written from a Chinese terminal would otherwise look like a different process.
+    const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LANG: "C", LC_ALL: "C" } });
     const out = r.status === 0 ? r.stdout.trim() : "";
     return out || undefined;
   },
@@ -102,6 +103,30 @@ function pidStart(pid: number): string | undefined {
 
 /** Two start times can only be compared when they were taken the same way. */
 const sameKind = (a: string, b: string) => a.startsWith("proc:") === b.startsWith("proc:");
+
+const MONTHS: Record<string, string> = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
+
+/** `ps -o lstart` in the C locale, or the same instant from a Chinese macOS locale, as `YYYY-MM-DDTHH:mm:ss`. */
+function canonicalLstart(text: string): string | undefined {
+  const s = text.trim();
+  const en = /^[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(s);
+  if (en) {
+    const month = MONTHS[en[1] ?? ""];
+    if (!month) return undefined;
+    return `${en[6]}-${month}-${(en[2] ?? "").padStart(2, "0")}T${en[3]}:${en[4]}:${en[5]}`;
+  }
+  const zh = /^\S+\s+(\d{1,2})月\/\s*(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(s);
+  if (zh) return `${zh[6]}-${(zh[1] ?? "").padStart(2, "0")}-${(zh[2] ?? "").padStart(2, "0")}T${zh[3]}:${zh[4]}:${zh[5]}`;
+  return undefined;
+}
+
+/** True when both strings name the same process start. Locale-specific `ps` text for one instant matches. */
+export function samePidStart(a: string, b: string): boolean {
+  if (a === b) return true;
+  const left = canonicalLstart(a);
+  const right = canonicalLstart(b);
+  return !!left && left === right;
+}
 
 /**
  * Is the process that wrote this lock still the same running process? Judged by pid and its start time,
@@ -115,7 +140,7 @@ export function lockHolderAlive(info: LockInfo): boolean {
   }
   if (info.pid_started) {
     const now = pidStart(info.pid);
-    if (now && sameKind(now, info.pid_started) && now !== info.pid_started) return false;
+    if (now && sameKind(now, info.pid_started) && !samePidStart(info.pid_started, now)) return false;
   }
   return true;
 }

@@ -19,7 +19,13 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - run: npm ci # prepare 會一併 build
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web build
       - run: npm run check:docs
       - run: npm run lint
       - run: npm run typecheck # includes the mod's pure logic

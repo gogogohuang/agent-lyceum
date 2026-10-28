@@ -47,6 +47,14 @@ describe("buildWatchFrame keeps what is not completed", () => {
     expect(Object.keys(frame.runs ?? {}).sort()).toEqual(["20260101-000000", "20260102-000000", "20260103-000000", "20260104-000000"]);
     expect(frame.runs?.["20260101-000000"].run?.state).toBe("interrupted");
   });
+
+  it("keeps completed runs when every task is requested", () => {
+    env = makeEnv();
+    writeRun("20260101-000000", { end_reason: "done", outcome: "completed" });
+    writeRun("20260102-000000", { pid: 2 ** 22 + 1 });
+    const frame = buildWatchFrame(env.project(), new Set(), { allTasks: true });
+    expect(Object.keys(frame.runs ?? {}).sort()).toEqual(["20260101-000000", "20260102-000000"]);
+  });
 });
 
 describe("createStatusWatcher", () => {

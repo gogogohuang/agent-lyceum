@@ -49,7 +49,7 @@ npx agent-lyceum status
 | `init` | 建立 home 與全域 agent 庫。 [詳細](docs/commands.zh-TW.md#init) |
 | `project add` / `project` / `project remove` | 註冊、列出或移除專案。 [詳細](docs/commands.zh-TW.md#project-add) |
 | `doctor` | 不執行 agent，檢查設定、git、鎖與 runtime CLI。 [詳細](docs/commands.zh-TW.md#doctor) |
-| `status` | 顯示 agent、信件、目前的喚醒與過去的 run。 [詳細](docs/commands.zh-TW.md#status) |
+| `status` | 顯示 agent、信件、目前的喚醒與過去的 run。`status --web` 在瀏覽器看全部已註冊專案。 [詳細](docs/commands.zh-TW.md#status) |
 | `run` | 把任務交給 lead，執行到完成。 [詳細](docs/commands.zh-TW.md#run) |
 | `resume` | 繼續中斷的 run，或用追加需求重開已完成的 run。 [詳細](docs/commands.zh-TW.md#resume) |
 | `clear` | 刪除 run，或移除殘留的鎖。 [詳細](docs/commands.zh-TW.md#clear) |
