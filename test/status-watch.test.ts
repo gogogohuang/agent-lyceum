@@ -35,7 +35,7 @@ describe("buildWatchFrame", () => {
 });
 
 describe("buildWatchFrame keeps what is not completed", () => {
-  it("lists interrupted, waiting and non-completed ended runs, and drops completed ones", () => {
+  it("lists interrupted, waiting and blocked/failed ended runs, and drops completed and partial ones", () => {
     env = makeEnv();
     const dead = 2 ** 22 + 1; // no such process: the dispatcher is gone
     writeRun("20260101-000000", { pid: dead });
@@ -43,9 +43,20 @@ describe("buildWatchFrame keeps what is not completed", () => {
     writeRun("20260103-000000", { end_reason: "done", outcome: "partial" });
     writeRun("20260104-000000", { end_reason: "agent_failed", outcome: "failed" });
     writeRun("20260105-000000", { end_reason: "done", outcome: "completed" });
+    writeRun("20260106-000000", { end_reason: "idle", outcome: "blocked" });
     const frame = buildWatchFrame(env.project(), new Set());
-    expect(Object.keys(frame.runs ?? {}).sort()).toEqual(["20260101-000000", "20260102-000000", "20260103-000000", "20260104-000000"]);
+    expect(Object.keys(frame.runs ?? {}).sort()).toEqual(["20260101-000000", "20260102-000000", "20260104-000000", "20260106-000000"]);
     expect(frame.runs?.["20260101-000000"].run?.state).toBe("interrupted");
+  });
+
+  it("shows a run that ends partial once more after it was running, then drops it", () => {
+    env = makeEnv();
+    writeRun("20260101-000000");
+    const tracked = new Set<string>();
+    buildWatchFrame(env.project(), tracked);
+    writeRun("20260101-000000", { end_reason: "done", outcome: "partial" });
+    expect(Object.keys(buildWatchFrame(env.project(), tracked).runs ?? {})).toEqual(["20260101-000000"]);
+    expect(Object.keys(buildWatchFrame(env.project(), tracked).runs ?? {})).toEqual([]);
   });
 
   it("keeps completed runs when every task is requested", () => {

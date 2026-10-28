@@ -75,11 +75,12 @@ test('newestFirst orders by start time, undated last, ties stable', () => {
   expect(newestFirst(xs, x => x.t).map(x => x.n)).toEqual(['new', 'old', 'none', 'none2'])
 })
 
-test('isOpen: only a completed run leaves the pane', () => {
+test('isOpen: completed and partial runs leave the pane', () => {
   expect(isOpen(run())).toBe(true)
   expect(isOpen(run({ state: 'interrupted' }))).toBe(true)
   expect(isOpen(run({ state: 'waiting' }))).toBe(true)
-  expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'partial', outcome_verified: true }))).toBe(true)
+  expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'partial', outcome_verified: true }))).toBe(false)
+  for (const outcome of ['blocked', 'failed', 'cancelled']) expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome, outcome_verified: true }))).toBe(true)
   expect(isOpen(run({ state: 'ended', end_reason: 'done', outcome: 'completed', outcome_verified: true }))).toBe(false)
 })
 
