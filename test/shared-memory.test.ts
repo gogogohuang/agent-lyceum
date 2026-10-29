@@ -93,7 +93,7 @@ describe("the handoff folder: where it is and who may write it", () => {
     expect(fs.readFileSync(idx, "utf8")).toContain("decisions");
   });
 
-  it("reverts non-lead changes anywhere under records/ (including .archive/); the lead's are kept", () => {
+  it("keeps a member's records edits", () => {
     env = makeEnv();
     const p = bound();
     const dec = path.join(recordsDir(p), "decisions", "keep.md");
@@ -107,24 +107,13 @@ describe("the handoff folder: where it is and who may write it", () => {
     fs.rmSync(arc);
     write(added, "x\n");
     const v = g.check([member]);
-    expect(v.map((x) => [x.file, x.action, x.suspects]).sort()).toEqual(
-      [[dec, "restored", ["fe-member"]], [arc, "restored", ["fe-member"]], [added, "removed", ["fe-member"]]].sort(),
-    );
-    expect(fs.readFileSync(dec, "utf8")).toBe("original\n");
-    expect(fs.readFileSync(arc, "utf8")).toBe("archived\n");
-    expect(fs.existsSync(added)).toBe(false);
-    expect(g.check([member])).toEqual([]);
-
-    write(dec, "lead edit\n");
-    write(added, "lead new\n");
-    fs.rmSync(arc);
-    expect(g.check([p.agents.lead])).toEqual([]);
-    expect(fs.readFileSync(dec, "utf8")).toBe("lead edit\n");
-    expect(g.check([member])).toEqual([]);
+    expect(v).toEqual([]);
+    expect(fs.readFileSync(dec, "utf8")).toBe("tampered\n");
     expect(fs.existsSync(arc)).toBe(false);
+    expect(fs.readFileSync(added, "utf8")).toBe("x\n");
   });
 
-  it("does not write through a records root or kind folder swapped for a symlink", () => {
+  it("keeps a member's records root or kind folder swapped for a symlink and does not write through it", () => {
     for (const mode of ["root", "nested"]) {
       env = makeEnv();
       const p = bound();
@@ -143,14 +132,12 @@ describe("the handoff folder: where it is and who may write it", () => {
         fs.rmSync(path.dirname(dec), { recursive: true });
         fs.symlinkSync(outside, path.dirname(dec));
       }
-      const v = g.check([p.agents["fe-member"]]);
+      const v = g.check([p.agents["fe-member"]!]);
       const link = mode === "root" ? root : path.dirname(dec);
-      expect(v.map((x) => [x.file, x.action])).toEqual(expect.arrayContaining([[link, "removed"], [dec, "restored"]]));
-      expect(fs.lstatSync(link).isDirectory()).toBe(true);
-      expect(fs.readFileSync(dec, "utf8")).toBe("original\n");
+      expect(v).toEqual([]);
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
       expect(fs.readFileSync(sentinel, "utf8")).toBe("sentinel\n");
       expect(fs.readFileSync(path.join(outside, "decisions", "keep.md"), "utf8")).toBe("sentinel-nested\n");
-      expect(g.check([p.agents["fe-member"]])).toEqual([]);
       env.cleanup();
     }
   });

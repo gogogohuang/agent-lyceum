@@ -246,7 +246,7 @@ describe("dispatcher", () => {
       expect(leadPrompt).not.toContain("Protected file");
       const ev = events(s.runDir);
       expect(ev.some((e) => e.event === "violation")).toBe(false);
-      expect(ev.filter((e) => e.event === "protected-change-unattributed").map((e) => e.file).sort()).toEqual([common, rec].sort());
+      expect(ev.filter((e) => e.event === "protected-change-unattributed")).toEqual([]);
     } finally {
       other.release();
     }

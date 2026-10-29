@@ -280,7 +280,10 @@ function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
 
 /** Can `agent` legitimately change this protected file? */
 export function mayEditProtected(project: ResolvedProject, agent: ResolvedAgent, file: string): boolean {
-  return writePolicy(project, agent).allowFiles.includes(file);
+  const pol = writePolicy(project, agent);
+  if (pol.allowFiles.includes(file)) return true;
+  const roots = [projectAgentDir(project, agent.name), projectCommonDir(project)].filter((d) => pol.allowDirs.includes(d));
+  return roots.some((d) => file === d || file.startsWith(d + path.sep));
 }
 
 export type SandboxRelation = "equal" | "inside" | "contains";

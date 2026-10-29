@@ -1,9 +1,12 @@
+import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ProtectedGuard } from "../src/guard.js";
 import { synthesizeSlots } from "../src/instances.js";
 import {
   commonFile,
   enforcementFor,
+  mayEditProtected,
   ownAgentDirAllowed,
   projectAgentDir,
   projectCommonDir,
@@ -11,10 +14,15 @@ import {
   repoInstructionFiles,
   writePolicy,
 } from "../src/policy.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { bindRunProject } from "../src/run-store.js";
+import { makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
+
+function bound() {
+  return bindRunProject(env.project(), path.join(env.root, "run-1"), "run");
+}
 
 describe("project write scope", () => {
   it("a member may write agents/<self>/ and shared/common/, and may not write another agent's persona or the records deny", () => {
@@ -81,5 +89,32 @@ describe("project write scope", () => {
     const pol = writePolicy(bound, member);
     expect(pol.deny).not.toContain(projectMd);
     expect(pol.deny).toContain(p.agents.lead.agentMd);
+  });
+
+  it("keeps a member's edit of COMMON.md, records, and a project-level AGENT.md", () => {
+    env = makeEnv();
+    const p = bound();
+    const projectMd = path.join(projectAgentDir(p, "fe-member"), "AGENT.md");
+    fs.mkdirSync(path.dirname(projectMd), { recursive: true });
+    fs.writeFileSync(projectMd, "persona\n");
+    const member = { ...p.agents["fe-member"]!, agentMd: projectMd };
+    const project = { ...p, agents: { ...p.agents, "fe-member": member } };
+    expect(mayEditProtected(project, member, commonFile(project))).toBe(true);
+    expect(mayEditProtected(project, member, projectMd)).toBe(true);
+    expect(mayEditProtected(project, member, project.agents.lead.agentMd)).toBe(false);
+    const dec = path.join(recordsDir(project), "decisions", "keep.md");
+    write(commonFile(project), "v1\n");
+    write(dec, "original\n");
+    const g = new ProtectedGuard(project);
+    write(commonFile(project), "v2\n");
+    write(dec, "member edit\n");
+    write(projectMd, "rewritten\n");
+    write(project.agents.lead.agentMd, "stolen\n");
+    const v = g.check([member]);
+    expect(v.map((x) => x.file)).toEqual([project.agents.lead.agentMd]);
+    expect(fs.readFileSync(commonFile(project), "utf8")).toBe("v2\n");
+    expect(fs.readFileSync(dec, "utf8")).toBe("member edit\n");
+    expect(fs.readFileSync(projectMd, "utf8")).toBe("rewritten\n");
+    expect(fs.readFileSync(project.agents.lead.agentMd, "utf8")).not.toBe("stolen\n");
   });
 });

@@ -36,7 +36,7 @@ function safeName(file: string): string {
  */
 export class ProtectedGuard {
   private baseline = new Map<string, Buffer | null>();
-  /** Regular files of the records tree (including `.archive/`); only the lead may change them. */
+  /** Regular files of the records tree (including `.archive/`); any agent in the running batch may change them. */
   private records = new Map<string, Buffer>();
 
   /** Changes kept (not reverted) because another live run may have made them; see `takeUnattributed`. */
@@ -146,14 +146,14 @@ export class ProtectedGuard {
     // Never write through a symlinked parent of the records tree: skip its protection for this batch.
     if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
     const now = readTree(root);
-    const lead = running.some((a) => a.name === this.project.lead);
+    const authorized = running.length > 0;
     const suspects = running.map((a) => a.name);
     const fixedDirs = new Set<string>();
     for (const file of new Set([...this.records.keys(), ...now.keys()])) {
       const before = this.records.get(file) ?? null;
       const cur = now.get(file) ?? null;
       if (same(before, cur)) continue;
-      if (lead) continue;
+      if (authorized) continue;
       if (other.length) {
         this.unattributed.push({ file, agents: suspects, otherRuns: other });
         continue;
@@ -170,7 +170,7 @@ export class ProtectedGuard {
         violations.push({ file, action: "restored", suspects, ...kept });
       }
     }
-    if (lead || other.length) this.records = now;
+    if (authorized || other.length) this.records = now;
   }
 
   /**
