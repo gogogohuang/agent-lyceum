@@ -1,7 +1,7 @@
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError, loadGlobal, resolveProjectFrom } from "../src/config.js";
-import { commonFile, projectCommonDir, sharedIndex, writePolicy } from "../src/policy.js";
+import { commonFile, projectAgentDir, projectCommonDir, sharedIndex, writePolicy } from "../src/policy.js";
 import { buildSystemPrompt } from "../src/prompt.js";
 import { bindRunProject } from "../src/run-store.js";
 import { soloProject } from "../src/solo.js";
@@ -55,12 +55,13 @@ describe("soloProject", () => {
     expect(() => soloProject(p, "pm", { globalAgents: ["pm"] })).toThrow(/agent-lyceum call pm/);
   });
 
-  it("a solo agent may write shared/common via allowDirs, and its prompt has no teammates or ask", () => {
+  it("a solo agent may write its project agent dir but not shared/common, and its prompt has no teammates or ask", () => {
     env = makeEnv();
     const p = bindRunProject(soloProject(env.project(), "fe-member"), path.join(env.project().paths.runs, "r1"), "run");
     const pol = writePolicy(p, p.agents["fe-member"]!);
     expect(pol.allowFiles).not.toContain(commonFile(p));
-    expect(pol.allowDirs).toContain(projectCommonDir(p));
+    expect(pol.allowDirs).not.toContain(projectCommonDir(p));
+    expect(pol.allowDirs).toContain(projectAgentDir(p, "fe-member"));
     expect(pol.allowFiles).toEqual([sharedIndex(p)]); // the solo agent is its own lead: it writes its handoff notes
     const sys = buildSystemPrompt(p, p.agents["fe-member"]!);
     expect(sys).toMatch(/working alone/);

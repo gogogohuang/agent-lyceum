@@ -9,7 +9,7 @@
 ## 為什麼用它
 
 - **角色不會跑掉。** 每個 agent 有自己的人設（`AGENT.md`）與長期記憶，reviewer 會一直做 review，不會漸漸變成在寫程式。
-- **agent 改不了規則。** agent 只能寫自己的記憶與寄件匣（outbox），不能改其他 agent 的 context，也不能改自己的人設；能做到的地方由 OS 沙箱強制，而不只靠 prompt。見 [Write scope](docs/write-scope.zh-TW.md)。
+- **agent 改不了規則。** agent 可以寫自己的記憶、寄件匣（outbox），以及自己的專案 agent 目錄（`agents/<name>/`，含它在那裡建立的專案人設）。它不能改其他 agent 的 context、`COMMON.md`、專案紀錄，或全域人設。能做到的地方由 OS 沙箱強制，而不只靠 prompt。見 [Write scope](docs/write-scope.zh-TW.md)。
 - **混用 runtime。** Claude Code 與 Codex agent 可在同一個團隊。
 - **備用模型。** 模型被限流、額度用完或連不上時，run 可以改用備用的模型或 runtime 繼續，而不是直接停下。見[設定](docs/configuration.zh-TW.md#備援模型)。
 - **沒有黑箱。** agent 透過純檔案信箱溝通，每則訊息、決策與記憶都是你能讀、能 grep、能 diff 的檔案；dispatcher 不會替你 merge。

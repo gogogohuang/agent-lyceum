@@ -34,7 +34,7 @@ export function commonFile(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "COMMON.md");
 }
 
-/** Durable decisions and lessons of the project, one file per entry: every member may write them, no longer only the lead. `.archive/` is tidy's output, never shown in prompts. */
+/** Durable decisions and lessons of the project, one file per entry. Only the lead may write them. `.archive/` is tidy's output, never shown in prompts. */
 export function recordsDir(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "records");
 }
@@ -126,28 +126,52 @@ export function projectCommonDir(project: ResolvedProject): string {
 }
 
 function covers(dir: string, target: string): boolean {
-  const root = dir.endsWith(path.sep) ? dir : dir + path.sep;
-  return target === dir || target.startsWith(root);
+  const root = canonicalPath(dir);
+  const file = canonicalPath(target);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  return file === root || file.startsWith(prefix);
 }
 
-/** Another agent's persona, memory, inbox or outbox. Codex cannot exclude one file inside a writable root, so a root that holds any of these stays closed. */
-function holdsForeignProtected(project: ResolvedProject, agent: ResolvedAgent, dir: string): boolean {
+/** Another agent's persona, memory, inbox or outbox. A slot that shares this agent's persona file is not another persona. */
+function foreignProtectedPaths(project: ResolvedProject, agent: ResolvedAgent, other: ResolvedAgent): string[] {
+  return [
+    ...(other.agentMd === agent.agentMd ? [] : [other.agentMd]),
+    inboxDir(project, other.name),
+    outboxDir(project, other.name),
+    ...memoryDirs(other),
+  ];
+}
+
+/**
+ * True when `dir` contains a foreign protected path, or sits inside one.
+ * Codex has no deny list inside a writable root, so either direction closes the root.
+ * Compared on real paths: a symlink grant is the target the sandbox would write if it follows links.
+ * Whether a live Claude or Codex sandbox follows that symlink was not verified; the directory is not granted either way.
+ */
+function overlapsForeign(project: ResolvedProject, agent: ResolvedAgent, dir: string): boolean {
   for (const other of Object.values(project.agents)) {
     if (other.name === agent.name) continue;
-    const paths = [other.agentMd, inboxDir(project, other.name), outboxDir(project, other.name), ...memoryDirs(other)];
-    if (paths.some((p) => covers(dir, p))) return true;
+    if (foreignProtectedPaths(project, agent, other).some((p) => covers(dir, p) || covers(p, dir))) return true;
   }
   return false;
 }
 
-/** True when `agents/<name>/` does not contain another agent's persona, memory, inbox or outbox. */
-export function ownAgentDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
-  return !holdsForeignProtected(project, agent, projectAgentDir(project, agent.name));
+/** True when the real path of `dir` is `parent` or a directory inside it. */
+function staysInside(dir: string, parent: string): boolean {
+  const real = canonicalPath(dir);
+  const root = canonicalPath(parent);
+  return real === root || real.startsWith(root + path.sep);
 }
 
-/** True when `shared/common/` does not contain another agent's persona, memory, inbox or outbox. */
+/** True when `agents/<name>/` stays inside the project agents directory and does not overlap another agent's protected paths. */
+export function ownAgentDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
+  const dir = projectAgentDir(project, agent.name);
+  return staysInside(dir, project.paths.agentsDir) && !overlapsForeign(project, agent, dir);
+}
+
+/** True when `shared/common/` does not overlap another agent's persona, memory, inbox or outbox. */
 export function projectCommonDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
-  return !holdsForeignProtected(project, agent, projectCommonDir(project));
+  return !overlapsForeign(project, agent, projectCommonDir(project));
 }
 
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
@@ -158,16 +182,14 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   const sharedIdx = sharedIndex(project);
   const mayWriteShared = !!shared && agent.name === project.lead;
   const ownDir = projectAgentDir(project, agent.name);
-  const commonDir = projectCommonDir(project);
   const grantOwnDir = ownAgentDirAllowed(project, agent);
-  const grantCommon = projectCommonDirAllowed(project, agent);
   const allowDirs = [
     ...memoryDirs(agent),
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
+    ...(isLead ? [recordsDir(project)] : []),
     ...(grantOwnDir ? [ownDir] : []),
-    ...(grantCommon ? [commonDir] : []),
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),
   ];
@@ -181,7 +203,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   const deny: string[] = [];
   const allowedFileSet = new Set(allowFiles);
-  const grantedRoots = [...(grantOwnDir ? [ownDir] : []), ...(grantCommon ? [commonDir] : [])];
+  const grantedRoots = [...(grantOwnDir ? [ownDir] : [])];
   const addDeny = (p: string) => {
     if (!allowedFileSet.has(p) && !grantedRoots.some((d) => covers(d, p))) deny.push(p);
   };
@@ -194,6 +216,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   for (const f of sharedContextFiles(project)) addDeny(f);
   for (const f of repoInstructionFiles(project)) addDeny(f);
   if (shared && !mayWriteShared) deny.push(shared);
+  if (!isLead) deny.push(recordsDir(project));
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
   // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
   for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
@@ -204,7 +227,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...Object.values(agent.sharedMemory ?? {})],
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...Object.values(agent.sharedMemory ?? {})],
     allowFiles,
     deny: [...new Set(deny)],
   };
@@ -292,7 +315,7 @@ function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
 export function mayEditProtected(project: ResolvedProject, agent: ResolvedAgent, file: string): boolean {
   const pol = writePolicy(project, agent);
   if (pol.allowFiles.includes(file)) return true;
-  const roots = [projectAgentDir(project, agent.name), projectCommonDir(project)].filter((d) => pol.allowDirs.includes(d));
+  const roots = [projectAgentDir(project, agent.name)].filter((d) => pol.allowDirs.includes(d));
   return roots.some((d) => file === d || file.startsWith(d + path.sep));
 }
 

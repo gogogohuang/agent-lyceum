@@ -10,8 +10,7 @@
       "Edit(/<ROOT>/home/agents/fe-member/memory/**)",
       "Edit(/<ROOT>/home/projects/demo/task-memory/run-1/fe-member/**)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member/**)",
-      "Edit(/<ROOT>/home/projects/demo/agents/fe-member/**)",
-      "Edit(/<ROOT>/home/projects/demo/shared/common/**)"
+      "Edit(/<ROOT>/home/projects/demo/agents/fe-member/**)"
     ],
     "deny": [
       "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
@@ -35,12 +34,15 @@
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member/**)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/inbox/qa-member)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/inbox/qa-member/**)",
+      "Edit(/<ROOT>/home/projects/demo/shared/common/COMMON.md)",
       "Edit(/<ROOT>/repo/CLAUDE.md)",
       "Edit(/<ROOT>/repo/CLAUDE.md/**)",
       "Edit(/<ROOT>/repo/AGENTS.md)",
       "Edit(/<ROOT>/repo/AGENTS.md/**)",
       "Edit(/<ROOT>/home/projects/demo/task-memory/run-1/_shared)",
       "Edit(/<ROOT>/home/projects/demo/task-memory/run-1/_shared/**)",
+      "Edit(/<ROOT>/home/projects/demo/shared/common/records)",
+      "Edit(/<ROOT>/home/projects/demo/shared/common/records/**)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/state.json)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/log.jsonl)",
       "Edit(/<ROOT>/home/projects/demo/runs/run-1/log.1.jsonl)",
@@ -75,8 +77,7 @@
         "<ROOT>/home/agents/fe-member/memory",
         "<ROOT>/home/projects/demo/task-memory/run-1/fe-member",
         "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member",
-        "<ROOT>/home/projects/demo/agents/fe-member",
-        "<ROOT>/home/projects/demo/shared/common"
+        "<ROOT>/home/projects/demo/agents/fe-member"
       ],
       "denyWrite": [
         "<ROOT>/home/agents/lead/AGENT.md",
@@ -91,9 +92,11 @@
         "<ROOT>/home/projects/demo/task-memory/run-1/qa-member",
         "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member",
         "<ROOT>/home/projects/demo/runs/run-1/mail/inbox/qa-member",
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
         "<ROOT>/repo/CLAUDE.md",
         "<ROOT>/repo/AGENTS.md",
         "<ROOT>/home/projects/demo/task-memory/run-1/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records",
         "<ROOT>/home/projects/demo/runs/run-1/state.json",
         "<ROOT>/home/projects/demo/runs/run-1/log.jsonl",
         "<ROOT>/home/projects/demo/runs/run-1/log.1.jsonl",

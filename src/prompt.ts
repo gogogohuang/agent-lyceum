@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { cutUtf8, readFileCapped } from "./fs-util.js";
 import path from "node:path";
 import { REQUIRED_SECTIONS } from "./format.js";
@@ -8,7 +7,7 @@ import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
 import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
-import { commonFile, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, projectCommonDir, projectCommonDirAllowed, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { commonFile, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -75,8 +74,14 @@ const NO_DAEMONS_RULE =
 const OPEN_PR_RULE =
   "Add the frontmatter line `open_pr: true` to `done` only when the user's task explicitly asks for a pull request; otherwise leave it out. It only has an effect when the run ends `completed` with changes on its own branch, and agent-lyceum (not you) then pushes the branch and opens the pull request. Keep agent and role names out of the report, because it becomes the pull request description.";
 
+/** A project persona is injected into every wake-up. Cap it, and refuse a FIFO or other non-file, so one write cannot stall the dispatcher. */
+export const PERSONA_LIMIT = 64 * 1024;
+
 export function readPersona(agent: ResolvedAgent): string {
-  return fs.readFileSync(agent.agentMd, "utf8").trim();
+  const read = readFileCapped(agent.agentMd, PERSONA_LIMIT);
+  if (!read) return "";
+  const text = read.text.trim();
+  return read.truncated ? `${text}\n\n[persona truncated at ${PERSONA_LIMIT} bytes]` : text;
 }
 
 /** What the lead (or a solo agent) is told about the handoff notes: they are what a reopened task starts from. */
@@ -89,10 +94,8 @@ function handoffRule(dir: string): string[] {
 }
 
 function extraWritableDirs(project: ResolvedProject, agent: ResolvedAgent): string[] {
-  return [
-    ...(ownAgentDirAllowed(project, agent) ? [projectAgentDir(project, agent.name)] : []),
-    ...(projectCommonDirAllowed(project, agent) ? [projectCommonDir(project)] : []),
-  ];
+  if (project.solo === "call") return [];
+  return ownAgentDirAllowed(project, agent) ? [projectAgentDir(project, agent.name)] : [];
 }
 
 function extraWriteClause(dirs: string[]): string {
@@ -100,20 +103,20 @@ function extraWriteClause(dirs: string[]): string {
 }
 
 function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string[] {
+  const isLead = agent.name === project.lead && !project.solo;
   const ownDir = projectAgentDir(project, agent.name);
-  const ownPersona = agent.agentMd === path.join(ownDir, "AGENT.md") || agent.agentMd.startsWith(ownDir + path.sep);
-  const leadClause = agent.canEditAgentMd
-    ? " The lead may also edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."
-    : "";
+  const mayWriteOwn = project.solo !== "call" && ownAgentDirAllowed(project, agent);
+  const ownPersona = mayWriteOwn && (agent.agentMd === path.join(ownDir, "AGENT.md") || agent.agentMd.startsWith(ownDir + path.sep));
+  const records = `decisions in \`${recordsKindDir(project, "decisions")}/\` and lessons in \`${recordsKindDir(project, "lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`;
   return [
-    ...(projectCommonDirAllowed(project, agent)
-      ? [
-          `- You may edit the shared team context \`${commonFile(project)}\` (keep it short) and the project records: decisions in \`${recordsKindDir(project, "decisions")}/\` and lessons in \`${recordsKindDir(project, "lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`,
-        ]
-      : []),
-    ...(ownAgentDirAllowed(project, agent) ? [`- You may write your project agent directory \`${ownDir}/\`.`] : []),
+    isLead
+      ? `- You keep the shared team context \`${commonFile(project)}\` (you maintain it; keep it short) and two kinds of durable records for every future run of this project, one Markdown file per entry: ${records} Add or update entries before you send \`done\`.`
+      : `- The shared team context is in \`${commonFile(project)}\` (read-only). Project records are ${records} Both are read-only.`,
+    ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
-    `- Never edit another agent's AGENT.md, a global \`AGENT.md\` outside \`${ownDir}/\`, or the repository's own \`CLAUDE.md\`/\`AGENTS.md\`.${leadClause}`,
+    ...(agent.canEditAgentMd
+      ? ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
+      : ["- Never edit another agent's AGENT.md, a global `AGENT.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`."]),
     "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).",
   ];
 }

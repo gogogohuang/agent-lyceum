@@ -11,7 +11,7 @@ afterEach(() => env?.cleanup());
 const bound = () => bindRunProject(env.project(), path.join(env.root, "run-1"), "run");
 
 describe("guard: shared-file changes while another run is live", () => {
-  it("keeps a member's COMMON.md and records, and reports another run's global AGENT.md edit as unattributed", () => {
+  it("keeps another run's COMMON.md / records / AGENT.md edit, reports it unattributed, and adopts it as baseline", () => {
     env = makeEnv();
     const p = bound();
     const common = commonFile(p);
@@ -26,29 +26,24 @@ describe("guard: shared-file changes while another run is live", () => {
     expect(fs.readFileSync(common, "utf8")).toBe("v2 by other lead\n");
     expect(fs.existsSync(rec)).toBe(true);
     expect(fs.readFileSync(agentMd, "utf8")).toBe("other run edit\n");
-    expect(g.takeUnattributed().map((u) => u.file)).toEqual([agentMd]);
+    expect(g.takeUnattributed().map((u) => u.file).sort()).toEqual([agentMd, common, rec].sort());
     expect(g.takeUnattributed()).toEqual([]);
     expect(g.check([p.agents["fe-member"]])).toEqual([]); // not re-flagged
     expect(g.takeUnattributed()).toEqual([]);
   });
 
-  it("keeps a member's COMMON.md and records when no other run is live, and restores another agent's AGENT.md", () => {
+  it("still reverts the same edits when no other run is live", () => {
     env = makeEnv();
     const p = bound();
     const common = commonFile(p);
     const rec = path.join(recordsDir(p), "decisions", "new.md");
-    const leadMd = p.agents.lead.agentMd;
-    const original = fs.readFileSync(leadMd, "utf8");
     write(common, "v1\n");
     const g = new ProtectedGuard(p, () => []);
-    write(common, "kept\n");
+    write(common, "tampered\n");
     write(rec, "x\n");
-    write(leadMd, "stolen\n");
     const v = g.check([p.agents["fe-member"]]);
-    expect(v.map((x) => [x.file, x.action])).toEqual([[leadMd, "restored"]]);
-    expect(fs.readFileSync(common, "utf8")).toBe("kept\n");
-    expect(fs.readFileSync(rec, "utf8")).toBe("x\n");
-    expect(fs.readFileSync(leadMd, "utf8")).toBe(original);
+    expect(v.map((x) => [x.file, x.action]).sort()).toEqual([[common, "restored"], [rec, "removed"]].sort());
+    expect(fs.readFileSync(common, "utf8")).toBe("v1\n");
     expect(g.takeUnattributed()).toEqual([]);
   });
 

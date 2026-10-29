@@ -97,27 +97,30 @@ describe("project records", () => {
     expect(prompt).not.toContain("ARCHIVED-BODY");
   });
 
-  it("every member may write shared/common, which contains the records", () => {
+  it("only the lead may write records; a member may read them", () => {
     env = makeEnv();
     const p = env.project();
     const lead = writePolicy(p, p.agents.lead);
     const member = writePolicy(p, p.agents["fe-member"]);
-    expect(lead.allowDirs).toContain(projectCommonDir(p));
-    expect(member.allowDirs).toContain(projectCommonDir(p));
-    expect(member.deny).not.toContain(recordsDir(p));
-    expect(member.readDirs).not.toContain(recordsDir(p));
+    expect(lead.allowDirs).toContain(recordsDir(p));
+    expect(lead.allowFiles).toContain(commonFile(p));
+    expect(member.allowDirs).not.toContain(projectCommonDir(p));
+    expect(member.allowDirs).not.toContain(recordsDir(p));
+    expect(member.deny).toContain(recordsDir(p));
+    expect(member.deny).toContain(commonFile(p));
+    expect(member.readDirs).toContain(recordsDir(p));
   });
 
-  it("every member's system prompt describes the records; nothing is created on disk", () => {
+  it("only the lead's system prompt tells them to update records before done; nothing is created on disk", () => {
     env = makeEnv();
     const p = env.project();
-    for (const name of ["lead", "fe-member"] as const) {
-      const sys = buildSystemPrompt(p, p.agents[name]!);
-      expect(sys).toContain(recordsKindDir(p, "decisions"));
-      expect(sys).toContain(recordsKindDir(p, "lessons"));
-      expect(sys).toContain(commonFile(p));
-      expect(sys).not.toContain("(read-only)");
-    }
+    const lead = buildSystemPrompt(p, p.agents.lead);
+    const member = buildSystemPrompt(p, p.agents["fe-member"]!);
+    expect(lead).toContain(recordsKindDir(p, "decisions"));
+    expect(lead).toContain("Add or update entries before you send `done`");
+    expect(member).toContain(recordsKindDir(p, "lessons"));
+    expect(member).toContain("(read-only)");
+    expect(member).not.toContain("Add or update entries before you send `done`");
     expect(fs.existsSync(recordsDir(p))).toBe(false);
   });
 

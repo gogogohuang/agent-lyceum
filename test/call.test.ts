@@ -58,7 +58,7 @@ describe("resolveCallAgent", () => {
 });
 
 describe("what a call may write", () => {
-  it("is the working directory, the agent's own global memory and the call's own agent and common dirs, with no outbox and no global AGENT.md", () => {
+  it("is the working directory and the agent's own global memory and call agent dir, with no outbox, no shared/common and no global AGENT.md", () => {
     env = makeEnv();
     const agent = resolveCallAgent(env.home, "fe-member");
     const project = callProject(env.home, agent, env.repo, path.join(callsDir(env.home), "c1"));
@@ -67,14 +67,13 @@ describe("what a call may write", () => {
     expect(pol.allowDirs).toEqual([
       path.join(env.home, "agents/fe-member/memory"),
       path.join(callsDir(env.home), "c1", "agents", "fe-member"),
-      path.join(callsDir(env.home), "c1", "shared", "common"),
     ]);
     expect(pol.allowFiles).toEqual([]);
     expect(pol.deny).toContain(agent.agentMd);
     expect(pol.deny).toContain(path.join(env.home, "team.yaml"));
   });
 
-  it("lets the sandbox write only the working directory, the agent's own memory and the call's own agent and common dirs, never the home or another agent's files", () => {
+  it("lets the sandbox write only the working directory, the agent's own memory and the call's own agent dir, never shared/common, the home or another agent's files", () => {
     env = makeEnv();
     const agent = resolveCallAgent(env.home, "fe-member");
     const project = callProject(env.home, agent, env.repo, path.join(callsDir(env.home), "c1"));
@@ -83,7 +82,6 @@ describe("what a call may write", () => {
       env.repo,
       path.join(env.home, "agents/fe-member/memory"),
       path.join(callsDir(env.home), "c1", "agents", "fe-member"),
-      path.join(callsDir(env.home), "c1", "shared", "common"),
     ]);
   });
 });

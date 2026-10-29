@@ -114,6 +114,16 @@ export class ProtectedGuard {
     const violations: Violation[] = [];
     const other = [...new Set([...this.liveAtBase, ...this.otherLiveRuns()])];
     for (const [file, before] of this.baseline) {
+      if (unsafeToRead(file)) {
+        const kept = this.keep(file, null);
+        fs.rmSync(file, { force: true });
+        if (before !== null) {
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, before);
+        }
+        violations.push({ file, action: before === null ? "removed" : "restored", suspects: running.map((a) => a.name), ...kept });
+        continue;
+      }
       const now = read(file);
       if (same(before, now)) continue;
       const authorized = running.some((a) => mayEditProtected(this.project, a, file));
@@ -146,7 +156,7 @@ export class ProtectedGuard {
     // Never write through a symlinked parent of the records tree: skip its protection for this batch.
     if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
     const now = readTree(root);
-    const authorized = running.length > 0;
+    const authorized = running.some((a) => a.name === this.project.lead);
     const suspects = running.map((a) => a.name);
     const fixedDirs = new Set<string>();
     for (const file of new Set([...this.records.keys(), ...now.keys()])) {
@@ -249,11 +259,47 @@ function readTree(dir: string): Map<string, Buffer> {
   return out;
 }
 
-function read(file: string): Buffer | null {
+const GUARD_READ_MAX = MAX_KEEP_BYTES * 2;
+
+/** A FIFO, device, directory, or a symlink to one. Opening it would block or is not a file the guard can compare. */
+function unsafeToRead(file: string): boolean {
+  let fd: number | undefined;
   try {
-    return fs.readFileSync(file);
+    const listed = fs.lstatSync(file);
+    if (listed.isFIFO() || listed.isSocket() || listed.isCharacterDevice() || listed.isBlockDevice() || listed.isDirectory()) return true;
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+    return !fs.fstatSync(fd).isFile();
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // already closed
+      }
+    }
+  }
+}
+
+function read(file: string): Buffer | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    if (st.size > GUARD_READ_MAX) return null;
+    return fs.readFileSync(fd);
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // already closed
+      }
+    }
   }
 }
 

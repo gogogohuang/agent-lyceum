@@ -7,8 +7,8 @@
 ├── calls/<call-id>/{task.md, log/, result.md}   # 每次 `call`（不屬於任何專案）一個資料夾，另有 .lock-<agent>
 └── projects/<project>/
     ├── project.yaml                  # 團隊、repo 路徑、覆寫設定
-    ├── agents/<agent>/{AGENT.md?, memory/}   # 專案層人設（選用）+ 專案記憶
-    ├── shared/common/{COMMON.md, records/{decisions,lessons}/<id>.md, records/.archive/}   # 每位成員可寫；每個決策／教訓一個檔（frontmatter：status、date、run?、supersedes?、title）；.archive 是 tidy 的輸出，不會放進 prompt
+    ├── agents/<agent>/{AGENT.md?, memory/}   # 該成員可寫這個目錄；這裡的 AGENT.md 一旦存在，就是這個專案的人設，並取代全域那份
+    ├── shared/common/{COMMON.md, records/{decisions,lessons}/<id>.md, records/.archive/}   # 由 lead 寫；其他 agent 唯讀；每個決策／教訓一個檔（frontmatter：status、date、run?、supersedes?、title）；.archive 是 tidy 的輸出，不會放進 prompt
     ├── locks/<run-id>.json           # 該 run 執行期間持有
     ├── task-memory/<run-id>/{<agent>/, _shared/}   # 任務記憶：每次 run 獨立，不與其他任務共用；_shared 是 lead 為追加要求寫的交接筆記
     └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
@@ -28,7 +28,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）。
+Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead；成員仍可寫自己的 `agents/<name>/AGENT.md`，這不會開放改別人的人設或 repo 指令檔）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）。
 
 `doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在，以及記憶資料夾互不重疊。零設定並行變更中移除的設定（見[升級](upgrading-run-v2.md)）仍可載入，只會產生警告。
 
