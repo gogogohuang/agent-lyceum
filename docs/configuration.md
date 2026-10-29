@@ -196,7 +196,7 @@ The lead's prompt has a lead-only `## Keeping wake-ups few` section. In summary,
 - skip the QA layer (the verification role and its reviewer) for a small fix: a few lines, a reproduction test that failed before and passes after, and an approving code review. Send QA for large, cross-module or user-visible changes;
 - use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before `done`.
 
-These are prompt rules. Whether models follow them is not measured. The dispatcher does not hold wake-ups back: it still wakes the lead for each reply that arrives alone. Replies that are waiting together are batched (up to 5, `LEAD_BATCH_LIMIT` in `src/prompt.ts`), so the saving comes from fewer mails, not from the dispatcher delaying wake-ups.
+These are prompt rules. Whether models follow them is not measured. The dispatcher does not hold wake-ups back: it still wakes the lead for each reply that arrives alone. Replies that are waiting together are handed to the lead in one wake-up, limited by the 64 KiB body budget (`MAIL_BATCH_LIMIT`) and at most 20 messages (`LEAD_REPLY_CAP`); one that would show none of its body stays unread. Other agents still take at most 5 same-thread replies (`LEAD_BATCH_LIMIT`), all in `src/prompt.ts`, so the saving comes from fewer mails, not from the dispatcher delaying wake-ups.
 
 ### Choosing models per role
 

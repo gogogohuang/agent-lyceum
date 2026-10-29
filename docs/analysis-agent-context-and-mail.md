@@ -66,7 +66,7 @@
 4. 原檔移到寄件者 outbox 的 `sent/`；被拒者移到 `rejected/`，並寄一封 `failure` 給寄件者說明原因（`src/mailbox.ts:264-277,396-397`）。
 5. 收件者下次被喚醒時，`listUnread` 讀 inbox 中未讀的 `.md`（`src/mailbox.ts:155-180`）。
 
-**未讀處理與批次。** 每次 wake 只處理最舊的一封；若最舊的是 `reply`／`failure`，則連續的 `reply`／`failure` 一起處理，最多 5 封（`LEAD_BATCH_LIMIT`）。Lead 可跨 thread 合併；非 lead 只合併同一 thread（`src/prompt.ts:21-22,235-248`）。其餘排隊的 mail 只以一行標題（寄件者、型別、主旨、檔案路徑）出現在 prompt（`src/prompt.ts:307-310`）。Wake 開始時先建立 claim（`src/message-store.ts:126-137`），成功後 `commitClaim` 才把輸入檔移到 `read/`（`src/message-store.ts:159-160`）；中途被中止則 claim 標為 abandoned，mail 保持未讀、之後重做（`src/message-store.ts:139-143`）。
+**未讀處理與批次。** 每次 wake 只處理最舊的一封；若最舊的是 `reply`／`failure`，則連續的 `reply`／`failure` 一起處理：lead 依 64 KiB 內文預算（`MAIL_BATCH_LIMIT`）最多 20 封（`LEAD_REPLY_CAP`），可跨 thread 合併；非 lead 最多 5 封（`LEAD_BATCH_LIMIT`），只合併同一 thread（`src/prompt.ts:21-22,235-248`）。其餘排隊的 mail 只以一行標題（寄件者、型別、主旨、檔案路徑）出現在 prompt（`src/prompt.ts:307-310`）。Wake 開始時先建立 claim（`src/message-store.ts:126-137`），成功後 `commitClaim` 才把輸入檔移到 `read/`（`src/message-store.ts:159-160`）；中途被中止則 claim 標為 abandoned，mail 保持未讀、之後重做（`src/message-store.ts:139-143`）。
 
 **Mail 內容如何進入收件者 prompt。** 在 user prompt 的「Message to handle now」下，逐封印出 `id/from/type/thread/subject` 與完整內文，沒有截斷（`src/prompt.ts:293-306`）。
 

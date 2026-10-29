@@ -58,7 +58,10 @@ export const CONTEXT_LIMIT = RECORDS_BUDGET;
 /** Largest mail body put in a prompt (the inline task limit), and the total for the mails handled in one wake-up. */
 export const MAIL_BODY_LIMIT = 16 * 1024;
 export const MAIL_BATCH_LIMIT = 64 * 1024;
+/** Same-thread `reply`/`failure` messages a non-lead agent takes in one wake-up. The lead uses `MAIL_BATCH_LIMIT` and `LEAD_REPLY_CAP` instead. */
 export const LEAD_BATCH_LIMIT = 5;
+/** Most waiting `reply`/`failure` messages the lead takes in one wake-up; headers are not counted in `MAIL_BATCH_LIMIT`, so tiny replies need a count cap too. */
+export const LEAD_REPLY_CAP = 20;
 const BATCHABLE = new Set<string | undefined>(["reply", "failure"]);
 
 const readCapped = readFileCapped;
@@ -296,17 +299,33 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   return text;
 }
 
-/** Messages one wake-up handles: the oldest one, or a run of `reply`/`failure` mail (up to LEAD_BATCH_LIMIT) so the agent decides once on all of it; the lead takes any such run, other agents only same-thread ones. */
+/** Bytes of `body` this wake-up would actually show, using the same caps as the prompt. */
+function shownBodyBytes(body: string, remaining: number): number {
+  if (remaining <= 0) return 0;
+  return cutUtf8(Buffer.from(body, "utf8"), Math.min(MAIL_BODY_LIMIT, remaining)).length;
+}
+
+/**
+ * Messages one wake-up handles: the oldest one, or a run of `reply`/`failure` so the agent decides once.
+ * The lead takes every such message that is already waiting and whose body still fits in `MAIL_BATCH_LIMIT`
+ * (a later one that would show none of its body stays unread), at most `LEAD_REPLY_CAP`. Other agents take
+ * at most `LEAD_BATCH_LIMIT` on the same thread.
+ */
 export function pickMessages(project: ResolvedProject, agent: ResolvedAgent, queue: Message[]): Message[] {
   const sorted = [...queue].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
   const first = sorted[0];
   if (!first || !BATCHABLE.has(first.meta.type)) return sorted.slice(0, 1);
   const isLead = agent.name === project.lead;
   const run: Message[] = [];
+  let remaining = MAIL_BATCH_LIMIT;
   for (const m of sorted) {
-    if (!BATCHABLE.has(m.meta.type) || run.length >= LEAD_BATCH_LIMIT) break;
+    if (!BATCHABLE.has(m.meta.type)) break;
+    if (run.length >= (isLead ? LEAD_REPLY_CAP : LEAD_BATCH_LIMIT)) break;
     if (!isLead && m.meta.thread !== first.meta.thread) break;
+    const shown = isLead ? shownBodyBytes(m.body, remaining) : 0;
+    if (isLead && Buffer.byteLength(m.body, "utf8") > 0 && shown === 0) break;
     run.push(m);
+    if (isLead) remaining -= shown;
   }
   return run;
 }
