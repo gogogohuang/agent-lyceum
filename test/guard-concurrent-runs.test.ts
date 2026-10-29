@@ -71,13 +71,13 @@ describe("guard: shared-file changes while another run is live", () => {
   it("counts a run that was live when the batch started even if it is gone at check time", () => {
     env = makeEnv();
     const p = bound();
-    const common = commonFile(p);
-    write(common, "v1\n");
+    const leadMd = p.agents.lead.agentMd;
     let live = ["run-2"];
     const g = new ProtectedGuard(p, () => live);
     live = [];
-    write(common, "v2\n");
+    write(leadMd, "other run edit\n");
     expect(g.check([p.agents["fe-member"]])).toEqual([]);
-    expect(g.takeUnattributed()).toHaveLength(1);
+    expect(fs.readFileSync(leadMd, "utf8")).toBe("other run edit\n");
+    expect(g.takeUnattributed().map((u) => u.file)).toEqual([leadMd]);
   });
 });

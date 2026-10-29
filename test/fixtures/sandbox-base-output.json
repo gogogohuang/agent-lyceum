@@ -9,7 +9,8 @@
     "Grep",
     "Edit(/<ROOT>/repo/**)",
     "Edit(/<ROOT>/home/agents/fe-member/memory/**)",
-    "Edit(/<ROOT>/home/projects/demo/shared/outbox/fe-member/**)"
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/fe-member/**)",
+    "Edit(/<ROOT>/home/projects/demo/agents/fe-member/**)"
    ],
    "deny": [
     "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
@@ -49,7 +50,8 @@
     "allowWrite": [
      "<ROOT>/repo",
      "<ROOT>/home/agents/fe-member/memory",
-     "<ROOT>/home/projects/demo/shared/outbox/fe-member"
+     "<ROOT>/home/projects/demo/shared/outbox/fe-member",
+     "<ROOT>/home/projects/demo/agents/fe-member"
     ],
     "denyWrite": [
      "<ROOT>/home/agents/lead/AGENT.md",
@@ -83,7 +85,7 @@
   "-c",
   "approval_policy=\"never\"",
   "-c",
-  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
   "--json",
   "-o",
   "<ROOT>/work/codex-last-message.txt",
@@ -98,7 +100,7 @@
   "-c",
   "approval_policy=\"never\"",
   "-c",
-  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
   "--json",
   "-o",
   "<ROOT>/work/codex-last-message.txt",

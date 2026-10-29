@@ -9,7 +9,8 @@
       "Edit(/<ROOT>/repo/**)",
       "Edit(/<ROOT>/home/agents/fe-member/memory/**)",
       "Edit(/<ROOT>/home/projects/demo/task-memory/run-1/fe-member/**)",
-      "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member/**)"
+      "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member/**)",
+      "Edit(/<ROOT>/home/projects/demo/agents/fe-member/**)"
     ],
     "deny": [
       "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
@@ -83,7 +84,8 @@
         "<ROOT>/repo",
         "<ROOT>/home/agents/fe-member/memory",
         "<ROOT>/home/projects/demo/task-memory/run-1/fe-member",
-        "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member"
+        "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/agents/fe-member"
       ],
       "denyWrite": [
         "<ROOT>/home/agents/lead/AGENT.md",

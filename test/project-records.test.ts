@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
+import { commonFile, projectCommonDir, recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
 import { CONTEXT_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
 import { activeRecordsBytes, buildRecordsView, listRecords } from "../src/records.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
@@ -97,24 +97,30 @@ describe("project records", () => {
     expect(prompt).not.toContain("ARCHIVED-BODY");
   });
 
-  it("the lead may write the records dir; others may only read it", () => {
+  it("only the lead may write records; a member may read them", () => {
     env = makeEnv();
     const p = env.project();
     const lead = writePolicy(p, p.agents.lead);
     const member = writePolicy(p, p.agents["fe-member"]);
     expect(lead.allowDirs).toContain(recordsDir(p));
-    expect(lead.deny).not.toContain(recordsDir(p));
+    expect(lead.allowFiles).toContain(commonFile(p));
+    expect(member.allowDirs).not.toContain(projectCommonDir(p));
     expect(member.allowDirs).not.toContain(recordsDir(p));
     expect(member.deny).toContain(recordsDir(p));
+    expect(member.deny).toContain(commonFile(p));
     expect(member.readDirs).toContain(recordsDir(p));
   });
 
-  it("only the lead's system prompt describes the records; nothing is created on disk", () => {
+  it("only the lead's system prompt tells them to update records before done; nothing is created on disk", () => {
     env = makeEnv();
     const p = env.project();
-    expect(buildSystemPrompt(p, p.agents.lead)).toContain(recordsKindDir(p, "decisions"));
-    expect(buildSystemPrompt(p, p.agents.lead)).toContain(recordsKindDir(p, "lessons"));
-    expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("records");
+    const lead = buildSystemPrompt(p, p.agents.lead);
+    const member = buildSystemPrompt(p, p.agents["fe-member"]!);
+    expect(lead).toContain(recordsKindDir(p, "decisions"));
+    expect(lead).toContain("Add or update entries before you send `done`");
+    expect(member).toContain(recordsKindDir(p, "lessons"));
+    expect(member).toContain("(read-only)");
+    expect(member).not.toContain("Add or update entries before you send `done`");
     expect(fs.existsSync(recordsDir(p))).toBe(false);
   });
 

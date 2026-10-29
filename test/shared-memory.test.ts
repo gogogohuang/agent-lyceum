@@ -143,14 +143,14 @@ describe("the handoff folder: where it is and who may write it", () => {
         fs.rmSync(path.dirname(dec), { recursive: true });
         fs.symlinkSync(outside, path.dirname(dec));
       }
-      const v = g.check([p.agents["fe-member"]]);
+      const v = g.check([p.agents["fe-member"]!]);
       const link = mode === "root" ? root : path.dirname(dec);
       expect(v.map((x) => [x.file, x.action])).toEqual(expect.arrayContaining([[link, "removed"], [dec, "restored"]]));
       expect(fs.lstatSync(link).isDirectory()).toBe(true);
       expect(fs.readFileSync(dec, "utf8")).toBe("original\n");
       expect(fs.readFileSync(sentinel, "utf8")).toBe("sentinel\n");
       expect(fs.readFileSync(path.join(outside, "decisions", "keep.md"), "utf8")).toBe("sentinel-nested\n");
-      expect(g.check([p.agents["fe-member"]])).toEqual([]);
+      expect(g.check([p.agents["fe-member"]!])).toEqual([]);
       env.cleanup();
     }
   });

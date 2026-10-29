@@ -9,7 +9,8 @@
       "Edit(/<ROOT>/repo/**)",
       "Edit(/<ROOT>/home/agents/qa-member/memory/**)",
       "Edit(/<ROOT>/home/projects/demo/task-memory/run-1/qa-member/**)",
-      "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member/**)"
+      "Edit(/<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member/**)",
+      "Edit(/<ROOT>/home/projects/demo/agents/qa-member/**)"
     ],
     "deny": [
       "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
@@ -75,7 +76,8 @@
         "<ROOT>/repo",
         "<ROOT>/home/agents/qa-member/memory",
         "<ROOT>/home/projects/demo/task-memory/run-1/qa-member",
-        "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member"
+        "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/agents/qa-member"
       ],
       "denyWrite": [
         "<ROOT>/home/agents/lead/AGENT.md",

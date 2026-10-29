@@ -2,7 +2,8 @@
   "allowDirs": [
     "<ROOT>/home/agents/fe-member/memory",
     "<ROOT>/home/projects/demo/task-memory/run-1/fe-member",
-    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member"
+    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member",
+    "<ROOT>/home/projects/demo/agents/fe-member"
   ],
   "readDirs": [
     "<ROOT>/home/projects/demo/task-memory/run-1/_shared",

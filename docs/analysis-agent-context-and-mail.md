@@ -12,7 +12,7 @@
 - Mail 是帶 frontmatter 的 Markdown 檔，agent 寫進自己的 outbox（run layout 為 `<runDir>/mail/outbox`，`src/run-store.ts:284-287`），dispatcher 驗證後投遞到收件者 inbox；沒有附件欄位，只能在內文寫檔案路徑（`src/mailbox.ts:19-36,250-402`）。
 - `task` 必須有 `Goal／Acceptance criteria／Scope／Upstream`，`reply` 必須有 `Changes／Verification／Open items／Risks`；缺少時最多退回 2 次，之後帶警告投遞（`src/format.ts:6-9`，`src/mailbox.ts:343-353`）。
 - 程式碼對「mail 內容 vs. COMMON.md／AGENT.md」沒有寫明優先順序；實際只有 prompt 組裝順序（persona → 協定 → COMMON → records → 交接 → memory → 本次 mail），mail 排最後（`src/prompt.ts:127,253-311`）。
-- 渲染 mail 本身不寫任何檔（`src/prompt.ts:293-306`），但收件者可依 mail 在自己的授權內行動：自己的 memory（`src/policy.ts:127`）、lead 的 `COMMON.md`／records（`131,134`）、被授權者的 `AGENT.md`（`136-139`）；授權範圍內的寫入會保留（`src/guard.ts:87-91`）。
+- 渲染 mail 本身不寫任何檔，但收件者可依 mail 在自己的授權內行動：自己的 memory、自己的 `agents/<name>/`（含專案人設）、lead 的 `COMMON.md`／records、`can_edit_agent_md` 授權者的每一份 `AGENT.md`。`COMMON.md` 與 records 仍只有 lead 能寫。授權範圍內的寫入會保留。
 - 主要缺口：repo 的 `CLAUDE.md`/`AGENTS.md` 是否由 runtime 自動載入為「推論，未驗證」，agent-lyceum 不控管內容；mail 無長度上限；無 sandbox 時 Codex 僅 prompt 約束（`src/policy.ts:196-204`）。
 
 ## 1. 共享的 context
@@ -100,14 +100,14 @@
 - 渲染 mail 不寫任何檔（`src/prompt.ts:293-306`），但收件者可依 mail 在授權內行動並留下持久寫入：自己的 memory（`src/policy.ts:127`）、lead 的 `COMMON.md`／records（`131,134`）、被授權 agent 的 `AGENT.md`（`136-139`）；guard 對授權寫入視為合法（`src/guard.ts:87-91`）。
 - 越權寫他人 memory／outbox：Claude 以 deny 規則與 sandbox denyWrite 擋（`src/policy.ts:146-151`，`src/adapters/claude.ts:11-20,48`）；Codex 只靠可寫根目錄（`src/adapters/codex.ts:62-78`）。memory 目錄不在 guard 的保護清單（`src/guard.ts:47-55`），所以事後還原不涵蓋 memory。
 - `AGENT.md`／`COMMON.md`／repo 指令檔：guard 事後還原未授權變更（`src/guard.ts:82-105`）；但 repo 指令檔指向 lead 的 checkout（`src/policy.ts:58-61`），Codex 無法逐檔禁止（`src/policy.ts:200-201`）。
-- `can_edit_agent_md` 為 true 的 agent（預設只有 lead）可修改所有 `AGENT.md` 與 repo 指令檔（`src/policy.ts:136-139,216-218`）；prompt 要求這種修改「changes are logged」（`src/prompt.ts:220-221`）。
+- `can_edit_agent_md` 為 true 的 agent（預設只有 lead）可修改所有 `AGENT.md` 與 repo 指令檔。成員不必有這個旗標也能寫自己的 `agents/<name>/AGENT.md`；那個檔一旦存在，下一次載入就成為這個專案的人設，全域人設仍不可寫。prompt 對這類修改要求留下紀錄。
 - 無 OS sandbox 時：Claude 僅靠工具規則，Bash 可繞過 Edit 規則；Codex 為 prompt-only（`src/policy.ts:196-203`）。
 
 ## 5. 資訊流向總表
 
 | 來源 | 載入時機 | 誰看得到 | 誰能寫 | 覆蓋規則 |
 | --- | --- | --- | --- | --- |
-| `AGENT.md` | 每次 wake，system prompt 開頭（`src/prompt.ts:127`） | 該 agent | 預設僅 lead（`src/config.ts:238`）；其他 agent 須設定 `can_edit_agent_md`（`src/policy.ts:136-137`） | 無明確規則；在 system prompt 最前 |
+| `AGENT.md` | 每次 wake，system prompt 開頭（`src/prompt.ts`，有大小上限，FIFO 不讀） | 該 agent | 成員可寫自己的 `agents/<name>/AGENT.md`（下一次載入會取代全域人設）；`can_edit_agent_md`（預設 lead）才能改每一份人設與 repo 指令檔 | 無明確規則；在 system prompt 最前 |
 | 團隊協定（程式碼產生） | 每次 wake，system prompt（`src/prompt.ts:128-231`） | 該 agent | 只有程式碼 | 無明確規則 |
 | `COMMON.md` | 每次 wake，user prompt 開頭，8 KB（`src/prompt.ts:253`） | 全部 | 僅 lead（`src/policy.ts:134`） | 無明確規則；非 lead 唯讀 |
 | records（decisions／lessons） | 每次 wake，各 6 KB（`src/prompt.ts:263-269`） | 全部 | 僅 lead（`src/policy.ts:131`） | 同類中被 `supersedes` 或 `status: superseded` 的不顯示（`src/records.ts:95,118`）；與 `COMMON.md` 無規定 |

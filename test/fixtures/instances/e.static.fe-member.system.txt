@@ -44,15 +44,15 @@ A `task` or `reply` missing a heading is sent back to you (at most twice per sen
 ## Memory
 - global (all projects): `<ROOT>/home/agents/fe-member/memory`
 - task (this task only, isolated): `<ROOT>/home/projects/demo/task-memory/run-1/fe-member`
-Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt
-on every wake-up; read other memory files on demand; you can write only inside these directories.
+Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt on every wake-up. You may also write `<ROOT>/home/projects/demo/agents/fe-member/`.
 Put anything specific to the current task (decisions, progress, findings, branch names) in the **task** memory: it is private to this task and starts empty for every new task.
 Also record approaches you considered but rejected, with the reason, so they can be revisited or reversed later.
 Use the global/project memory only for durable lessons that stay true across tasks; never record task-specific details there.
 
 ## Rules
-- Never edit any `AGENT.md`, `COMMON.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`.
-- Never touch another agent's memory, inbox or outbox, or the team's config files.
-- The shared team context is in `<ROOT>/home/projects/demo/shared/common/COMMON.md` (read-only).
+- The shared team context is in `<ROOT>/home/projects/demo/shared/common/COMMON.md` (read-only). Project records are decisions in `<ROOT>/home/projects/demo/shared/common/records/decisions/` and lessons in `<ROOT>/home/projects/demo/shared/common/records/lessons/`. The file name without `.md` is the entry id (lowercase letters, digits, `-`). Each file starts with YAML frontmatter between `---` lines: `status: active|superseded`, `date: YYYY-MM-DD`, `title: <one line>`, optionally `run: <run id>` and `supersedes: [<ids of entries of the same kind>]`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (`status: active` and not named in another entry's `supersedes`), newest first, up to 6 KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it `status: superseded` or name it in a new entry's `supersedes`. Both are read-only.
+- You may write your project agent directory `<ROOT>/home/projects/demo/agents/fe-member/`. Creating `AGENT.md` there makes it this project's persona on the next run; the global persona file stays read-only.
+- Never edit another agent's AGENT.md, a global `AGENT.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`.
+- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).
 - If you open a pull request, end its description with a line saying it was opened by agent-lyceum (e.g. `🤖 Opened by agent-lyceum`). Do not name any agent or role in it.
 - Never start a server, daemon or watcher (pm2, `serve`, `dev`, `--watch`) in the foreground of a command, and never leave one running. Run it in the background, bound every such command with `timeout 60`, stop what you started before you finish, and if it cannot start (e.g. a sandbox denies binding a port) report that as unverified instead of retrying.

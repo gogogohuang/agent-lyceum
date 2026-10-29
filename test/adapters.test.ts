@@ -61,6 +61,7 @@ describe("write policy", () => {
     expect(pol.allowDirs).toEqual([
       path.join(env.home, "agents/fe-member/memory"),
       path.join(p.paths.outboxRoot, "fe-member"),
+      path.join(p.paths.agentsDir, "fe-member"),
     ]);
     expect(pol.allowFiles).toEqual([]);
     expect(pol.deny).toContain(p.agents["fe-member"].agentMd);

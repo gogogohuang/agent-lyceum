@@ -58,24 +58,31 @@ describe("resolveCallAgent", () => {
 });
 
 describe("what a call may write", () => {
-  it("is the working directory and the agent's own global memory, with no outbox and no AGENT.md", () => {
+  it("is the working directory and the agent's own global memory and call agent dir, with no outbox, no shared/common and no global AGENT.md", () => {
     env = makeEnv();
     const agent = resolveCallAgent(env.home, "fe-member");
     const project = callProject(env.home, agent, env.repo, path.join(callsDir(env.home), "c1"));
     const pol = writePolicy(project, agent);
     expect(project.dir).toBe(env.repo);
-    expect(pol.allowDirs).toEqual([path.join(env.home, "agents/fe-member/memory")]);
+    expect(pol.allowDirs).toEqual([
+      path.join(env.home, "agents/fe-member/memory"),
+      path.join(callsDir(env.home), "c1", "agents", "fe-member"),
+    ]);
     expect(pol.allowFiles).toEqual([]);
     expect(pol.deny).toContain(agent.agentMd);
     expect(pol.deny).toContain(path.join(env.home, "team.yaml"));
   });
 
-  it("lets the sandbox write only the working directory and the agent's own memory, never the home or another agent's files", () => {
+  it("lets the sandbox write only the working directory, the agent's own memory and the call's own agent dir, never shared/common, the home or another agent's files", () => {
     env = makeEnv();
     const agent = resolveCallAgent(env.home, "fe-member");
     const project = callProject(env.home, agent, env.repo, path.join(callsDir(env.home), "c1"));
     const sandbox = buildClaudeSettings(project, agent).sandbox as { filesystem: { allowWrite: string[] } };
-    expect(sandbox.filesystem.allowWrite).toEqual([env.repo, path.join(env.home, "agents/fe-member/memory")]);
+    expect(sandbox.filesystem.allowWrite).toEqual([
+      env.repo,
+      path.join(env.home, "agents/fe-member/memory"),
+      path.join(callsDir(env.home), "c1", "agents", "fe-member"),
+    ]);
   });
 });
 

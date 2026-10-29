@@ -2,7 +2,8 @@
   "allowDirs": [
     "<ROOT>/home/agents/qa-member/memory",
     "<ROOT>/home/projects/demo/task-memory/run-1/qa-member",
-    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member"
+    "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member",
+    "<ROOT>/home/projects/demo/agents/qa-member"
   ],
   "readDirs": [
     "<ROOT>/home/projects/demo/task-memory/run-1/_shared",

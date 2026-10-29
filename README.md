@@ -9,7 +9,7 @@ Give a task to a **team of agents** (Claude Code and/or Codex) instead of one ov
 ## Why
 
 - **Roles that stay in role.** Each agent has its own persona (`AGENT.md`) and long-term memory, so a reviewer keeps reviewing instead of drifting into writing code.
-- **Agents can't rewrite the rules.** An agent can only write its own memory and outbox. It can't touch other agents' context or its own persona, and this is enforced by the OS sandbox where possible, not just by a prompt. See [Write scope](docs/write-scope.md).
+- **Agents can't rewrite the rules.** An agent can write its own memory, its outbox, and its project agent directory (`agents/<name>/`, including a project persona it creates there). It can't touch other agents' context, `COMMON.md`, the project records, or a global persona. This is enforced by the OS sandbox where possible, not just by a prompt. See [Write scope](docs/write-scope.md).
 - **Mix runtimes.** Claude Code and Codex agents work in the same team.
 - **Backup models.** If a model is rate-limited, out of quota or unreachable, a run can switch to a backup model or runtime instead of stopping. See [Configuration](docs/configuration.md#fallback-models).
 - **Nothing hidden.** Agents talk through plain-file mailboxes, so every message, decision and memory is a file you can read, grep and diff. The dispatcher never merges for you.
