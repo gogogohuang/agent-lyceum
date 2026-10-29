@@ -26,3 +26,6 @@ agent-lyceum-config/
 
 # devlog-tracker records your prompts verbatim: keep it out of version control
 .devlog/
+
+# local git worktrees
+.worktrees/
