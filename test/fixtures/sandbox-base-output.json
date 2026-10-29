@@ -9,7 +9,9 @@
     "Grep",
     "Edit(/<ROOT>/repo/**)",
     "Edit(/<ROOT>/home/agents/fe-member/memory/**)",
-    "Edit(/<ROOT>/home/projects/demo/shared/outbox/fe-member/**)"
+    "Edit(/<ROOT>/home/projects/demo/shared/outbox/fe-member/**)",
+    "Edit(/<ROOT>/home/projects/demo/agents/fe-member/**)",
+    "Edit(/<ROOT>/home/projects/demo/shared/common/**)"
    ],
    "deny": [
     "Edit(/<ROOT>/home/agents/lead/AGENT.md)",
@@ -29,13 +31,10 @@
     "Edit(/<ROOT>/home/projects/demo/shared/outbox/qa-member/**)",
     "Edit(/<ROOT>/home/projects/demo/shared/inbox/qa-member)",
     "Edit(/<ROOT>/home/projects/demo/shared/inbox/qa-member/**)",
-    "Edit(/<ROOT>/home/projects/demo/shared/common/COMMON.md)",
     "Edit(/<ROOT>/repo/CLAUDE.md)",
     "Edit(/<ROOT>/repo/CLAUDE.md/**)",
     "Edit(/<ROOT>/repo/AGENTS.md)",
     "Edit(/<ROOT>/repo/AGENTS.md/**)",
-    "Edit(/<ROOT>/home/projects/demo/shared/common/records)",
-    "Edit(/<ROOT>/home/projects/demo/shared/common/records/**)",
     "Edit(/<ROOT>/home/projects/demo/runs)",
     "Edit(/<ROOT>/home/projects/demo/runs/**)",
     "Edit(/<ROOT>/home/projects/demo/project.yaml)",
@@ -49,7 +48,9 @@
     "allowWrite": [
      "<ROOT>/repo",
      "<ROOT>/home/agents/fe-member/memory",
-     "<ROOT>/home/projects/demo/shared/outbox/fe-member"
+     "<ROOT>/home/projects/demo/shared/outbox/fe-member",
+     "<ROOT>/home/projects/demo/agents/fe-member",
+     "<ROOT>/home/projects/demo/shared/common"
     ],
     "denyWrite": [
      "<ROOT>/home/agents/lead/AGENT.md",
@@ -62,10 +63,8 @@
      "<ROOT>/home/agents/qa-member/memory",
      "<ROOT>/home/projects/demo/shared/outbox/qa-member",
      "<ROOT>/home/projects/demo/shared/inbox/qa-member",
-     "<ROOT>/home/projects/demo/shared/common/COMMON.md",
      "<ROOT>/repo/CLAUDE.md",
      "<ROOT>/repo/AGENTS.md",
-     "<ROOT>/home/projects/demo/shared/common/records",
      "<ROOT>/home/projects/demo/runs",
      "<ROOT>/home/projects/demo/project.yaml",
      "<ROOT>/home/team.yaml"
@@ -83,7 +82,7 @@
   "-c",
   "approval_policy=\"never\"",
   "-c",
-  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\",\"<ROOT>/home/projects/demo/shared/common\"]",
   "--json",
   "-o",
   "<ROOT>/work/codex-last-message.txt",
@@ -98,7 +97,7 @@
   "-c",
   "approval_policy=\"never\"",
   "-c",
-  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\"]",
+  "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/shared/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\",\"<ROOT>/home/projects/demo/shared/common\"]",
   "--json",
   "-o",
   "<ROOT>/work/codex-last-message.txt",

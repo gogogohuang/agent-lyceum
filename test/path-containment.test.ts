@@ -31,25 +31,25 @@ describe("a relative path that merely starts with '..' is not an escape", () => 
     expect(isInside("/h", "/h")).toBe(true);
   });
 
-  it("the guard removes a member's new file under records/..x/", () => {
+  it("the guard keeps a member's new file under records/..x/ (members may write records)", () => {
     env = makeEnv();
     const p = bindRunProject(env.project(), path.join(env.root, "run-1"), "run");
     const g = new ProtectedGuard(p);
     const f = path.join(recordsDir(p), "..x", "note.md");
     write(f, "member wrote this\n");
-    expect(g.check([p.agents["fe-member"]!]).map((x) => x.file)).toContain(f);
-    expect(fs.existsSync(f)).toBe(false);
+    expect(g.check([p.agents["fe-member"]!]).map((x) => x.file)).not.toContain(f);
+    expect(fs.existsSync(f)).toBe(true);
   });
 
-  it("the guard restores a member's edit under records/..x/", () => {
+  it("the guard keeps a member's edit under records/..x/ (members may write records)", () => {
     env = makeEnv();
     const p = bindRunProject(env.project(), path.join(env.root, "run-1"), "run");
     const f = path.join(recordsDir(p), "..x", "note.md");
     write(f, "lead wrote this\n");
     const g = new ProtectedGuard(p);
     write(f, "member changed it\n");
-    expect(g.check([p.agents["fe-member"]!]).map((x) => x.file)).toContain(f);
-    expect(fs.readFileSync(f, "utf8")).toBe("lead wrote this\n");
+    expect(g.check([p.agents["fe-member"]!]).map((x) => x.file)).not.toContain(f);
+    expect(fs.readFileSync(f, "utf8")).toBe("member changed it\n");
   });
 
   describe("worktree symlink containment", () => {
