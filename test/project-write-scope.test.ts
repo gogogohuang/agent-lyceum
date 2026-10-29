@@ -68,6 +68,29 @@ describe("project write scope", () => {
     expect(pol.allowDirs).toContain(projectCommonDir(p));
   });
 
+  it("does not grant shared/common when it contains another agent's persona, and reverts an edit of that file", () => {
+    env = makeEnv();
+    const p = bound();
+    const common = projectCommonDir(p);
+    const foreign = path.join(common, "qa-persona.md");
+    const qa = { ...p.agents["qa-member"]!, agentMd: foreign };
+    const member = p.agents["fe-member"]!;
+    const project = { ...p, agents: { ...p.agents, "qa-member": qa } };
+    const pol = writePolicy(project, member);
+    expect(pol.allowDirs).not.toContain(common);
+    expect(pol.deny).toContain(foreign);
+    expect(mayEditProtected(project, member, foreign)).toBe(false);
+    expect(mayEditProtected(project, member, commonFile(project))).toBe(false);
+    const sys = buildSystemPrompt(project, member);
+    expect(sys).not.toContain("You may edit the shared team context");
+    expect(sys).not.toContain(`${common}/`);
+    write(foreign, "qa persona\n");
+    const g = new ProtectedGuard(project);
+    write(foreign, "taken\n");
+    expect(g.check([member]).map((x) => x.file)).toEqual([foreign]);
+    expect(fs.readFileSync(foreign, "utf8")).toBe("qa persona\n");
+  });
+
   it("instance 2 gets agents/<slot>/ and shared/common/, not the role directory", () => {
     env = makeEnv();
     const p = env.project();

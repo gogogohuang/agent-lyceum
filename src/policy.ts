@@ -130,15 +130,24 @@ function covers(dir: string, target: string): boolean {
   return target === dir || target.startsWith(root);
 }
 
-/** True when `agents/<name>/` does not contain another agent's persona, memory, inbox or outbox. */
-export function ownAgentDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
-  const dir = projectAgentDir(project, agent.name);
+/** Another agent's persona, memory, inbox or outbox. Codex cannot exclude one file inside a writable root, so a root that holds any of these stays closed. */
+function holdsForeignProtected(project: ResolvedProject, agent: ResolvedAgent, dir: string): boolean {
   for (const other of Object.values(project.agents)) {
     if (other.name === agent.name) continue;
     const paths = [other.agentMd, inboxDir(project, other.name), outboxDir(project, other.name), ...memoryDirs(other)];
-    if (paths.some((p) => covers(dir, p))) return false;
+    if (paths.some((p) => covers(dir, p))) return true;
   }
-  return true;
+  return false;
+}
+
+/** True when `agents/<name>/` does not contain another agent's persona, memory, inbox or outbox. */
+export function ownAgentDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
+  return !holdsForeignProtected(project, agent, projectAgentDir(project, agent.name));
+}
+
+/** True when `shared/common/` does not contain another agent's persona, memory, inbox or outbox. */
+export function projectCommonDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
+  return !holdsForeignProtected(project, agent, projectCommonDir(project));
 }
 
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
@@ -151,13 +160,14 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   const ownDir = projectAgentDir(project, agent.name);
   const commonDir = projectCommonDir(project);
   const grantOwnDir = ownAgentDirAllowed(project, agent);
+  const grantCommon = projectCommonDirAllowed(project, agent);
   const allowDirs = [
     ...memoryDirs(agent),
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
     ...(grantOwnDir ? [ownDir] : []),
-    commonDir,
+    ...(grantCommon ? [commonDir] : []),
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),
   ];
@@ -171,7 +181,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   const deny: string[] = [];
   const allowedFileSet = new Set(allowFiles);
-  const grantedRoots = [...(grantOwnDir ? [ownDir] : []), commonDir];
+  const grantedRoots = [...(grantOwnDir ? [ownDir] : []), ...(grantCommon ? [commonDir] : [])];
   const addDeny = (p: string) => {
     if (!allowedFileSet.has(p) && !grantedRoots.some((d) => covers(d, p))) deny.push(p);
   };
