@@ -198,7 +198,7 @@ lead 的 prompt 有只給 lead 的 `## Keeping wake-ups few` 段落。摘要如�
 - 小修改跳過 QA 層（驗證角色與其 reviewer）：幾行程式、一個修改前失敗修改後通過的重現測試、加上 code review 核可。大型、跨模組或使用者可見的變更才送 QA；
 - 只在三個時刻使用最強（最貴）的模型：計畫定稿前、同一個錯誤第二次出現時、`done` 之前。
 
-這些是 prompt 規則，模型是否遵守並未量測。dispatcher 不會延後喚醒：單獨抵達的每封回覆仍會喚醒 lead。同時在等的回覆會被合併（最多 5 封，見 `src/prompt.ts` 的 `LEAD_BATCH_LIMIT`），所以節省來自信件變少，而不是 dispatcher 壓住喚醒。
+這些是 prompt 規則，模型是否遵守並未量測。dispatcher 不會延後喚醒：單獨抵達的每封回覆仍會喚醒 lead。同時在等的回覆會一次交給 lead，以 64 KiB 內文預算（`MAIL_BATCH_LIMIT`）為限、最多 20 封（`LEAD_REPLY_CAP`），一點內文都放不進的那封留著未讀；其他 agent 仍最多 5 封同一 thread 的回覆（`LEAD_BATCH_LIMIT`），皆見 `src/prompt.ts`，所以節省來自信件變少，而不是 dispatcher 壓住喚醒。
 
 ### 各角色的模型選擇
 
