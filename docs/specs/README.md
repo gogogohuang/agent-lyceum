@@ -27,6 +27,7 @@
 | [23](23-dynamic-instances.md) | 同角色動態多實例（lead 標 `parallel: true`） | 中 | 高（state v3、路由重播、memory 寫入範圍） | — |
 | [24](24-model-tiers.md) | 模型分級（`model` 是上限，lead 在 task 標 `tier`） | 中 | 中（fallback 順序、重複信判定、各模型分開 session） | — |
 | [25](25-sandbox-allowances.md) | 每個 agent 的 sandbox 放寬（`sandbox.write`／`network`／`local_binding`） | 中 | 中（受保護路徑檢查、Codex 網路全有全無、fallback 拒絕） | — |
+| [26](26-lead-parked-session.md) | Claude lead 在回合之間留下同一個行程 | 無（不做） | 高（行程生命週期、與成員批次互斥） | — |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
