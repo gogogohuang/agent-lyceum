@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProtectedGuard } from "../src/guard.js";
+import { buildSystemPrompt } from "../src/prompt.js";
 import { synthesizeSlots } from "../src/instances.js";
 import {
   commonFile,
@@ -116,5 +117,38 @@ describe("project write scope", () => {
     expect(fs.readFileSync(dec, "utf8")).toBe("member edit\n");
     expect(fs.readFileSync(projectMd, "utf8")).toBe("rewritten\n");
     expect(fs.readFileSync(project.agents.lead.agentMd, "utf8")).not.toBe("stolen\n");
+  });
+
+  it("tells a member to edit COMMON.md and not another agent's AGENT.md; a global persona is not offered", () => {
+    env = makeEnv();
+    const p = env.project();
+    const sys = buildSystemPrompt(p, p.agents["fe-member"]!);
+    expect(sys).toContain(commonFile(p));
+    expect(sys).toContain(projectCommonDir(p));
+    expect(sys).toContain(projectAgentDir(p, "fe-member"));
+    expect(sys).not.toContain(`You may edit your project persona \`${p.agents["fe-member"]!.agentMd}\``);
+    expect(sys).toContain("Never edit another agent's AGENT.md");
+  });
+
+  it("does not tell instance 2 to edit the role persona", () => {
+    env = makeEnv();
+    const p = env.project();
+    const agents = synthesizeSlots(p.agents, { roles: { "fe-member": ["fe-member--2"] } }, (slot) => path.join(p.paths.taskMemory, "run-1", slot));
+    const slot = agents["fe-member--2"]!;
+    const sys = buildSystemPrompt({ ...p, agents }, slot);
+    expect(sys).toContain(projectCommonDir(p));
+    expect(sys).not.toContain(`You may edit your project persona \`${slot.agentMd}\``);
+    expect(sys).toContain("cannot write the shared memory");
+  });
+
+  it("offers the project persona only when agentMd lives in agents/<name>/", () => {
+    env = makeEnv();
+    const p = env.project();
+    const projectMd = path.join(projectAgentDir(p, "fe-member"), "AGENT.md");
+    fs.mkdirSync(path.dirname(projectMd), { recursive: true });
+    fs.writeFileSync(projectMd, "# fe\n");
+    const member = { ...p.agents["fe-member"]!, agentMd: projectMd };
+    const sys = buildSystemPrompt({ ...p, agents: { ...p.agents, "fe-member": member } }, member);
+    expect(sys).toContain(`You may edit your project persona \`${projectMd}\``);
   });
 });

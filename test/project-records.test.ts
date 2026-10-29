@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { projectCommonDir, recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
+import { commonFile, projectCommonDir, recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
 import { CONTEXT_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
 import { activeRecordsBytes, buildRecordsView, listRecords } from "../src/records.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
@@ -108,12 +108,16 @@ describe("project records", () => {
     expect(member.readDirs).not.toContain(recordsDir(p));
   });
 
-  it("only the lead's system prompt describes the records; nothing is created on disk", () => {
+  it("every member's system prompt describes the records; nothing is created on disk", () => {
     env = makeEnv();
     const p = env.project();
-    expect(buildSystemPrompt(p, p.agents.lead)).toContain(recordsKindDir(p, "decisions"));
-    expect(buildSystemPrompt(p, p.agents.lead)).toContain(recordsKindDir(p, "lessons"));
-    expect(buildSystemPrompt(p, p.agents["fe-member"])).not.toContain("records");
+    for (const name of ["lead", "fe-member"] as const) {
+      const sys = buildSystemPrompt(p, p.agents[name]!);
+      expect(sys).toContain(recordsKindDir(p, "decisions"));
+      expect(sys).toContain(recordsKindDir(p, "lessons"));
+      expect(sys).toContain(commonFile(p));
+      expect(sys).not.toContain("(read-only)");
+    }
     expect(fs.existsSync(recordsDir(p))).toBe(false);
   });
 

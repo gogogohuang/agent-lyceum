@@ -5,7 +5,8 @@ Default rules (everything else in the repo is unrestricted):
 | Target | Rule |
 |---|---|
 | own memory dirs, own `outbox/` | writable |
-| any `AGENT.md`, `COMMON.md`, repo `CLAUDE.md`/`AGENTS.md` | read-only; the lead (`can_edit_agent_md`) may edit them |
+| own `agents/<self>/`, `shared/common/` (`COMMON.md`, `records/`) | writable by every member |
+| another agent's `AGENT.md`, a global `AGENT.md`, repo `CLAUDE.md`/`AGENTS.md` | read-only; the lead (`can_edit_agent_md`) may edit them |
 | the run's handoff notes `task-memory/<run-id>/_shared/` | the lead writes; every other agent is read-only |
 | other agents' memory/inbox/outbox, `runs/`, config files | not writable |
 

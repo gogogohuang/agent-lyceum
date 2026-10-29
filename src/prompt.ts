@@ -8,7 +8,7 @@ import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
 import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
-import { commonFile, memoryDirs, outboxDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { commonFile, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, projectCommonDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -88,6 +88,21 @@ function handoffRule(dir: string): string[] {
   ];
 }
 
+function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string[] {
+  const ownDir = projectAgentDir(project, agent.name);
+  const ownPersona = agent.agentMd === path.join(ownDir, "AGENT.md") || agent.agentMd.startsWith(ownDir + path.sep);
+  const leadClause = agent.canEditAgentMd
+    ? " The lead may also edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."
+    : "";
+  return [
+    `- You may edit the shared team context \`${commonFile(project)}\` (keep it short) and the project records: decisions in \`${recordsKindDir(project, "decisions")}/\` and lessons in \`${recordsKindDir(project, "lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`,
+    ...(ownAgentDirAllowed(project, agent) ? [`- You may write your project agent directory \`${ownDir}/\`.`] : []),
+    ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
+    `- Never edit another agent's AGENT.md, a global \`AGENT.md\` outside \`${ownDir}/\`, or the repository's own \`CLAUDE.md\`/\`AGENTS.md\`.${leadClause}`,
+    "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).",
+  ];
+}
+
 /** The protocol of an agent working alone: no teammates, no ask. `run --agent` still ends with a `done` mail; `call` just answers. */
 export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
   const isCall = project.solo === "call";
@@ -126,16 +141,19 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
   if (mems.length === 0) lines.push("You have no long-term memory directory.");
   for (const m of mems) lines.push(`- ${memoryLabel(agent, m)}: \`${m}\``);
   if (mems.length) {
+    const extra = [
+      ...(ownAgentDirAllowed(project, agent) ? [projectAgentDir(project, agent.name)] : []),
+      projectCommonDir(project),
+    ];
     lines.push(
-      "Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt on every wake-up; you can write only inside these directories.",
+      `Keep a \`MEMORY.md\` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt on every wake-up. You may also write ${extra.map((d) => `\`${d}/\``).join(" and ")}.`,
       "Use memory only for durable lessons that stay true across tasks; never record task-specific details there.",
     );
   }
   lines.push(
     "",
     "## Rules",
-    "- Never edit any `AGENT.md`, `COMMON.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`.",
-    "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum.",
+    ...writeScopeRules(project, agent),
     PR_ATTRIBUTION_RULE,
     NO_DAEMONS_RULE,
   );
@@ -260,9 +278,12 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     lines.push(`- ${label}: \`${m}\``);
   }
   if (mems.length) {
+    const extra = [
+      ...(ownAgentDirAllowed(project, agent) ? [projectAgentDir(project, agent.name)] : []),
+      projectCommonDir(project),
+    ];
     lines.push(
-      "Keep a `MEMORY.md` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt",
-      "on every wake-up; read other memory files on demand; you can write only inside these directories.",
+      `Keep a \`MEMORY.md\` index in each memory directory (one line per entry, pointing at a file). Its contents are shown in your prompt on every wake-up. You may also write ${extra.map((d) => `\`${d}/\``).join(" and ")}.`,
       "Put anything specific to the current task (decisions, progress, findings, branch names) in the **task** memory: it is private to this task and starts empty for every new task.",
       "Also record approaches you considered but rejected, with the reason, so they can be revisited or reversed later.",
       ...(sharedMems.length
@@ -271,19 +292,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     );
   }
   lines.push("", "## Rules");
-  lines.push(
-    "- Never edit any `AGENT.md`, `COMMON.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`" +
-      (isLead || agent.canEditAgentMd ? " unless you need to as lead (changes are logged)." : "."),
-    "- Never touch another agent's memory, inbox or outbox, or the team's config files.",
-    `- The shared team context is in \`${commonFile(project)}\`${isLead ? " (you maintain it; keep it short)" : " (read-only)"}.`,
-    ...(isLead
-      ? [
-          `- You also keep two kinds of durable records for every future run of this project, one Markdown file per entry: decisions in \`${recordsKindDir(project, "decisions")}/\` (what was decided and why) and lessons in \`${recordsKindDir(project, "lessons")}/\` (heuristics and pitfalls that stay true). The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`. Add or update entries before you send \`done\`.`,
-        ]
-      : []),
-    PR_ATTRIBUTION_RULE,
-    NO_DAEMONS_RULE,
-  );
+  lines.push(...writeScopeRules(project, agent), PR_ATTRIBUTION_RULE, NO_DAEMONS_RULE);
   let text = lines.join("\n");
   if (isLead && project.run?.instances) text = `${text}\n\n${PARALLEL_SECTION(project.run.instances.max)}`;
   if (isLead) {

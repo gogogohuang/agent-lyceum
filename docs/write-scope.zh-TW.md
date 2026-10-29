@@ -5,7 +5,8 @@
 | 目標 | 規則 |
 |---|---|
 | 自己的記憶資料夾、自己的 `outbox/` | 可寫入 |
-| 任何 `AGENT.md`、`COMMON.md`、repo 的 `CLAUDE.md`/`AGENTS.md` | 唯讀；lead（`can_edit_agent_md`）可編輯 |
+| 自己的 `agents/<自己>/`、`shared/common/`（`COMMON.md`、`records/`） | 每位成員可寫 |
+| 別人的 `AGENT.md`、全域 `AGENT.md`、repo 的 `CLAUDE.md`/`AGENTS.md` | 唯讀；lead（`can_edit_agent_md`）可編輯 |
 | run 的交接筆記 `task-memory/<run-id>/_shared/` | lead 可寫；其他 agent 唯讀 |
 | 其他 agent 的記憶／inbox／outbox、`runs/`、設定檔 | 不可寫入 |
 
