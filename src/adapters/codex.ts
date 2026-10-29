@@ -1,13 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
+import { projectCommonDir, projectCommonDirAllowed, repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 export function codexWritableRoots(input: WakeInput): string[] {
   const pol = input.policy ?? writePolicy(input.project, input.agent);
   const work = input.policy ? scratchCwd(input.workDir) : repoDirFor(input.project, input.agent.name);
-  const roots = [...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === work || d.startsWith(work + path.sep)));
+  const common = projectCommonDir(input.project);
+  const withholdCommon = !input.policy && !projectCommonDirAllowed(input.project, input.agent);
+  const fileRoots = pol.allowFiles.map((f) => path.dirname(f)).filter((d) => !withholdCommon || (d !== common && !d.startsWith(common + path.sep)));
+  const roots = [...pol.allowDirs, ...fileRoots].filter((d) => !(d === work || d.startsWith(work + path.sep)));
   return [...new Set(roots)];
 }
 

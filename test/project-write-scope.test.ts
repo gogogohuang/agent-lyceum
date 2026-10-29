@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { codexWritableRoots } from "../src/adapters/codex.js";
 import { ProtectedGuard } from "../src/guard.js";
 import { buildSystemPrompt } from "../src/prompt.js";
 import { synthesizeSlots } from "../src/instances.js";
@@ -89,6 +90,20 @@ describe("project write scope", () => {
     write(foreign, "taken\n");
     expect(g.check([member]).map((x) => x.file)).toEqual([foreign]);
     expect(fs.readFileSync(foreign, "utf8")).toBe("qa persona\n");
+  });
+
+  it("does not give a Codex lead shared/common back through the COMMON.md parent when that directory holds another agent's persona", () => {
+    env = makeEnv();
+    const p = env.project();
+    const common = projectCommonDir(p);
+    const foreign = path.join(common, "qa-persona.md");
+    const project = { ...p, agents: { ...p.agents, "qa-member": { ...p.agents["qa-member"]!, agentMd: foreign } } };
+    const wake = { workDir: env.root, systemPrompt: "s", userPrompt: "u", timeoutSec: 60 };
+    const poisoned = codexWritableRoots({ ...wake, project, agent: project.agents.lead });
+    expect(poisoned).not.toContain(common);
+    expect(poisoned.some((r) => r.startsWith(common + path.sep))).toBe(false);
+    const normal = codexWritableRoots({ ...wake, project: p, agent: p.agents.lead });
+    expect(normal).toContain(common);
   });
 
   it("instance 2 gets agents/<slot>/ and shared/common/, not the role directory", () => {
