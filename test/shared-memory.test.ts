@@ -42,13 +42,13 @@ describe("the handoff folder: where it is and who may write it", () => {
     expect(member.allowDirs).not.toContain(dir);
     expect(member.allowFiles).not.toContain(sharedIndex(p));
     expect(member.deny).toContain(dir);
-    expect(member.readDirs).toEqual([dir, recordsDir(p)]);
+    expect(member.readDirs).toEqual([dir]);
   });
 
   it("policies outside a run are exactly what they were", () => {
     env = makeEnv();
     const p = env.project();
-    expect(writePolicy(p, p.agents["fe-member"]).readDirs).toEqual([recordsDir(p)]);
+    expect(writePolicy(p, p.agents["fe-member"]).readDirs).toEqual([]);
     expect(writePolicy(p, p.agents.lead).allowDirs.some((d) => d.endsWith("_shared"))).toBe(false);
   });
 

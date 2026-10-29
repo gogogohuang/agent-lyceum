@@ -34,7 +34,7 @@ export function commonFile(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "COMMON.md");
 }
 
-/** Durable decisions and lessons of the project, one file per entry: the lead writes them, everyone else reads them. `.archive/` is tidy's output, never shown in prompts. */
+/** Durable decisions and lessons of the project, one file per entry: every member may write them, no longer only the lead. `.archive/` is tidy's output, never shown in prompts. */
 export function recordsDir(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "records");
 }
@@ -117,6 +117,30 @@ export function repoDirFor(project: ResolvedProject, agent: string): string {
   return project.workspaces?.[agent]?.dir ?? project.dir;
 }
 
+export function projectAgentDir(project: ResolvedProject, agentName: string): string {
+  return path.join(project.paths.agentsDir, agentName);
+}
+
+export function projectCommonDir(project: ResolvedProject): string {
+  return path.join(project.paths.shared, "common");
+}
+
+function covers(dir: string, target: string): boolean {
+  const root = dir.endsWith(path.sep) ? dir : dir + path.sep;
+  return target === dir || target.startsWith(root);
+}
+
+/** True when `agents/<name>/` does not contain another agent's persona, memory, inbox or outbox. */
+export function ownAgentDirAllowed(project: ResolvedProject, agent: ResolvedAgent): boolean {
+  const dir = projectAgentDir(project, agent.name);
+  for (const other of Object.values(project.agents)) {
+    if (other.name === agent.name) continue;
+    const paths = [other.agentMd, inboxDir(project, other.name), outboxDir(project, other.name), ...memoryDirs(other)];
+    if (paths.some((p) => covers(dir, p))) return false;
+  }
+  return true;
+}
+
 export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
@@ -124,12 +148,16 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   const shared = sharedDir(project);
   const sharedIdx = sharedIndex(project);
   const mayWriteShared = !!shared && agent.name === project.lead;
+  const ownDir = projectAgentDir(project, agent.name);
+  const commonDir = projectCommonDir(project);
+  const grantOwnDir = ownAgentDirAllowed(project, agent);
   const allowDirs = [
     ...memoryDirs(agent),
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
-    ...(isLead ? [recordsDir(project)] : []),
+    ...(grantOwnDir ? [ownDir] : []),
+    commonDir,
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),
   ];
@@ -143,8 +171,9 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   const deny: string[] = [];
   const allowedFileSet = new Set(allowFiles);
+  const grantedRoots = [...(grantOwnDir ? [ownDir] : []), commonDir];
   const addDeny = (p: string) => {
-    if (!allowedFileSet.has(p)) deny.push(p);
+    if (!allowedFileSet.has(p) && !grantedRoots.some((d) => covers(d, p))) deny.push(p);
   };
   for (const a of Object.values(project.agents)) {
     addDeny(a.agentMd);
@@ -155,7 +184,6 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   for (const f of sharedContextFiles(project)) addDeny(f);
   for (const f of repoInstructionFiles(project)) addDeny(f);
   if (shared && !mayWriteShared) deny.push(shared);
-  if (!isLead) deny.push(recordsDir(project));
   deny.push(...runDenyPaths(project), project.paths.config, path.join(project.home, "team.yaml"));
   // In a worktree: other agents' checkouts are off limits, and so are this checkout's own copies of the protected files.
   for (const [name, other] of Object.entries(project.workspaces ?? {})) if (name !== agent.name) deny.push(other.root);
@@ -166,7 +194,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...Object.values(agent.sharedMemory ?? {})],
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...Object.values(agent.sharedMemory ?? {})],
     allowFiles,
     deny: [...new Set(deny)],
   };

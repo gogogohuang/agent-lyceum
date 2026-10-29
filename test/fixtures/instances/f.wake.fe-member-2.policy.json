@@ -3,11 +3,12 @@
     "<ROOT>/home/agents/fe-member/memory",
     "<ROOT>/home/projects/demo/task-memory/run-1/fe-member",
     "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/fe-member",
-    "<ROOT>/repo/.git/worktrees/fe-member"
+    "<ROOT>/repo/.git/worktrees/fe-member",
+    "<ROOT>/home/projects/demo/agents/fe-member",
+    "<ROOT>/home/projects/demo/shared/common"
   ],
   "readDirs": [
-    "<ROOT>/home/projects/demo/task-memory/run-1/_shared",
-    "<ROOT>/home/projects/demo/shared/common/records"
+    "<ROOT>/home/projects/demo/task-memory/run-1/_shared"
   ],
   "allowFiles": [],
   "deny": [
@@ -23,11 +24,9 @@
     "<ROOT>/home/projects/demo/task-memory/run-1/qa-member",
     "<ROOT>/home/projects/demo/runs/run-1/mail/outbox/qa-member",
     "<ROOT>/home/projects/demo/runs/run-1/mail/inbox/qa-member",
-    "<ROOT>/home/projects/demo/shared/common/COMMON.md",
     "<ROOT>/home/projects/demo/worktrees/run-1/lead/CLAUDE.md",
     "<ROOT>/home/projects/demo/worktrees/run-1/lead/AGENTS.md",
     "<ROOT>/home/projects/demo/task-memory/run-1/_shared",
-    "<ROOT>/home/projects/demo/shared/common/records",
     "<ROOT>/home/projects/demo/runs/run-1/state.json",
     "<ROOT>/home/projects/demo/runs/run-1/log.jsonl",
     "<ROOT>/home/projects/demo/runs/run-1/log.1.jsonl",

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
+import { projectCommonDir, recordsDir, recordsKindDir, writePolicy } from "../src/policy.js";
 import { CONTEXT_LIMIT, buildSystemPrompt, buildUserPrompt } from "../src/prompt.js";
 import { activeRecordsBytes, buildRecordsView, listRecords } from "../src/records.js";
 import { makeEnv, write, type TestEnv } from "./helpers.js";
@@ -97,16 +97,15 @@ describe("project records", () => {
     expect(prompt).not.toContain("ARCHIVED-BODY");
   });
 
-  it("the lead may write the records dir; others may only read it", () => {
+  it("every member may write shared/common, which contains the records", () => {
     env = makeEnv();
     const p = env.project();
     const lead = writePolicy(p, p.agents.lead);
     const member = writePolicy(p, p.agents["fe-member"]);
-    expect(lead.allowDirs).toContain(recordsDir(p));
-    expect(lead.deny).not.toContain(recordsDir(p));
-    expect(member.allowDirs).not.toContain(recordsDir(p));
-    expect(member.deny).toContain(recordsDir(p));
-    expect(member.readDirs).toContain(recordsDir(p));
+    expect(lead.allowDirs).toContain(projectCommonDir(p));
+    expect(member.allowDirs).toContain(projectCommonDir(p));
+    expect(member.deny).not.toContain(recordsDir(p));
+    expect(member.readDirs).not.toContain(recordsDir(p));
   });
 
   it("only the lead's system prompt describes the records; nothing is created on disk", () => {

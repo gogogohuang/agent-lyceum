@@ -61,10 +61,12 @@ describe("write policy", () => {
     expect(pol.allowDirs).toEqual([
       path.join(env.home, "agents/fe-member/memory"),
       path.join(p.paths.outboxRoot, "fe-member"),
+      path.join(p.paths.agentsDir, "fe-member"),
+      path.join(p.paths.shared, "common"),
     ]);
     expect(pol.allowFiles).toEqual([]);
     expect(pol.deny).toContain(p.agents["fe-member"].agentMd);
-    expect(pol.deny).toContain(commonFile(p));
+    expect(pol.deny).not.toContain(commonFile(p));
     for (const f of repoInstructionFiles(p)) expect(pol.deny).toContain(f);
     expect(pol.deny).toContain(path.join(env.home, "agents/qa-member/memory"));
     expect(pol.deny).toContain(p.paths.runs);
