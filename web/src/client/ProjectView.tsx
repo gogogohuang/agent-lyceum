@@ -7,6 +7,7 @@ import { Timeline } from "./Timeline";
 import { TokenChart } from "./TokenChart";
 import { MailBody } from "./MailBody";
 import { readableError, resultRows, splitNote } from "./prose";
+import { ProgressSummary } from "./ProgressSummary";
 import { cacheText, focusReport, openReports, progress, roundsLabel, runElapsed, runLabel, tokenText, workingAgents } from "./view";
 
 export function ProjectView({
@@ -42,7 +43,7 @@ export function ProjectView({
         <header>
           <p className="text-sm text-ink/60">{name}</p>
           {run ? (
-            <RunHeader run={run} now={now} />
+            <RunHeader name={name} run={run} now={now} />
           ) : (
             <>
               <h1 className="text-balance mt-2 text-4xl font-bold leading-tight">還沒有任務</h1>
@@ -74,24 +75,27 @@ export function ProjectView({
   );
 }
 
-function RunHeader({ run, now }: { run: Run; now: number }) {
+function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) {
   const task = run.task_summary || run.name || run.run_id;
   const cache = cacheText(run.cache_read_tokens, run.cache_write_tokens);
   const gone = run.live === false && run.state === "running";
   return (
     <>
       <h1 className="mt-2 max-w-3xl text-balance text-4xl font-bold leading-tight wrap-break-word md:text-5xl">{task}</h1>
-      <dl className="mt-6 grid max-w-3xl grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-4">
-        <div>
-          <dt className="text-sm text-ink/60">狀態</dt>
-          <dd className={cn("mt-1 text-lg tabular-nums", stateClass(run))}>{runLabel(run)}</dd>
-          {gone && <p className="text-pretty mt-1 text-sm text-failed">程序已不存在</p>}
-        </div>
-        <Cell label="輪次" value={`第 ${roundsLabel(run.rounds, run.max_rounds)} 輪`} />
-        <Cell label="token" value={tokenText(run.output_tokens)} />
-        <Cell label="已經過" value={runElapsed(run, now)} />
-        <Cell label="進度" value={progress(run)} />
-      </dl>
+      <div className="mt-6 flex max-w-3xl flex-wrap items-end gap-x-8 gap-y-3">
+        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-8 gap-y-4 sm:grid-cols-4">
+          <div>
+            <dt className="text-sm text-ink/60">狀態</dt>
+            <dd className={cn("mt-1 text-lg tabular-nums", stateClass(run))}>{runLabel(run)}</dd>
+            {gone && <p className="text-pretty mt-1 text-sm text-failed">程序已不存在</p>}
+          </div>
+          <Cell label="輪次" value={`第 ${roundsLabel(run.rounds, run.max_rounds)} 輪`} />
+          <Cell label="token" value={tokenText(run.output_tokens)} />
+          <Cell label="已經過" value={runElapsed(run, now)} />
+          <Cell label="進度" value={progress(run)} />
+        </dl>
+        <ProgressSummary key={`${name}/${run.run_id}`} project={name} runId={run.run_id} />
+      </div>
       {cache && <p className="mt-4 text-lg tabular-nums">{cache}</p>}
       {run.current_step && <p className="text-pretty mt-4 max-w-xl text-sm">目前 {run.current_step}</p>}
     </>
