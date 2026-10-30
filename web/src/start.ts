@@ -2,6 +2,7 @@ import type { WatchFactory } from "./server/hub.js";
 import { createWebHub } from "./server/hub.js";
 import { attachEvents, listen, serveStatic } from "./server/http.js";
 import { openBrowser } from "./server/open.js";
+import { handleSummary } from "./server/summary.js";
 
 export type StartWebOptions = {
   port: number;
@@ -22,6 +23,14 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
     const pathname = (req.url ?? "/").split("?")[0] ?? "/";
     if (pathname === "/events") {
       attachEvents(hub, req, res);
+      return;
+    }
+    if (pathname === "/summary" && req.method === "POST") {
+      void handleSummary(req, res, hub, opts.factory.summarize).catch(() => {
+        if (res.headersSent) return;
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "沒有寫出摘要。" }));
+      });
       return;
     }
     if (pathname === "/quota" && req.method === "POST") {

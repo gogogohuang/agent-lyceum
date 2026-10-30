@@ -30,6 +30,7 @@ import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 import { claudeQuota, codexQuota, type QuotaReport } from "./quota.js";
+import { summarizeProgress } from "./summarize.js";
 
 const program = new Command();
 program
@@ -737,6 +738,7 @@ program
               list: () => string[];
               watch: (name: string, onFrame: (frame: unknown) => void) => { beat: () => void; close: () => void };
               quota?: () => Promise<QuotaReport[]>;
+              summarize?: (input: { runtime: "claude" | "codex"; prompt: string }) => Promise<string>;
             };
           }) => Promise<{ url: string; close: () => Promise<void> }>;
         };
@@ -757,6 +759,7 @@ program
                 allTasks: true,
               }),
             quota: () => Promise.all([claudeQuota(), codexQuota()]),
+            summarize: ({ runtime, prompt }) => summarizeProgress(runtime, prompt),
           },
         });
         console.log(page.url);

@@ -10,6 +10,7 @@ export interface WatchFactory {
   list(): string[];
   watch(name: string, onFrame: (frame: WatchFrame) => void): ProjectWatch;
   quota?(): Promise<QuotaReport[]>;
+  summarize?(input: { runtime: "claude" | "codex"; prompt: string }): Promise<string>;
 }
 
 export function createWebHub(factory: WatchFactory) {
@@ -85,6 +86,9 @@ export function createWebHub(factory: WatchFactory) {
     start: sync,
     beat: sync,
     refreshQuota,
+    frame(name: string): WatchFrame | undefined {
+      return latest.get(name);
+    },
     close() {
       quotaToken += 1;
       for (const watch of watchers.values()) watch.close();
