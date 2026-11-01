@@ -75,6 +75,7 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 
 - **執行什麼：** 依序執行各指令（各用 `sh -c`），工作目錄是 lead 的工作區（它的 worktree；run 沒有 worktree 時是 `project.dir`）。第一條失敗就停止，由 exit code 決定（逾時或無法啟動也算失敗）。
 - **失敗時：** `done` 以 `failure` 信（「Your done report failed verification」）退回給 lead，附上指令、exit code 與輸出最後 4 KB，並計入 `max_rejections`。次數用完後，`done` 以 `partial` 收下並附上指出該指令的備註（若有工作未能整合，則維持 `blocked` 並列出兩項備註），不開 PR。契約本身的退回次數另計。每次退回讓 lead 多一次喚醒，計入 `max_rounds`。
+- **同樣的失敗再次發生：** 每次失敗都會和同一段落內上一次被退回的 `done` 比較，依據是失敗指令的名稱、結束狀態與輸出最後 100 行的指紋（已去除 ANSI 控制碼、時鐘時間、耗時、暫存路徑與本 run 自己的路徑）。指紋相同，且 lead 的 worktree 內容也相同（已追蹤的變更，加上未追蹤且未被 ignore 的檔案；被 ignore 的檔案不看）：很可能沒有進展，所以不再退回，以 `partial` 收下並附上原因，不消耗退回次數。這是啟發式判斷：被 ignore 的相依、環境變數與外部服務都沒有比較，所以原本可能通過的重試可能被提早結束，但絕不會回報成功。指紋相同但內容有變：照常退回，信件開頭會說明是同樣的失敗。沒有 lead 的 worktree（run 直接在 `project.dir` 工作），或取不到內容 hash 時，不比較內容：不會提早停止，信件仍會說明是同樣的失敗，上限只有 `max_rejections`。每次驗證失敗都會在 run log 寫一筆 `verify-repeat`。沒有 `verify` 時什麼都不變，`status --json` 也不變。未驗證：真實的 `claude`／`codex` 與 Linux。（spec 28）
 - **不驗證：** `partial`、`blocked`、`failed` 的 `done`（包含契約提醒用完後以 `partial` 收下的那種）。
 - **驗證中按 Ctrl-C：** 指令被停止，run 以 `cancelled` 結束，不寫判定；`done` 留在 lead 的 outbox，`resume` 會再驗證一次。
 - **崩潰之後：** 該 `done` 會從第一條指令重新驗證。指令可能重複產生副作用；agent-lyceum 不保證冪等。如果 dispatcher 本身被殺掉（`kill -9`），它當時在跑的指令會繼續執行，可能與重跑的那次重疊。

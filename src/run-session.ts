@@ -5,6 +5,7 @@ import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js"
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings, VerifySettings } from "./schema.js";
+import { compareWithLastRejection, repeatAction, repeatStopNote, stoppedInSegment, withRepeatLabel } from "./repeat-detect.js";
 import { commandPassed, describeFailure, rejectionMessage, runVerify, verificationSection } from "./verify.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
@@ -1137,9 +1138,24 @@ export class RunSession {
     const spec = must(verify.commands.find((c) => c.name === failed.name), "verify command");
     const counted = state.verify_rejected?.includes(source) ?? false;
     const used = state.verify_rejections ?? 0;
-    if (!counted && used >= verify.max_rejections) {
+    const cmp = compareWithLastRejection({ source, fingerprint: must(failed.fingerprint, "failure fingerprint"), hash: diffHash, worktree: this.leadSpace !== undefined, records: state.verify, rejected: state.verify_rejected });
+    const segment = state.reopened?.length ?? 0;
+    const left = verify.max_rejections - used;
+    const action = repeatAction(cmp, { counted, stoppedBefore: stoppedInSegment(state.verify, source, segment), left });
+    log("verify-repeat", { source, name: failed.name, fingerprint: failed.fingerprint, previous: cmp.previous ?? null, same_fingerprint: cmp.sameFingerprint, hash: cmp.hash, action, rejections_left: left });
+    if (action === "limit") {
       const note = `Verification failed after ${used} rejection(s): \`${failed.name}\` (\`${spec.run}\`) ${describeFailure(failed, spec.timeout_sec)}; see ${failed.log}. Reported as partial; the lead's report is kept as written.`;
       log("verify-failed", { name: failed.name, exit: failed.exit });
+      return { kind: "exhausted", record, cwd, failure: { note } };
+    }
+    if (action === "stop") {
+      // The verdict is stored before anything else, so a replay after a crash keeps it even if the command's output differs this time.
+      record.repeat_stop_segment = segment;
+      const note = repeatStopNote(failed.name, spec.run, describeFailure(failed, spec.timeout_sec), failed.log, used, verify.max_rejections);
+      this.saveState();
+      fault("verify:stopped");
+      log("verify-failed", { name: failed.name, exit: failed.exit, repeat: true });
+      say(`  done report not sent back: ${failed.name} failed the same way as last time and the workspace has not changed; accepted as partial`);
       return { kind: "exhausted", record, cwd, failure: { note } };
     }
     // Counted once per done file: the count and its source id are saved before the mail goes out, so a replay after a crash neither counts nor sends twice.
@@ -1154,7 +1170,7 @@ export class RunSession {
       to: project.lead,
       type: "failure",
       subject: "Your done report failed verification",
-      body: rejectionMessage(failed, spec.run, out.tails[failed.name] ?? "", spec.timeout_sec, state.verify_rejections ?? used, verify.max_rejections),
+      body: withRepeatLabel(action, cmp.hash, rejectionMessage(failed, spec.run, out.tails[failed.name] ?? "", spec.timeout_sec, state.verify_rejections ?? used, verify.max_rejections)),
     });
     fault("verify:sent");
     rejectDone(done.file);
@@ -1427,6 +1443,7 @@ export class RunSession {
     }
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
+    fault("run:ended");
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
     return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, ...(this.dispatcherVerification ? { dispatcherVerification: this.dispatcherVerification } : {}), doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr, project: project.name, failure: this.failure };
   }

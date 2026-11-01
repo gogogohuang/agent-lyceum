@@ -200,7 +200,7 @@ verify:
 ```
 
 - **預設關閉：** 沒有 `verify`，或 `commands: []`，即為關閉；至少一條指令才啟用。沒設的專案什麼都不會執行，也不會有任何改變。
-- **`max_rejections`：** 整數 0–5，預設 2。驗證失敗時把 `done` 退回 lead 的次數；用完後以 `partial` 收下。`0` 表示直接以 `partial` 收下。
+- **`max_rejections`：** 整數 0–5，預設 2。驗證失敗時把 `done` 退回 lead 的次數；用完後以 `partial` 收下。`0` 表示直接以 `partial` 收下。次數可能提早結束：若 `done` 的失敗與上一次被退回的完全相同，且 lead 的 worktree 沒有變動，就不再退回、不消耗次數，直接以 `partial` 收下（見[怎麼運作](how-it-works.zh-TW.md#驗證-completed-的-done)）。（spec 28）
 - **`commands[].name`：** 小寫字母、數字、`-`，清單內不可重複。用於 log 檔名與訊息。
 - **`commands[].run`：** 單一字串，用 `sh -c` 執行（僅 macOS／Linux）。
 - **`commands[].timeout_sec`：** 整數 1–7200，預設 600。逾時會停止該指令的 process group（先 SIGTERM，再 SIGKILL），並算作失敗。

@@ -14,7 +14,7 @@ export function resolveDoneOutcome(
   contract: DoneContract,
   rejections: number,
   unintegrated: UnintegratedWork[],
-  /** Spec 27: a verify command failed and no rejections were left; `note` says which and how. */
+  /** Spec 27/28: a verify command failed and no rejections were left, or the same failure repeated on an unchanged workspace; `note` says which and how. */
   verifyFailure?: { note: string },
 ): { outcome: RunOutcome; note?: string; verification?: string } {
   const ok = contract.missing.length === 0;

@@ -29,6 +29,7 @@
 | [25](25-sandbox-allowances.md) | 每個 agent 的 sandbox 放寬（`sandbox.write`／`network`／`local_binding`） | 中 | 中（受保護路徑檢查、Codex 網路全有全無、fallback 拒絕） | — |
 | [26](26-lead-parked-session.md) | Claude lead 在回合之間留下同一個行程 | 無（不做） | 高（行程生命週期、與成員批次互斥） | — |
 | [27](27-dispatcher-verify.md) | `done` 前由 dispatcher 執行確定性驗證（`verify`） | 高 | 高（在 agent sandbox 外執行專案指令、新設定鍵） | — |
+| [28](28-repeat-detect.md) | verify 重複失敗偵測（同樣的失敗、工作區沒變就提早降為 `partial`） | 低 | 低（誤判只會少一次退回，不會誤報成功；崩潰重播與 reopen 的比對對象） | — |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
