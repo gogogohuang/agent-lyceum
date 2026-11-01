@@ -79,6 +79,8 @@ Folder layout, every agent field and the rules `doctor` checks: [Configuration](
 
 Older versions refuse a `team.yaml` or `project.yaml` that contains `model_tiers` (a load error, "Unrecognized key"). Before using an older binary, remove `model_tiers` from every `project.yaml` and from `team.yaml`. Other mail and run state are unaffected: older versions ignore a `tier` line in mail. See [Model tiers](docs/configuration.md#model-tiers). (Spec 24.3.2, 24.13)
 
+Likewise, older versions refuse a `project.yaml` that contains `verify` ("Unrecognized key"). Remove the `verify` block before using an older binary. Run state is unaffected. See [Verify](docs/configuration.md#verify). (Spec 27.4)
+
 ## Topics
 
 | Topic | Read |

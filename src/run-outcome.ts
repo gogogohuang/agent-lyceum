@@ -14,6 +14,8 @@ export function resolveDoneOutcome(
   contract: DoneContract,
   rejections: number,
   unintegrated: UnintegratedWork[],
+  /** Spec 27: a verify command failed and no rejections were left; `note` says which and how. */
+  verifyFailure?: { note: string },
 ): { outcome: RunOutcome; note?: string; verification?: string } {
   const ok = contract.missing.length === 0;
   let outcome: RunOutcome = ok ? (contract.outcome ?? "partial") : "partial";
@@ -21,6 +23,11 @@ export function resolveDoneOutcome(
   if (outcome === "completed" && unintegrated.length) {
     outcome = "blocked";
     note = `Not completed: work of ${unintegrated.map((b) => `${b.agent} (branch ${b.branch})`).join(", ")} was never brought into the repo; see ${unintegrated.map((b) => b.report).join(", ")}.`;
+  }
+  if (verifyFailure) {
+    // blocked (work never reached the repo) is the worse verdict and stays; the note names both
+    if (outcome === "completed") outcome = "partial";
+    note = note ? `${note} ${verifyFailure.note}` : verifyFailure.note;
   }
   return { outcome, note, verification: contract.verification };
 }

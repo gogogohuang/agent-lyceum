@@ -1,6 +1,6 @@
 # 27 `done` 前由 dispatcher 執行確定性驗證（verify）
 
-狀態：**提案**（2026-11-01）。對應「Harness, Loops, Graphs」的 L3（檢查）。後續另開 spec：28 = L4（同樣結果重複就停）、29 = L6（通過就凍結、只重跑失敗步驟）。28、29 都要用到本 spec 留下的紀錄（27.7），本 spec 不實作它們。
+狀態：**已實作**（2026-11-01；文件：[設定](../configuration.zh-TW.md#驗證verify)、[怎麼運作](../how-it-works.zh-TW.md#驗證-completed-的-done)）。對應「Harness, Loops, Graphs」的 L3（檢查）。後續另開 spec：28 = L4（同樣結果重複就停）、29 = L6（通過就凍結、只重跑失敗步驟）。28、29 都要用到本 spec 留下的紀錄（27.7），本 spec 不實作它們。
 
 行號以 `55ae675`（0.31.1）為準。真實 `claude`／`codex` 的行為本 spec 不依賴。
 

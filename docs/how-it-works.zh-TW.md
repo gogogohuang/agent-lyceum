@@ -6,7 +6,7 @@
    **專案紀錄：**lead 把每個決策或教訓各寫成一個檔：`shared/common/records/decisions/<id>.md` 或 `records/lessons/<id>.md`（`id` ＝不含 `.md` 的檔名：小寫字母、數字、`-`）。Frontmatter：`status: active|superseded`（必填）、`date: YYYY-MM-DD`（必填）、`title`（必填）、`run` 與 `supersedes`（選填；`supersedes` 列出同類別的 id）；內文是決策或教訓與原因。只有 lead 能寫紀錄（可改 `status`）；其他 agent 的改動會被還原並記為違規；但若同專案另一個 run 仍存活，該改動無法歸屬，會保留並只記入日誌（見[寫入範圍](write-scope.zh-TW.md)）。成員可寫 `agents/<name>/`，包含在那裡建立 `AGENT.md`；這個檔在下一次執行會成為這個專案的人設，全域人設仍受保護。每個決策或教訓各是一個檔，所以同時執行的 run 若新增 id 不同的條目，不會改到同一個檔；兩個 run 改同一個條目仍可能衝突。prompt 只顯示有效的 active 條目（`status: active` 且未被其他條目的 `supersedes` 指名），依日期、再依 id 由新到舊，只放完整條目，每類約 6 KB；放不下的條目每個一行，附路徑，需要時再讀。沒有條目就不顯示。某類別有效 active 條目超過 6 KB 時，lead 的 `done` 會被拒絕；把條目標為 `superseded` 或合併即可。`records/.archive/` 放 `tidy` 的輸出，不會顯示。
 4. agent 寄信的方式，是在**自己的** `outbox/` 寫一個含 frontmatter（`to`、`type`、`subject`）的 Markdown 檔。dispatcher 會檢查 `can_message`、蓋上真正的寄件者，並移到收件者的 `inbox/`。處理完的信件移至 `inbox/<agent>/read/`。信箱屬於單一 run（`runs/<run-id>/mail/`），信件不會跨 run。舊版本啟動的 run 繼續使用共用的 `shared/{inbox,outbox}/` 信箱（信件不會被搬移），接續這類 run 時會沿用舊版配置。
    每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的 `task` 或 `reply` 會退回給寄件人，並以 `failure` 信列出缺少的標題；同一 run 內同一寄件人、type 與主旨最多退回兩次，之後仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。舊版配置的 run 一律直接送達並附警告。
-5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或（有設上限時）喚醒次數達到 `max_rounds`；預設 `0` 代表不限輪數。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。agent-lyceum 不會驗證 lead 回報的內容是否屬實。喚醒失敗最多重試 `retry` 次（預設 2，即最多呼叫 3 次）；仍然失敗就停止整個 run（成員失敗為 `agent_failed`，lead 失敗為 `lead_failed`），不會少了它繼續跑：它正在處理的那封信維持未讀，結束訊息會告訴你怎麼查原因與怎麼繼續（修正後 `agent-lyceum resume <run>`，或用 `clear` 放棄）。agent 為同一封信再次被喚醒時（重試，或 `resume` 後重做），prompt 會帶 Retry 或 Redo 提示；若上一次嘗試在 `outbox/` 留下尚未投遞的草稿，也會一併交還：只給同一個 agent、標為未驗證、最多 4 KB、不會被投遞。prompt 也會要求 agent 先讀自己的 task memory。這些都是 prompt 要求，模型是否照做尚未用真實 runtime 驗證。同一個寄件人寄給同一個收件人、type、reply_to 與內文（忽略空白差異）都相同的信不會再被投遞，並通知寄件人，避免兩個 agent 對著同一封信繞圈。
+5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或（有設上限時）喚醒次數達到 `max_rounds`；預設 `0` 代表不限輪數。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Not done`；`completed` 還要求 `## Steps` 全部勾選。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。除非你設定 `verify`，否則 agent-lyceum 不會檢查 lead 回報的內容是否屬實；見[驗證 completed 的 done](#驗證-completed-的-done)。喚醒失敗最多重試 `retry` 次（預設 2，即最多呼叫 3 次）；仍然失敗就停止整個 run（成員失敗為 `agent_failed`，lead 失敗為 `lead_failed`），不會少了它繼續跑：它正在處理的那封信維持未讀，結束訊息會告訴你怎麼查原因與怎麼繼續（修正後 `agent-lyceum resume <run>`，或用 `clear` 放棄）。agent 為同一封信再次被喚醒時（重試，或 `resume` 後重做），prompt 會帶 Retry 或 Redo 提示；若上一次嘗試在 `outbox/` 留下尚未投遞的草稿，也會一併交還：只給同一個 agent、標為未驗證、最多 4 KB、不會被投遞。prompt 也會要求 agent 先讀自己的 task memory。這些都是 prompt 要求，模型是否照做尚未用真實 runtime 驗證。同一個寄件人寄給同一個收件人、type、reply_to 與內文（忽略空白差異）都相同的信不會再被投遞，並通知寄件人，避免兩個 agent 對著同一封信繞圈。
 
 有待處理信件的成員會平行喚醒，沒有上限，且絕不與 lead 同時執行。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
 
@@ -68,6 +68,19 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 - 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
 - 開 PR 會把 lead 的 branch 與報告發布到 `origin`。因此，提出要求（`open_pr: true`）的 agent 能把它在沙箱內讀得到的任何東西送上遠端，所以只有在可以接受這件事時，才在 task 裡要求開 PR。push 與 `gh pr create` 從你的主 repo 執行，絕不在 agent 的 worktree 裡執行，因為 agent 能寫入那個目錄。
 - agent-lyceum 從不合併，也不等待 CI 或審查。在有 commit 的 git repo 裡，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。
+
+## 驗證 completed 的 done
+
+`project.yaml` 沒有 `verify` 時，agent-lyceum 不會檢查 lead 回報的內容。有設定時（見[設定](configuration.zh-TW.md#驗證verify)），通過上述契約的 `outcome: completed` `done` 會在 run 結束前被驗證。（spec 27.6）
+
+- **執行什麼：** 依序執行各指令（各用 `sh -c`），工作目錄是 lead 的工作區（它的 worktree；run 沒有 worktree 時是 `project.dir`）。第一條失敗就停止，由 exit code 決定（逾時或無法啟動也算失敗）。
+- **失敗時：** `done` 以 `failure` 信（「Your done report failed verification」）退回給 lead，附上指令、exit code 與輸出最後 4 KB，並計入 `max_rejections`。次數用完後，`done` 以 `partial` 收下並附上指出該指令的備註（若有工作未能整合，則維持 `blocked` 並列出兩項備註），不開 PR。契約本身的退回次數另計。每次退回讓 lead 多一次喚醒，計入 `max_rounds`。
+- **不驗證：** `partial`、`blocked`、`failed` 的 `done`（包含契約提醒用完後以 `partial` 收下的那種）。
+- **驗證中按 Ctrl-C：** 指令被停止，run 以 `cancelled` 結束，不寫判定；`done` 留在 lead 的 outbox，`resume` 會再驗證一次。
+- **崩潰之後：** 該 `done` 會從第一條指令重新驗證。指令可能重複產生副作用；agent-lyceum 不保證冪等。如果 dispatcher 本身被殺掉（`kill -9`），它當時在跑的指令會繼續執行，可能與重跑的那次重疊。
+- **後續追問**（`resume <run> "<follow-up>"`）會重新計算退回次數。
+- **記錄在哪：** `result.md` 與 `done-<n>.md` 的結尾有 dispatcher 寫的 `## Dispatcher verification` 段落（每條指令：通過、FAILED 或未執行、耗時、log 路徑）。它是最後一個標題，但 lead 的報告也可能寫出同樣的文字，所以請以 `state.json` 的 `verify` 為準，那才是真正的記錄。各指令輸出在 `runs/<run-id>/verify/<n>-<name>.log`（最後 1 MiB；`n` 累計整個 run 跑過的每條指令，跨多次驗證）。逾時或 Ctrl-C 會停止指令的 process group；自行另開 process group 的子行程不會被停止。`status` 會顯示最近一次驗證；`status --json` 不會。
+- **安全：** 預設關閉，只有你能開。指令在 **agent 的 sandbox 之外，以你的權限與未過濾的環境變數**執行，而且執行的是 agent 寫的程式，所以 agent 可以藉由它們做你帳號能做的任何事，包括改寫 `project.yaml` 與 `runs/`。exit 0 不保證測試真的跑了（agent 可能改了 `package.json`）。worktree 只是工作目錄，不是隔離。**沒有 worktree 時，指令直接在 `project.dir`（你實際的工作目錄）執行。** 指令產生、且 git 沒有忽略的檔案，會和 lead 的成果一起被 commit。`doctor` 的 sandbox 等級與 `dispatcher.strict` 都不涵蓋這條路徑。詳見[設定](configuration.zh-TW.md#驗證verify)。
 
 ## 喚醒失敗時
 

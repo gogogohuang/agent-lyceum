@@ -19,6 +19,8 @@ import {
   REMOVED_AGENT_KEYS,
   REMOVED_DISPATCHER_KEYS,
   ProjectConfig,
+  VERIFY_DEFAULTS,
+  type VerifySettings,
   type AgentPartialT,
   type DispatcherSettings,
   type Effort,
@@ -84,6 +86,8 @@ export interface ResolvedProject {
   agents: Record<string, ResolvedAgent>;
   /** Spec 24: non-empty model ladders per runtime, lowest first (project.yaml replaces team.yaml's per runtime). */
   modelTiers: Partial<Record<Runtime, string[]>>;
+  /** Spec 27: dispatcher-run verification commands from project.yaml; absent = off. Read once when the project is loaded. */
+  verify?: VerifySettings;
   /** Which file each ladder in `modelTiers` came from. */
   modelTiersFrom: Partial<Record<Runtime, "global" | "project">>;
   paths: ProjectPaths;
@@ -162,6 +166,13 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       modelTiersFrom[rt] = fromProject ? "project" : "global";
     }
   }
+
+  const verify: VerifySettings | undefined = p.verify?.commands.length
+    ? {
+        max_rejections: p.verify.max_rejections ?? VERIFY_DEFAULTS.max_rejections,
+        commands: p.verify.commands.map((c) => ({ name: c.name, run: c.run, timeout_sec: c.timeout_sec ?? VERIFY_DEFAULTS.timeout_sec })),
+      }
+    : undefined;
 
   const agents: Record<string, ResolvedAgent> = {};
   for (const agentName of Object.keys(p.agents)) {
@@ -295,6 +306,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     agents,
     modelTiers,
     modelTiersFrom,
+    ...(verify ? { verify } : {}),
     paths,
     ignoredSettings: collectIgnored(hp.globalConfig, g, paths.config, p),
   };

@@ -79,6 +79,8 @@ agents:
 
 舊版程式會拒絕載入含 `model_tiers` 的 `team.yaml` 或 `project.yaml`（載入錯誤，「Unrecognized key」）。改用舊版前，請先從每個 `project.yaml` 與 `team.yaml` 拿掉 `model_tiers`。其他信件與 run 狀態不受影響：舊版會忽略信件中的 `tier` 行。見[模型分級](docs/configuration.zh-TW.md#模型分級)。（spec 24.3.2、24.13）
 
+同樣地，舊版程式會拒絕載入含 `verify` 的 `project.yaml`（「Unrecognized key」）。改用舊版前，請先拿掉 `verify` 區塊。run 狀態不受影響。見[驗證](docs/configuration.zh-TW.md#驗證verify)。（spec 27.4）
+
 ## 主題
 
 | 主題 | 閱讀 |

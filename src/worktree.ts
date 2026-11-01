@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,6 +6,7 @@ import path from "node:path";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { escapesParent } from "./paths.js";
+import { killTree, register, unregister } from "./process-runner.js";
 import type { RunState } from "./run-store.js";
 
 export type WorkspaceMode = "shared" | "worktree";
@@ -324,6 +325,78 @@ export function snapshotBase(project: ResolvedProject, runId: string, n: number,
   } finally {
     fs.rmSync(index, { force: true });
   }
+}
+
+/**
+ * The git tree of the working tree as it is now (tracked changes and new, non-ignored files), through a throwaway index:
+ * nothing of the repo is touched. A worktree is read with the pinned git (no hooks, fsmonitor, filters from the worktree).
+ * Undefined when `dir` is not a git repository or the tree cannot be read (a nested repository in a worktree, ...).
+ */
+export async function workingTreeHash(project: ResolvedProject, from?: AgentWorkspace, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<string | undefined> {
+  const index = path.join(os.tmpdir(), `agent-lyceum-index-${crypto.randomBytes(6).toString("hex")}`);
+  const deadline = Date.now() + (opts.timeoutMs ?? HASH_BUDGET_MS);
+  // No hooks (git runs post-index-change after writing an index, also a temporary one) and no fsmonitor, in both modes.
+  // Clean filters named in the repo's own config still run during `add -A` (as in snapshotBase); only the deadline bounds them.
+  const run = (cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<string> =>
+    boundedGit(cwd, from ? pinnedArgs(args) : ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], from ? pinnedEnv(from, env) : env, deadline, opts.signal);
+  try {
+    let cwd: string;
+    if (from) {
+      assertWorkspaceIntact(from);
+      assertNoNestedRepos(from); // sync, no hooks, quick
+      cwd = from.root;
+    } else cwd = await run(project.dir, ["rev-parse", "--show-toplevel"]);
+    const env = { GIT_INDEX_FILE: index };
+    const head = await run(cwd, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined);
+    if (head) await run(cwd, ["read-tree", head], env);
+    await run(cwd, ["add", "-A"], env);
+    return await run(cwd, ["write-tree"], env);
+  } catch {
+    return undefined;
+  } finally {
+    fs.rmSync(index, { force: true });
+    fs.rmSync(`${index}.lock`, { force: true }); // a git killed during `add` leaves its lock behind
+  }
+}
+
+/** The most the tree hash may take in total (spec 27.7 record only); then it is absent and verification goes on. */
+const HASH_BUDGET_MS = 30_000;
+
+/** git in its own process group, killed with SIGKILL (group and descendants) at `deadline` or on `signal`; the event loop stays free meanwhile. */
+function boundedGit(cwd: string, args: string[], env: NodeJS.ProcessEnv, deadline: number, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("aborted"));
+    const child = spawn("git", args, { cwd, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    if (child.pid !== undefined) register(child.pid);
+    let out = "";
+    let err = "";
+    let done = false;
+    const end = (e?: Error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (child.pid !== undefined) {
+        killTree(child.pid, "SIGKILL"); // also what a filter left behind
+        unregister(child.pid);
+      }
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (e) reject(e);
+      else resolve(out.replace(/\n$/, ""));
+    };
+    const onAbort = () => end(new Error("aborted"));
+    const timer = setTimeout(() => end(new Error("timed out")), Math.max(0, deadline - Date.now()));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (c: Buffer) => {
+      out += c.toString("utf8");
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      err += c.toString("utf8").slice(0, 4096);
+    });
+    child.on("error", (e) => end(e));
+    child.on("close", (code) => end(code === 0 ? undefined : new Error(`git ${args.join(" ")} failed: ${err.trim()}`)));
+  });
 }
 
 interface WorkspaceMeta {

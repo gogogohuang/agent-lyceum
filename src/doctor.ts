@@ -196,6 +196,15 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     );
   }
 
+  if (project.verify) {
+    const cmds = project.verify.commands.map((c) => `${c.name}: ${c.run} (timeout ${c.timeout_sec}s)`).join("; ");
+    checks.push({
+      level: "warn",
+      subject: "verify",
+      message: `Before it accepts a lead's \`completed\` done, the dispatcher runs ${project.verify.commands.length} verify command(s), up to ${project.verify.max_rejections} rejection(s): ${cmds}. They run OUTSIDE the agents' sandbox with your permissions and execute code the agents wrote, in the lead's worktree, or directly in ${project.dir} when runs do not use worktrees. Only you can change them (project.yaml).`,
+    });
+  }
+
   for (const lock of listRunLocks(project.paths.root)) {
     const alive = lockHolderAlive(lock);
     checks.push({

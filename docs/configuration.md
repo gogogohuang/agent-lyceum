@@ -184,6 +184,48 @@ Config fails to load (`doctor` and `run` report an error) when: (24.3.4)
 
 **Lead guidance:** when at least one member can run below its `model`, the harness adds a `## Task tiers` section to the lead's system prompt; without a ladder the prompt is unchanged. A resumed Claude lead may keep its old system prompt, so a ladder added mid-run may not reach it (unverified). (24.10)
 
+## Verify
+
+`verify` makes the dispatcher run your commands before it accepts a lead's `done` with `outcome: completed`. It is a `project.yaml` key only. See [How a run works](how-it-works.md#verifying-a-completed-done) for the flow. (Spec 27.4)
+
+```yaml
+# projects/<name>/project.yaml
+verify:
+  max_rejections: 2          # optional, 0-5, default 2
+  commands:
+    - { name: typecheck, run: "npm run typecheck" }
+    - { name: test,      run: "npm test", timeout_sec: 900 }
+```
+
+- **Off by default:** `verify` absent, or `commands: []`, is off; one command or more turns it on. Nothing runs and nothing changes for a project without it.
+- **`max_rejections`:** integer 0-5, default 2. How many times a failed verification sends the `done` back to the lead before the run is accepted as `partial`. `0` accepts as `partial` at once.
+- **`commands[].name`:** lowercase letters, digits and `-`, unique within the list. It names the log file and appears in messages.
+- **`commands[].run`:** one string, run with `sh -c` (macOS/Linux only).
+- **`commands[].timeout_sec`:** integer 1-7200, default 600. On timeout the command's process group is stopped (SIGTERM, then SIGKILL) and the command counts as failed.
+- Any other key under `verify` or a command is a load error that names the key. Only you write `project.yaml`; `verify` is not accepted in `team.yaml`.
+- `project.yaml` is read when the run starts; editing `verify` during a run does not change that run.
+
+**Security: read this before you turn it on.** These commands run **outside the agent sandbox, with your permissions and your unfiltered environment** (the dispatcher's env is passed on as is), and they run code the agents wrote: `npm test` executes the tests and build scripts any member just changed. Anything your account can do, that code can do, including editing `project.yaml` (`verify` itself) and `runs/`. Consequences:
+
+- Exit code 0 does not prove the tests ran: an agent may have changed `package.json` so that `test` is `exit 0`.
+- It is not isolation. With a lead worktree the command's working directory is that worktree, but it can still write anywhere you can. **Without worktrees (a non-git folder, or a repo with no commit) the commands run in `project.dir`, your real working directory.**
+- Files a command creates that git does not ignore end up in the lead's commit.
+- `doctor` lists every command and warns about this. The sandbox levels `doctor` reports and `dispatcher.strict` do not cover this path.
+- Spec 14.2-9 ("the lead has no unrestricted shell") no longer holds for a project that sets `verify`.
+- Running the commands inside an OS sandbox is not built.
+
+**Measured** with fake commands in `test/verify.test.ts` (no real `claude` or `codex`, no real project):
+
+- A verify command that appends to a protected file (the test uses `COMMON.md`) is kept: the guard does not detect it and does not restore it (`test/verify.test.ts:424`). `project.yaml` is not in the guard's list at all (spec 27.8).
+- Output above 1 MiB: the log in `runs/<run-id>/verify/` keeps the last 1 MiB and starts with a line `[agent-lyceum: output truncated; ...]` (`:114`).
+- CRLF output is written to the log as it came (`\r\n`); the (at most) 4 KB tail put in the mail to the lead has `\r\n` turned into `\n` (`:103`; `src/verify.ts:153`).
+
+Not tested: a real `claude`/`codex` lead, a real project, and whether two runs of one project that both verify interfere (spec 27.11).
+
+`doctor` prints a `verify` warning with each command, its timeout and the rejection limit, only when `verify` is set. `status` (text) adds a line with the last verification; `status --json` is unchanged.
+
+**Mixed versions:** older binaries refuse a `project.yaml` that contains `verify` (a load error, "Unrecognized key"), as with `model_tiers`; see [Downgrading](../README.md#downgrading). (Spec 27.4)
+
 ## Saving tokens
 
 Each wake-up re-reads the agent's whole context, so the number of wake-ups is the main cost of a run. The user measured this over 3 runs: about 156k output tokens against about 12.5M cache-read tokens, with each wake-up re-reading roughly 300k tokens of context. In one run, 6 of 13 rounds were lead re-dispatch or receive wakes, and for a one-line change the code review, docs review, QA and QA review ran; QA plus its review (about 14.6k output tokens) cost twice the implementation. These are one user's measurements, not a benchmark.
