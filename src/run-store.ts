@@ -88,6 +88,27 @@ export interface RunFailure {
   tried?: TriedModel[];
 }
 
+/** What one verify command did (spec 27.7). `log` is relative to the run dir. */
+export interface VerifyCommandRecord {
+  name: string;
+  exit: number | null;
+  ms: number;
+  timed_out: boolean;
+  log: string;
+  /** Set when the command could not be started (for example no shell). */
+  error?: string;
+}
+
+/** One verification of a lead's `done` (spec 27.7). `diff_hash` is the git tree of the lead's workspace when it started; absent outside a git repo. */
+export interface VerifyRecord {
+  at: string;
+  passed: boolean;
+  /** The `done` mail's source id. */
+  source: string;
+  diff_hash?: string;
+  commands: VerifyCommandRecord[];
+}
+
 export interface RunState {
   /** 1 for runs written before versioning; 2 for runs with their own mailboxes. */
   schema_version: number;
@@ -110,6 +131,12 @@ export interface RunState {
   verification?: string;
   /** How many `done` mails were sent back because they broke the completion contract. */
   done_rejections?: number;
+  /** Spec 27: one record per verification the dispatcher ran, oldest first (kept across reopens). */
+  verify?: VerifyRecord[];
+  /** Spec 27: `done` reports sent back because a verify command failed, in the current segment (reset at reopen). */
+  verify_rejections?: number;
+  /** Spec 27: source ids of the `done` files already counted in `verify_rejections`, so a replay does not count twice. */
+  verify_rejected?: string[];
   /** How many malformed `ask` mails each agent had sent back (the limit is MAX_ASK_REJECTIONS). */
   ask_rejections?: Record<string, number>;
   /** Recovery remarks (interrupted attempts whose side effects may have happened). */
@@ -202,6 +229,9 @@ const WireState = z
     outcome_note: z.string().optional(),
     verification: z.string().optional(),
     done_rejections: nonNeg.optional(),
+    verify: z.array(z.any()).optional(),
+    verify_rejections: nonNeg.optional(),
+    verify_rejected: z.array(z.string()).optional(),
     notes: z.array(z.string()).optional(),
     ask_rejections: z.record(z.string(), nonNeg).optional(),
     sessions: z.record(z.string(), z.string()).optional(),

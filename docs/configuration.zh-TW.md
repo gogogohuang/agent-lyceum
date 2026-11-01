@@ -186,6 +186,48 @@ agents:
 
 **Lead 指引：** 至少一個成員能低於自己的 `model` 時，harness 會在 lead 的系統提示加 `## Task tiers` 段落；沒有階梯時提示不變。續接的 Claude lead 可能保留舊系統提示，run 中途新增階梯時它可能看不到（未驗證）。（24.10）
 
+## 驗證（verify）
+
+`verify` 讓 dispatcher 在接受 lead 的 `outcome: completed` `done` 之前，先執行你設定的指令。只能寫在 `project.yaml`。流程見[怎麼運作](how-it-works.zh-TW.md#驗證-completed-的-done)。（spec 27.4）
+
+```yaml
+# projects/<name>/project.yaml
+verify:
+  max_rejections: 2          # 選填，0–5，預設 2
+  commands:
+    - { name: typecheck, run: "npm run typecheck" }
+    - { name: test,      run: "npm test", timeout_sec: 900 }
+```
+
+- **預設關閉：** 沒有 `verify`，或 `commands: []`，即為關閉；至少一條指令才啟用。沒設的專案什麼都不會執行，也不會有任何改變。
+- **`max_rejections`：** 整數 0–5，預設 2。驗證失敗時把 `done` 退回 lead 的次數；用完後以 `partial` 收下。`0` 表示直接以 `partial` 收下。
+- **`commands[].name`：** 小寫字母、數字、`-`，清單內不可重複。用於 log 檔名與訊息。
+- **`commands[].run`：** 單一字串，用 `sh -c` 執行（僅 macOS／Linux）。
+- **`commands[].timeout_sec`：** 整數 1–7200，預設 600。逾時會停止該指令的 process group（先 SIGTERM，再 SIGKILL），並算作失敗。
+- `verify` 或指令下出現其他鍵，載入失敗並指出鍵名。只有你能寫 `project.yaml`；`team.yaml` 不接受 `verify`。
+- `project.yaml` 在 run 啟動時讀取；run 進行中改 `verify` 不影響該 run。
+
+**安全：開啟前請先讀這一段。** 這些指令在 **agent 的 sandbox 之外，以你的權限與未過濾的環境變數**執行（dispatcher 的環境原樣傳下去），而且執行的是 agent 寫的程式：`npm test` 會執行任何成員剛改過的測試與 build 腳本。你的帳號能做的事，這些程式都能做，包括改寫 `project.yaml`（含 `verify` 本身）與 `runs/`。後果：
+
+- exit code 0 不保證測試真的跑了：agent 可能把 `package.json` 的 `test` 改成 `exit 0`。
+- 這不是隔離。有 lead worktree 時，指令的工作目錄是該 worktree，但指令仍可寫到你能寫的任何地方。**沒有 worktree 時（非 git 資料夾，或沒有 commit 的 repo），指令直接在 `project.dir`（你實際的工作目錄）執行。**
+- 指令產生、且 git 沒有忽略的檔案，會進到 lead 的 commit。
+- `doctor` 會列出每條指令並警告。`doctor` 回報的 sandbox 等級與 `dispatcher.strict` 都不涵蓋這條路徑。
+- 設了 `verify` 的專案，spec 14.2-9（「lead 本身不拿到不受限的 shell」）不再成立。
+- 在 OS sandbox 內執行這些指令尚未實作。
+
+**量測結果**，用 `test/verify.test.ts` 的假指令取得（沒有真實的 `claude`／`codex`，也沒有真實專案）：
+
+- verify 指令對受保護檔案（測試用 `COMMON.md`）附加內容：內容被保留，guard 不偵測也不還原（`test/verify.test.ts:424`）。`project.yaml` 根本不在 guard 的清單內（spec 27.8）。
+- 輸出超過 1 MiB：`runs/<run-id>/verify/` 的 log 只留最後 1 MiB，第一行是 `[agent-lyceum: output truncated; ...]`（`:114`）。
+- CRLF 輸出在 log 中原樣保留（`\r\n`）；放進給 lead 的信的尾端（最多 4 KB）會把 `\r\n` 換成 `\n`（`:103`；`src/verify.ts:153`）。
+
+未測：真實的 `claude`／`codex` lead、真實專案，以及同一專案兩個都啟用 verify 的 run 會不會互相干擾（spec 27.11）。
+
+只有設了 `verify` 時，`doctor` 才會印出一則 `verify` 警告，列出每條指令、逾時與退回上限。`status`（文字）多一行最近一次驗證；`status --json` 不變。
+
+**混用版本：** 舊版程式會拒絕載入含 `verify` 的 `project.yaml`（載入錯誤，「Unrecognized key」），與 `model_tiers` 相同；見[降級（改用舊版）](../README.zh-TW.md#降級改用舊版)。（spec 27.4）
+
 ## 節省 token
 
 每次喚醒都會重讀 agent 的整個 context，所以喚醒次數是一次 run 的主要成本。使用者在 3 次 run 上的實測：輸出約 156k token、cache 讀取約 12.5M token，每次喚醒約重讀 300k token 的 context。其中一次 run 的 13 輪裡有 6 輪是 lead 重新派工或收信的喚醒；一行的修改跑了 code review、docs review、QA 與 QA review，QA 加其 review（輸出約 14.6k token）的花費是實作的兩倍。以上是單一使用者的量測，不是 benchmark。

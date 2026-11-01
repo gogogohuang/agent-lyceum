@@ -128,11 +128,41 @@ export const GlobalConfig = z
   })
   .strict();
 
+/** Spec 27: commands the dispatcher runs before it accepts a lead's `completed` done. Only the user writes them (project.yaml). */
+export const VerifyCommandPartial = z
+  .object({
+    name: z.string().regex(/^[a-z0-9-]+$/, "must be lowercase letters, digits and '-'"),
+    run: z.string().min(1),
+    timeout_sec: z.number().int().min(1).max(7200).optional(),
+  })
+  .strict();
+
+export const VerifyPartial = z
+  .object({
+    max_rejections: z.number().int().min(0).max(5).optional(),
+    commands: z.array(VerifyCommandPartial).default([]),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    const seen = new Set<string>();
+    v.commands.forEach((c, i) => {
+      if (seen.has(c.name)) ctx.addIssue({ code: "custom", path: ["commands", i, "name"], message: `"${c.name}" is used twice; names must be unique` });
+      seen.add(c.name);
+    });
+  });
+
+export interface VerifySettings {
+  max_rejections: number;
+  commands: { name: string; run: string; timeout_sec: number }[];
+}
+export const VERIFY_DEFAULTS = { max_rejections: 2, timeout_sec: 600 } as const;
+
 export const ProjectConfig = z
   .object({
     dir: z.string(),
     team: z.object({ lead: z.string() }).strict(),
     model_tiers: ModelTiersPartial.optional(),
+    verify: VerifyPartial.optional(),
     dispatcher: DispatcherPartial.default({}),
     agents: z.record(z.string(), AgentPartial).default({}),
   })

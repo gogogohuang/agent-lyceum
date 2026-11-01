@@ -101,7 +101,8 @@ function sample(): void {
   for (const [pid, seen] of live) for (const d of below(kids, pid)) seen.add(d);
 }
 
-function register(pid: number): void {
+/** Make a child visible to `killAllRunning` (also used by verify commands, spec 27). */
+export function register(pid: number): void {
   live.set(pid, new Set());
   if (!exitHook) {
     exitHook = true;
@@ -113,7 +114,7 @@ function register(pid: number): void {
   }
 }
 
-function unregister(pid: number): void {
+export function unregister(pid: number): void {
   live.delete(pid);
   if (!live.size && sampler) {
     clearInterval(sampler);
@@ -140,7 +141,7 @@ function signalPid(pid: number, sig: NodeJS.Signals, group: boolean): void {
 }
 
 /** Signal the runtime's group, the descendants recorded earlier that are still in the process table, and its current descendants. */
-function killTree(pid: number, sig: NodeJS.Signals): void {
+export function killTree(pid: number, sig: NodeJS.Signals): void {
   const kids = processTable();
   const seen = live.get(pid) ?? new Set<number>();
   const now = below(kids, pid);

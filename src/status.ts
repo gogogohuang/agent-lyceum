@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
 import { RESULT_FILE } from "./dispatcher.js";
-import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type InstanceTable, type RunFailure, type RunState, type WakeRecord, type WakeTopic } from "./run-store.js";
+import { bindRunProject, loadRunState, outcomeOf, roundsLabel, runLabel, type ActiveWake, type EndReason, type InstanceTable, type RunFailure, type RunState, type VerifyRecord, type WakeRecord, type WakeTopic } from "./run-store.js";
 import type { RunOutcome } from "./schema.js";
 import type { ResolvedProject } from "./config.js";
 import { candidatesFor } from "./fallback.js";
@@ -338,7 +338,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
       ask = { path: askReplyPath(run.dir), total: 0, unanswered: 0 };
     }
   }
-  return {
+  const report: RunReport = {
     run_id: s.run_id,
     name: s.name,
     dir: run.dir,
@@ -376,7 +376,13 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
     ...(s.instances ? { instances: s.instances.roles } : {}),
     ...(ask ? { ask } : {}),
   };
+  const lastVerify = s.verify?.at(-1);
+  if (lastVerify) lastVerifyOf.set(report, lastVerify); // human output only: `status --json` stays as it was
+  return report;
 }
+
+/** The latest dispatcher verification (spec 27), kept off the report so `status --json` is unchanged. */
+const lastVerifyOf = new WeakMap<RunReport, VerifyRecord>();
 
 /** A run that ended with a `completed` or `partial` outcome: the only kinds the monitor stops listing (blocked, failed and cancelled stay). */
 export const isFinishedRun = (r: Pick<RunReport, "state" | "outcome">): boolean => r.state === "ended" && (r.outcome === "completed" || r.outcome === "partial");
@@ -511,6 +517,8 @@ function summaryBlock(run: RunReport | undefined, now: number, c: Paint): string
   if (s.end_reason === "done" && s.result_path && s.result_head.length) {
     lines.push(`${L("結果：")}${s.result_path}`, ...s.result_head.map((l) => c.dim("          " + clip(l, 80))));
   }
+  const dv = lastVerifyOf.get(s);
+  if (dv) lines.push(`${L("dispatcher 驗證：")}${dv.passed ? c.green("通過") : c.red("未通過")}（${dv.commands.map((x) => `${x.name} ${x.timed_out ? "逾時" : x.error ? "無法執行" : `exit ${x.exit}`}`).join("、")}；${dv.at}）`);
   const lastWake = (s.wakes ?? []).at(-1);
   if (lastWake) lines.push(`${L("上一次：")}#${lastWake.round} ${c.cyan(lastWake.agent)} ${okText(c, lastWake.ok)} → ${sentText(lastWake.sent)}`);
   if (s.failure) {

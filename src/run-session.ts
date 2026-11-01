@@ -4,7 +4,8 @@ import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
-import type { DispatcherSettings } from "./schema.js";
+import type { DispatcherSettings, VerifySettings } from "./schema.js";
+import { commandPassed, describeFailure, rejectionMessage, runVerify, verificationSection } from "./verify.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
 import { ProtectedGuard } from "./guard.js";
 import { listRunLocks, lockHolderAlive } from "./project-lock.js";
@@ -21,7 +22,8 @@ import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, 
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type TriedModel } from "./run-store.js";
+import { workingTreeHash } from "./worktree.js";
+import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
@@ -81,6 +83,8 @@ export interface RunSummary {
   outcome: RunOutcome;
   outcomeNote?: string;
   verification?: string;
+  /** Spec 27: the dispatcher's own verification of this done, when `verify` is configured and ran. */
+  dispatcherVerification?: { passed: boolean; text: string };
   doneMessage?: { subject: string; body: string };
   /** Set when the run waits for the user: the file with the questions. */
   askReplyPath?: string;
@@ -122,6 +126,8 @@ export interface RunOptions {
    * shared memory), or undefined. Asked before activation, after an instance is created and when a run is resumed. Tests inject one.
    */
   instanceCheck?: (role: string, k: number) => string | undefined;
+  /** Spec 27: kill grace and pipe wait of verify commands (milliseconds); tests shorten them. */
+  verifyTiming?: { killGraceMs?: number; settleWaitMs?: number };
 }
 
 /**
@@ -196,6 +202,8 @@ export class RunSession {
   /** Models cooling down after a rate limit or quota error; one table for the run, shared by parallel wake-ups. */
   private readonly cooldowns: Cooldowns;
   private doneVerification: string | undefined;
+  /** What the dispatcher's own verification of the accepted done came to (spec 27); set only when it ran. */
+  private dispatcherVerification: { passed: boolean; text: string } | undefined;
   /** The accepted `done` carried `open_pr: true` (only the lead can send `done`). */
   private openPrRequested = false;
   private readonly prRunner: CommandRunner;
@@ -288,6 +296,8 @@ export class RunSession {
         state.max_rounds = roundLimit(state, cfg.max_rounds);
         state.result_branch = undefined;
         state.done_rejections = 0;
+        state.verify_rejections = undefined;
+        state.verify_rejected = undefined;
         // The progress so far stays shown: the follow-up's own steps are added after it.
         state.step_base = resume.steps;
         if (recut && resume.pr_url) {
@@ -954,7 +964,7 @@ export class RunSession {
 
 
   /** After a batch (or, on resume, before the first one): revert guarded edits, route mail, detect done / lead failure. */
-  private settle(batch: ResolvedAgent[], results: WakeOutcome[]): void {
+  private async settle(batch: ResolvedAgent[], results: WakeOutcome[]): Promise<void> {
     const { say, runDir, project, log, state, guard, claims, attempts } = this;
     const violations = guard.check(batch);
     for (const v of violations) {
@@ -1007,6 +1017,20 @@ export class RunSession {
         contract = undefined;
       }
     }
+    // Spec 27: a completed done that met the contract is judged by the project's verify commands (the contract came first).
+    let verified: { record: VerifyRecord; cwd: string; failure?: { note: string } } | undefined;
+    if (route.done && contract && contract.missing.length === 0 && contract.outcome === "completed" && project.verify) {
+      const v = await this.verifyDone(route.done, project.verify);
+      if (v.kind === "cancelled") {
+        // No verdict: the done stays in the outbox (routed again on resume); the rest of this settle still runs.
+        route.done = undefined;
+        contract = undefined;
+        this.endReason = "cancelled";
+      } else if (v.kind === "rejected") {
+        route.done = undefined;
+        contract = undefined;
+      } else verified = v;
+    }
     this.noteTierIgnored(route);
     const askAccepted = this.handleAsks(route);
     for (const d of route.delivered) log("route", d);
@@ -1051,11 +1075,16 @@ export class RunSession {
       }
       this.doneMessage = { subject: route.done.subject, body: route.done.body };
       this.openPrRequested = route.done.meta.open_pr === true;
-      const resolved = resolveDoneOutcome(must(contract, "completion contract of the done report"), state.done_rejections ?? 0, state.blocked_integrations ?? []);
+      const resolved = resolveDoneOutcome(must(contract, "completion contract of the done report"), state.done_rejections ?? 0, state.blocked_integrations ?? [], verified?.failure);
       this.doneOutcome = resolved.outcome;
       this.doneNote = resolved.note;
       this.doneVerification = resolved.verification;
-      const report = `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n`;
+      if (verified) {
+        const bad = verified.record.commands.find((c) => !commandPassed(c));
+        const spec = bad ? project.verify?.commands.find((c) => c.name === bad.name) : undefined;
+        this.dispatcherVerification = bad ? { passed: false, text: `FAILED: ${bad.name} (${spec?.run ?? "?"}) ${describeFailure(bad, spec?.timeout_sec)}` } : { passed: true, text: `passed (${verified.record.commands.map((c) => c.name).join(", ")})` };
+      }
+      const report = `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n${verified ? `\n${verificationSection(verified.record, must(project.verify, "verify settings"), verified.cwd)}` : ""}`;
       atomicWrite(path.join(runDir, RESULT_FILE), report);
       atomicWrite(path.join(runDir, `done-${(state.reopened?.length ?? 0) + 1}.md`), report);
       this.pendingDoneFile = route.done.file;
@@ -1063,6 +1092,7 @@ export class RunSession {
       this.endReason = "done";
       return;
     }
+    if (this.endReason) return; // cancelled while verifying: nothing later may change why the run ended
     if (askAccepted) {
       this.endReason = "waiting";
       return;
@@ -1078,6 +1108,60 @@ export class RunSession {
     }
   }
 
+
+  /**
+   * Run the project's verify commands on a completed `done` (spec 27). `passed`: accept; `exhausted`: accept as partial;
+   * `rejected`: sent back to the lead (the done file is set aside); `cancelled`: no verdict, the done file stays in the outbox.
+   * The commands are `project.verify` as loaded when this process started (project.yaml is not read again during a run).
+   */
+  private async verifyDone(done: NonNullable<RouteResult["done"]>, verify: VerifySettings): Promise<{ kind: "cancelled" } | { kind: "rejected" } | { kind: "passed" | "exhausted"; record: VerifyRecord; cwd: string; failure?: { note: string } }> {
+    const { say, runDir, project, log, state } = this;
+    const cwd = this.leadSpace?.dir ?? project.dir;
+    const source = sourceIdOf(done.from, done.file);
+    // The tree is hashed before any command runs; with the lead's worktree this uses the pinned git, never a bare one.
+    const diffHash = await workingTreeHash(project, this.leadSpace, { signal: this.opts.signal });
+    say(`  verifying ${project.lead}'s done: ${verify.commands.map((c) => c.name).join(", ")}`);
+    const out = await runVerify(verify, runDir, state.verify, { cwd, signal: this.opts.signal, ...this.opts.verifyTiming }, {
+      start: (name) => log("verify-start", { name }),
+      end: (c) => log("verify-end", { name: c.name, exit: c.exit, ms: c.ms, timed_out: c.timed_out, ...(c.error ? { error: c.error } : {}) }),
+    });
+    if (out.cancelled) {
+      say("  verification cancelled: no verdict; the done report stays for the next resume");
+      log("verify-cancelled", { source });
+      return { kind: "cancelled" };
+    }
+    const record: VerifyRecord = { at: new Date().toISOString(), passed: out.passed, source, ...(diffHash ? { diff_hash: diffHash } : {}), commands: out.commands };
+    state.verify = [...(state.verify ?? []), record];
+    if (out.passed) return { kind: "passed", record, cwd };
+    const failed = must(out.failed, "failed verify command");
+    const spec = must(verify.commands.find((c) => c.name === failed.name), "verify command");
+    const counted = state.verify_rejected?.includes(source) ?? false;
+    const used = state.verify_rejections ?? 0;
+    if (!counted && used >= verify.max_rejections) {
+      const note = `Verification failed after ${used} rejection(s): \`${failed.name}\` (\`${spec.run}\`) ${describeFailure(failed, spec.timeout_sec)}; see ${failed.log}. Reported as partial; the lead's report is kept as written.`;
+      log("verify-failed", { name: failed.name, exit: failed.exit });
+      return { kind: "exhausted", record, cwd, failure: { note } };
+    }
+    // Counted once per done file: the count and its source id are saved before the mail goes out, so a replay after a crash neither counts nor sends twice.
+    if (!counted) {
+      state.verify_rejections = used + 1;
+      state.verify_rejected = [...(state.verify_rejected ?? []), source];
+    }
+    this.saveState();
+    fault("verify:counted");
+    deliverOnce(project, this.journal(), `verify-reject:${source}`, {
+      from: "dispatcher",
+      to: project.lead,
+      type: "failure",
+      subject: "Your done report failed verification",
+      body: rejectionMessage(failed, spec.run, out.tails[failed.name] ?? "", spec.timeout_sec, state.verify_rejections ?? used, verify.max_rejections),
+    });
+    fault("verify:sent");
+    rejectDone(done.file);
+    say(`  done report sent back to ${project.lead}: ${failed.name} ${describeFailure(failed, spec.timeout_sec)}`);
+    log("verify-rejected", { name: failed.name, exit: failed.exit, count: state.verify_rejections });
+    return { kind: "rejected" };
+  }
 
   /** The user answered: send each asker its answers as a `reply`, then mark them delivered. Safe to repeat after a crash. */
   private deliverAnswers(): void {
@@ -1212,7 +1296,7 @@ export class RunSession {
 
 
   /** On resume: sort out what the interrupted process left behind before anything is woken. */
-  private recover(): void {
+  private async recover(): Promise<void> {
     const { say, runId, runDir, project, wsMode, log } = this;
     if (this.resume?.end_reason === "waiting") this.deliverAnswers();
     const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent) });
@@ -1234,14 +1318,14 @@ export class RunSession {
       }
     }
     for (const c of rec.abandoned) say(`  ${c.agent}'s unfinished wake-up is redone: its ${c.message_ids.length} message(s) stay unread`);
-    this.settle([], []);
+    await this.settle([], []);
     // Wake-ups that had finished before the crash: their output is routed now, so their input is consumed.
     for (const c of rec.ready) commitClaim(runDir, c.id);
   }
 
 
   async run(): Promise<RunSummary> {
-    if (this.resume) this.recover();
+    if (this.resume) await this.recover();
 
     const { say, runId, runDir, wsMode, log, state, opts } = this;
     let project = this.project;
@@ -1321,7 +1405,7 @@ export class RunSession {
       const results = await Promise.all(awake.map((a) => this.wake(a)));
       leadWasLast = awake.some((a) => a.name === project.lead);
       if (awake.some((a) => a.name !== project.lead)) nudged = false;
-      this.settle(awake, results);
+      await this.settle(awake, results);
       if (!this.endReason && opts.signal?.aborted) this.endReason = "cancelled";
     }
 
@@ -1344,6 +1428,6 @@ export class RunSession {
     log("end", { reason: endReason, outcome, rounds: state.rounds });
     this.saveState();
     if (this.pendingDoneFile) finishDone(this.pendingDoneFile);
-    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr, project: project.name, failure: this.failure };
+    return { runId, name: state.name, runDir, rounds: state.rounds, endReason, outcome, outcomeNote, verification: this.doneVerification, ...(this.dispatcherVerification ? { dispatcherVerification: this.dispatcherVerification } : {}), doneMessage: this.doneMessage, askReplyPath: endReason === "waiting" ? askReplyPath(runDir) : undefined, resultBranch, pr, project: project.name, failure: this.failure };
   }
 }
