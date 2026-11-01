@@ -7,8 +7,8 @@
 ## 27.1 問題
 
 - `done` 目前只檢查結構：要有 `outcome` 和規定標題，`completed` 要 Steps 全勾（`src/format.ts` 的 `doneContract`）。報告內容是真是假，dispatcher 不檢查；`docs/how-it-works.md` 也明說 "does not verify what the lead reports"。
-- 結果是：lead 可以在測試沒過的情況下回報 `completed`，並且 `open_pr: true` 會照樣開出 PR（`completed` 是唯一條件，見 spec 14.2-3）。
-- 「dispatcher 直接執行專案指令」之前被擋下，因為指令會執行 agent 寫的程式碼，等於在 agent 的 sandbox 外跑（`docs/evaluations/graph-engineering.md` §4）。本 spec 正面處理這個風險，而不是繞開它（27.5）。
+- 結果是：lead 可以在測試沒過的情況下回報 `completed`，並且 `open_pr: true` 會照樣開出 PR（內容面的條件只有 `completed`，見 spec 14.2-3；另外只要求有 lead 分支且分支有檔案變更，`src/run-session.ts:1185-1188`）。
+- 「dispatcher 直接執行專案指令」之前被擋下，因為指令會執行 agent 寫的程式碼，等於在 agent 的 sandbox 外跑（`docs/evaluations/graph-engineering.md` §4 判定「不可採」）。本 spec 改變這個結論：風險沒有被消除，改由使用者明確開啟並自行承擔（27.5）；隔離仍未解決。
 
 ## 27.2 目標與非目標
 
@@ -16,7 +16,7 @@
 
 **非目標：**
 
-- 不讓 agent 設定或改動 verify 指令。指令只能由使用者寫在 `project.yaml`（agent 寫不到設定家目錄，見 `docs/write-scope.md`）。
+- 不讓 agent 設定或改動 verify 指令。指令只能由使用者寫在 `project.yaml`（agent 的寫入政策把 `project.yaml` 與 `team.yaml` 列為 deny，`src/policy.ts:220`；設定家目錄裡的 memory 等其他路徑 agent 可寫；這條限制不約束 verify 指令本身，見 27.5）。
 - 不在 `partial`／`blocked`／`failed` 的 `done` 上跑驗證。
 - 不做成員層級的 gate（每次成員 `reply` 都驗）。那屬於 29。
 - 不解析測試框架的輸出、不算失敗指紋、不偵測重複失敗。那屬於 28。
@@ -31,7 +31,7 @@
 | D-01 | 預設不跑任何驗證。沒有 `verify` 設定的專案，行為與 0.31.1 完全相同 | 相容；執行專案指令必須是使用者明確選擇的 |
 | D-02 | 設定放在 `project.yaml` 的 `verify`（見 27.4），不放 `team.yaml`，不能由 agent 或 task 內容指定 | 指令的來源必須是使用者，不是 agent 或任務文字 |
 | D-03 | 只在 lead 的 `done` 宣告 `outcome: completed`、且通過 `doneContract` 之後才跑 | 契約不全的 `done` 本來就會被退回；`partial`／`blocked`／`failed` 沒有宣稱成功，不需要驗 |
-| D-04 | 跑的時機是成員工作已整合進 lead 工作區之後（`routeOutboxes` 之前的 `integrateMember` 已完成，`src/run-session.ts:984-988`），在 lead 的工作區（worktree 模式）或 `project.dir`（非 worktree 模式）執行 | 驗的是 lead 真正會提交的那棵樹 |
+| D-04 | 跑的時機是成員工作已整合進 lead 工作區之後（`routeOutboxes` 之前的 `integrateMember` 已完成，`src/run-session.ts:982-986`），在 lead 的工作區（worktree 模式）或 `project.dir`（非 worktree 模式）執行 | 驗的是 lead 真正會提交的那棵樹；但 verify 自己產生、未被 ignore 的檔案也會被提交（`commitWorkspace` 用 `git add -A`，`src/worktree.ts:506`） |
 | D-05 | 指令依序執行，遇到第一個失敗就停（`fail_fast`，固定行為，不開設定） | 後面的指令常依賴前面的（build 才有 test）；少跑也省時間 |
 | D-06 | 全部通過：接受 `done`。把驗證結果寫進 `result.md` 與 `done-<n>.md` 的 `## Dispatcher verification` 區段，與 lead 自己寫的 `## Verification` 分開 | 讓讀者分得出「dispatcher 跑的」和「lead 說的」 |
 | D-07 | 有失敗：不結束 run，`done` 退回 lead，附指令、exit code、輸出尾端（每條至多 4 KB）。退回次數有上限 `max_rejections`（預設 2），與 `done_rejections` 分開計 | 沿用 `doneContract` 的退回模式；失敗要給方向（L4 的前提） |
@@ -42,7 +42,7 @@
 | D-12 | 不升 `schema_version`。`state.json` 新增選填欄位 `verify`；舊 run 照常載入 | 沿用過去的相容作法 |
 | D-13 | 重開（`resume <run> "<follow-up>"`）後的新 `done` 重新驗證；上一段的驗證結果保留在 `done-<n>.md` | 每個 segment 各自負責 |
 | D-14 | `doctor` 在設定了 `verify` 時列出每條指令，並明確警告「這些指令在 agent 的 sandbox 外、以你的權限執行」 | 使用者必須知情 |
-| D-15 | 這個功能對 `run --agent`（單獨 agent）同樣適用，`call` 不適用 | 單獨 agent 就是它那個一人團隊的 lead（spec 14.2-9）；`call` 沒有專案與工作區 |
+| D-15 | 這個功能對 `run --agent`（單獨 agent）同樣適用，`call` 不適用 | 單獨 agent 就是它那個一人團隊的 lead（spec 14.2-9）；`call` 沒有信箱，也就沒有 `done`（`src/policy.ts:188`） |
 
 ## 27.4 設定
 
@@ -60,11 +60,11 @@ verify:
 - `run`：交給 `sh -c` 執行的單一字串（Windows 不支援，與整體平台限制一致）。
 - `timeout_sec`：1–7200，預設 600。
 - schema 一律 `.strict()`。未知的鍵載入失敗並指出鍵名。
-- **降版：** 舊版本會因 `verify` 是未知的鍵而拒絕載入 `project.yaml`（"Unrecognized key"），與 `model_tiers` 相同。README 的 Downgrading 區段與 `docs/upgrading-run-v2.md` 要補上。
+- **降版：** 舊版本會因 `verify` 是未知的鍵而拒絕載入 `project.yaml`（"Unrecognized key"），與 `model_tiers` 相同。README 的 Downgrading 區段與 `docs/configuration.md` 的 Mixed versions 說明要補上（`docs/upgrading-run-v2.md` 談 run 格式，本 spec 不改格式，見 D-12）。
 
 ## 27.5 安全：指令會執行 agent 寫的程式碼
 
-**事實：** `npm test` 這類指令會執行 agent 剛改過的測試與程式。dispatcher 用使用者的權限跑它們，等於 agent 寫的程式碼在 agent 的 sandbox 外執行。agent 可以藉由改測試或 build 腳本做任何使用者帳號能做的事。
+**事實：** `npm test` 這類指令會執行 agent 剛改過的測試與程式。dispatcher 用使用者的權限跑它們，等於 agent 寫的程式碼在 agent 的 sandbox 外執行。agent 可以藉由改測試或 build 腳本做任何使用者帳號能做的事，包括連網、改寫 `project.yaml`（含 `verify` 本身）與 `runs/`。這些程式碼的作者可以是任何成員，不只 lead。開啟 verify 後，spec 14.2-9「lead 本身不拿到不受限的 shell」不再成立，`doctor` 與 `dispatcher.strict` 回報的 sandbox 等級也不涵蓋這條路徑。同樣因為腳本可被 agent 改動，exit code 0 不保證原本的測試有跑（例如 `package.json` 的 `test` 被改成 `exit 0`）。
 
 **本 spec 的處理：**
 
@@ -73,7 +73,7 @@ verify:
 3. `doctor` 與文件明講風險（D-14）。
 4. 工作區是 lead 的 worktree，不是使用者的主工作樹（worktree 模式）；指令的 cwd 在 worktree。這**不是**隔離：指令仍可寫到 worktree 以外。
 5. 環境變數：繼承 dispatcher 的環境，不做過濾。過濾清單（哪些是機密）無法可靠判斷，做了反而給人錯誤的安心。
-6. 這和使用者自己 `git merge` 後跑 `npm test` 的風險是同一類，只是時機提前。
+6. 這和使用者自己 `git merge` 後跑 `npm test` 的風險同類，但有兩點較差：使用者沒有機會先讀 diff、不能決定不跑；而且在 run 進行中執行，可以改動 dispatcher 之後會讀的設定與 run 資料。
 
 **未解決，要另案：**
 
@@ -82,7 +82,7 @@ verify:
 
 ## 27.6 流程
 
-在 `run-session.ts` 接受 `done` 的位置（`:990-1021` 契約檢查之後、`:1049` 之前）：
+在 `run-session.ts` 的 `settle`，契約檢查（`:989-1009`）之後、`noteTierIgnored`（`:1010`）之前；採用方式與 `done-reject` 相同。`settle`（`:957`）和呼叫它的 `recover`（`:1215`）目前都是同步函式（呼叫點 `:1237`、`:1244`、`:1324`），要支援逾時與 Ctrl-C，兩者都要改成 async，或把驗證拆到 `run()` 迴圈裡：
 
 1. `doneContract` 通過，且 `outcome === "completed"`，且 `verify.commands` 非空 → 進入驗證。
 2. 依序執行；每條執行前後 `log("verify-start"|"verify-end", {name, exit, ms})`。
@@ -91,7 +91,7 @@ verify:
 5. 有失敗且次數用完 → 接受 `done`，`outcome` 降為 `partial`（D-08）。
 6. 退回訊息使用 `deliverOnce`，key 為 `verify-reject:<source id>`，與 `done-reject` 一樣冪等。
 
-**崩潰與重播：** 驗證本身不改工作區，重跑是安全的。驗證中途崩潰，重新啟動後該 `done` 仍在 outbox 中，會再走一次驗證；不保留半途結果。這一點實作時要用測試確認（27.9）。
+**崩潰與重播：** 驗證中途崩潰，重新啟動後該 `done` 仍在 outbox 中（`recover` 會再走 `settle`，`:1237`），會再走一次驗證；不保留半途結果。指令可能改動工作區或外部狀態（27.5），重跑的副作用由指令本身決定，dispatcher 不保證冪等。這一點實作時要用測試確認（27.9）。
 
 **取消：** Ctrl-C 要殺掉驗證中的 process group，run 以 `cancelled` 結束，不寫判定。
 
@@ -103,7 +103,7 @@ verify:
 - `verify_rejections` 計數。
 - 驗證當下 lead 工作區的 diff hash（28 用來判斷「工作區沒變」）。
 
-28、29 只讀這些欄位，不需要再改本 spec 的行為。
+28 只讀這些欄位，不需要再改本 spec 的行為。29 若要跳過已通過的指令（會改變 D-05、D-06 的執行行為），或做成員層級的 gate（27.2，需要新增執行點），都不在這個保證內。
 
 ## 27.8 與其他機制的關係
 
@@ -111,7 +111,7 @@ verify:
 - **`open_pr`（spec 14）：** 驗證失敗而降為 `partial` 時不開 PR，不需要改 14 的程式。
 - **`max_rounds`：** 驗證退回會讓 lead 多一次喚醒，計入喚醒次數。
 - **fallback／tier：** 不受影響。
-- **write-scope／guard：** verify 在 agent 喚醒之外執行，不經過 guard。指令若修改了受保護檔案，下一次 guard 比對時會被當成變更處理，**行為未驗證**（27.9 要測）。
+- **write-scope／guard：** verify 在 agent 喚醒之外執行，不經過 guard。`guard.check` 只在 `settle` 開頭跑（`src/run-session.ts:959`），下一批喚醒前的 `guard.rebase()`（`:1318`）會把當下內容收為基準。依讀碼，指令對受保護檔案內容的一般修改**不會被偵測或還原**（把它換成 symlink 等不安全類型時，`guard.check` 的 `unsafeToRead` 分支仍會處理，`src/guard.ts:117-124`）；`project.yaml` 根本不在 guard 的清單內（`src/guard.ts:78-86`）。未實測（27.9 要測）。
 - **`run --agent`：** 同一條路徑（D-15）。
 - **非 worktree 模式：** 在 `project.dir` 執行，也就是使用者的實際工作目錄。文件要特別標出這一點。
 
@@ -139,12 +139,12 @@ verify:
 - `src/schema.ts`：`VerifyPartial`、`ProjectConfig.verify`。
 - `src/config.ts`：解析與預設值。
 - 新檔 `src/verify.ts`：執行、逾時、截斷、log 寫入。
-- `src/run-session.ts`：D-03～D-08 的流程與 state 欄位。
+- `src/run-session.ts`：D-03～D-08 的流程與 state 欄位；`settle`／`recover` 改 async（27.6）。
 - `src/run-outcome.ts`：降級與 note。
 - `src/run-store.ts`：state 選填欄位。
 - `src/doctor.ts`：D-14。
 - `src/status.ts`：顯示最近一次驗證結果。
-- 文件（中英成對）：`docs/configuration.md`、`docs/how-it-works.md`、`README.md`（含 Downgrading）、`docs/upgrading-run-v2.md`。
+- 文件（中英成對）：`docs/configuration.md`、`docs/how-it-works.md`、`README.md`（含 Downgrading）。
 - `docs/specs/README.md`：索引加一列。
 
 ## 27.11 評估範圍
@@ -154,7 +154,7 @@ verify:
 | 格式與相容 | 新鍵與新選填 state 欄位；舊 run 可讀；舊版本讀不了新設定（27.4） |
 | 取消與部分完成 | 取消不產生判定（D-09）；驗證失敗用盡退回後降為 `partial`（D-08） |
 | 安全 | 27.5；本 spec 不聲稱隔離 |
-| 並行與恢復 | 驗證在批次之外、整合之後；崩潰重播要測（27.9）；多個 run 各自在自己的 worktree 驗證，互不干擾，但共用機器資源與連接埠，**未驗證** |
+| 並行與恢復 | 驗證在批次之外、整合之後；崩潰重播要測（27.9）；多個 run 的 cwd 各在自己的 worktree，但指令不受隔離（27.5），共用檔案、快取、機器資源與連接埠都可能互相干擾，**未驗證** |
 | 平台 | macOS／Linux；Windows 不支援 |
 | 測試性 | 假指令；真實專案的 `npm test` 只在手動驗收時跑 |
 | 可診斷性 | `verify-start`／`verify-end`／`verify-rejected` 事件、完整 log 檔、`status` 顯示 |
