@@ -4,16 +4,18 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam } from "../src/dispatcher.js";
+import { rejectDone } from "../src/mailbox.js";
 import { setFaultHook } from "../src/message-store.js";
 import type { CommandRunner } from "../src/open-pr.js";
 import { outboxDir, sharedContextFiles } from "../src/policy.js";
-import { bindRunProject, loadRunState } from "../src/run-store.js";
+import { repeatStopNote } from "../src/repeat-detect.js";
+import { bindRunProject, loadRunState, saveRunState } from "../src/run-store.js";
 import { ProjectConfig } from "../src/schema.js";
 import { prepareTask } from "../src/task.js";
 import { logBody, nextLogNumber, runCommand, tailText, VERIFY_LOG_BYTES } from "../src/verify.js";
 import { workingTreeHash } from "../src/worktree.js";
 import { buildRunReport, formatStatusReport } from "../src/status.js";
-import { FULL_DONE, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => {
@@ -218,6 +220,7 @@ describe("a completed done is verified by the dispatcher", () => {
     expect(fs.readFileSync(path.join(runDir, "result.md"), "utf8")).not.toContain("Dispatcher verification");
     expect(loadRunState(runDir).verify).toBeUndefined();
     expect(fs.existsSync(path.join(runDir, "verify"))).toBe(false);
+    expect(events(runDir).some((e) => e.event === "verify-repeat")).toBe(false);
   });
 
   it("all pass: accepted, section in result.md and done-1.md, record in state, events logged", async () => {
@@ -240,6 +243,8 @@ describe("a completed done is verified by the dispatcher", () => {
     const ev = events(runDir).map((e) => e.event);
     expect(ev.filter((e) => e === "verify-start")).toHaveLength(2);
     expect(ev.filter((e) => e === "verify-end")).toHaveLength(2);
+    expect(ev).not.toContain("verify-repeat");
+    expect(JSON.stringify(st.verify)).not.toMatch(/fingerprint|repeat_stop_segment/);
   });
 
   it("the doneMessage keeps the lead's body only", async () => {
@@ -623,6 +628,8 @@ describe("status and doctor", () => {
     const without = buildRunReport({ dir: runDir, state: rest as typeof state }, project);
     expect(JSON.stringify(withV)).toBe(JSON.stringify(without));
     expect(JSON.stringify(withV)).not.toContain("verify");
+    const marked = { ...state, verify: state.verify!.map((r) => ({ ...r, repeat_stop_segment: 0, commands: r.commands.map((c) => ({ ...c, fingerprint: "0123456789abcdef" })) })) };
+    expect(JSON.stringify(buildRunReport({ dir: runDir, state: marked }, project))).toBe(JSON.stringify(withV));
     const text = formatStatusReport({ project: project.name, agents: [], run: withV } as never);
     expect(text).toMatch(/dispatcher 驗證：\s*通過/);
   });
@@ -760,9 +767,312 @@ describe("run epilogue and temp index lock", () => {
     try {
       expect(await workingTreeHash(env.project(), undefined, { timeoutMs: 500 })).toBeUndefined();
     } finally {
-      process.env.TMPDIR = old;
+      if (old === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = old;
     }
     // Only this helper's files: Apple Git leaves its own `xcrun_db` in TMPDIR.
     expect(fs.readdirSync(tmp).filter((f) => f.startsWith("agent-lyceum-index-"))).toEqual([]);
+  });
+});
+
+describe("spec 28: the same failure on an unchanged workspace", () => {
+  type Opts = { git?: "commit" | "init"; max?: number; cmd?: string | ((root: string) => string); edit?: (i: WakeInput, k: number) => void; openPr?: boolean };
+  const lead = (i: WakeInput) => i.project.workspaces?.lead?.dir ?? "";
+  const newFile = (i: WakeInput, k: number) => write(path.join(lead(i), `f${k}.txt`), "x\n");
+  const repeats = (runDir: string) => events(runDir).filter((e) => e.event === "verify-repeat");
+  const actions = (runDir: string) => repeats(runDir).map((e) => e.action);
+  const labelled = (runDir: string) => mailWith(runDir, "Same failure as your last rejected");
+  const rejections = (runDir: string) => mailWith(runDir, "Your done report failed verification");
+  const setup = (o: Opts) => {
+    env = makeEnv();
+    if (o.git === "commit") initGitRepo(env.repo);
+    else if (o.git === "init") git(env.repo, "init", "-q");
+    withVerify([{ name: "test", run: typeof o.cmd === "function" ? o.cmd(env.root) : (o.cmd ?? "echo nope; exit 1") }], o.max);
+    return start();
+  };
+  const go = async (o: Opts) => {
+    const { project, runDir, task } = setup(o);
+    const calls = { n: 0 };
+    const prompts: string[] = [];
+    const prCalls: string[][] = [];
+    const pr: CommandRunner = (cmd, args) => {
+      prCalls.push([cmd, ...args]);
+      return { ok: true, out: "" };
+    };
+    const s = await runTeam({ project, task, runDir, log: () => {}, pr, invoker: async (i) => {
+      calls.n++;
+      prompts.push(i.userPrompt);
+      o.edit?.(i, calls.n);
+      sendDone(i, "completed", FULL_DONE, o.openPr ? "open_pr: true\n" : "");
+      return OK;
+    } });
+    return { s, runDir, calls, prompts, prCalls, st: loadRunState(runDir) };
+  };
+
+  it("1: same fingerprint and same tree: stopped at the second failure as partial, no rejection used for it", async () => {
+    const { s, runDir, calls, prCalls, st } = await go({ git: "commit", max: 2, openPr: true });
+    expect(calls.n).toBe(2);
+    expect(s.endReason).toBe("done");
+    expect(s.outcome).toBe("partial");
+    expect(s.outcomeNote).toContain("Verification stopped early");
+    expect(s.outcomeNote).toContain("(1 of 2 rejection(s) used)");
+    expect(st.verify_rejections).toBe(1);
+    expect(st.verify_rejected).toHaveLength(1);
+    expect(rejections(runDir)).toHaveLength(1);
+    expect(actions(runDir)).toEqual(["none", "stop"]);
+    expect(repeats(runDir)[1]).toMatchObject({ hash: "same", same_fingerprint: true, rejections_left: 1 });
+    expect(prCalls).toEqual([]);
+    expect(fs.readFileSync(path.join(runDir, "result.md"), "utf8")).toContain("NOT all commands passed");
+    expect(st.verify!.map((r) => r.repeat_stop_segment)).toEqual([undefined, 0]);
+    expect(st.verify![0]!.commands[0]!.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("2: same fingerprint, tree changed: sent back with the label, then the limit of spec 27", async () => {
+    const { s, runDir, calls, st } = await go({ git: "commit", max: 2, edit: newFile });
+    expect(calls.n).toBe(3);
+    expect(s.outcome).toBe("partial");
+    expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(s.outcomeNote).not.toContain("stopped early");
+    expect(actions(runDir)).toEqual(["none", "label", "limit"]);
+    expect(repeats(runDir)[1]).toMatchObject({ hash: "changed" });
+    const l = labelled(runDir);
+    expect(l).toHaveLength(1);
+    expect(fs.readFileSync(l[0]!, "utf8")).toContain("The workspace changed since then, but this result did not.");
+    expect(st.verify_rejections).toBe(2);
+  });
+
+  it("3: a different fingerprint: no label, only the count", async () => {
+    const { s, runDir, calls } = await go({ git: "commit", max: 2, cmd: (root) => `cat ${root}/count; exit 1`, edit: (_i, k) => fs.writeFileSync(path.join(env.root, "count"), `run ${k}\n`) });
+    expect(calls.n).toBe(3);
+    expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(labelled(runDir)).toEqual([]);
+    expect(repeats(runDir).map((e) => e.same_fingerprint)).toEqual([false, false, false]);
+  });
+
+  it("4: fail-fast: a different command failing next is progress", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const flag = path.join(env.root, "a-fixed");
+    withVerify([{ name: "a", run: `if [ -f ${flag} ]; then exit 0; fi; echo bad a; exit 1` }, { name: "b", run: "echo bad b; exit 1" }], 2);
+    const { project, runDir, task } = start();
+    const calls = { n: 0 };
+    const s = await runTeam({ project, task, runDir, log: () => {}, invoker: async (i) => {
+      if (++calls.n === 2) fs.writeFileSync(flag, "1");
+      sendDone(i);
+      return OK;
+    } });
+    expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(s.outcomeNote).toContain("`b`");
+    expect(labelled(runDir)).toEqual([]);
+    expect(actions(runDir)).toEqual(["none", "none", "limit"]);
+  });
+
+  it.each(["not a git repo", "git repo without a commit"])("5: no lead worktree (%s): the hash is not compared, the count is the only limit", async (kind) => {
+    const { s, runDir, calls, st } = await go({ git: kind === "not a git repo" ? undefined : "init", max: 2 });
+    if (kind !== "not a git repo") expect(st.verify![0]!.diff_hash).toMatch(/^[0-9a-f]{40}$/); // a hash exists, and is still ignored
+    expect(calls.n).toBe(3);
+    expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(actions(runDir)).toEqual(["none", "label", "limit"]);
+    expect(repeats(runDir).slice(0, 2).map((e) => e.hash)).toEqual(["no-worktree", "no-worktree"]);
+    const l = labelled(runDir);
+    expect(l).toHaveLength(1);
+    expect(fs.readFileSync(l[0]!, "utf8")).not.toContain("The workspace changed");
+  });
+
+  it("6: a worktree whose hash cannot be taken (nested repository): unknown, never the same", async () => {
+    const { s, runDir, calls, st } = await go({ git: "commit", max: 2, edit: (i, k) => k === 1 && git(lead(i), "init", "-q", "nested") });
+    expect(st.verify![0]!.diff_hash).toBeUndefined();
+    expect(calls.n).toBe(3);
+    expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(actions(runDir)).toEqual(["none", "label", "limit"]);
+    expect(repeats(runDir)[1]).toMatchObject({ hash: "unknown", same_fingerprint: true });
+    expect(fs.readFileSync(labelled(runDir)[0]!, "utf8")).not.toContain("The workspace changed");
+  });
+
+  it.each(["verify:counted", "verify:sent"])("7: a replay after a crash at %s does not count twice and does not stop on its own record", async (step) => {
+    const { project, runDir, task } = setup({ git: "commit", max: 2 });
+    setFaultHook((x) => {
+      if (x === step) throw new Error("crash");
+    });
+    const calls = { n: 0 };
+    const at2: { prompt?: string; rejections?: number; result?: boolean } = {};
+    const invoker: Invoker = async (i) => {
+      calls.n++;
+      if (calls.n === 2) {
+        at2.prompt = i.userPrompt;
+        at2.rejections = loadRunState(runDir).verify_rejections;
+        at2.result = fs.existsSync(path.join(runDir, "result.md"));
+      }
+      sendDone(i);
+      return OK;
+    };
+    await expect(runTeam({ project, task, runDir, log: () => {}, invoker })).rejects.toThrow("crash");
+    setFaultHook(undefined);
+    const resumed = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, log: () => {}, invoker });
+    expect(at2.prompt).toContain("failed verification");
+    expect(at2.rejections).toBe(1);
+    expect(at2.result).toBe(false);
+    expect(calls.n).toBe(2);
+    expect(rejections(runDir)).toHaveLength(1);
+    expect(resumed.outcomeNote).toContain("Verification stopped early");
+    const st = loadRunState(runDir);
+    expect(st.verify_rejections).toBe(1);
+    expect(st.verify).toHaveLength(3);
+    expect(actions(runDir)).toEqual(["none", "none", "stop"]); // first, the replay of the same done, the new done
+  });
+
+  describe("8: a crash after the stop was stored", () => {
+    const cmd = (root: string) => `if [ -f ${root}/fixed ]; then exit 0; fi; if [ -f ${root}/flip ]; then echo different; else echo nope; fi; exit 1`;
+    const crashed = async () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      withVerify([{ name: "test", run: cmd(env.root) }], 2);
+      const { project, runDir, task } = start();
+      setFaultHook((x) => {
+        if (x === "verify:stopped") throw new Error("crash");
+      });
+      const calls = { n: 0 };
+      const invoker: Invoker = async (i) => {
+        calls.n++;
+        sendDone(i);
+        return OK;
+      };
+      await expect(runTeam({ project, task, runDir, log: () => {}, invoker })).rejects.toThrow("crash");
+      setFaultHook(undefined);
+      expect(loadRunState(runDir).verify!.at(-1)!.repeat_stop_segment).toBe(0);
+      expect(loadRunState(runDir).end_reason).toBeUndefined();
+      return { runDir, project, calls, invoker };
+    };
+    it("replayed with other output: still stopped, nothing counted, no second mail", async () => {
+      const { runDir, calls, invoker } = await crashed();
+      fs.writeFileSync(path.join(env.root, "flip"), "1");
+      const resumed = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, log: () => {}, invoker });
+      expect(calls.n).toBe(2);
+      expect(resumed.outcome).toBe("partial");
+      expect(resumed.outcomeNote).toContain("Verification stopped early");
+      const st = loadRunState(runDir);
+      expect(st.verify_rejections).toBe(1);
+      expect(rejections(runDir)).toHaveLength(1);
+      expect(actions(runDir)).toEqual(["none", "stop", "stop"]);
+    });
+    it("replayed with the command now passing: accepted as completed", async () => {
+      const { runDir, invoker } = await crashed();
+      fs.writeFileSync(path.join(env.root, "fixed"), "1");
+      const resumed = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, log: () => {}, invoker });
+      expect(resumed.outcome).toBe("completed");
+      expect(loadRunState(runDir).verify_rejections).toBe(1);
+    });
+  });
+
+  it("9: a follow-up starts a new segment: the first failure is sent back, the next repeat stops", async () => {
+    const { project, runDir, task } = setup({ git: "commit", max: 2 });
+    const invoker: Invoker = async (i) => {
+      sendDone(i);
+      return OK;
+    };
+    const first = await runTeam({ project, task, runDir, log: () => {}, invoker });
+    expect(first.outcomeNote).toContain("Verification stopped early");
+    const second = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, log: () => {}, followup: { text: "more" }, invoker });
+    expect(second.outcomeNote).toContain("Verification stopped early");
+    expect(second.outcomeNote).toContain("(1 of 2 rejection(s) used)");
+    const st = loadRunState(runDir);
+    expect(st.verify).toHaveLength(4);
+    expect(st.verify!.map((r) => r.repeat_stop_segment)).toEqual([undefined, 0, undefined, 1]);
+    expect(actions(runDir)).toEqual(["none", "stop", "none", "stop"]);
+    expect(st.verify_rejections).toBe(1);
+  });
+
+  it("10: records written before spec 28 (no fingerprint) never match", async () => {
+    const { project, runDir, task } = setup({ git: "commit", max: 2 });
+    setFaultHook((x) => {
+      if (x === "verify:sent") throw new Error("crash");
+    });
+    const calls = { n: 0 };
+    const invoker: Invoker = async (i) => {
+      calls.n++;
+      sendDone(i);
+      return OK;
+    };
+    await expect(runTeam({ project, task, runDir, log: () => {}, invoker })).rejects.toThrow("crash");
+    setFaultHook(undefined);
+    // the done is set aside as the crashed process would have done next; the record loses its fingerprint like one from an older version
+    const outbox = outboxDir(bindRunProject(project, runDir, "run"), project.lead);
+    for (const f of fs.readdirSync(outbox).filter((x) => x.endsWith(".md"))) rejectDone(path.join(outbox, f));
+    const old = loadRunState(runDir);
+    for (const r of old.verify!) for (const c of r.commands) delete c.fingerprint;
+    saveRunState(runDir, old);
+    const resumed = await runTeam({ project: env.project(), resume: loadRunState(runDir), runDir, log: () => {}, invoker });
+    expect(calls.n).toBe(3);
+    expect(resumed.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+    expect(labelled(runDir)).toEqual([]);
+    expect(actions(runDir)).toEqual(["none", "none", "limit"]);
+  });
+
+  it.each([
+    [0, ["limit"], 1],
+    [1, ["none", "limit"], 2],
+  ])("11: max_rejections %i keeps the text of spec 27 and never stops early", async (max, acts, wakes) => {
+    const { s, runDir, calls } = await go({ git: "commit", max });
+    expect(calls.n).toBe(wakes);
+    expect(s.outcomeNote).toMatch(new RegExp(`^Verification failed after ${max} rejection\\(s\\): \`test\` \\(\`echo nope; exit 1\`\\) exited with code 1; see verify/\\d+-test\\.log\\. Reported as partial; the lead's report is kept as written\\.$`));
+    expect(actions(runDir)).toEqual(acts);
+  });
+
+  it("12: with unintegrated work the outcome stays blocked and the note carries both reasons", async () => {
+    const { resolveDoneOutcome } = await import("../src/run-outcome.js");
+    const note = repeatStopNote("test", "npm test", "exited with code 1", "verify/2-test.log", 1, 2);
+    const r = resolveDoneOutcome({ missing: [], outcome: "completed" } as never, 0, [{ agent: "fe", branch: "b", report: "r.md" }], { note });
+    expect(r.outcome).toBe("blocked");
+    expect(r.note).toContain("never brought into the repo");
+    expect(r.note).toContain("Verification stopped early");
+  });
+
+  describe("16: a done left in the outbox of an ended segment enters the next one", () => {
+    it.each(["unchanged", "changed"])("%s workspace", async (kind) => {
+      const { project, runDir, task } = setup({ git: "commit", max: 2 });
+      setFaultHook((x) => {
+        if (x === "run:ended") throw new Error("crash");
+      });
+      const calls = { n: 0 };
+      const at3: { prompt?: string; rejections?: number; rejected?: string[] } = {};
+      const invoker: Invoker = async (i) => {
+        calls.n++;
+        if (calls.n === 3) {
+          at3.prompt = i.userPrompt;
+          at3.rejections = loadRunState(runDir).verify_rejections;
+          at3.rejected = loadRunState(runDir).verify_rejected;
+          if (kind === "changed") newFile(i, 3);
+        }
+        sendDone(i);
+        return OK;
+      };
+      await expect(runTeam({ project, task, runDir, log: () => {}, invoker })).rejects.toThrow("crash");
+      setFaultHook(undefined);
+      const ended = loadRunState(runDir);
+      expect(ended.end_reason).toBe("done");
+      expect(ended.verify!.map((r) => r.repeat_stop_segment)).toEqual([undefined, 0]);
+      const resumed = await runTeam({ project: env.project(), resume: ended, runDir, log: () => {}, followup: { text: "more please" }, invoker });
+      const st = loadRunState(runDir);
+      expect(calls.n).toBe(kind === "changed" ? 4 : 3);
+      expect(at3.prompt).toContain("more please");
+      expect(at3.prompt).toContain("failed verification");
+      expect(at3.rejections).toBe(1);
+      expect(at3.rejected).toHaveLength(1);
+      expect(at3.rejected![0]).toBe(ended.verify![1]!.source); // the old done, judged afresh in the new segment
+      expect(st.verify).toHaveLength(kind === "changed" ? 5 : 4);
+      expect(st.verify![2]!.source).toBe(st.verify![1]!.source);
+      expect(labelled(runDir).length).toBe(kind === "changed" ? 1 : 0);
+      if (kind === "unchanged") {
+        expect(resumed.outcome).toBe("partial");
+        expect(resumed.outcomeNote).toContain("Verification stopped early");
+        expect(resumed.outcomeNote).toContain("1 of 2");
+        expect(rejections(runDir)).toHaveLength(2);
+        expect(st.verify!.map((r) => r.repeat_stop_segment)).toEqual([undefined, 0, undefined, 1]);
+        expect(actions(runDir)).toEqual(["none", "stop", "none", "stop"]);
+      } else {
+        expect(resumed.outcomeNote).toContain("Verification failed after 2 rejection(s)");
+        expect(actions(runDir).slice(2)).toEqual(["none", "label", "limit"]);
+      }
+    });
   });
 });

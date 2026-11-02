@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { atomicWrite } from "./fs-util.js";
 import { killTree, register, unregister } from "./process-runner.js";
+import { FINGERPRINT_WINDOW_BYTES, failureFingerprint, fingerprintPaths } from "./repeat-detect.js";
 import type { VerifyCommandRecord, VerifyRecord } from "./run-store.js";
 import type { VerifySettings } from "./schema.js";
 
@@ -158,6 +159,7 @@ export async function runVerify(verify: VerifySettings, runDir: string, records:
     fs.mkdirSync(path.join(runDir, VERIFY_DIR), { recursive: true });
     atomicWrite(path.join(runDir, rel), body);
     const rec: VerifyCommandRecord = { name: c.name, exit: r.exit, ms: r.ms, timed_out: r.timedOut, log: rel, ...(r.error ? { error: r.error } : {}) };
+    if (!commandPassed(rec)) rec.fingerprint = failureFingerprint(rec, tailText(r.output, FINGERPRINT_WINDOW_BYTES), fingerprintPaths(opts.cwd, runDir));
     commands.push(rec);
     tails[c.name] = tailText(r.output, VERIFY_TAIL_BYTES).replace(/\r\n/g, "\n");
     hooks.end?.(rec);

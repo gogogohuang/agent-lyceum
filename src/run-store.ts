@@ -97,6 +97,8 @@ export interface VerifyCommandRecord {
   log: string;
   /** Set when the command could not be started (for example no shell). */
   error?: string;
+  /** spec 28: hash of the failure (name, status, normalised last lines); only on a failed command. */
+  fingerprint?: string;
 }
 
 /** One verification of a lead's `done` (spec 27.7). `diff_hash` is the git tree of the lead's workspace when it started; absent outside a git repo. */
@@ -106,6 +108,8 @@ export interface VerifyRecord {
   /** The `done` mail's source id. */
   source: string;
   diff_hash?: string;
+  /** spec 28: this done was stopped as a repeat, in this segment (state.reopened length). */
+  repeat_stop_segment?: number;
   commands: VerifyCommandRecord[];
 }
 

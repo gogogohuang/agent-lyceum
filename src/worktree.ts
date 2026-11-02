@@ -359,7 +359,7 @@ export async function workingTreeHash(project: ResolvedProject, from?: AgentWork
   }
 }
 
-/** The most the tree hash may take in total (spec 27.7 record only); then it is absent and verification goes on. */
+/** The most the tree hash may take in total (spec 27.7 record, spec 28 comparison); then it is absent and verification goes on. */
 const HASH_BUDGET_MS = 30_000;
 
 /** git in its own process group, killed with SIGKILL (group and descendants) at `deadline` or on `signal`; the event loop stays free meanwhile. */

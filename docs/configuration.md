@@ -198,7 +198,7 @@ verify:
 ```
 
 - **Off by default:** `verify` absent, or `commands: []`, is off; one command or more turns it on. Nothing runs and nothing changes for a project without it.
-- **`max_rejections`:** integer 0-5, default 2. How many times a failed verification sends the `done` back to the lead before the run is accepted as `partial`. `0` accepts as `partial` at once.
+- **`max_rejections`:** integer 0-5, default 2. How many times a failed verification sends the `done` back to the lead before the run is accepted as `partial`. `0` accepts as `partial` at once. The limit can end early: when a `done` fails exactly as the previously rejected one did and the lead's worktree has not changed, it is accepted as `partial` without using another rejection (see [How a run works](how-it-works.md#verifying-a-completed-done)). (Spec 28)
 - **`commands[].name`:** lowercase letters, digits and `-`, unique within the list. It names the log file and appears in messages.
 - **`commands[].run`:** one string, run with `sh -c` (macOS/Linux only).
 - **`commands[].timeout_sec`:** integer 1-7200, default 600. On timeout the command's process group is stopped (SIGTERM, then SIGKILL) and the command counts as failed.
