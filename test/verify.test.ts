@@ -767,7 +767,8 @@ describe("run epilogue and temp index lock", () => {
     try {
       expect(await workingTreeHash(env.project(), undefined, { timeoutMs: 500 })).toBeUndefined();
     } finally {
-      process.env.TMPDIR = old;
+      if (old === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = old;
     }
     // Only this helper's files: Apple Git leaves its own `xcrun_db` in TMPDIR.
     expect(fs.readdirSync(tmp).filter((f) => f.startsWith("agent-lyceum-index-"))).toEqual([]);
