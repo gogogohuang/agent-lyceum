@@ -6,8 +6,8 @@ export function TokenChart({ run }: { run?: Run }) {
   const max = Math.max(1, ...rows.map((row) => row.output));
   const cache = cacheText(run?.cache_read_tokens ?? 0, run?.cache_write_tokens ?? 0);
   return (
-    <section className="mt-10">
-      <h2 className="text-balance text-xl">Token 與快取</h2>
+    <section className="panel mt-6 p-4">
+      <h2 className="text-balance text-base font-semibold">Token 與快取</h2>
       {rows.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">還沒有 token 紀錄。</p>
       ) : (
@@ -16,14 +16,14 @@ export function TokenChart({ run }: { run?: Run }) {
             <li key={row.agent}>
               <div className="flex justify-between gap-3 text-sm">
                 <span className="truncate">{row.agent}</span>
-                <span className="shrink-0 tabular-nums text-ink/70">
+                <span className="shrink-0 font-mono text-xs tabular-nums text-ink/70">
                   {tokenText(row.output)}
                   {row.cacheRead + row.cacheWrite > 0 ? `，快取讀 ${tokenText(row.cacheRead)}` : ""}
                   {row.failed > 0 ? `，失敗 ${row.failed}` : ""}
                 </span>
               </div>
-              <div className="mt-1 h-2 bg-line" title={`輸出 ${row.output}，快取讀 ${row.cacheRead}，寫 ${row.cacheWrite}`}>
-                <div className="h-full bg-ink" style={{ width: `${(row.output / max) * 100}%` }} />
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-wall" title={`輸出 ${row.output}，快取讀 ${row.cacheRead}，寫 ${row.cacheWrite}`}>
+                <div className="h-full rounded-full bg-signal" style={{ width: `${(row.output / max) * 100}%` }} />
               </div>
             </li>
           ))}

@@ -4,8 +4,8 @@ import { clock, timeline } from "./view";
 export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now: number }) {
   const model = timeline(run, agents, now);
   return (
-    <figure className="mt-10">
-      <figcaption className="text-balance text-xl">喚醒時間軸</figcaption>
+    <figure className="panel mt-6 p-4">
+      <figcaption className="text-balance text-base font-semibold">喚醒時間軸</figcaption>
       {!model ? (
         <p className="text-pretty mt-3 text-sm">這個任務還沒有喚醒紀錄。</p>
       ) : (
@@ -13,7 +13,7 @@ export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now
           <div className="mt-3 space-y-1">
             {model.lanes.map((lane) => (
               <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2" key={lane.agent}>
-                <div className="truncate text-xs" title={lane.agent}>
+                <div className="truncate font-mono text-xs text-ink/80" title={lane.agent}>
                   {lane.agent}
                 </div>
                 <svg viewBox="0 0 1000 28" preserveAspectRatio="none" className="h-7 w-full" role="img" aria-label={`${lane.agent} 的喚醒`}>
@@ -25,8 +25,8 @@ export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now
                       y={bar.live ? 6 : 8}
                       width={Math.max(bar.width, 4)}
                       height={bar.live ? 16 : 12}
-                      rx="1"
-                      className={bar.live ? "fill-none stroke-working" : bar.ok ? "fill-ink" : "fill-failed"}
+                      rx="3"
+                      className={bar.live ? "fill-none stroke-working" : bar.ok ? "fill-signal/70" : "fill-failed"}
                       strokeWidth={bar.live ? 8 : 0}
                     >
                       <title>{bar.title}</title>
