@@ -15,22 +15,22 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
   const recent = recentMail(run);
   const live = run?.state === "running";
   return (
-    <section className="mt-10">
-      <h2 className="text-balance text-xl">隊伍</h2>
+    <section className="panel mt-6 p-4">
+      <h2 className="text-balance text-base font-semibold">隊伍</h2>
       {ordered.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">沒有 agent。</p>
       ) : (
         <>
           <p className="text-pretty mt-2 text-sm text-ink/70">連線是誰可以傳話給誰。▼ 往下，▲ 往上，↕ 雙方。{live ? "會移動的是最近一次交接。" : ""}</p>
-          <div className="mt-6 max-w-2xl">
+          <div className="mt-4 max-w-2xl space-y-2">
             {lead && <Card agent={lead} run={run} now={now} />}
             {members.length > 0 && (
-              <ul className="mt-1 list-none border-l border-line p-0">
+              <ul className="mt-2 list-none space-y-2 border-l border-line p-0">
                 {members.map((agent) => {
                   const link = lead ? memberLink(lead, agent, edge) : undefined;
                   return (
-                    <li key={agent.name} className="relative pl-8">
-                      {link && lead ? <LinkMark glyph={link.glyph} hot={link.hot} live={live} title={tieTitle(lead, agent, link)} /> : <div className="h-8" />}
+                    <li key={agent.name} className="relative pt-0 pl-8">
+                      {link && lead ? <LinkMark glyph={link.glyph} hot={link.hot} live={live} title={tieTitle(lead, agent, link)} /> : <div className="h-2" />}
                       <Card agent={agent} run={run} now={now} />
                     </li>
                   );
@@ -43,9 +43,9 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
       {recent.length > 0 && (
         <ol className="mt-6 max-w-xl space-y-3 text-sm">
           {recent.map((item) => (
-            <li key={`${item.from}-${item.to}-${item.subject}`}>
-              <p className="text-ink/60">{item.to === "(done)" ? `${item.from} 結束` : `${item.from} 給 ${item.to}`}</p>
-              <p className="text-pretty mt-0.5 font-serif leading-snug">{item.subject}</p>
+            <li key={`${item.from}-${item.to}-${item.subject}`} className="rounded-lg border border-line bg-wall/50 px-3 py-2">
+              <p className="eyebrow">{item.to === "(done)" ? `${item.from} 結束` : `${item.from} 給 ${item.to}`}</p>
+              <p className="text-pretty mt-0.5 leading-snug">{item.subject}</p>
             </li>
           ))}
         </ol>
@@ -61,7 +61,7 @@ function LinkMark({ glyph, hot, live, title }: { glyph: "▼" | "▲" | "↕"; h
   const play = live && !reduce && inView;
   const moving = play && hot;
   return (
-    <div ref={ref} title={title} className="absolute top-0 -left-8 flex size-8 items-center justify-center">
+    <div ref={ref} title={title} className="absolute top-3 -left-8 flex size-8 items-center justify-center">
       {live && glyph !== "▲" && <Flow y={[0, 18]} hot={hot} play={play} />}
       {live && glyph !== "▼" && <Flow y={[18, 0]} hot={hot} play={play} />}
       <motion.span
@@ -97,10 +97,10 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
   const tokens = wakes.reduce((sum, wake) => sum + (wake.output_tokens ?? 0), 0);
   const mails = mailsOf(agent, run, dot);
   return (
-    <Collapsible.Root key={working ? `${agent.name}:on` : agent.name} defaultOpen={working} className={cn("group border-b border-line", working && "border-l-2 border-signal pl-4")}>
+    <Collapsible.Root key={working ? `${agent.name}:on` : agent.name} defaultOpen={working} className={cn("group rounded-lg border bg-wall/50 px-3", working ? "border-signal/60 bg-signal-soft/40" : "border-line")}>
       <Collapsible.Trigger className="flex w-full items-baseline gap-3 py-3 text-left">
-        <strong className={cn("min-w-0 flex-1", working ? "text-balance text-lg" : "truncate text-base text-ink/80")}>{agentLabel(agent)}</strong>
-        <span className={cn("shrink-0 text-sm tabular-nums", statusColor(dot))}>{statusLine(dot, active?.round, active ? elapsed(active.since, now) : "", queued)}</span>
+        <strong className={cn("min-w-0 flex-1", working ? "text-balance text-base" : "truncate text-sm text-ink/80")}>{agentLabel(agent)}</strong>
+        <span className={cn("shrink-0 font-mono text-xs tabular-nums", statusColor(dot))}>{statusLine(dot, active?.round, active ? elapsed(active.since, now) : "", queued)}</span>
         <span className="shrink-0 text-sm text-ink/60 group-data-[open]:hidden">展開</span>
         <span className="hidden shrink-0 text-sm text-ink/60 group-data-[open]:inline">收合</span>
       </Collapsible.Trigger>

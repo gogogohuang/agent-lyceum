@@ -25,7 +25,7 @@ export function ProgressSummary({ project, runId }: { project: string; runId: st
       <Button
         type="button"
         disabled={pending}
-        className="shrink-0 text-sm underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:opacity-60"
+        className="panel shrink-0 self-stretch px-4 text-sm font-medium hover:bg-wall disabled:opacity-60"
         onClick={summarize}
       >
         {pending ? "正在總結" : "總結進度"}
@@ -35,14 +35,14 @@ export function ProgressSummary({ project, runId }: { project: string; runId: st
           {error && <p className="text-pretty mt-3 text-sm text-failed">{error}</p>}
           {pending && (
             <div className="mt-4 max-w-xl space-y-2" aria-hidden="true">
-              <div className="h-3 bg-line" />
-              <div className="h-3 w-2/3 bg-line" />
+              <div className="h-3 animate-pulse rounded bg-line" />
+              <div className="h-3 w-2/3 animate-pulse rounded bg-line" />
             </div>
           )}
           {!pending && text && (
-            <div className="max-w-xl">
+            <div className="panel mt-3 max-w-xl px-4 pb-4">
               {paragraphs(text).map((paragraph, index) => (
-                <p key={`${index}-${paragraph.slice(0, 24)}`} className="text-pretty mt-4 font-serif text-lg leading-relaxed">
+                <p key={`${index}-${paragraph.slice(0, 24)}`} className="text-pretty mt-4 text-base leading-relaxed">
                   {paragraph}
                 </p>
               ))}

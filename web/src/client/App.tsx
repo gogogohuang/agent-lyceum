@@ -49,8 +49,8 @@ export function App() {
 
   return (
     <div className="grid h-dvh grid-cols-1 bg-wall md:grid-cols-[15rem_minmax(0,1fr)]">
-      <nav aria-label="已註冊專案" className="inset-safe sticky top-0 z-10 flex gap-2 overflow-x-auto border-b border-line bg-wall p-3 md:h-dvh md:flex-col md:overflow-y-auto md:border-r md:border-b-0">
-        <p className="hidden px-2 pt-2 text-sm text-ink/60 md:block">專案</p>
+      <nav aria-label="已註冊專案" className="inset-safe sticky top-0 z-10 flex gap-2 overflow-x-auto border-b border-line bg-paper p-3 md:h-dvh md:flex-col md:overflow-y-auto md:border-r md:border-b-0">
+        <p className="eyebrow hidden px-2 pt-2 pb-1 md:block">專案</p>
         {names.length === 0 ? (
           <p className="text-pretty px-2 text-sm">{live === "up" ? "還沒有已註冊的專案。" : "正在連上本機狀態…"}</p>
         ) : (
@@ -63,22 +63,23 @@ export function App() {
                 key={name}
                 type="button"
                 className={cn(
-                  "min-w-36 shrink-0 border-l-2 px-2 py-2 text-left md:min-w-0",
-                  on && running && "border-signal bg-paper",
-                  on && !running && "border-ink bg-paper",
-                  !on && "border-transparent hover:bg-paper/60",
+                  "min-w-36 shrink-0 rounded-lg border px-3 py-2 text-left md:min-w-0",
+                  on ? "border-line bg-wall" : "border-transparent hover:bg-wall/70",
                 )}
                 onClick={() => select(name)}
               >
-                <span className="block truncate text-sm">{name}</span>
-                <span className={cn("block truncate text-xs tabular-nums", running ? "text-signal" : "text-ink/60")}>{item ? railText(item) : ""}</span>
+                <span className="flex items-center gap-2 truncate text-sm font-medium">
+                  <span aria-hidden className={cn("size-2 shrink-0 rounded-full", running ? "pulse-dot bg-signal" : item?.error ? "bg-failed" : "bg-ink/25")} />
+                  <span className="truncate">{name}</span>
+                </span>
+                <span className={cn("mt-0.5 block truncate pl-4 font-mono text-xs tabular-nums", running ? "text-signal" : "text-ink/60")}>{item ? railText(item) : ""}</span>
               </Button>
             );
           })
         )}
         <div className="mt-auto hidden px-2 pb-2 md:block">
           {live === "up" ? (
-            <p className="text-xs text-ink/60">即時更新</p>
+            <p className="flex items-center gap-2 text-xs text-ink/60"><span aria-hidden className="size-1.5 rounded-full bg-signal" />即時更新</p>
           ) : (
             <Button type="button" className="text-sm underline" onClick={() => setAttempt((n) => n + 1)}>
               重新連線
@@ -86,16 +87,16 @@ export function App() {
           )}
         </div>
       </nav>
-      <main className="min-h-0 overflow-y-auto bg-paper">
+      <main className="min-h-0 overflow-y-auto bg-wall">
         {(live === "up" || (quota && quota.length > 0)) && <Allowance reports={quota ?? []} onReports={setQuota} />}
         {frame && selected ? (
           <ProjectView name={selected} frame={frame} runId={hash.project === selected ? hash.run : undefined} now={now} onRun={(id) => select(selected, id)} />
         ) : (
           <article className="enter animate-in fade-in p-6 duration-200">
-            <h1 className="text-balance text-4xl font-bold leading-tight">{headline(live, names.length)}</h1>
+            <h1 className="text-balance text-2xl font-semibold tracking-tight">{headline(live, names.length)}</h1>
             {live === "up" && names.length === 0 && <p className="text-pretty mt-3 text-sm">在終端執行 agent-lyceum project add 註冊一個專案。</p>}
             {live === "down" && (
-              <Button type="button" className="mt-4 text-sm underline" onClick={() => setAttempt((n) => n + 1)}>
+              <Button type="button" className="mt-4 rounded-md border border-line bg-paper px-3 py-1.5 text-sm hover:bg-wall" onClick={() => setAttempt((n) => n + 1)}>
                 重新連線
               </Button>
             )}
@@ -140,11 +141,11 @@ function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: 
   };
 
   return (
-    <div className="sticky top-0 z-10 border-b border-line bg-wall px-4 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+    <div className="sticky top-0 z-10 border-b border-line bg-paper/90 px-4 py-2 backdrop-blur">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
         {reports.map((report) => (
           <p key={report.runtime} className="text-sm">
-            <span>{report.runtime}</span>
+            <span className="eyebrow">{report.runtime}</span>
             {report.error ? (
               <span className="text-pretty ml-3 text-failed">{report.error}</span>
             ) : report.windows.length === 0 ? (
@@ -159,7 +160,7 @@ function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: 
             )}
           </p>
         ))}
-        <Button type="button" disabled={pending} className="text-sm underline disabled:opacity-60" onClick={refresh}>
+        <Button type="button" disabled={pending} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-wall disabled:opacity-60" onClick={refresh}>
           {pending ? "正在取得" : "重新取得"}
         </Button>
         {error && <span className="text-pretty text-sm text-failed">{error}</span>}

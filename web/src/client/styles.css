@@ -1,16 +1,51 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@theme {
-  --color-ink: #1a2330;
-  --color-paper: #f7f8f9;
-  --color-wall: #e4e7ea;
-  --color-signal: #0f6f6a;
-  --color-working: #0f6f6a;
-  --color-failed: #8e3434;
-  --color-line: #c5cad1;
-  --font-sans: Futura, "Century Gothic", "Avenir Next", "Trebuchet MS", sans-serif;
-  --font-serif: "Hoefler Text", "Iowan Old Style", Baskerville, "Palatino Linotype", serif;
+/* Ops-console palette. Light by default, dark follows the OS. */
+:root {
+  color-scheme: light dark;
+  --c-ink: #0f172a;
+  --c-wall: #eef1f5;
+  --c-paper: #ffffff;
+  --c-line: #d6dce5;
+  --c-signal: #047857;
+  --c-signal-soft: #d1fae5;
+  --c-failed: #b91c1c;
+  --c-failed-soft: #fee2e2;
+  --c-warn: #a16207;
+  --c-warn-soft: #fef3c7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-ink: #e6ebf2;
+    --c-wall: #0b1220;
+    --c-paper: #111a2b;
+    --c-line: #25324a;
+    --c-signal: #34d399;
+    --c-signal-soft: #0d3b2e;
+    --c-failed: #f87171;
+    --c-failed-soft: #3f1a1f;
+    --c-warn: #fbbf24;
+    --c-warn-soft: #3a2f0f;
+  }
+}
+
+@theme inline {
+  --color-ink: var(--c-ink);
+  --color-wall: var(--c-wall);
+  --color-paper: var(--c-paper);
+  --color-line: var(--c-line);
+  --color-signal: var(--c-signal);
+  --color-working: var(--c-signal);
+  --color-signal-soft: var(--c-signal-soft);
+  --color-failed: var(--c-failed);
+  --color-failed-soft: var(--c-failed-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-serif: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 @utility enter {
@@ -22,15 +57,53 @@
   padding-left: env(safe-area-inset-left);
 }
 
+/* Shared surface + small caps heading used by every section. */
+@utility panel {
+  border: 1px solid var(--c-line);
+  background: var(--c-paper);
+  border-radius: 0.75rem;
+}
+
+@utility eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--c-ink) 60%, transparent);
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
-  color: var(--color-ink);
-  background: var(--color-wall);
+  color: var(--c-ink);
+  background: var(--c-wall);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-signal);
+  outline-offset: 2px;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .enter {
+  .enter,
+  .pulse-dot {
     animation: none;
   }
 }
