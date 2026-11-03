@@ -68,6 +68,26 @@ describe("buildWatchFrame keeps what is not completed", () => {
   });
 });
 
+describe("buildWatchFrame finished cache", () => {
+  it("reuses a finished run's report until its state.json changes, and never caches an unfinished run", () => {
+    env = makeEnv();
+    writeRun("20260101-000000", { end_reason: "done", outcome: "completed" });
+    writeRun("20260102-000000");
+    const cache = new Map();
+    const first = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache });
+    expect([...cache.keys()]).toEqual(["20260101-000000"]);
+
+    const second = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache });
+    expect(second.runs?.["20260101-000000"]).toBe(first.runs?.["20260101-000000"]);
+    expect(second.runs?.["20260102-000000"]).not.toBe(first.runs?.["20260102-000000"]);
+
+    writeRun("20260101-000000", { end_reason: "done", outcome: "completed", rounds: 7 });
+    const third = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache });
+    expect(third.runs?.["20260101-000000"]).not.toBe(first.runs?.["20260101-000000"]);
+    expect(third.runs?.["20260101-000000"].run?.rounds).toBe(7);
+  });
+});
+
 describe("createStatusWatcher", () => {
   function make() {
     vi.useFakeTimers();

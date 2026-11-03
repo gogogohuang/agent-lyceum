@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { ResolvedProject } from "./config.js";
-import { buildStatusReport, buildTaskListReport, isFinishedRun, type StatusReport } from "./status.js";
+import { buildStatusReport, buildTaskListReport, currentRun, isFinishedRun, type StatusReport } from "./status.js";
 
 /** What `status --json --watch` prints, one JSON object per line: the project's report plus one per task that is not finished (completed or partial). */
 export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Record<string, StatusReport>; error?: string };
@@ -11,15 +12,47 @@ export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Reco
  * A task that was running in the previous frame and has finished (completed or partial) since is included once more, so the reader sees
  * it finish (and can toast) before it is dropped. `tracked` is that previous set; it is replaced by the ids running now.
  */
-export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>, opts?: { allTasks?: boolean }): WatchFrame {
+/**
+ * Reports of finished runs, kept so a sweep does not rebuild them (about 300 ms each). An entry is reused while the
+ * run's state.json is unchanged and it is younger than `FINISHED_TTL_MS`; the TTL picks up what lives outside that file
+ * (unread mail, memory advice).
+ */
+export type FinishedCache = Map<string, { stamp: string; at: number; report: StatusReport }>;
+const FINISHED_TTL_MS = 5 * 60_000;
+
+function stampOf(project: ResolvedProject, id: string): string {
+  try {
+    const st = fs.statSync(path.join(project.paths.runs, id, "state.json"));
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "";
+  }
+}
+
+export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>, opts?: { allTasks?: boolean; cache?: FinishedCache }): WatchFrame {
   const all = buildTaskListReport(project).runs;
   const running = all.filter((r) => r.state === "running").map((r) => r.run_id);
   const open = all.filter((r) => !isFinishedRun(r)).map((r) => r.run_id);
   const runs: Record<string, StatusReport> = {};
   // The web page keeps every task. The terminal watch drops one after it has finished, once the finish has been seen.
   const ids = opts?.allTasks ? all.map((r) => r.run_id) : [...open, ...tracked];
-  for (const id of new Set(ids)) runs[id] = buildStatusReport(project, id);
-  const report = buildStatusReport(project);
+  const finished = new Set(all.filter(isFinishedRun).map((r) => r.run_id));
+  const cache = opts?.cache;
+  const now = Date.now();
+  for (const id of new Set(ids)) {
+    const stamp = cache && finished.has(id) ? stampOf(project, id) : "";
+    const hit = stamp ? cache?.get(id) : undefined;
+    if (hit && hit.stamp === stamp && now - hit.at < FINISHED_TTL_MS) {
+      runs[id] = hit.report;
+      continue;
+    }
+    runs[id] = buildStatusReport(project, id);
+    if (stamp) cache?.set(id, { stamp, at: now, report: runs[id] });
+  }
+  if (cache) for (const id of cache.keys()) if (!finished.has(id)) cache.delete(id);
+  // The project's own report shows the current run, which is usually one already built above.
+  const currentId = currentRun(project)?.state.run_id;
+  const report = currentId && runs[currentId] ? runs[currentId] : buildStatusReport(project);
   tracked.clear();
   for (const id of running) tracked.add(id);
   return { schema_version: 1, report, runs };
@@ -48,6 +81,7 @@ function fsWatch(dir: string, onChange: () => void): { close: () => void } {
  */
 export function createStatusWatcher(d: WatchDeps): { beat: () => void; close: () => void } {
   const tracked = new Set<string>();
+  const cache: FinishedCache = new Map();
   const watch = d.watch ?? fsWatch;
   let lastLine = "";
   let watching = "";
@@ -59,7 +93,7 @@ export function createStatusWatcher(d: WatchDeps): { beat: () => void; close: ()
     let project: ResolvedProject | undefined;
     try {
       project = d.load();
-      frame = buildWatchFrame(project, tracked, { allTasks: d.allTasks });
+      frame = buildWatchFrame(project, tracked, { allTasks: d.allTasks, cache });
     } catch (e) {
       frame = { schema_version: 1, error: (e as Error).message };
     }
