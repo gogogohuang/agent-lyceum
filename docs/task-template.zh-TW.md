@@ -1,6 +1,6 @@
 # 任務檔範本
 
-複製成 `spec.md` 填寫後，執行 `agent-lyceum run --task-file spec.md`。任務一開始就寫清楚範圍、驗收條件與驗證指令，lead 才能把獨立工作一次派齊，並在小修改時略過 QA 層（見 [Saving tokens](configuration.zh-TW.md#節省-token)）。括號內是提示，填完請刪除。
+複製成 `spec.md` 填寫後，執行 `agent-lyceum run --task-file spec.md`。任務一開始就寫清楚範圍、驗收條件與驗證指令，lead 才能把獨立工作一次派齊，並在小修改時略過 QA 層（見 [節省 token](configuration.zh-TW.md#節省-token)）。括號內是提示，填完請刪除。
 
 ```markdown
 # <一行標題>
@@ -18,5 +18,5 @@
 （必須通過的確切指令，例如 `npm run lint && npm run typecheck && npm test`。）
 
 ## 是否小修改
-（是／否。只有「數行、有修前失敗／修後通過的測試、不改變使用者可見行為」才答是；答是時 lead 可略過 QA。）
+（是／否。只有「數行、有修前失敗／修後通過的測試、不改變使用者可見行為」才答是；答是且 code review 通過時，lead 可略過 QA。）
 ```

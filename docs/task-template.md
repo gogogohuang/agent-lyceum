@@ -18,5 +18,5 @@ Copy this to `spec.md` and fill it in, then run `agent-lyceum run --task-file sp
 (The exact commands that must pass, for example `npm run lint && npm run typecheck && npm test`.)
 
 ## Small change?
-(yes / no. Answer yes only when it is a few lines, has a test that fails before and passes after, and changes no user-visible behaviour. A yes lets the lead skip QA.)
+(yes / no. Answer yes only when it is a few lines, has a test that fails before and passes after, and changes no user-visible behaviour. A yes lets the lead skip QA after an approving code review.)
 ```

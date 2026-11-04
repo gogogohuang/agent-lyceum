@@ -9,9 +9,10 @@ const PAIRS = [
   ['docs/how-it-works.md', 'docs/how-it-works.zh-TW.md'],
   ['docs/monitor.md', 'docs/monitor.zh-TW.md'],
   ['docs/web-access.md', 'docs/web-access.zh-TW.md'],
+  ['docs/task-template.md', 'docs/task-template.zh-TW.md'],
   ['docs/write-scope.md', 'docs/write-scope.zh-TW.md'],
 ]
-const LINKED = [...PAIRS.flat(), 'docs/upgrading-run-v2.md', 'docs/task-template.md', 'docs/task-template.zh-TW.md']
+const LINKED = [...PAIRS.flat(), 'docs/upgrading-run-v2.md']
 const errors = []
 
 const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-')
