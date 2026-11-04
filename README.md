@@ -90,4 +90,5 @@ Likewise, older versions refuse a `project.yaml` that contains `verify` ("Unreco
 | Letting an agent search or fetch the web | [Web access](docs/web-access.md) |
 | Live run status inside Claude Code (a framed, state-coloured tree of agents; pane or full-width band) | [Monitor mod](docs/monitor.md) |
 | All commands in full | [Commands](docs/commands.md) |
+| A task file template (scope, acceptance criteria, verification) | [Task template](docs/task-template.md) |
 | Coming from an older version | [Upgrading to run v2](docs/upgrading-run-v2.md) |

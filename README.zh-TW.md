@@ -90,4 +90,5 @@ agents:
 | 讓 agent 搜尋或讀取網頁 | [網路存取](docs/web-access.zh-TW.md) |
 | 在 Claude Code 內看即時 run 狀態（每個 agent 一個依狀態上色的外框，樹狀排列；面板或整寬橫幅） | [監控 mod](docs/monitor.zh-TW.md) |
 | 所有指令的完整說明 | [指令](docs/commands.zh-TW.md) |
+| 任務檔範本（範圍、驗收條件、驗證指令） | [任務檔範本](docs/task-template.zh-TW.md) |
 | 從舊版升級 | [升級到 run v2](docs/upgrading-run-v2.md) |
