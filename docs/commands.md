@@ -30,11 +30,11 @@ Give the task to the lead and run the dispatcher until done. If an agent asks yo
 Options:
 
 - `"task"`: the task as text. Give this *or* `--task-file`, not both.
-- `--task-file f`: read the task from a file.
+- `--task-file f`: read the task from a file. A [task file template](task-template.md) covers scope, acceptance criteria, out-of-scope, the verification command and whether it is a small change.
 - `--name n`: name the run (default: made from the first line of the task). Lowercase letters, digits and `-`, at most 30 characters; refused if the name is already used. See "Continuing a finished run" in [How a run works](how-it-works.md#continuing-a-finished-run).
 - `-p name`: the project (default: inferred from the current directory).
 - `--assume-defaults`: when a question has a suggested value, use it instead of pausing. Questions without a suggestion still pause.
-- `--agent a`: give the task to that one member of the project, and wake nobody else. See below.
+- `--agent a`: give the task to that one member of the project, and wake nobody else. See below. For small tasks this can cost far fewer wake-ups than the whole team; [When you do not need the whole team](configuration.md#when-you-do-not-need-the-whole-team) has four questions to decide, and notes that this project usually needs the cross-runtime review, so the team stays the default here.
 
 With `--agent`:
 
