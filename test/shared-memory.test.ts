@@ -206,16 +206,19 @@ describe("prompts", () => {
     const p = bound();
     const idx = sharedIndex(p) as string;
     write(idx, "- decided: sessions, not JWT\n");
-    expect(buildUserPrompt(p, p.agents.lead, [], 1)).not.toContain("Handoff notes");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1)).not.toContain("<handoff_notes");
     const withNotes = buildUserPrompt(p, p.agents["fe-member"], [], 1, true);
-    expect(withNotes).toContain(`# Handoff notes from earlier segments of this task (${idx})`);
+    expect(withNotes).toContain(`<handoff_notes from="earlier segments of this task" file="${idx}">`);
     expect(withNotes).toContain("decided: sessions, not JWT");
+    expect(withNotes).toMatch(/<handoff_notes [^>]*>\n[\s\S]*decided: sessions, not JWT[\s\S]*<\/handoff_notes>/); // the block is closed
 
     write(idx, "   \n");
-    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("<handoff_notes");
 
     write(idx, "x".repeat(HANDOFF_LIMIT + 100));
-    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+    const cut = buildUserPrompt(p, p.agents.lead, [], 1, true);
+    expect(cut).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+    expect(cut).toMatch(/truncated at \d+ bytes[\s\S]*<\/handoff_notes>/); // the marker sits inside the block
   });
 });
 
@@ -247,7 +250,7 @@ describe("a reopened run starts from the handoff notes", () => {
       first.push(i.userPrompt);
       return leadWritesNotes(i);
     });
-    expect(first.join("\n")).not.toContain("Handoff notes");
+    expect(first.join("\n")).not.toContain("<handoff_notes");
     expect((loadRunState(runDir).notes ?? []).some((n) => n.includes("shared-not-updated"))).toBe(false);
 
     const prompts: Record<string, string[]> = {};
@@ -271,7 +274,7 @@ describe("a reopened run starts from the handoff notes", () => {
     for (const who of ["lead", "fe-member"]) {
       const text = (prompts[who] as string[]).join("\n");
       expect(text).toContain("decided: sessions, not JWT");
-      expect(text).toContain("# Handoff notes from earlier segments of this task");
+      expect(text).toContain("<handoff_notes ");
     }
     expect((prompts.lead as string[])[0]).toContain(`handoff notes written for follow-ups are in \`${idx}\``);
   });
@@ -302,7 +305,7 @@ describe("a reopened run starts from the handoff notes", () => {
       },
     });
     expect(second.endReason).toBe("done");
-    expect(seen).not.toContain("Handoff notes");
+    expect(seen).not.toContain("<handoff_notes");
     expect(seen).not.toContain("handoff notes written for follow-ups");
   });
 
@@ -392,12 +395,12 @@ describe("the capped reads never hang or throw", () => {
     const idx = sharedIndex(p) as string;
     fs.rmSync(idx, { force: true });
     fs.mkdirSync(idx, { recursive: true });
-    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("<handoff_notes");
 
     fs.rmSync(idx, { recursive: true });
     if (process.platform !== "win32") {
       execFileSync("mkfifo", [idx]);
-      expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("Handoff notes");
+      expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("<handoff_notes");
       fs.rmSync(idx);
     }
 
@@ -406,7 +409,7 @@ describe("the capped reads never hang or throw", () => {
     fs.mkdirSync(path.dirname(commonFile(p)), { recursive: true });
     fs.rmSync(commonFile(p), { force: true });
     fs.symlinkSync(common, commonFile(p));
-    expect(buildUserPrompt(p, p.agents.lead, [], 1)).toContain("# Shared team context (COMMON.md)");
+    expect(buildUserPrompt(p, p.agents.lead, [], 1)).toContain('<shared_context source="COMMON.md">');
   });
 
   it("a file through a symlink still reads, and a big one is cut at the limit", () => {

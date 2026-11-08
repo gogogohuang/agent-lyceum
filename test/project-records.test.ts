@@ -79,8 +79,8 @@ describe("project records", () => {
     const p = env.project();
     expect(buildRecordsView(p, "decisions", CONTEXT_LIMIT)).toBeUndefined();
     const prompt = buildUserPrompt(p, p.agents["fe-member"], []);
-    expect(prompt).not.toContain("# Project decisions");
-    expect(prompt).not.toContain("# Project lessons");
+    expect(prompt).not.toContain("<project_decisions>");
+    expect(prompt).not.toContain("<project_lessons>");
   });
 
   it("injects both kinds into the prompt, but never .archive/", () => {
@@ -90,10 +90,12 @@ describe("project records", () => {
     entry(p, "lessons", "l1", ok("Build first"), "run the build before the tests");
     write(path.join(recordsDir(p), ".archive", "decisions", "old.md"), "---\nstatus: active\ndate: 2025-01-01\ntitle: Archived\n---\nARCHIVED-BODY\n");
     const prompt = buildUserPrompt(p, p.agents["fe-member"], []);
-    expect(prompt).toContain("# Project decisions");
+    expect(prompt).toContain("<project_decisions>");
     expect(prompt).toContain("no server to run");
-    expect(prompt).toContain("# Project lessons");
+    expect(prompt).toContain("<project_lessons>");
     expect(prompt).toContain("run the build before the tests");
+    expect(prompt).toMatch(/<project_decisions>\n[\s\S]*no server to run[\s\S]*<\/project_decisions>/);
+    expect(prompt).toMatch(/<project_lessons>\n[\s\S]*run the build before the tests[\s\S]*<\/project_lessons>/);
     expect(prompt).not.toContain("ARCHIVED-BODY");
   });
 

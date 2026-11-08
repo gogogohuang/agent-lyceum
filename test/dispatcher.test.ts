@@ -94,7 +94,7 @@ describe("dispatcher", () => {
     expect(prompts[0]).toContain("subject: older job");
     expect(prompts[0]).toContain("body of older job");
     expect(prompts[0]).not.toContain("body of newer job");
-    const queued = /Queued messages[\s\S]*"newer job" -> (\S+)/.exec(prompts[0]);
+    const queued = /<queued_messages[\s\S]*"newer job" -> (\S+)/.exec(prompts[0]);
     expect(queued).not.toBeNull();
     expect(prompts[1]).toContain("subject: newer job");
     expect(prompts[1]).toContain("body of newer job");
@@ -370,10 +370,10 @@ describe("dispatcher", () => {
     expect(s.endReason).toBe("done");
     expect(s.rounds).toBe(4);
     expect(leadPrompts).toHaveLength(2);
-    expect(leadPrompts[1]).toContain("Messages to handle now (2");
+    expect(leadPrompts[1]).toContain('<messages count="2"');
     expect(leadPrompts[1]).toContain("body of reply from fe-member");
     expect(leadPrompts[1]).toContain("body of reply from qa-member");
-    expect(leadPrompts[1]).not.toContain("Queued messages");
+    expect(leadPrompts[1]).not.toContain("<queued_messages");
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
     expect(state.wakes.find((w: { round: number }) => w.round === 4).handling).toHaveLength(2);
   });
