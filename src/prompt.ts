@@ -17,6 +17,25 @@ function memoryLabel(agent: ResolvedAgent, dir: string): string {
   return shared ? `${kind}, read-only for you: ${instance1} maintains it)` : `${kind})`;
 }
 
+/** Escape a value for a double-quoted attribute of the tags that wrap injected data. */
+function attr(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** One memory directory as a `<memory>` block: its MEMORY.md index, or a hint to create one. */
+function memoryBlock(agent: ResolvedAgent, dir: string): string[] {
+  const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
+  const scope = memoryLabel(agent, dir).split(" ")[0];
+  const out = [`<memory scope="${attr(scope ?? "")}" dir="${attr(dir)}" index="MEMORY.md">`];
+  if (!idx) out.push("(no MEMORY.md yet — create one when you have something worth keeping)");
+  else {
+    out.push(idx.text.trim());
+    if (idx.truncated) out.push(`\n[index truncated at ${MEMORY_INDEX_LIMIT} bytes — trim it]`);
+  }
+  out.push("</memory>");
+  return out;
+}
+
 /** Lead-only rules that keep the number of wake-ups down; placed after the progress-tracking block. */
 export const WAKE_ECONOMY_SECTION = [
   "## Keeping wake-ups few",
@@ -181,13 +200,8 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
 /** The prompt of a `call`: the memory indexes the agent is used to, then the task. */
 export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string {
   const parts: string[] = [];
-  for (const dir of memoryDirs(agent)) {
-    const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
-    parts.push(`# Your ${memoryLabel(agent, dir).split(" ")[0]} memory index (${dir}/MEMORY.md)`);
-    if (!idx) parts.push("(no MEMORY.md yet — create one when you have something worth keeping)", "");
-    else parts.push(idx.text.trim(), ...(idx.truncated ? [`[index truncated at ${MEMORY_INDEX_LIMIT} bytes — trim it]`] : []), "");
-  }
-  parts.push("# Task", task.trim());
+  for (const dir of memoryDirs(agent)) parts.push(...memoryBlock(agent, dir), "");
+  parts.push("<task>", task.trim(), "</task>");
   return parts.join("\n");
 }
 
@@ -355,7 +369,7 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
   const parts: string[] = [];
 
   const common = readCapped(commonFile(project), COMMON_LIMIT);
-  parts.push("# Shared team context (COMMON.md)");
+  parts.push('<shared_context source="COMMON.md">');
   if (!common) parts.push("(empty)");
   else {
     parts.push(common.text.trim());
@@ -363,42 +377,34 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
       parts.push(`\n[COMMON.md was truncated at ${COMMON_LIMIT} bytes — the lead should condense it.]`);
     }
   }
+  parts.push("</shared_context>");
 
-  for (const [title, kind] of [
-    ["Project decisions", "decisions"],
-    ["Project lessons", "lessons"],
+  for (const [tag, kind] of [
+    ["project_decisions", "decisions"],
+    ["project_lessons", "lessons"],
   ] as const) {
     const view = buildRecordsView(project, kind, CONTEXT_LIMIT);
-    if (view) parts.push("", `# ${title}`, view); // nothing recorded yet: no heading, no tokens
+    if (view) parts.push("", `<${tag}>`, view, `</${tag}>`); // nothing recorded yet: no tag, no tokens
   }
 
   const handoffFile = handoff ? sharedIndex(project) : undefined;
   const notes = handoffFile ? readCapped(handoffFile, HANDOFF_LIMIT) : undefined;
   if (handoffFile && notes?.text.trim()) {
-    parts.push("", `# Handoff notes from earlier segments of this task (${handoffFile})`, notes.text.trim());
+    parts.push("", `<handoff_notes from="earlier segments of this task" file="${attr(handoffFile)}">`, notes.text.trim());
     if (notes.truncated) parts.push(`\n[handoff index truncated at ${HANDOFF_LIMIT} bytes — the lead should condense it.]`);
-    parts.push("The other files in that folder are there to read on demand.");
+    parts.push("The other files in that folder are there to read on demand.", "</handoff_notes>");
   }
 
-  for (const dir of [...Object.values(agent.sharedMemory ?? {}), ...memoryDirs(agent)]) {
-    const idx = readCapped(path.join(dir, "MEMORY.md"), MEMORY_INDEX_LIMIT);
-    const label = memoryLabel(agent, dir).split(" ")[0];
-    parts.push("", `# Your ${label} memory index (${dir}/MEMORY.md)`);
-    if (!idx) parts.push("(no MEMORY.md yet — create one when you have something worth keeping)");
-    else {
-      parts.push(idx.text.trim());
-      if (idx.truncated) parts.push(`\n[index truncated at ${MEMORY_INDEX_LIMIT} bytes — trim it]`);
-    }
-  }
+  for (const dir of [...Object.values(agent.sharedMemory ?? {}), ...memoryDirs(agent)]) parts.push("", ...memoryBlock(agent, dir));
 
   const sorted = [...unread].sort((a, b) => path.basename(a.file).localeCompare(path.basename(b.file)));
   const current = sorted.slice(0, handleCount);
   const queued = sorted.slice(handleCount);
-  parts.push("", current.length > 1 ? `# Messages to handle now (${current.length}, oldest first — decide on them together)` : "# Message to handle now");
+  parts.push("", current.length > 1 ? `<messages count="${current.length}" order="oldest first" note="decide on them together">` : `<messages count="${current.length}">`);
   if (current.length === 0) parts.push("(no message)");
   let remaining = MAIL_BATCH_LIMIT;
   current.forEach((m, i) => {
-    if (current.length > 1) parts.push("", `## Message ${i + 1} of ${current.length}`);
+    parts.push(current.length > 1 ? `<message n="${i + 1}" of="${current.length}">` : "<message>");
     const raw = Buffer.from(m.body, "utf8");
     const shown = cutUtf8(raw, Math.min(MAIL_BODY_LIMIT, remaining));
     remaining -= shown.length;
@@ -414,11 +420,14 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
       `subject: ${m.meta.subject}`,
       "",
       body,
+      "</message>",
     );
   });
+  parts.push("</messages>");
   if (queued.length) {
-    parts.push("", "# Queued messages (not handled in this wake-up; each gets its own wake-up later, titles only)");
+    parts.push("", '<queued_messages note="not handled in this wake-up; each gets its own wake-up later, titles only">');
     for (const m of queued) parts.push(`- from ${senderLabel(m.meta.from, project.agents)} [${m.meta.type}] "${m.meta.subject}" -> ${m.file}`);
+    parts.push("</queued_messages>");
   }
   return parts.join("\n");
 }
