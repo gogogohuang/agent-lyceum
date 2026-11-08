@@ -94,6 +94,8 @@ describe("project records", () => {
     expect(prompt).toContain("no server to run");
     expect(prompt).toContain("<project_lessons>");
     expect(prompt).toContain("run the build before the tests");
+    expect(prompt).toMatch(/<project_decisions>\n[\s\S]*no server to run[\s\S]*<\/project_decisions>/);
+    expect(prompt).toMatch(/<project_lessons>\n[\s\S]*run the build before the tests[\s\S]*<\/project_lessons>/);
     expect(prompt).not.toContain("ARCHIVED-BODY");
   });
 

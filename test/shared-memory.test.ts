@@ -210,12 +210,15 @@ describe("prompts", () => {
     const withNotes = buildUserPrompt(p, p.agents["fe-member"], [], 1, true);
     expect(withNotes).toContain(`<handoff_notes from="earlier segments of this task" file="${idx}">`);
     expect(withNotes).toContain("decided: sessions, not JWT");
+    expect(withNotes).toMatch(/<handoff_notes [^>]*>\n[\s\S]*decided: sessions, not JWT[\s\S]*<\/handoff_notes>/); // the block is closed
 
     write(idx, "   \n");
     expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).not.toContain("<handoff_notes");
 
     write(idx, "x".repeat(HANDOFF_LIMIT + 100));
-    expect(buildUserPrompt(p, p.agents.lead, [], 1, true)).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+    const cut = buildUserPrompt(p, p.agents.lead, [], 1, true);
+    expect(cut).toContain(`truncated at ${HANDOFF_LIMIT} bytes`);
+    expect(cut).toMatch(/truncated at \d+ bytes[\s\S]*<\/handoff_notes>/); // the marker sits inside the block
   });
 });
 
