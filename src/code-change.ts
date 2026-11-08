@@ -3,6 +3,7 @@ import path from "node:path";
 
 export const WATCH_RESTART_EXIT = 75;
 export const WATCH_RESTART_MESSAGE = "status --watch: agent-lyceum code changed on disk; restart to load it";
+export const WEB_RESTART_MESSAGE = "status --web: agent-lyceum code changed on disk; restart to load it";
 
 /** Sorted relative paths, sizes and mtimes; unreadable trees never trigger a restart. */
 export function codeFingerprint(dir: string, ext: string): string {

@@ -1,3 +1,4 @@
+import type { WebState } from '../hooks/web-server'
 export type Step = { text: string; done: boolean }
 export type DigestSection = { label: string; lines: string[] }
 export type Mail = { from: string; type: string; subject: string; brief?: string; digest?: DigestSection[] }
@@ -49,6 +50,6 @@ export type Snapshots = Record<string, Snapshot>
 
 declare module 'claude-code' {
   interface PluginState {
-    'status-monitor': { snapshot: Snapshots; tab: string; view: 'graph' | 'text'; expanded: boolean; band: boolean }
+    'status-monitor': { snapshot: Snapshots; tab: string; view: 'graph' | 'text'; expanded: boolean; band: boolean; web: WebState | null }
   }
 }

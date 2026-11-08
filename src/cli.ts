@@ -25,6 +25,7 @@ import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
 import { runMonitor } from "./monitor-lifecycle.js";
 import { codeFingerprint, watchCodeChange, WATCH_RESTART_EXIT, WATCH_RESTART_MESSAGE } from "./code-change.js";
+import { probeHealth, runAttachedWeb } from "./web-attach.js";
 import { createStatusWatcher } from "./status-watch.js";
 import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
@@ -693,13 +694,16 @@ program
   .option("--port <n>", "with --web: TCP port", "8787")
   .option("--host <addr>", "with --web: bind address", "127.0.0.1")
   .option("--no-open", "with --web: do not open a browser")
-  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; watch?: boolean; heartbeat: string; web?: boolean; port: string; host: string; open?: boolean }) => {
+  .option("--exit-with-parent", "with --web: stop when the launching process goes away (parent exit, closed stdout) and print the URL as the first stdout line")
+  .option("--allow-host <name>", "with --web on a loopback address: also accept this Host name (repeatable)", (value: string, previous: string[]) => [...previous, value], [] as string[])
+  .action(async (opts: { project?: string; taskList?: string | boolean; taskId?: string; monitor?: boolean; interval: string; json?: boolean; watch?: boolean; heartbeat: string; web?: boolean; port: string; host: string; open?: boolean; exitWithParent?: boolean; allowHost: string[] }) => {
     try {
+      if (opts.exitWithParent && !opts.web) fail("--exit-with-parent needs --web.");
       if (opts.web) {
         if (opts.json || opts.watch || opts.monitor || opts.taskList || opts.taskId !== undefined) fail("--web cannot be combined with --json, --watch, --monitor, --task-list or --task-id.");
         if (opts.project) fail("--web shows every registered project; it does not take --project.");
         const port = Number(opts.port);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port must be a TCP port.");
+        if (!Number.isInteger(port) || port < 0 || port > 65535) fail("--port must be a TCP port (0 picks a free one).");
         const beat = Number(opts.heartbeat);
         if (!(beat > 0)) fail("--heartbeat must be a positive number of seconds.");
         const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -715,20 +719,25 @@ program
             open: boolean;
             staticDir: string;
             heartbeatMs: number;
+            identity: { version: string; home: string };
+            allowHosts: string[];
             factory: {
               list: () => string[];
               watch: (name: string, onFrame: (frame: unknown) => void) => { beat: () => void; close: () => void };
-              quota?: () => Promise<QuotaReport[]>;
+              quota?: (signal?: AbortSignal) => Promise<QuotaReport[]>;
               summarize?: (input: { runtime: "claude" | "codex"; prompt: string }) => Promise<string>;
             };
           }) => Promise<{ url: string; close: () => Promise<void> }>;
         };
-        const page = await mod.startWebServer({
+        const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version?: string }).version ?? "unknown";
+        const startOptions: Parameters<typeof mod.startWebServer>[0] = {
           port,
           host: opts.host,
           open: opts.open !== false,
           staticDir,
           heartbeatMs: beat * 1000,
+          identity: { version, home: home() },
+          allowHosts: opts.allowHost,
           factory: {
             list: () => listProjects(home()).map((item) => item.name),
             watch: (name, onFrame) =>
@@ -739,10 +748,37 @@ program
                 debounceMs: 100,
                 allTasks: true,
               }),
-            quota: () => Promise.all([claudeQuota(), codexQuota()]),
-            summarize: ({ runtime, prompt }) => summarizeProgress(runtime, prompt),
+            quota: (signal?: AbortSignal) => Promise.all([claudeQuota(signal), codexQuota(signal)]),
+            summarize: ({ runtime, prompt }: { runtime: "claude" | "codex"; prompt: string }) => summarizeProgress(runtime, prompt),
           },
-        });
+        };
+        if (opts.exitWithParent) {
+          const codeFile = fileURLToPath(import.meta.url);
+          const changed = watchCodeChange(() => codeFingerprint(path.dirname(codeFile), path.extname(codeFile)));
+          await runAttachedWeb({
+            start: () => mod.startWebServer(startOptions),
+            port,
+            ppid: () => process.ppid,
+            startPpid: LAUNCH_PPID,
+            stdout: process.stdout,
+            stdin: process.stdin,
+            onSignal: (sig, handler) => process.on(sig, handler),
+            writeErr: (line) => {
+              try {
+                fs.writeSync(2, line);
+              } catch {
+                // A closed stderr must not prevent the exit.
+              }
+            },
+            exit: (code) => process.exit(code),
+            fail: (message) => fail(message),
+            probeHealth,
+            intervalMs: beat * 1000,
+            changed,
+          });
+          await new Promise(() => {});
+        }
+        const page = await mod.startWebServer(startOptions);
         console.log(page.url);
         const stop = (code: number) => {
           void page.close().finally(() => process.exit(code));

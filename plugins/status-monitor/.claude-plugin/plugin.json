@@ -33,6 +33,29 @@
       "title": "agent-lyceum projects",
       "description": "Registered project name(s) (-p); separate several with commas to watch them all. Leave empty to infer from the session's directory.",
       "default": ""
+    },
+    "web": {
+      "type": "string",
+      "title": "Web page (status --web)",
+      "description": "off (default): no web server. pane: run `status --web` while the pane or band is shown, and stop it 1 second after the last one closes. session: run it for the whole session. One server is shared by all sessions on this machine; the others take over when its owner closes. Never started for -p runs.",
+      "default": "off",
+      "options": [
+        "off",
+        "pane",
+        "session"
+      ]
+    },
+    "webPort": {
+      "type": "number",
+      "title": "Web page port",
+      "description": "Port of the web page (1-65535, an integer; host is always 127.0.0.1). Default 8787.",
+      "default": 8787
+    },
+    "webOpen": {
+      "type": "boolean",
+      "title": "Open the web page in a browser",
+      "description": "When you run /status-monitor and this session starts the web server, open the page once. Off by default.",
+      "default": false
     }
   }
 }

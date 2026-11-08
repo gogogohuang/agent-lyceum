@@ -24,8 +24,13 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `intervalSeconds` | Polling interval after `status --watch` fails to start or ends | `1` |
 | `maxColumns` | Upper bound for the pane's opening width (half the terminal) and the width the tree is drawn at | `250` |
 | `autoOpen` | Open the pane when a session starts (it seats only from 144 columns when opened unasked) | `false` |
+| `web` | Run the web page (`status --web`) with the mod: `off`, `pane` (while the pane or band is shown) or `session` (for the whole session) | `off` |
+| `webPort` | Port for the web page, an integer from 1 to 65535 | `8787` |
+| `webOpen` | Open the browser once when you open the pane yourself and this session becomes the owner of the server | `false` |
 
 Changes take effect on the next session start. If the pane shows `無法取得狀態：...`, the `command` could not run (usually `dist/cli.js` was not built) or the project name is not registered.
+
+**Web page.** With `web` set to `pane` or `session`, the mod starts `status --web --no-open --exit-with-parent --host 127.0.0.1 --port <webPort>` and shows its address in the pane. It never runs in `-p`/SDK sessions. With `pane`, the server stops about 1 second after the last of the pane and the band is hidden (switching between them does not stop it); `session` keeps it until the session ends (not on `/clear` or resume). One machine runs one server: a second session finds it through `GET /health` and follows it, and takes over about 10 seconds after the owner stops. A session only stops the server it started. If the page is not built the pane shows the reason and the build command and does not retry; after fixing it press **retry** in the pane. If the port belongs to another program the mod waits 30 seconds and tries again; it never changes the port. **Known gap:** stopping is a request, not a guarantee. If `command` goes through a wrapper such as `npx`, the wrapper may not forward the signal and the server can outlive the pane; point `command` at the binary (`node /path/to/agent-lyceum/dist/cli.js`) to avoid it. A server whose parent was killed exits by itself within a few heartbeats (5 seconds each). The usage probes (`claude -p`, `codex app-server`) get a SIGTERM when the server closes; a probe that ignores it can linger. The page now rejects unknown `Host` names; see `--allow-host` in [commands](commands.md#status).
 
 **Fallback badge.** When an agent that has a fallback chain is running on a backup model, its block title carries a small `備援中` (on a fallback) mark; nothing else in the layout changes. Which model it fell back from and why, and any cooldown, are in `agent-lyceum status`.
 
