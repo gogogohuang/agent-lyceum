@@ -254,6 +254,23 @@ describe("status --json --watch", { timeout: 30_000 }, () => {
     expect(run(["status", "--web", "-p", "demo"]).err).toContain("does not take --project");
   });
 
+  it("--exit-with-parent needs --web", () => {
+    env = makeEnv();
+    const r = run(["status", "--exit-with-parent"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("--exit-with-parent needs --web.");
+  });
+
+  it("--port accepts 0 and still rejects out-of-range values (checked before anything listens)", () => {
+    env = makeEnv();
+    expect(run(["status", "--web", "--port", "-1"]).err).toContain("--port must be a TCP port");
+    expect(run(["status", "--web", "--port", "65536"]).err).toContain("--port must be a TCP port");
+    // --heartbeat is validated right after --port, so this fails on the heartbeat and never starts a server.
+    const r = run(["status", "--web", "--port", "0", "--heartbeat", "0"]);
+    expect(r.err).toContain("--heartbeat must be a positive number");
+    expect(r.err).not.toContain("--port must be");
+  });
+
   it("prints a frame at start and another when a run starts, without polling", async () => {
     env = makeEnv();
     const { spawn } = await import("node:child_process");

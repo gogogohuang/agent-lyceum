@@ -96,6 +96,18 @@ describe("runMonitor (unit)", () => {
     vi.advanceTimersByTime(1000);
     expect(m.exit).toHaveBeenCalledWith(129);
   });
+
+  it("a given startPpid that differs from the current ppid exits 129 at the first tick, without drawing", () => {
+    const m = make({ ppid: () => 1, startPpid: 10 });
+    expect(m.exit).toHaveBeenCalledWith(129);
+    expect(m.deps.draw).not.toHaveBeenCalled();
+  });
+
+  it("a given startPpid equal to the current ppid keeps running", () => {
+    const m = make({ ppid: () => 10, startPpid: 10 });
+    expect(m.exit).not.toHaveBeenCalled();
+    expect(m.deps.draw).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("status --monitor process", () => {

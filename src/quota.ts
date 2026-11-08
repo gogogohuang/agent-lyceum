@@ -41,24 +41,31 @@ function roundPercent(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-export async function claudeQuota(): Promise<QuotaReport> {
+export async function claudeQuota(signal?: AbortSignal): Promise<QuotaReport> {
   try {
-    const text = await capture("claude", ["-p", "--no-session-persistence", "--output-format", "text", "/usage"], 20_000);
+    const text = await capture("claude", ["-p", "--no-session-persistence", "--output-format", "text", "/usage"], 20_000, signal);
     const windows = parseClaudeUsage(text.stdout);
     if (windows.length === 0) return { runtime: "claude", windows: [], error: firstLine(text.stderr) || firstLine(text.stdout) || "claude /usage 沒有回傳額度。" };
     return { runtime: "claude", windows };
   } catch (error) {
+    if (isAbort(error)) throw error;
     return { runtime: "claude", windows: [], error: missing("claude", error) };
   }
 }
 
-export async function codexQuota(): Promise<QuotaReport> {
+export async function codexQuota(signal?: AbortSignal): Promise<QuotaReport> {
   try {
-    const limits = await readCodexLimits();
+    const limits = await readCodexLimits(signal);
     return { runtime: "codex", windows: codexWindows(limits) };
   } catch (error) {
+    if (isAbort(error)) throw error;
     return { runtime: "codex", windows: [], error: missing("codex", error) };
   }
+}
+
+/** An aborted quota read is a cancelled request, not a report: callers (the hub) discard it. */
+function isAbort(error: unknown): boolean {
+  return (error as { name?: string }).name === "AbortError";
 }
 
 function missing(cmd: string, error: unknown): string {
@@ -71,9 +78,9 @@ function firstLine(text: string): string {
   return text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
 }
 
-function capture(cmd: string, args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+function capture(cmd: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...(signal ? { signal } : {}) });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -93,9 +100,9 @@ function capture(cmd: string, args: string[], timeoutMs: number): Promise<{ stdo
   });
 }
 
-function readCodexLimits(): Promise<RateLimits> {
+function readCodexLimits(signal?: AbortSignal): Promise<RateLimits> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], ...(signal ? { signal } : {}) });
     let buf = "";
     const timer = setTimeout(() => {
       child.kill();

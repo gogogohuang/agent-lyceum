@@ -1,11 +1,13 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { CommandRunInput, CommandRunResult, EngineInterface, Register } from 'claude-code'
 
 import type { Report, Snapshots } from '../types'
 import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, clipCells, textCells } from './graph'
 import { superviseWatch } from './watch-restart'
 import { graphView } from './graph-view'
+import { createWebServer, describeWeb, type Life, type WebServer, type WebState } from './web-server'
+import { createReconciler, type Mode, type Reconciler } from './reconcile'
 
 const PANE = 'agent-lyceum'
 const snapshot = atom({ plugin: 'status-monitor', key: 'snapshot' } as const, {} as Snapshots)
@@ -20,12 +22,21 @@ const expanded = atom({ plugin: 'status-monitor', key: 'expanded' } as const, fa
 /** True while the status is drawn as a band above the prompt (full terminal width) instead of the docked pane. */
 const band = atom({ plugin: 'status-monitor', key: 'band' } as const, false)
 
+/** What the web server is doing (see web-server.ts); the pane draws it when `web` is not off. */
+const webView = atom({ plugin: 'status-monitor', key: 'web' } as const, null as WebState | null)
+
 type Target = { key: string; status: string[] }
 
 const last = new Map<string, Report>()
 const polling = new Set<string>()
 let several = false
 let targets: Target[] = []
+/** The `web` option. 'off' leaves everything below untouched. */
+let webMode: Mode = 'off'
+let web: WebServer | undefined
+let rec: Reconciler | undefined
+/** Open the browser once, when this session next becomes the owner (webOpen + the person ran /status-monitor). */
+let webOpenPending = false
 
 async function fetchReport($: EngineInterface, args: string[]): Promise<Report> {
   const res = await $.process.run(args, { timeoutMs: 15000 })
@@ -247,16 +258,41 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
   )
   const wanted = await read($, tab)
   const active = tabs.find(x => x.id === wanted) ?? tabs[0]
+  // The web server's line(s); only when `web` is not off.
+  const webState = webMode === 'off' ? null : await read($, webView)
+  const webLines = webState ? describeWeb(webState, performance.now()) : []
+  const webBox =
+    webLines.length > 0 ? (
+      <Box flexDirection="column">
+        {webLines.map(l => (
+          <Text dimColor={webState?.phase !== 'failed'} color={webState?.phase === 'failed' ? 'yellow' : undefined}>
+            {l}
+          </Text>
+        ))}
+        {webState?.phase === 'failed' && <Button key="web-retry" label="重試網頁 (r)" hotkey="r" variant="secondary" onPress={() => web?.retry()} />}
+      </Box>
+    ) : null
   if (!active) {
     const errors = targets.map(t => snap[t.key]?.error).filter((m): m is string => !!m)
-    return <Text dimColor>{errors.length && !targets.some(t => snap[t.key]?.report) ? `無法取得狀態：${errors[0]}` : '沒有未完成的任務'}</Text>
+    const empty = <Text dimColor>{errors.length && !targets.some(t => snap[t.key]?.report) ? `無法取得狀態：${errors[0]}` : '沒有未完成的任務'}</Text>
+    return webBox ? (
+      <Box flexDirection="column">
+        {empty}
+        {webBox}
+      </Box>
+    ) : (
+      empty
+    )
   }
 
   return (
     <Box flexDirection="column">
       <Box>
         <Text bold>agent-lyceum </Text>
-        <Button key="close" label="關閉 (x)" hotkey="x" role="dismiss" variant="primary" onPress={() => (inBand ? update($, band, () => false) : $.ui.close({ id: PANE }))} />
+        <Button key="close" label="關閉 (x)" hotkey="x" role="dismiss" variant="primary" onPress={() => {
+          const closing = inBand ? update($, band, () => false) : $.ui.close({ id: PANE })
+          return rec ? Promise.resolve(closing).then(() => rec?.reconcile()) : closing
+        }} />
         <Button key="expand" label={open ? '收合 (e)' : '展開 (e)'} hotkey="e" variant="secondary" onPress={() => update($, expanded, x => !x)} />
         <Button key="view" label={mode === 'graph' ? '文字版 (v)' : '圖形版 (v)'} hotkey="v" variant="secondary" onPress={() => update($, view, m => (m === 'graph' ? 'text' : 'graph'))} />
       </Box>
@@ -265,9 +301,75 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
           <Button key={x.id} label={`${i + 1} ${x.label}`} hotkey={i < 9 ? String(i + 1) : undefined} variant={x.id === active.id ? 'primary' : 'secondary'} onPress={() => update($, tab, () => x.id)} />
         ))}
       </Box>
+      {webBox}
       {active.body()}
     </Box>
   )
+}
+
+/** Wire the web server and the reconciler to this session's `$` (once per module instance). */
+function startWeb($: EngineInterface, life: Life, options: Record<string, unknown>) {
+  if (rec) return
+  const command = String(options.command ?? 'agent-lyceum').trim().split(/\s+/)
+  web = createWebServer({
+    life,
+    command,
+    port: options.webPort,
+    fetch: async url => {
+      const r = await $.http.fetch(url)
+      return { status: r.status, text: r.text }
+    },
+    spawn: (argv, io) => {
+      const stream = $.process.spawn({ argv })
+      const ended = (async () => {
+        try {
+          for (;;) {
+            const r = await stream.next()
+            if (r.done) return { code: r.value.code, signal: r.value.signal }
+            if (r.value.stream === 'stderr') io.onStderr(r.value.text)
+            else io.onStdout(r.value.text)
+          }
+        } catch (err) {
+          return { code: null, signal: null, error: err instanceof Error ? err.message : String(err) }
+        }
+      })()
+      // `return()` asks the engine to kill the child; it does not wait and promises nothing about when.
+      return { stop: () => void stream.return(undefined as never).catch(() => {}), ended }
+    },
+    after: (ms, fn) => $.clock.after(ms, fn),
+    sleep: (ms, o) => $.clock.sleep(ms, o),
+    now: () => performance.now(),
+    log: line => $.ui.log(`status-monitor: web: ${line}`, { to: 'debug' }),
+    publish: state => {
+      void update($, webView, () => state)
+      if (state.phase === 'owner' && state.url && webOpenPending) {
+        webOpenPending = false
+        void openBrowser($, state.url)
+      } else if (state.phase === 'follower' || state.phase === 'failed' || state.phase === 'idle') webOpenPending = false
+    },
+  })
+  const w = web
+  rec = createReconciler({
+    life,
+    mode: webMode,
+    interactive: true,
+    surfaces: async () => ({ paneOpen: (await $.ui.panes()).some(x => x.id === PANE && x.isPlaced), bandShown: await read($, band) }),
+    setDesired: v => w.setDesired(v),
+    after: (ms, fn) => w.after(ms, fn),
+    log: line => $.ui.log(`status-monitor: web: ${line}`, { to: 'debug' }),
+  })
+}
+
+/** Best effort: `open` (macOS), then `xdg-open` (Linux). */
+async function openBrowser($: EngineInterface, url: string) {
+  for (const cmd of ['open', 'xdg-open']) {
+    try {
+      if ((await $.process.run([cmd, url], { timeoutMs: 5000 })).exitCode === 0) return
+    } catch {
+      // try the next one
+    }
+  }
+  $.ui.log(`status-monitor: web: could not open a browser for ${url}`, { to: 'debug' })
 }
 
 export const register: Register = (on, options) => {
@@ -280,15 +382,38 @@ export const register: Register = (on, options) => {
   })
   const every = Math.max(1, Number(options.intervalSeconds ?? 1)) * 1000
   const maxColumns = Number(options.maxColumns) > 0 ? Math.max(40, Number(options.maxColumns)) : Infinity
+  webMode = options.web === 'pane' || options.web === 'session' ? options.web : 'off'
+  web = undefined
+  rec = undefined
+  webOpenPending = false
+  // One lifecycle per module instance: a hot reload builds a new one.
+  const life: Life = { epoch: 0, ended: false }
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane; `band` shows it full width above the prompt instead' })
     watchAll($, targets, every)
-    if (options.autoOpen === true) void $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 })
+    // The web server is never started for `-p` runs or the SDK (nobody is there to look, and its quota refresh would spawn `claude -p`).
+    if (webMode !== 'off' && e.isInteractive) startWeb($, life, options)
+    const open = options.autoOpen === true ? () => $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 }) : undefined
+    if (rec) void rec.onStart(open)
+    else if (open) void open()
     return next(e)
   })
 
-  on('command.run', { command: 'status-monitor' }, async ($, e) => {
+  on('session.end', async ($, e, next) => {
+    // clear and resume leave the process alive (and give no new session.start): sessionEnd ignores them.
+    rec?.sessionEnd(e.reason)
+    return next(e)
+  })
+
+  on('ui.close', async ($, e, next) => {
+    const r = await next(e)
+    // Our own closes (origin plugin) reconcile in the code that made them; unload never reaches this hook.
+    if (rec && e.id === PANE && e.origin.kind === 'person') void rec.reconcile()
+    return r
+  })
+
+  const runCommand = async ($: EngineInterface, e: CommandRunInput): Promise<CommandRunResult> => {
     const { isFullscreen, columns } = e.presentation
     // `/status-monitor` docks a pane on the right (the host caps a dock at 45% of the terminal's width). `/status-monitor band` shows a full-width band above the prompt instead.
     if (e.args.trim() === 'band') {
@@ -306,9 +431,17 @@ export const register: Register = (on, options) => {
     // Dock at half the terminal's width (a request: a width the person dragged the dock to wins).
     const opened = await $.ui.open({ id: PANE, title: 'agent-lyceum', columns: Math.min(maxColumns, Math.max(40, Math.floor(columns / 2))), rows: 16, focus: true })
     if (!opened.isPlaced) return { text: `agent-lyceum pane not shown: ${opened.reason}` }
+    // webOpen: the person asked for the pane, so open the page once if this session turns out to own the server.
+    if (web && options.webOpen === true && web.state().phase !== 'owner') webOpenPending = true
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
     return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, v switches graph/text, e expands or collapses the details, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
+  }
+
+  on('command.run', { command: 'status-monitor' }, async ($, e) => {
+    const r = await runCommand($, e)
+    await rec?.reconcile()
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => render($, e, false))

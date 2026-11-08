@@ -6,6 +6,8 @@ export interface MonitorDeps {
   stdout: EventEmitter & { destroyed?: boolean; writable?: boolean };
   stdin: EventEmitter & { isTTY?: boolean; resume: () => unknown };
   ppid: () => number;
+  /** The parent pid recorded before any await; when absent the pid at call time is used. */
+  startPpid?: number;
   exit: (code: number) => void;
   onSignal: (sig: NodeJS.Signals, handler: () => void) => void;
   fail: (message: string) => void;
@@ -15,7 +17,7 @@ const SIGNAL_CODES: [NodeJS.Signals, number][] = [["SIGINT", 130], ["SIGTERM", 1
 
 /** Run `draw` every interval and end the process when the monitor is closed: signal, dead stdout, TTY stdin close, or lost parent. */
 export function runMonitor(d: MonitorDeps): void {
-  const startPpid = d.ppid();
+  const startPpid = d.startPpid ?? d.ppid();
   let timer: NodeJS.Timeout | undefined;
   let done = false;
   const stop = (code: number) => {

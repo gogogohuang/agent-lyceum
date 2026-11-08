@@ -24,8 +24,13 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 | `intervalSeconds` | `status --watch` 啟動失敗或結束後，改用的輪詢間隔 | `1` |
 | `maxColumns` | 面板開啟寬度（終端的一半）與樹狀圖繪製寬度的上限 | `250` |
 | `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
+| `web` | 讓 mod 一併啟動網頁（`status --web`）：`off`、`pane`（面板或 band 顯示期間）、`session`（整個 session） | `off` |
+| `webPort` | 網頁的埠，1 到 65535 的整數 | `8787` |
+| `webOpen` | 你自己開面板、而且這個 session 成為伺服器擁有者時，開一次瀏覽器 | `false` |
 
 設定變更要等下次啟動 session 才生效。面板若顯示 `無法取得狀態：...`，通常是 `command` 跑不起來（多半是還沒 build `dist/cli.js`），或專案名稱沒有註冊。
+
+**網頁。** `web` 設成 `pane` 或 `session` 時，mod 會啟動 `status --web --no-open --exit-with-parent --host 127.0.0.1 --port <webPort>`，並在面板顯示網址。`-p`／SDK session 不會啟動。`pane` 模式下，面板與 band 都收起後約 1 秒關閉伺服器（面板與 band 互相切換不會關）；`session` 模式維持到 session 結束（`/clear` 與 resume 不會關）。同一台機器只跑一個伺服器：第二個 session 用 `GET /health` 發現後會跟隨，擁有者停止後約 10 秒接手。每個 session 只會關自己啟動的伺服器。網頁沒有建置時，面板顯示原因與建置指令，不會重試；修好後在面板按 **retry**。埠被其他程式占用時，mod 等 30 秒再試，不會自動換埠。**已知缺口：** 停止只是請求，不是保證。`command` 如果經過 `npx` 這類 wrapper，wrapper 可能不轉送 signal，伺服器會比面板活得久；請把 `command` 直接指向 binary（`node /path/to/agent-lyceum/dist/cli.js`）。父程序被 kill 的伺服器會在數個 heartbeat（每次 5 秒）內自行結束。伺服器關閉時會對用量查詢的子程序（`claude -p`、`codex app-server`）送 SIGTERM；忽略它的子程序可能殘留。網頁現在會拒絕未知的 `Host` 名稱，見 [commands](commands.zh-TW.md#status) 的 `--allow-host`。
 
 **備援標記。** 設有備援鏈的 agent 正在使用備用模型時，它的區塊標題會多一個小小的 `備援中` 標記，其他版面不變。從哪個模型切換、原因，以及冷卻狀態，請看 `agent-lyceum status`。
 

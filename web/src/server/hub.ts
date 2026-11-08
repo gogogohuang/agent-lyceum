@@ -9,7 +9,8 @@ export interface ProjectWatch {
 export interface WatchFactory {
   list(): string[];
   watch(name: string, onFrame: (frame: WatchFrame) => void): ProjectWatch;
-  quota?(): Promise<QuotaReport[]>;
+  /** `signal` aborts when the hub closes: implementations should pass it to what they spawn. */
+  quota?(signal?: AbortSignal): Promise<QuotaReport[]>;
   summarize?(input: { runtime: "claude" | "codex"; prompt: string }): Promise<string>;
 }
 
@@ -19,6 +20,7 @@ export function createWebHub(factory: WatchFactory) {
   const listeners = new Set<(event: WebEvent) => void>();
   let quota: QuotaReport[] | undefined;
   let quotaToken = 0;
+  const quotaAbort = new AbortController();
 
   const emit = (event: WebEvent) => {
     for (const listener of listeners) {
@@ -72,7 +74,7 @@ export function createWebHub(factory: WatchFactory) {
     if (!factory.quota) return Promise.resolve(quota);
     const token = ++quotaToken;
     return factory
-      .quota()
+      .quota(quotaAbort.signal)
       .then((reports) => {
         if (token !== quotaToken) return quota;
         quota = reports;
@@ -91,6 +93,7 @@ export function createWebHub(factory: WatchFactory) {
     },
     close() {
       quotaToken += 1;
+      quotaAbort.abort(); // asks in-flight quota children to end (SIGTERM); it does not wait for them
       for (const watch of watchers.values()) watch.close();
       watchers.clear();
       listeners.clear();
