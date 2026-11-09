@@ -180,8 +180,8 @@
     "result_head": [
       "# bye",
       "**Outcome:** completed",
-      "## Result",
-      "Shipped."
+      "> [agent-lyceum] Format warning: this report has no `## Spot-check`, `## Quiz` section (advisory; the report was accepted).",
+      "## Result"
     ],
     "mail_layout": "run",
     "workspace_mode": "worktree",

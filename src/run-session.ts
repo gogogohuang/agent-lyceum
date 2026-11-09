@@ -1092,7 +1092,12 @@ export class RunSession {
         const spec = bad ? project.verify?.commands.find((c) => c.name === bad.name) : undefined;
         this.dispatcherVerification = bad ? { passed: false, text: `FAILED: ${bad.name} (${spec?.run ?? "?"}) ${describeFailure(bad, spec?.timeout_sec)}` } : { passed: true, text: `passed (${verified.record.commands.map((c) => c.name).join(", ")})` };
       }
-      const report = `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${route.done.body.trimEnd()}\n${verified ? `\n${verificationSection(verified.record, must(project.verify, "verify settings"), verified.cwd)}` : ""}`;
+      const advisory = contract?.warnings.length ? `> [agent-lyceum] Format warning: this report has no ${contract.warnings.join(", ")} section (advisory; the report was accepted).\n\n` : "";
+      if (advisory) {
+        say(`  done report accepted without ${contract?.warnings.join(", ")} (advisory)`);
+        log("done-advisory", { missing: contract?.warnings });
+      }
+      const report = `# ${route.done.subject}\n\n**Outcome:** ${this.doneOutcome}${this.doneNote ? ` (${this.doneNote})` : ""}\n\n${advisory}${route.done.body.trimEnd()}\n${verified ? `\n${verificationSection(verified.record, must(project.verify, "verify settings"), verified.cwd)}` : ""}`;
       atomicWrite(path.join(runDir, RESULT_FILE), report);
       atomicWrite(path.join(runDir, `done-${(state.reopened?.length ?? 0) + 1}.md`), report);
       this.pendingDoneFile = route.done.file;
