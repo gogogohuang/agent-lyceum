@@ -16,7 +16,7 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
-const FULL = "## Result\nShipped login.\n\n## Files\n- src/login.ts\n\n## Verification\nnpm test: 12 passed\n\n## Not done\nNone\n";
+const FULL = "## Result\nShipped login.\n\n## Files\n- src/login.ts\n\n## Verification\nnpm test: 12 passed\n\n## Decisions\nNone\n\n## Not done\nNone\n";
 
 const sendDone = (i: Parameters<Invoker>[0], fm: string, body: string) =>
   write(path.join(outboxDir(i.project, "lead"), `${Math.random()}.md`), `---\ntype: done\nsubject: report\n${fm}---\n\n${body}\n`);
@@ -62,7 +62,7 @@ describe("completion contract", () => {
 
   it("names every gap: missing outcome, headings, unfinished steps", () => {
     expect(doneContract({}, FULL).missing.join(" ")).toMatch(/outcome/);
-    expect(doneContract({ outcome: "completed" }, "## Result\nok\n").missing.join(" ")).toMatch(/Files.*Verification.*Not done/);
+    expect(doneContract({ outcome: "completed" }, "## Result\nok\n").missing.join(" ")).toMatch(/Files.*Verification.*Decisions.*Not done/);
     expect(doneContract({ outcome: "completed" }, FULL + "\n## Steps\n- [x] a\n- [ ] build\n").missing.join(" ")).toMatch(/build/);
     expect(doneContract({ outcome: "completed" }, FULL, [{ text: "deploy", done: false }]).missing.join(" ")).toMatch(/deploy/);
     expect(doneContract({ outcome: "cancelled" }, FULL).missing.join(" ")).toMatch(/outcome/);

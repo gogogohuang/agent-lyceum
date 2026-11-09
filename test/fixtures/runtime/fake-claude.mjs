@@ -27,7 +27,7 @@ const prompt = fs.readFileSync(0, "utf8");
 const me = process.env.AGENT_LYCEUM_AGENT ?? "";
 const dirs = args.flatMap((x, i) => (x === "--add-dir" ? [args[i + 1]] : []));
 const outbox = dirs.find((d) => d.endsWith(path.join("outbox", me)));
-const FULL = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Not done\nNone\n";
+const FULL = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Decisions\nNone\n\n## Not done\nNone\n";
 
 const sleepForever = () => {
   if (process.env.FAKE_IGNORE_TERM) process.on("SIGTERM", () => {});

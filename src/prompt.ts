@@ -171,7 +171,7 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
       "## Not done",
       "```",
       "",
-      "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all four headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report. " + OPEN_PR_RULE,
+      "That ends the run. `## Result` is the actual deliverable or conclusion (not just \"done\"), `## Files` the paths you created or changed, `## Verification` what you ran or checked and what it showed, `## Decisions` the choices you made that the task did not specify and the assumptions you relied on (or `None`), `## Not done` anything skipped or unverified (or `None`). Only `completed` means success and it needs all five headings; if work remains or is blocked say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A summary in your reply text is never delivered: without a `done` mail the run ends as idle with no report. " + OPEN_PR_RULE,
     );
   }
   const shared = sharedDir(project);
@@ -266,7 +266,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,
     `- \`reply\`: ${REQUIRED_SECTIONS.reply!.map((h) => `\`## ${h}\``).join(", ")}.`,
     isLead
-      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all four headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run. " + OPEN_PR_RULE
+      ? "- `done`: your final report to the user (shown when the run ends, saved as `result.md`). Its frontmatter must contain `outcome: completed|partial|blocked|failed`, and the body the headings `## Result` (the actual deliverable or conclusion, not just \"done\"), `## Files` (paths created or changed), `## Verification` (what you ran or checked, and what it showed), `## Decisions` (choices you made that the task did not specify and assumptions you relied on, or `None`) and `## Not done` (anything skipped or unverified, or `None`). Only `completed` means success, and it needs all five headings and every checklist step ticked; if work remains or is blocked, say `partial`/`blocked`/`failed` (those need only `## Result` and `## Not done`). A `done` that breaks this is sent back to you and does not end the run. " + OPEN_PR_RULE
       : "- `done` has no required headings.",
     ...(agent.canAskUser
       ? [
