@@ -261,8 +261,8 @@
     "result_head": [
       "# bye",
       "**Outcome:** blocked (Not completed: work of fe-member (branch agent-lyceum/run-1/fe-member) was never brought into the repo; see <ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md.)",
-      "## Result",
-      "Shipped."
+      "> [agent-lyceum] Format warning: this report has no `## Spot-check`, `## Quiz` section (advisory; the report was accepted).",
+      "## Result"
     ],
     "mail_layout": "run",
     "workspace_mode": "worktree",
