@@ -196,7 +196,7 @@ describe("dispatcher integration", () => {
   const mail = (p: ResolvedProject, from: string, to: string, subject: string, type = "reply", outcome = "completed") =>
     write(
       path.join(outboxDir(p, from), `${Math.random()}.md`),
-      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Not done\nNone\n" : withSections(type, `body of ${subject}`)}\n`,
+      `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? `outcome: ${outcome}\n` : ""}---\n\n${type === "done" ? "## Result\nx\n\n## Files\nx\n\n## Verification\nx\n\n## Decisions\nNone\n\n## Not done\nNone\n" : withSections(type, `body of ${subject}`)}\n`,
     );
 
   async function start(invoker: Parameters<typeof runTeam>[0]["invoker"], opts: { pr?: CommandRunner } = {}) {

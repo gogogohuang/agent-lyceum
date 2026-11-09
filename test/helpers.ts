@@ -33,7 +33,7 @@ export function makeEnv(name = "demo"): TestEnv {
 }
 
 /** A `done` body that meets the completion contract for `outcome: completed`. */
-export const FULL_DONE = "## Result\nShipped.\n\n## Files\n- src/x.ts\n\n## Verification\nnpm test: passed\n\n## Not done\nNone\n";
+export const FULL_DONE = "## Result\nShipped.\n\n## Files\n- src/x.ts\n\n## Verification\nnpm test: passed\n\n## Decisions\nNone\n\n## Not done\nNone\n";
 
 /** A `reply` body that carries every required heading. */
 export const REPLY_BODY = "## Changes\nNone\n## Verification\nNone\n## Open items\nNone\n## Risks\nNone";

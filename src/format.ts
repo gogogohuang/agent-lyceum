@@ -99,7 +99,7 @@ export interface DoneContract {
 
 /**
  * The completion contract of a `done` report: frontmatter `outcome`, and `## Result` and `## Not done`;
- * a `completed` report must also carry `## Files` and `## Verification` and leave no checklist step unticked
+ * a `completed` report must also carry `## Files`, `## Verification` and `## Decisions` and leave no checklist step unticked
  * (the report's own `## Steps`, else the run's latest `stateSteps`).
  */
 export function doneContract(meta: Record<string, unknown>, body: string, stateSteps?: Step[]): DoneContract {
@@ -108,7 +108,7 @@ export function doneContract(meta: Record<string, unknown>, body: string, stateS
   const outcome = (DECLARABLE_OUTCOMES as readonly string[]).includes(declared) ? (declared as RunOutcome) : undefined;
   if (!outcome) missing.push(`\`outcome: ${DECLARABLE_OUTCOMES.join("|")}\` in the frontmatter${declared ? ` (got "${declared}")` : ""}`);
 
-  const need = outcome === "completed" || !outcome ? ["Result", "Files", "Verification", "Not done"] : ["Result", "Not done"];
+  const need = outcome === "completed" || !outcome ? ["Result", "Files", "Verification", "Decisions", "Not done"] : ["Result", "Not done"];
   const have = new Set([...body.matchAll(HEADING)].map((m) => (m[1] ?? "").trim().toLowerCase()));
   for (const h of need) if (!have.has(h.toLowerCase())) missing.push(`\`## ${h}\``);
 
