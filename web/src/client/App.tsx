@@ -48,8 +48,8 @@ export function App() {
   const frame = selected ? projects.get(selected) : undefined;
 
   return (
-    <div className="grid h-dvh grid-cols-1 bg-wall md:grid-cols-[15rem_minmax(0,1fr)]">
-      <nav aria-label="已註冊專案" className="inset-safe sticky top-0 z-10 flex gap-2 overflow-x-auto border-b border-line bg-paper p-3 md:h-dvh md:flex-col md:overflow-y-auto md:border-r md:border-b-0">
+    <div className="grid h-dvh grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-wall md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-1 xl:grid-cols-[16rem_minmax(0,1fr)]">
+      <nav aria-label="已註冊專案" className="inset-safe z-20 flex items-center gap-2 overflow-x-auto border-b border-line bg-paper p-3 md:sticky md:top-0 md:h-dvh md:flex-col md:items-stretch md:overflow-y-auto md:border-r md:border-b-0">
         <p className="eyebrow hidden px-2 pt-2 pb-1 md:block">專案</p>
         {names.length === 0 ? (
           <p className="text-pretty px-2 text-sm">{live === "up" ? "還沒有已註冊的專案。" : "正在連上本機狀態…"}</p>
@@ -63,7 +63,7 @@ export function App() {
                 key={name}
                 type="button"
                 className={cn(
-                  "min-w-36 shrink-0 rounded-lg border px-3 py-2 text-left md:min-w-0",
+                  "min-h-11 min-w-36 shrink-0 rounded-lg border px-3 py-2 text-left md:min-w-0",
                   on ? "border-line bg-wall" : "border-transparent hover:bg-wall/70",
                 )}
                 onClick={() => select(name)}
@@ -76,6 +76,11 @@ export function App() {
               </Button>
             );
           })
+        )}
+        {live === "down" && (
+          <Button type="button" className="min-h-11 shrink-0 rounded-lg border border-line px-3 text-sm underline md:hidden" onClick={() => setAttempt((n) => n + 1)}>
+            重新連線
+          </Button>
         )}
         <div className="mt-auto hidden px-2 pb-2 md:block">
           {live === "up" ? (
@@ -92,11 +97,11 @@ export function App() {
         {frame && selected ? (
           <ProjectView name={selected} frame={frame} runId={hash.project === selected ? hash.run : undefined} now={now} onRun={(id) => select(selected, id)} />
         ) : (
-          <article className="enter animate-in fade-in p-6 duration-200">
+          <article className="enter animate-in fade-in p-4 duration-200 sm:p-6">
             <h1 className="text-balance text-2xl font-semibold tracking-tight">{headline(live, names.length)}</h1>
             {live === "up" && names.length === 0 && <p className="text-pretty mt-3 text-sm">在終端執行 agent-lyceum project add 註冊一個專案。</p>}
             {live === "down" && (
-              <Button type="button" className="mt-4 rounded-md border border-line bg-paper px-3 py-1.5 text-sm hover:bg-wall" onClick={() => setAttempt((n) => n + 1)}>
+              <Button type="button" className="mt-4 min-h-11 rounded-md border border-line bg-paper px-4 py-1.5 text-sm hover:bg-wall" onClick={() => setAttempt((n) => n + 1)}>
                 重新連線
               </Button>
             )}
@@ -141,7 +146,7 @@ function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: 
   };
 
   return (
-    <div className="sticky top-0 z-10 border-b border-line bg-paper/90 px-4 py-2 backdrop-blur">
+    <div className="sticky top-0 z-10 border-b border-line bg-paper/90 px-3 py-2 sm:px-4 backdrop-blur">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
         {reports.map((report) => (
           <p key={report.runtime} className="text-sm">
@@ -160,7 +165,7 @@ function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: 
             )}
           </p>
         ))}
-        <Button type="button" disabled={pending} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-wall disabled:opacity-60" onClick={refresh}>
+        <Button type="button" disabled={pending} className="min-h-9 rounded-md border border-line px-3 py-1 text-xs hover:bg-wall disabled:opacity-60 sm:min-h-0" onClick={refresh}>
           {pending ? "正在取得" : "重新取得"}
         </Button>
         {error && <span className="text-pretty text-sm text-failed">{error}</span>}

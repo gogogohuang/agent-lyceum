@@ -4,7 +4,7 @@ import { clock, timeline } from "./view";
 export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now: number }) {
   const model = timeline(run, agents, now);
   return (
-    <figure className="panel mt-6 p-4">
+    <figure className="panel p-3 sm:p-4">
       <figcaption className="text-balance text-base font-semibold">喚醒時間軸</figcaption>
       {!model ? (
         <p className="text-pretty mt-3 text-sm">這個任務還沒有喚醒紀錄。</p>
@@ -12,7 +12,7 @@ export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now
         <>
           <div className="mt-3 space-y-1">
             {model.lanes.map((lane) => (
-              <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2" key={lane.agent}>
+              <div className="grid grid-cols-[5rem_minmax(0,1fr)] sm:grid-cols-[7rem_minmax(0,1fr)] items-center gap-2" key={lane.agent}>
                 <div className="truncate font-mono text-xs text-ink/80" title={lane.agent}>
                   {lane.agent}
                 </div>
@@ -36,7 +36,7 @@ export function Timeline({ run, agents, now }: { run?: Run; agents: Agent[]; now
               </div>
             ))}
           </div>
-          <div className="mt-1 grid grid-cols-[7rem_minmax(0,1fr)] text-xs tabular-nums text-ink/60">
+          <div className="mt-1 grid grid-cols-[5rem_minmax(0,1fr)] sm:grid-cols-[7rem_minmax(0,1fr)] text-xs tabular-nums text-ink/60">
             <span />
             <span className="flex justify-between">
               <span>{clock(model.start)}</span>

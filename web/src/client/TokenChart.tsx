@@ -6,7 +6,7 @@ export function TokenChart({ run }: { run?: Run }) {
   const max = Math.max(1, ...rows.map((row) => row.output));
   const cache = cacheText(run?.cache_read_tokens ?? 0, run?.cache_write_tokens ?? 0);
   return (
-    <section className="panel mt-6 p-4">
+    <section className="panel p-3 sm:p-4">
       <h2 className="text-balance text-base font-semibold">Token 與快取</h2>
       {rows.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">還沒有 token 紀錄。</p>
