@@ -93,6 +93,8 @@ export interface DoneContract {
   outcome?: RunOutcome;
   /** What the report lacks; empty when the contract is met. */
   missing: string[];
+  /** Advisory only: sections a `completed` report should carry but that never reject it. */
+  warnings: string[];
   /** First lines of `## Verification`, for display. */
   verification?: string;
 }
@@ -102,8 +104,11 @@ export interface DoneContract {
  * a `completed` report must also carry `## Files`, `## Verification` and `## Decisions` and leave no checklist step unticked
  * (the report's own `## Steps`, else the run's latest `stateSteps`).
  */
+export const ADVISORY_DONE_SECTIONS = ["Spot-check", "Quiz"] as const;
+
 export function doneContract(meta: Record<string, unknown>, body: string, stateSteps?: Step[]): DoneContract {
   const missing: string[] = [];
+  const warnings: string[] = [];
   const declared = String(meta.outcome ?? "").trim().toLowerCase();
   const outcome = (DECLARABLE_OUTCOMES as readonly string[]).includes(declared) ? (declared as RunOutcome) : undefined;
   if (!outcome) missing.push(`\`outcome: ${DECLARABLE_OUTCOMES.join("|")}\` in the frontmatter${declared ? ` (got "${declared}")` : ""}`);
@@ -113,6 +118,7 @@ export function doneContract(meta: Record<string, unknown>, body: string, stateS
   for (const h of need) if (!have.has(h.toLowerCase())) missing.push(`\`## ${h}\``);
 
   if (outcome === "completed") {
+    for (const h of ADVISORY_DONE_SECTIONS) if (!have.has(h.toLowerCase())) warnings.push(`\`## ${h}\``);
     const own = parseSteps(body);
     const open = (own.length ? own : (stateSteps ?? [])).filter((x) => !x.done);
     if (open.length) missing.push(`unfinished steps: ${open.slice(0, 3).map((x) => `"${x.text}"`).join(", ")}${open.length > 3 ? ", ..." : ""} (finish and tick them, or report \`partial\`)`);
@@ -127,7 +133,7 @@ export function doneContract(meta: Record<string, unknown>, body: string, stateS
         .join(" ")
         .slice(0, 400) || undefined
     : undefined;
-  return { outcome, missing, verification };
+  return { outcome, missing, warnings, verification };
 }
 
 export interface DigestSection {
