@@ -25,7 +25,7 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
           <div className="mt-4 space-y-2">
             {lead && <Card agent={lead} run={run} now={now} />}
             {members.length > 0 && (
-              <ul className="mt-2 list-none space-y-2 border-l border-line p-0">
+              <ul className="mt-2 grid list-none items-start gap-2 p-0 md:grid-cols-2 2xl:grid-cols-3">
                 {members.map((agent) => {
                   const link = lead ? memberLink(lead, agent, edge) : undefined;
                   return (

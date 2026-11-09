@@ -67,7 +67,7 @@ export function ProjectView({
         {working.length > 0 && <AgentTree agents={agents} run={run} now={now} />}
         <Timeline run={run} agents={agents} now={now} />
         {working.length === 0 && <AgentTree agents={agents} run={run} now={now} />}
-        <div className="grid items-start gap-4 sm:gap-6 xl:grid-cols-2">
+        <div className="flex flex-col gap-4 sm:gap-6">
           <TokenChart run={run} />
           {run && <Facts report={current} />}
         </div>
@@ -157,6 +157,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
   return (
     <section className="panel p-3 sm:p-4">
       <h2 className="text-balance text-base font-semibold">這次任務</h2>
+      <div className="grid gap-x-8 md:grid-cols-2 2xl:grid-cols-3">
       {steps.length > 0 && (
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
           {steps.map((step) => (
@@ -207,6 +208,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
         </div>
       )}
       {(run.result_head ?? []).length > 0 && <Result lines={run.result_head ?? []} />}
+      </div>
     </section>
   );
 }

@@ -11,7 +11,7 @@ export function TokenChart({ run }: { run?: Run }) {
       {rows.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">還沒有 token 紀錄。</p>
       ) : (
-        <ul className="mt-3 space-y-3">
+        <ul className="mt-3 grid gap-x-8 gap-y-3 lg:grid-cols-2">
           {rows.map((row) => (
             <li key={row.agent}>
               <div className="flex justify-between gap-3 text-sm">
