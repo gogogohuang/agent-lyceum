@@ -2,20 +2,8 @@
 // Pure: every effect (fetch, spawn, timers, clock, log, publish) is injected, because the mod runtime has no Node.
 // What it guarantees is the mod's own ordering (a stale await never spawns, probes or retries); when the child really stops is the engine's business.
 
-export type Phase = 'idle' | 'waiting-old' | 'probing' | 'starting' | 'owner' | 'follower' | 'backoff' | 'failed'
-
-export interface WebState {
-  phase: Phase
-  url?: string
-  pid?: number
-  home?: string
-  reason?: string
-  hint?: string
-  /** `now()` reading at which backoff ends. */
-  retryAt?: number
-  /** Probing by fetch was given up: followers try to spawn instead. */
-  degraded?: boolean
-}
+import type { Phase, WebState } from '../types'
+export type { Phase, WebState }
 
 /** Shared by the reconciler and the state machine; `ended` only ever goes false -> true. */
 export interface Life {
