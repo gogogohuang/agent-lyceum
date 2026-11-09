@@ -642,6 +642,13 @@ export class RunSession {
   }
 
 
+  /** The run's original task as the user wrote it (`task.md` in the run folder), for the teammates' prompts; undefined when there is none. */
+  private userTask(): { text: string; file: string } | undefined {
+    const file = path.join(this.runDir, "task.md");
+    const got = readFileCapped(file, 64 * 1024);
+    return got?.text.trim() ? { text: got.text, file } : undefined;
+  }
+
   private async wake(agent: ResolvedAgent): Promise<WakeOutcome> {
     const { invoke, say, cfg, runDir, project, log, state, claims, attempts, noSessionNoted, opts, cooldowns } = this;
     const queue = listUnread(project, agent.name);
@@ -659,7 +666,7 @@ export class RunSession {
       workDir,
       workspace: spaces[agent.name],
       systemPrompt: buildSystemPrompt(aproject, agent),
-      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0),
+      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask()),
       timeoutSec: cfg.wake_timeout_sec,
     };
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).

@@ -240,11 +240,17 @@ describe("redo context", () => {
     expect(prompts[1]!.text).toBe(`${prompts[0]!.text}\n\n# Retry notice\nYour previous attempt at this wake-up failed (boom) after possibly changing files already. Its mail was discarded. ${tail}${g}`);
   });
 
+  // The run's task.md (two levels above an agent's work dir), which a non-lead agent's prompt carries as <user_task>.
+  const runTask = (workDir: string) => {
+    const file = path.join(workDir, "..", "..", "task.md");
+    return fs.existsSync(file) ? { text: fs.readFileSync(file, "utf8"), file } : undefined;
+  };
+
   it("T5: a first wake with nothing to redo gets exactly the plain prompt", async () => {
     const seen: { text: string; plain: string }[] = [];
     await start(async (i) => {
       if (leadFlow(i)) return OK;
-      seen.push({ text: i.userPrompt, plain: buildUserPrompt(i.project, i.agent, listUnread(i.project, i.agent.name), 1) });
+      seen.push({ text: i.userPrompt, plain: buildUserPrompt(i.project, i.agent, listUnread(i.project, i.agent.name), 1, false, runTask(i.workDir)) });
       send(i.project, "fe-member", "lead", "fe finished");
       return OK;
     });
