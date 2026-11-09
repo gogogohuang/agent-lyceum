@@ -365,7 +365,23 @@ export function pickMessages(project: ResolvedProject, agent: ResolvedAgent, que
   return run;
 }
 
-export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false): string {
+/** Most bytes of the user's original task put into a teammate's wake-up prompt. */
+export const USER_TASK_LIMIT = 4 * 1024;
+
+/**
+ * The user's original task for a teammate's wake-up (`<user_task>`), so a reviewer or QA can judge the work against what the user asked,
+ * not only against the lead's reading of it. Not for the lead (it has the task as its first mail), and not when a mail already carries the tag.
+ */
+export function userTaskBlock(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], task: string | undefined, file?: string): string[] {
+  if (!task?.trim() || agent.name === project.lead) return [];
+  if (unread.some((m) => m.body.includes("<user_task>"))) return [];
+  const raw = Buffer.from(task.trim(), "utf8");
+  const shown = cutUtf8(raw, USER_TASK_LIMIT);
+  const text = shown.length === raw.length ? task.trim() : `${shown.toString("utf8")}\n[agent-lyceum: cut at ${shown.length} of ${raw.length} bytes${file ? `; the whole task is in \`${file}\`` : ""}]`;
+  return ["", '<user_task note="the user\'s original request, verbatim; judge the work against it, not only against the lead\'s acceptance criteria">', text, "</user_task>"];
+}
+
+export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false, userTask?: { text: string; file?: string }): string {
   const parts: string[] = [];
 
   const common = readCapped(commonFile(project), COMMON_LIMIT);
@@ -386,6 +402,8 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     const view = buildRecordsView(project, kind, CONTEXT_LIMIT);
     if (view) parts.push("", `<${tag}>`, view, `</${tag}>`); // nothing recorded yet: no tag, no tokens
   }
+
+  parts.push(...userTaskBlock(project, agent, unread, userTask?.text, userTask?.file));
 
   const handoffFile = handoff ? sharedIndex(project) : undefined;
   const notes = handoffFile ? readCapped(handoffFile, HANDOFF_LIMIT) : undefined;

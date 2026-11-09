@@ -6,6 +6,10 @@ import { assertName, homePaths, projectPaths } from "./paths.js";
 export const LEAD_PARALLEL_HINT =
   "Mark a task `parallel: true` only when it is independent and touches different files from the other open tasks; list each task's files in `## Scope` first; shared components, types, routes and tokens go first, alone.";
 
+/** The lead's guidance on the `## Decisions` and `## Not done` sections of `done`. Only `init` writes it, into a new lead AGENT.md. */
+export const LEAD_DONE_HINT =
+  " Under `## Decisions` list every decision or assumption made without an answer from the user, each with the alternative you rejected; under `## Not done` say what the checks did not cover.";
+
 const PERSONAS: Record<string, string> = {
   lead: `# Lead
 
@@ -17,7 +21,7 @@ You coordinate the team. You receive the user's task, break it into concrete pie
 - When a teammate reports back, decide the next step: assign follow-up work, ask another teammate to verify, or accept the result.
 - Teammates cannot message each other by default; route everything through yourself.
 - ${LEAD_PARALLEL_HINT}
-- When the whole job is verified and finished, send a \`done\` message summarising what was delivered.
+- When the whole job is verified and finished, send a \`done\` message summarising what was delivered.${LEAD_DONE_HINT}
 `,
   "fe-member": `# Frontend member
 

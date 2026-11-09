@@ -6,7 +6,7 @@ import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { flattenResolved, resolveProjectWithSources } from "../src/config.js";
 import { runTeam } from "../src/dispatcher.js";
 import { outboxDir, writePolicy } from "../src/policy.js";
-import { LEAD_PARALLEL_HINT } from "../src/scaffold.js";
+import { LEAD_DONE_HINT, LEAD_PARALLEL_HINT } from "../src/scaffold.js";
 import { PARALLEL_SECTION, buildSystemPrompt } from "../src/prompt.js";
 import { bindRunProject } from "../src/run-store.js";
 import { buildStatusReport } from "../src/status.js";
@@ -96,7 +96,7 @@ async function scenario(kind: Kind, extraProjectYaml = "") {
   env = makeEnv();
   // `init` now writes one more bullet into a new lead AGENT.md (spec 23.12.5); the HEAD fixtures were made without it, and this file tests the dispatcher, not the scaffold.
   const leadMd = path.join(env.home, "agents", "lead", "AGENT.md");
-  fs.writeFileSync(leadMd, fs.readFileSync(leadMd, "utf8").replace(`- ${LEAD_PARALLEL_HINT}\n`, ""));
+  fs.writeFileSync(leadMd, fs.readFileSync(leadMd, "utf8").replace(`- ${LEAD_PARALLEL_HINT}\n`, "").replace(LEAD_DONE_HINT, ""));
   initGitRepo(env.repo);
   const member = kind === "e" ? "fe--x" : "fe-member";
   if (kind === "e") env.editProjectYaml((t) => `${t}  fe--x:\n    runtime: claude-code\n    agent_md: ${path.join(env.home, "agents/fe-member/AGENT.md")}\n    can_message: [lead]\n`);
