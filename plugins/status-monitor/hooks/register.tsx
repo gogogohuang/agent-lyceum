@@ -413,7 +413,8 @@ export const register: Register = (on, options) => {
     return r
   })
 
-  const runCommand = async ($: EngineInterface, e: CommandRunInput): Promise<CommandRunResult> => {
+  on('command.run', { command: 'status-monitor' }, async ($, e) => {
+  const r = await (async (): Promise<CommandRunResult> => {
     const { isFullscreen, columns } = e.presentation
     // `/status-monitor` docks a pane on the right (the host caps a dock at 45% of the terminal's width). `/status-monitor band` shows a full-width band above the prompt instead.
     if (e.args.trim() === 'band') {
@@ -436,10 +437,7 @@ export const register: Register = (on, options) => {
     // The host docks a pane on the right of the transcript (mouse-clickable) only in the fullscreen layout from 110 columns.
     const where = isFullscreen && columns >= 110 ? 'docked on the right' : `shown above the prompt (right-side dock needs the fullscreen layout and 110+ columns; now ${isFullscreen ? 'fullscreen' : 'not fullscreen'}, ${columns} columns. The layout is fixed when the session starts: set "tui": "fullscreen" in ~/.claude/settings.json and restart the session)`
     return { text: `agent-lyceum pane opened, ${where}. Mouse clicks are only reported in the fullscreen terminal; here use the keyboard: x closes, v switches graph/text, e expands or collapses the details, 1-9 (or Tab/Enter) switch task, Esc returns to the prompt, /status-monitor again also closes.` }
-  }
-
-  on('command.run', { command: 'status-monitor' }, async ($, e) => {
-    const r = await runCommand($, e)
+  })()
     await rec?.reconcile()
     return r
   })

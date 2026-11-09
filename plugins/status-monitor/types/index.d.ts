@@ -1,4 +1,3 @@
-import type { WebState } from '../hooks/web-server'
 export type Step = { text: string; done: boolean }
 export type DigestSection = { label: string; lines: string[] }
 export type Mail = { from: string; type: string; subject: string; brief?: string; digest?: DigestSection[] }
@@ -47,6 +46,20 @@ export type History = { run_id: string; state: Run['state']; outcome?: string; o
 export type Snapshot = { report: Report | null; /** Every running run of the project, by run id (status --json shows only one). */ runs?: Record<string, Report>; error: string | null; history?: History[] }
 /** One Snapshot per watched project, keyed by the configured name ('' = inferred from the session directory). */
 export type Snapshots = Record<string, Snapshot>
+
+export type Phase = 'idle' | 'waiting-old' | 'probing' | 'starting' | 'owner' | 'follower' | 'backoff' | 'failed'
+export interface WebState {
+  phase: Phase
+  url?: string
+  pid?: number
+  home?: string
+  reason?: string
+  hint?: string
+  /** `now()` reading at which backoff ends. */
+  retryAt?: number
+  /** Probing by fetch was given up: followers try to spawn instead. */
+  degraded?: boolean
+}
 
 declare module 'claude-code' {
   interface PluginState {
