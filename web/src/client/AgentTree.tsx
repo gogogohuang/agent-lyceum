@@ -120,7 +120,7 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
         </dl>
         {dot === "failed" && agent.last_wake?.error && <p className="text-pretty mt-3 text-sm leading-relaxed text-failed">{readableError(agent.last_wake.error)}</p>}
         {mails.length > 0 && (
-          <div className="grid gap-x-3 lg:grid-cols-2 2xl:grid-cols-3">
+          <div className="flex flex-col">
             {mails.map((mail, index) => (
               <MailBody key={`${index}-${mail.from}-${mail.subject}`} mail={mail} />
             ))}
