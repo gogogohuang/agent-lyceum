@@ -25,7 +25,7 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
           <div className="mt-4 space-y-2">
             {lead && <Card agent={lead} run={run} now={now} />}
             {members.length > 0 && (
-              <ul className="mt-2 grid list-none items-start gap-2 p-0 md:grid-cols-2 2xl:grid-cols-3">
+              <ul className="mt-2 list-none space-y-2 border-l border-line p-0">
                 {members.map((agent) => {
                   const link = lead ? memberLink(lead, agent, edge) : undefined;
                   return (
@@ -105,13 +105,13 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
         <span className="hidden shrink-0 text-sm text-ink/60 group-data-[open]:inline">收合</span>
       </Collapsible.Trigger>
       <Collapsible.Panel className="pb-4 text-sm">
-        <dl className="mt-1">
+        <dl className="mt-1 grid gap-x-8 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
           <Fact label="執行" value={`${agent.lead ? "帶隊，" : ""}${agent.runtime ?? "?"}`} />
           {(agent.model || agent.fallback) && <Fact label="模型" value={agent.fallback ? `備援中 ${agent.model ?? ""}` : (agent.model ?? "")} />}
           <Fact label="token" value={tokenText(tokens)} />
           <Fact label="喚醒" value={`${wakes.length} 次${failed > 0 ? `，失敗 ${failed}` : ""}`} />
           {agent.unread > 0 && <Fact label="未看" value={String(agent.unread)} />}
-          <div className="mt-1 flex gap-3">
+          <div className="flex gap-3 sm:col-span-2 xl:col-span-3">
             <dt className="w-16 shrink-0 sm:w-20 text-ink/60">可傳話給</dt>
             <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
               {(agent.can_message ?? []).length > 0 ? (agent.can_message ?? []).map((name) => <span key={name}>{name}</span>) : "沒有人"}
@@ -119,9 +119,13 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
           </div>
         </dl>
         {dot === "failed" && agent.last_wake?.error && <p className="text-pretty mt-3 text-sm leading-relaxed text-failed">{readableError(agent.last_wake.error)}</p>}
-        {mails.map((mail, index) => (
-          <MailBody key={`${index}-${mail.from}-${mail.subject}`} mail={mail} />
-        ))}
+        {mails.length > 0 && (
+          <div className="grid gap-x-3 lg:grid-cols-2 2xl:grid-cols-3">
+            {mails.map((mail, index) => (
+              <MailBody key={`${index}-${mail.from}-${mail.subject}`} mail={mail} />
+            ))}
+          </div>
+        )}
       </Collapsible.Panel>
     </Collapsible.Root>
   );
@@ -129,7 +133,7 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mt-1 flex gap-3 first:mt-0">
+    <div className="flex gap-3">
       <dt className="w-16 shrink-0 sm:w-20 text-ink/60">{label}</dt>
       <dd className="min-w-0 text-pretty tabular-nums">{value}</dd>
     </div>
