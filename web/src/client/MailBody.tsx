@@ -11,7 +11,7 @@ const TYPE: Record<string, string> = {
 export function MailBody({ mail }: { mail: Mail }) {
   const sections = mail.digest?.length ? mail.digest : mail.brief ? [{ label: "摘要", lines: [mail.brief] }] : [];
   return (
-    <article className="mt-3 max-w-xl rounded-lg border border-line bg-paper px-3 py-2">
+    <article className="mt-3 rounded-lg border border-line bg-paper px-3 py-2">
       <p className="eyebrow">
         {TYPE[mail.type] ?? mail.type}，來自 {mail.from}
       </p>
@@ -21,7 +21,7 @@ export function MailBody({ mail }: { mail: Mail }) {
         <dl className="mt-3">
           {sections.map((section) => (
             <div key={section.label} className="mt-2 flex gap-3 first:mt-0">
-              <dt className="w-20 shrink-0 text-pretty text-xs text-ink/60">{section.label}</dt>
+              <dt className="w-16 shrink-0 sm:w-20 text-pretty text-xs text-ink/60">{section.label}</dt>
               <dd className="min-w-0">
                 {section.lines.map((line, index) => (
                   <p key={`${index}-${line}`} className="text-pretty text-sm leading-relaxed">

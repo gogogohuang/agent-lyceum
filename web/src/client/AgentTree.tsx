@@ -15,14 +15,14 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
   const recent = recentMail(run);
   const live = run?.state === "running";
   return (
-    <section className="panel mt-6 p-4">
+    <section className="panel p-3 sm:p-4">
       <h2 className="text-balance text-base font-semibold">隊伍</h2>
       {ordered.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">沒有 agent。</p>
       ) : (
         <>
           <p className="text-pretty mt-2 text-sm text-ink/70">連線是誰可以傳話給誰。▼ 往下，▲ 往上，↕ 雙方。{live ? "會移動的是最近一次交接。" : ""}</p>
-          <div className="mt-4 max-w-2xl space-y-2">
+          <div className="mt-4 space-y-2">
             {lead && <Card agent={lead} run={run} now={now} />}
             {members.length > 0 && (
               <ul className="mt-2 list-none space-y-2 border-l border-line p-0">
@@ -41,7 +41,7 @@ export function AgentTree({ agents, run, now }: { agents: Agent[]; run?: Run; no
         </>
       )}
       {recent.length > 0 && (
-        <ol className="mt-6 max-w-xl space-y-3 text-sm">
+        <ol className="mt-6 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
           {recent.map((item) => (
             <li key={`${item.from}-${item.to}-${item.subject}`} className="rounded-lg border border-line bg-wall/50 px-3 py-2">
               <p className="eyebrow">{item.to === "(done)" ? `${item.from} 結束` : `${item.from} 給 ${item.to}`}</p>
@@ -105,23 +105,27 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
         <span className="hidden shrink-0 text-sm text-ink/60 group-data-[open]:inline">收合</span>
       </Collapsible.Trigger>
       <Collapsible.Panel className="pb-4 text-sm">
-        <dl className="mt-1">
+        <dl className="mt-1 grid gap-x-8 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
           <Fact label="執行" value={`${agent.lead ? "帶隊，" : ""}${agent.runtime ?? "?"}`} />
           {(agent.model || agent.fallback) && <Fact label="模型" value={agent.fallback ? `備援中 ${agent.model ?? ""}` : (agent.model ?? "")} />}
           <Fact label="token" value={tokenText(tokens)} />
           <Fact label="喚醒" value={`${wakes.length} 次${failed > 0 ? `，失敗 ${failed}` : ""}`} />
           {agent.unread > 0 && <Fact label="未看" value={String(agent.unread)} />}
-          <div className="mt-1 flex gap-3">
-            <dt className="w-20 shrink-0 text-ink/60">可傳話給</dt>
+          <div className="flex gap-3 sm:col-span-2 xl:col-span-3">
+            <dt className="w-16 shrink-0 sm:w-20 text-ink/60">可傳話給</dt>
             <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
               {(agent.can_message ?? []).length > 0 ? (agent.can_message ?? []).map((name) => <span key={name}>{name}</span>) : "沒有人"}
             </dd>
           </div>
         </dl>
-        {dot === "failed" && agent.last_wake?.error && <p className="text-pretty mt-3 max-w-xl text-sm leading-relaxed text-failed">{readableError(agent.last_wake.error)}</p>}
-        {mails.map((mail, index) => (
-          <MailBody key={`${index}-${mail.from}-${mail.subject}`} mail={mail} />
-        ))}
+        {dot === "failed" && agent.last_wake?.error && <p className="text-pretty mt-3 text-sm leading-relaxed text-failed">{readableError(agent.last_wake.error)}</p>}
+        {mails.length > 0 && (
+          <div className="flex flex-col">
+            {mails.map((mail, index) => (
+              <MailBody key={`${index}-${mail.from}-${mail.subject}`} mail={mail} />
+            ))}
+          </div>
+        )}
       </Collapsible.Panel>
     </Collapsible.Root>
   );
@@ -129,8 +133,8 @@ function Card({ agent, run, now }: { agent: Agent; run?: Run; now: number }) {
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mt-1 flex gap-3 first:mt-0">
-      <dt className="w-20 shrink-0 text-ink/60">{label}</dt>
+    <div className="flex gap-3">
+      <dt className="w-16 shrink-0 sm:w-20 text-ink/60">{label}</dt>
       <dd className="min-w-0 text-pretty tabular-nums">{value}</dd>
     </div>
   );

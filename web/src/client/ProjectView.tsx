@@ -38,8 +38,8 @@ export function ProjectView({
   const agents = current?.agents ?? frame.report?.agents ?? [];
   const working = workingAgents(agents, run);
   return (
-    <div className="enter animate-in fade-in grid gap-6 p-4 duration-200 lg:grid-cols-[minmax(0,1fr)_19rem] lg:p-6">
-      <div className="min-w-0">
+    <div className="enter animate-in fade-in grid w-full gap-4 p-3 duration-200 sm:gap-6 sm:p-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:p-6 2xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="flex min-w-0 flex-col gap-4 sm:gap-6">
         <header>
           <p className="eyebrow">{name}</p>
           {run ? (
@@ -61,14 +61,16 @@ export function ProjectView({
             <p className="text-sm text-failed">
               {run.failure.agent} 連續失敗 {run.failure.attempts} 次
             </p>
-            {run.failure.error && <p className="text-pretty mt-1 max-w-xl text-sm leading-relaxed text-failed">{readableError(run.failure.error)}</p>}
+            {run.failure.error && <p className="text-pretty mt-1 text-sm leading-relaxed text-failed">{readableError(run.failure.error)}</p>}
           </div>
         )}
         {working.length > 0 && <AgentTree agents={agents} run={run} now={now} />}
         <Timeline run={run} agents={agents} now={now} />
         {working.length === 0 && <AgentTree agents={agents} run={run} now={now} />}
-        <TokenChart run={run} />
-        {run && <Facts report={current} />}
+        <div className="flex flex-col gap-4 sm:gap-6">
+          <TokenChart run={run} />
+          {run && <Facts report={current} />}
+        </div>
       </div>
       <History reports={reports} currentId={run?.run_id} onRun={onRun} />
     </div>
@@ -81,9 +83,9 @@ function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) 
   const gone = run.live === false && run.state === "running";
   return (
     <>
-      <h1 className="mt-1 max-w-3xl text-balance text-2xl font-semibold leading-snug tracking-tight wrap-break-word md:text-3xl">{task}</h1>
+      <h1 className="mt-1 text-balance text-2xl font-semibold leading-snug tracking-tight wrap-break-word md:text-3xl">{task}</h1>
       <div className="mt-4 flex flex-wrap items-stretch gap-3">
-        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-5">
+        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           <div className="panel px-3 py-2">
             <dt className="eyebrow">狀態</dt>
             <dd className={cn("mt-1 flex items-center gap-2 font-mono text-lg tabular-nums", stateClass(run))}>{run.state === "running" && <span aria-hidden className="pulse-dot size-2 rounded-full bg-signal" />}{runLabel(run)}</dd>
@@ -97,7 +99,7 @@ function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) 
         <ProgressSummary key={`${name}/${run.run_id}`} project={name} runId={run.run_id} />
       </div>
       {cache && <p className="mt-3 font-mono text-sm tabular-nums text-ink/70">{cache}</p>}
-      {run.current_step && <p className="text-pretty mt-3 max-w-xl text-sm text-ink/80"><span className="eyebrow mr-2">目前</span>{run.current_step}</p>}
+      {run.current_step && <p className="text-pretty mt-3 text-sm text-ink/80"><span className="eyebrow mr-2">目前</span>{run.current_step}</p>}
     </>
   );
 }
@@ -113,12 +115,12 @@ function Cell({ label, value }: { label: string; value: string }) {
 
 function History({ reports, currentId, onRun }: { reports: StatusReport[]; currentId?: string; onRun: (id: string) => void }) {
   return (
-    <aside className="panel p-3 lg:sticky lg:top-16 lg:max-h-[calc(100dvh-5rem)] lg:self-start lg:overflow-y-auto">
+    <aside className="panel p-3 lg:sticky lg:top-14 lg:max-h-[calc(100dvh-4.5rem)] lg:self-start lg:overflow-y-auto">
       <h2 className="eyebrow">較早班次</h2>
       {reports.length === 0 ? (
         <p className="text-pretty mt-3 text-sm">這個專案還沒有任務。</p>
       ) : (
-        <div className="mt-3">
+        <div className="mt-3 max-lg:flex max-lg:gap-2 max-lg:overflow-x-auto [&>button]:max-lg:w-64 [&>button]:max-lg:shrink-0">
           {reports.map((report) => {
             const run = report.run;
             if (!run) return null;
@@ -129,7 +131,7 @@ function History({ reports, currentId, onRun }: { reports: StatusReport[]; curre
                 type="button"
                 aria-current={selected ? "true" : undefined}
                 className={cn(
-                  "block w-full rounded-lg border px-3 py-2.5 text-left",
+                  "block min-h-11 w-full rounded-lg border px-3 py-2.5 text-left",
                   selected ? "border-line bg-wall" : "border-transparent hover:bg-wall/70",
                 )}
                 onClick={() => onRun(run.run_id)}
@@ -153,8 +155,9 @@ function Facts({ report }: { report: StatusReport | undefined }) {
   if (!run) return null;
   const steps = run.steps ?? [];
   return (
-    <section className="panel mt-6 p-4">
+    <section className="panel p-3 sm:p-4">
       <h2 className="text-balance text-base font-semibold">這次任務</h2>
+      <div className="grid gap-x-8 md:grid-cols-2 2xl:grid-cols-3">
       {steps.length > 0 && (
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
           {steps.map((step) => (
@@ -176,7 +179,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
         </div>
       )}
       {(run.blocked_integrations ?? []).length > 0 && (
-        <div className="mt-6 max-w-xl">
+        <div className="mt-6">
           <h3 className="eyebrow text-balance">受阻的整合</h3>
           {(run.blocked_integrations ?? []).map((item) => (
             <div key={`${item.agent}-${item.branch}`} className="mt-3">
@@ -189,7 +192,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
         </div>
       )}
       {(run.notes ?? []).length > 0 && (
-        <div className="mt-6 max-w-xl">
+        <div className="mt-6">
           <h3 className="eyebrow text-balance">備註</h3>
           {(run.notes ?? []).map((note, index) => (
             <Note key={`${index}-${note.slice(0, 24)}`} text={note} />
@@ -197,7 +200,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
         </div>
       )}
       {(report?.memory_advice ?? []).length > 0 && (
-        <div className="mt-6 max-w-xl">
+        <div className="mt-6">
           <h3 className="eyebrow text-balance">記憶建議</h3>
           {(report?.memory_advice ?? []).map((item) => (
             <Advice key={item} text={item} />
@@ -205,6 +208,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
         </div>
       )}
       {(run.result_head ?? []).length > 0 && <Result lines={run.result_head ?? []} />}
+      </div>
     </section>
   );
 }
@@ -245,7 +249,7 @@ function Advice({ text }: { text: string }) {
 
 function Result({ lines }: { lines: string[] }) {
   return (
-    <div className="mt-6 max-w-xl">
+    <div className="mt-6">
       <h3 className="eyebrow text-balance">結果</h3>
       {resultRows(lines).map((row, index) => {
         if (row.kind === "title") return <p key={index} className="text-pretty mt-2 text-base font-semibold leading-snug">{row.text}</p>;
@@ -253,7 +257,7 @@ function Result({ lines }: { lines: string[] }) {
         if (row.kind === "fact") {
           return (
             <p key={index} className="mt-2 flex gap-3 text-sm">
-              <span className="w-20 shrink-0 text-ink/60">{row.text}</span>
+              <span className="w-16 shrink-0 sm:w-20 text-ink/60">{row.text}</span>
               <span>{row.extra}</span>
             </p>
           );
