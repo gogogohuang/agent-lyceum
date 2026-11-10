@@ -29,6 +29,39 @@ async function run(invoker: Invoker, opts: { task?: string; file?: string } = {}
 const events = (runDir: string) =>
   fs.readFileSync(path.join(runDir, "log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 
+/**
+ * A rendezvous: each caller waits until `n` callers have arrived. Concurrency tests use it instead of sleeping and
+ * comparing wall-clock spans, which fail whenever a loaded machine starts one agent late. If the dispatcher ran the
+ * agents one after another, the first caller would never see the others arrive and the test fails after `ms`.
+ */
+function rendezvous(n: number, ms = 3000) {
+  let arrived = 0;
+  let gaveUp = false;
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return {
+    arrive: async () => {
+      if (++arrived === n) open();
+      let timer: NodeJS.Timeout | undefined;
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          gaveUp = true;
+          reject(new Error(`only ${arrived} of ${n} agents ran at the same time`));
+        }, ms);
+      });
+      try {
+        await Promise.race([opened, late]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    /** true when some caller gave up waiting, i.e. the agents did not all run at the same time */
+    gaveUp: () => gaveUp,
+  };
+}
+
 describe("dispatcher", () => {
   it("routes a task lead -> fe-member -> lead and ends on done", async () => {
     env = makeEnv();
@@ -300,10 +333,12 @@ describe("dispatcher", () => {
     let active = 0;
     let maxActive = 0;
     let leadCalls = 0;
+    const pair = rendezvous(2);
     const s = await run(async (i) => {
       active++;
       maxActive = Math.max(maxActive, active);
-      await new Promise((r) => setTimeout(r, 30));
+      if (i.agent.name === "lead") await new Promise((r) => setTimeout(r, 30));
+      else await pair.arrive(); // the two workers must be running together to get past this
       if (i.agent.name === "lead") {
         leadCalls++;
         if (leadCalls === 1) {
@@ -314,6 +349,7 @@ describe("dispatcher", () => {
       active--;
       return OK;
     });
+    expect(pair.gaveUp()).toBe(false);
     expect(s.endReason).toBe("done");
     expect(maxActive).toBe(2);
   });
@@ -329,9 +365,11 @@ describe("dispatcher", () => {
     );
     const spans: { name: string; start: number; end: number }[] = [];
     let leadCalls = 0;
+    const batchGate = rendezvous(3);
     const s = await run(async (i) => {
       const start = Date.now();
-      await new Promise((r) => setTimeout(r, 80));
+      if (i.agent.name === "lead") await new Promise((r) => setTimeout(r, 80));
+      else await batchGate.arrive(); // all 3 members must be running together to get past this
       if (i.agent.name === "lead") {
         if (++leadCalls === 1) for (const m of ["fe-member", "qa-member", "ops-member"]) mail(i, m, "a", "task");
         else mail(i, "lead", "bye", "done");
@@ -342,7 +380,7 @@ describe("dispatcher", () => {
     expect(s.endReason).toBe("done");
     const batch = spans.filter((x) => x.name !== "lead");
     expect(batch.map((x) => x.name).sort()).toEqual(["fe-member", "ops-member", "qa-member"]);
-    for (const a of batch) for (const b of batch) if (a !== b) expect(a.start).toBeLessThan(b.end);
+    expect(batchGate.gaveUp()).toBe(false);
     const lead = spans.filter((x) => x.name === "lead");
     for (const l of lead) for (const m of batch) expect(l.end <= m.start || m.end <= l.start).toBe(true);
   });
