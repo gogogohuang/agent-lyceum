@@ -2,8 +2,10 @@ import { Button } from "@base-ui/react/button";
 import { useEffect, useState } from "react";
 import type { QuotaReport, WatchFrame, WebEvent } from "../types";
 import { cn } from "./cn";
+import { JobsPage } from "./JobsPage";
 import { ProjectView } from "./ProjectView";
 import { headline, railText } from "./rail";
+import { ToolsPage } from "./ToolsPage";
 import { focusReport } from "./view";
 
 type Live = "up" | "down";
@@ -56,7 +58,7 @@ export function App() {
         ) : (
           names.map((name) => {
             const item = projects.get(name);
-            const on = name === selected;
+            const on = !hash.view && name === selected;
             const running = item ? focusReport(item)?.run?.state === "running" : false;
             return (
               <Button
@@ -77,6 +79,21 @@ export function App() {
             );
           })
         )}
+        <div className="flex items-center gap-2 md:mt-4 md:flex-col md:items-stretch md:border-t md:border-line md:pt-3">
+          {([["tools", "工具"], ["jobs", "任務輸出"]] as const).map(([view, label]) => (
+            <a
+              key={view}
+              href={`#!${view}`}
+              aria-current={hash.view === view ? "page" : undefined}
+              className={cn(
+                "inline-flex min-h-11 min-w-24 shrink-0 items-center rounded-lg border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal",
+                hash.view === view ? "border-line bg-wall" : "border-transparent hover:bg-wall/70",
+              )}
+            >
+              {label}
+            </a>
+          ))}
+        </div>
         {live === "down" && (
           <Button type="button" className="min-h-11 shrink-0 rounded-lg border border-line px-3 text-sm underline md:hidden" onClick={() => setAttempt((n) => n + 1)}>
             重新連線
@@ -94,7 +111,11 @@ export function App() {
       </nav>
       <main className="min-h-0 overflow-y-auto bg-wall">
         {(live === "up" || (quota && quota.length > 0)) && <Allowance reports={quota ?? []} onReports={setQuota} />}
-        {frame && selected ? (
+        {hash.view === "tools" ? (
+          <ToolsPage projects={names} />
+        ) : hash.view === "jobs" ? (
+          <JobsPage />
+        ) : frame && selected ? (
           <ProjectView name={selected} frame={frame} runId={hash.project === selected ? hash.run : undefined} now={now} onRun={(id) => select(selected, id)} />
         ) : (
           <article className="enter animate-in fade-in p-4 duration-200 sm:p-6">
@@ -117,10 +138,11 @@ function select(project: string, run?: string): void {
   location.hash = next;
 }
 
-function readHash(): { project?: string; run?: string } {
+function readHash(): { project?: string; run?: string; view?: "tools" | "jobs" } {
   try {
     const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
     if (!raw) return {};
+    if (raw === "!tools" || raw === "!jobs") return { view: raw === "!tools" ? "tools" : "jobs" };
     const slash = raw.indexOf("/");
     if (slash === -1) return { project: raw };
     return { project: raw.slice(0, slash), run: raw.slice(slash + 1) };
