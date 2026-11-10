@@ -36,3 +36,15 @@ export function reduce(state: DialogState, action: DialogAction): DialogState {
 export function confirmReady(state: DialogState): boolean {
   return state.phase === "confirm" && (state.need === "confirm" || state.typed === state.target);
 }
+
+/** A request-token counter: `next()` starts a request and invalidates all earlier ones; `invalidate()` just invalidates. */
+export function createRequestGuard(): { next: () => number; invalidate: () => void; isCurrent: (token: number) => boolean } {
+  let current = 0;
+  return {
+    next: () => ++current,
+    invalidate: () => {
+      current += 1;
+    },
+    isCurrent: (token) => token === current,
+  };
+}

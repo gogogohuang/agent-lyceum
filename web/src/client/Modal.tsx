@@ -19,6 +19,8 @@ export function Modal({
   const titleId = useId();
   const openRef = useRef(open);
   openRef.current = open;
+  const closableRef = useRef(closable);
+  closableRef.current = closable;
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -33,8 +35,15 @@ export function Modal({
         if (!closable) e.preventDefault();
       }}
       // Also fires after a parent-driven close(); only report a close the parent has not already made.
-      onClose={() => {
-        if (openRef.current) onClose();
+      onClose={(e) => {
+        if (!openRef.current) return;
+        if (!closableRef.current) {
+          // The browser closed us anyway (e.g. a second Esc can't be cancelled): reopen instead of unmounting mid-request.
+          const dialog = e.currentTarget;
+          if (!dialog.open) dialog.showModal();
+          return;
+        }
+        onClose();
       }}
       className="m-auto w-[min(38rem,calc(100vw-2rem))] max-h-[90dvh] overflow-y-auto rounded-xl border border-line bg-paper p-0 text-ink backdrop:bg-black/40"
     >

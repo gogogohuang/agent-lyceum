@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { confirmReady, initialState, reduce } from "../web/src/client/dialog-state.js";
+import { confirmReady, createRequestGuard, initialState, reduce } from "../web/src/client/dialog-state.js";
 import { exitInfo } from "../web/src/client/exit-info.js";
 
 const short = { kind: "short", result: { mode: "short", exit: 0, signal: null, stdout: "ok", stderr: "", timedOut: false, truncated: false } } as const;
@@ -74,5 +74,22 @@ describe("exitInfo", () => {
     expect(exitInfo(1, false)).toEqual({ tone: "fail", text: "失敗（結束碼 1）" });
     expect(exitInfo(null, true)).toEqual({ tone: "fail", text: "等太久，已中止" });
     expect(exitInfo(null, false)).toEqual({ tone: "fail", text: "沒能啟動" });
+  });
+});
+
+describe("request guard", () => {
+  it("only the latest token is current", () => {
+    const g = createRequestGuard();
+    const a = g.next();
+    expect(g.isCurrent(a)).toBe(true);
+    const b = g.next();
+    expect(g.isCurrent(a)).toBe(false);
+    expect(g.isCurrent(b)).toBe(true);
+  });
+  it("invalidate drops an in-flight token", () => {
+    const g = createRequestGuard();
+    const a = g.next();
+    g.invalidate();
+    expect(g.isCurrent(a)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useId, useReducer, useRef, useState } from "react";
 import { COMMANDS, type Body, type CommandDef, type CommandId, type Field } from "../commands";
 import { postCommand } from "./api";
 import { cn } from "./cn";
-import { confirmReady, initialState, reduce } from "./dialog-state";
+import { confirmReady, createRequestGuard, initialState, reduce } from "./dialog-state";
 import { exitInfo } from "./exit-info";
 import { Modal } from "./Modal";
 
@@ -38,13 +38,13 @@ export function CommandDialog({
   const [state, dispatch] = useReducer(reduce, initialState);
   const [preview, setPreview] = useState<string>();
   const [sentBody, setSentBody] = useState<Body>({});
-  // Bumped on every (re)open so a late dry-run preview can never land on a fresh session.
-  const session = useRef(0);
+  // One token per send / open / back: a response that is no longer current is dropped, so a stale preview can't show under another target's confirm.
+  const guard = useRef(createRequestGuard());
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the dialog (re)opens, not when `initial` is a new object each render.
   useEffect(() => {
     if (!open) return;
-    session.current += 1;
+    guard.current.invalidate();
     setValues(initial ?? {});
     setPreview(undefined);
     dispatch({ type: "reset" });
@@ -52,13 +52,15 @@ export function CommandDialog({
 
   const send = async (extra: Body = {}) => {
     const body = { ...values, ...fixed, ...extra };
-    const mine = session.current;
+    const mine = guard.current.next();
+    setPreview(undefined);
     setSentBody(body);
     dispatch({ type: "submit" });
     const result = await postCommand(id, body);
+    if (!guard.current.isCurrent(mine)) return;
     if (result.kind === "need" && canPreview(def, body)) {
       void postCommand(id, { ...body, dryRun: true, confirm: undefined, confirmText: undefined }).then((p) => {
-        if (p.kind === "short" && session.current === mine) setPreview(p.result.stdout || p.result.stderr);
+        if (p.kind === "short" && guard.current.isCurrent(mine)) setPreview(p.result.stdout || p.result.stderr || undefined);
       });
     }
     dispatch({ type: "result", result });
@@ -130,7 +132,11 @@ export function CommandDialog({
             <button type="button" autoFocus className={btn} onClick={onClose}>
               取消
             </button>
-            <button type="button" className={btn} onClick={() => dispatch({ type: "back" })}>
+            <button type="button" className={btn} onClick={() => {
+                guard.current.invalidate();
+                setPreview(undefined);
+                dispatch({ type: "back" });
+              }}>
               回上一步
             </button>
             <button
@@ -208,7 +214,6 @@ function FieldRow({
 }) {
   const uid = useId();
   const errId = `${uid}-err`;
-  // biome-ignore lint/a11y/noAutofocus: focus moves into the dialog on purpose
   const common = { id: uid, "aria-invalid": error ? true : undefined, "aria-describedby": error ? errId : undefined, autoFocus };
   const choices = options ?? field.options;
   return (
