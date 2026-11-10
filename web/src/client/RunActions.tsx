@@ -3,6 +3,7 @@ import type { CommandId } from "../commands";
 import type { Run } from "../types";
 import { AnswerDialog } from "./AnswerDialog";
 import { CommandDialog } from "./CommandDialog";
+import { isIdleRun } from "./run-state";
 
 type Open = { id: CommandId; initial?: Record<string, unknown>; title?: string } | "answer" | undefined;
 
@@ -11,7 +12,7 @@ const btn = "min-h-11 rounded-lg border border-line bg-paper px-3 text-sm hover:
 export function RunActions({ project, run }: { project: string; run?: Run }) {
   const [open, setOpen] = useState<Open>();
   const close = () => setOpen(undefined);
-  const idle = run && run.state !== "running";
+  const idle = isIdleRun(run);
   const waiting = !!run?.ask && run.ask.unanswered > 0;
   return (
     <>

@@ -9,15 +9,29 @@ const STATE = { running: "執行中", ended: "已結束", lost: "已結束（結
 export function JobsPage() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [picked, setPicked] = useState<string>();
-  // undefined = not loaded yet; null = request failed
+  // undefined = not loaded yet; null = request failed; a later failure keeps the last good detail
   const [detail, setDetail] = useState<JobDetail | null>();
+  const [stale, setStale] = useState(false);
 
   useEffect(() => startPoll(getJobs, setJobs, 3000), []);
 
   useEffect(() => {
     setDetail(undefined);
+    setStale(false);
     if (!picked) return;
-    return startPoll(() => getJob(picked), (d) => setDetail(d ?? null), 2000);
+    return startPoll(
+      () => getJob(picked),
+      (d) => {
+        if (d) {
+          setDetail(d);
+          setStale(false);
+        } else {
+          setDetail((prev) => prev ?? null);
+          setStale(true);
+        }
+      },
+      2000,
+    );
   }, [picked]);
 
   return (
@@ -54,6 +68,7 @@ export function JobsPage() {
       {detail && (
         <section aria-label="輸出" className="mt-6">
           <p className="eyebrow">{detail.argv.join(" ")}</p>
+          {stale && <p className="mt-1 text-sm text-warn">更新失敗，稍後重試</p>}
           <pre className="mt-2 max-h-[60dvh] overflow-auto rounded-lg border border-line bg-paper p-3 font-mono text-xs whitespace-pre-wrap">{detail.tail || "（還沒有輸出）"}</pre>
         </section>
       )}
