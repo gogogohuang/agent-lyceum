@@ -112,6 +112,7 @@ export const COMMANDS: Record<CommandId, CommandDef> = {
     argv: (b) => {
       const name = need(text(b, "name", { required: true, re: NAME_RE, what: "專案名稱" }));
       const dir = need(text(b, "dir", { required: true, re: PATH_RE, what: "路徑", max: 1024 }));
+      if (dir.startsWith("~")) throw new ArgError("dir", "路徑請用絕對路徑，不支援 ~。");
       return ["project", "add", name, "--dir", dir];
     },
   },

@@ -56,6 +56,7 @@ describe("argv", () => {
     expect(argv("project.list", {})).toEqual(["project"]);
     expect(argv("project.add", { name: "web", dir: "/tmp/repo" })).toEqual(["project", "add", "web", "--dir", "/tmp/repo"]);
     expect(badField("project.add", { name: "web", dir: "relative/dir" })).toBe("dir");
+    expect(badField("project.add", { name: "web", dir: "~/repo" })).toBe("dir");
     expect(badField("project.add", { name: "-x", dir: "/tmp/r" })).toBe("name");
     expect(argv("project.remove", { name: "web", purge: true })).toEqual(["project", "remove", "web", "--purge"]);
   });
