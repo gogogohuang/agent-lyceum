@@ -10,11 +10,12 @@ export type ShortResult = { exit: number | null; signal: string | null; stdout: 
 
 const OUT_CAP = 1_000_000;
 const TAIL_BYTES = 20_000;
+const KILL_GRACE_MS = 2000;
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export function runShort(cli: CliLauncher, home: string, argv: string[], opts: { cwd: string; timeoutMs: number }): Promise<ShortResult> {
   return new Promise((resolve) => {
-    const child = spawn(cli.execPath, [...cli.args, "--home", home, ...argv], { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const child = spawn(cli.execPath, [...cli.args, "--home", home, ...argv], { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, detached: process.platform !== "win32" });
     let stdout = "";
     let stderr = "";
     let truncated = false;
@@ -31,17 +32,39 @@ export function runShort(cli: CliLauncher, home: string, argv: string[], opts: {
     child.stderr.on("data", (c: Buffer) => {
       stderr = take(stderr, c);
     });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, opts.timeoutMs);
+    let killTimer: NodeJS.Timeout | undefined;
+    // The child leads its own process group, so signalling -pid also reaches grandchildren that may hold the pipes.
+    const killGroup = (sig: NodeJS.Signals) => {
+      try {
+        if (child.pid && process.platform !== "win32") process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch {
+        // already gone
+      }
+    };
     let done = false;
     const finish = (exit: number | null, signal: string | null, extra = "") => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
+      child.stdout.destroy();
+      child.stderr.destroy();
       resolve({ exit, signal, stdout, stderr: stderr + extra, timedOut, truncated });
     };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup("SIGTERM");
+      killTimer = setTimeout(() => {
+        killGroup("SIGKILL");
+        finish(null, "SIGKILL");
+      }, KILL_GRACE_MS);
+    }, opts.timeoutMs);
+    child.on("exit", (code, signal) => {
+      if (!timedOut) return; // normal case: wait for "close" so all output is read
+      killGroup("SIGKILL");
+      finish(code, signal);
+    });
     child.on("error", (e) => finish(null, null, e.message));
     child.on("close", (code, signal) => finish(code, signal));
   });
@@ -72,8 +95,12 @@ export function startJob(cli: CliLauncher, home: string, jobsDir: string, comman
   const child = spawn(process.execPath, ["-e", WRAPPER, dir], { cwd, detached: true, stdio: ["ignore", log, log], env: process.env });
   fs.closeSync(log);
   child.on("error", (e) => {
-    fs.appendFileSync(path.join(dir, "out.log"), `${e.message}\n`);
-    fs.writeFileSync(path.join(dir, "exit.json"), JSON.stringify({ exit: 127, signal: null, ended_at: new Date().toISOString() }));
+    try {
+      fs.appendFileSync(path.join(dir, "out.log"), `${e.message}\n`);
+      fs.writeFileSync(path.join(dir, "exit.json"), JSON.stringify({ exit: 127, signal: null, ended_at: new Date().toISOString() }));
+    } catch {
+      // job dir removed meanwhile
+    }
   });
   child.unref();
   const record: JobRecord = { id, command, argv, cwd, started_at: new Date().toISOString(), pid: child.pid ?? 0 };
@@ -98,6 +125,7 @@ function view(dir: string): JobView | undefined {
   } catch {
     return undefined;
   }
+  if (typeof record?.id !== "string" || typeof record.started_at !== "string") return undefined;
   try {
     const ended = JSON.parse(fs.readFileSync(path.join(dir, "exit.json"), "utf8")) as { exit: number | null; signal: string | null; ended_at: string };
     return { ...record, state: "ended", exit: ended.exit, signal: ended.signal, ended_at: ended.ended_at };

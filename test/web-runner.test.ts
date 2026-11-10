@@ -50,6 +50,34 @@ describe("runShort", () => {
     expect(r.timedOut).toBe(true);
     expect(r.exit).not.toBe(0);
   });
+  it("resolves and leaves no process behind when the CLI ignores SIGTERM and a grandchild holds the pipes", async () => {
+    const pidFile = path.join(dir, "gc.pid");
+    const stubborn = path.join(dir, "stubborn.mjs");
+    fs.writeFileSync(
+      stubborn,
+      [
+        "import { spawn } from 'node:child_process';",
+        "import fs from 'node:fs';",
+        "process.on('SIGTERM', () => {});",
+        `const gc = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{});setTimeout(()=>{},60000)"], { stdio: 'inherit' });`,
+        `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
+        "setTimeout(() => {}, 60000);",
+      ].join("\n"),
+    );
+    const t0 = Date.now();
+    const r = await runShort({ execPath: process.execPath, args: [stubborn] }, "/h", [], { cwd: dir, timeoutMs: 200 });
+    expect(r.timedOut).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(4500);
+    const gc = Number(fs.readFileSync(pidFile, "utf8"));
+    await until(() => {
+      try {
+        process.kill(gc, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+  });
   it("a missing executable is a result, not a throw", async () => {
     const r = await runShort({ execPath: path.join(dir, "nope"), args: [] }, "/h", [], { cwd: dir, timeoutMs: 1000 });
     expect(r.exit).toBeNull();
@@ -86,6 +114,14 @@ describe("startJob", () => {
   it("rejects ids that could leave the jobs directory", () => {
     expect(readJob(path.join(dir, "web-jobs"), "../x")).toBeUndefined();
     expect(readJob(path.join(dir, "web-jobs"), "a/b")).toBeUndefined();
+  });
+  it("skips job records without a started_at", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "bad1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "bad1", "job.json"), JSON.stringify({ id: "bad1", command: "run", pid: 0 }));
+    fs.mkdirSync(path.join(jobsDir, "ok1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "ok1", "job.json"), JSON.stringify({ id: "ok1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:01.000Z", pid: 0 }));
+    expect(listJobs(jobsDir).map((j) => j.id)).toEqual(["ok1"]);
   });
   it("lists newest first and caps the list", () => {
     const jobsDir = path.join(dir, "web-jobs");
