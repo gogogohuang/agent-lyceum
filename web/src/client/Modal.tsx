@@ -1,9 +1,24 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 /** A native <dialog>: the browser traps focus, closes on Esc and puts focus back on the button that opened it. */
-export function Modal({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({
+  open,
+  title,
+  onClose,
+  closable = true,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  /** When false, Esc is blocked (the native `cancel` event is prevented). The caller must also disable its own close buttons. */
+  closable?: boolean;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const openRef = useRef(open);
+  openRef.current = open;
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -14,7 +29,13 @@ export function Modal({ open, title, onClose, children }: { open: boolean; title
     <dialog
       ref={ref}
       aria-labelledby={titleId}
-      onClose={onClose}
+      onCancel={(e) => {
+        if (!closable) e.preventDefault();
+      }}
+      // Also fires after a parent-driven close(); only report a close the parent has not already made.
+      onClose={() => {
+        if (openRef.current) onClose();
+      }}
       className="m-auto w-[min(38rem,calc(100vw-2rem))] max-h-[90dvh] overflow-y-auto rounded-xl border border-line bg-paper p-0 text-ink backdrop:bg-black/40"
     >
       {open && (

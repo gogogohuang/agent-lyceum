@@ -27,7 +27,7 @@ export function reduce(state: DialogState, action: DialogAction): DialogState {
       if (r.kind === "short" || r.kind === "job") return { phase: "done", result: r };
       if (r.kind === "need") return { phase: "confirm", need: r.need, ...(r.target !== undefined ? { target: r.target } : {}), typed: "" };
       if (r.kind === "invalid") return r.field ? { phase: "form", errors: { [r.field]: r.error } } : { phase: "form", errors: {}, notice: r.error };
-      if (r.kind === "stale") return { phase: "form", errors: {}, notice: "頁面已過期（伺服器重新啟動過），請重新整理頁面後再試。" };
+      if (r.kind === "stale") return { phase: "form", errors: {}, notice: "請求被拒絕，請重新整理頁面後再試。" };
       return { phase: "form", errors: {}, notice: r.message };
     }
   }
