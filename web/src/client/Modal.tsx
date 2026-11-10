@@ -21,12 +21,24 @@ export function Modal({
   openRef.current = open;
   const closableRef = useRef(closable);
   closableRef.current = closable;
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      dialog.showModal();
+    }
     if (!open && dialog.open) dialog.close();
   }, [open]);
+  // A parent that unmounts us while open (its own 取消／關閉 buttons) never gets the browser's native focus restore, so do it here.
+  useEffect(
+    () => () => {
+      const back = opener.current;
+      if (openRef.current && back?.isConnected) queueMicrotask(() => back.focus());
+    },
+    [],
+  );
   return (
     <dialog
       ref={ref}
