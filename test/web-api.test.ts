@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleApi, type ConsoleDeps } from "../web/src/server/api.js";
 import { readJob } from "../web/src/server/runner.js";
 
@@ -131,6 +133,9 @@ describe("jobs", () => {
     const started = await call("POST", "/api/cmd/run", { project: "web", task: "t" });
     const list = await call("GET", "/api/jobs");
     expect((list.json.jobs as { id: string }[]).map((j) => j.id)).toContain(started.json.jobId);
+    const jobsDir = path.join(deps.home, "web-jobs");
+    const end = Date.now() + 5000;
+    while (readJob(jobsDir, started.json.jobId as string)?.state !== "ended" && Date.now() < end) await new Promise((x) => setTimeout(x, 25));
     const one = await call("GET", `/api/jobs/${started.json.jobId as string}`);
     expect(one.status).toBe(200);
     expect(one.json.command).toBe("run");
@@ -159,5 +164,52 @@ describe("routing", () => {
   it("only claims /api/ paths", async () => {
     expect((await call("GET", "/events")).handled).toBe(false);
     expect((await call("GET", "/api/zzz")).status).toBe(404);
+  });
+});
+
+describe("real server", () => {
+  let server: http.Server | undefined;
+  afterEach(async () => {
+    const s = server;
+    server = undefined;
+    if (s) {
+      s.closeAllConnections();
+      await new Promise<void>((r) => s.close(() => r()));
+    }
+  });
+  it("delivers 413 for an oversized body instead of resetting the connection", async () => {
+    server = http.createServer((req, res) => {
+      void handleApi(req, res, new URL(req.url ?? "/", "http://127.0.0.1"), deps);
+    });
+    await new Promise<void>((r) => server?.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    let gotResponse = false;
+    const status = await new Promise<number>((resolve, reject) => {
+      const rq = http.request({ host: "127.0.0.1", port, path: "/api/cmd/run", method: "POST", headers: { "Content-Type": "application/json" } }, (r) => {
+        gotResponse = true;
+        r.resume();
+        resolve(r.statusCode ?? 0);
+      });
+      rq.on("error", (e) => {
+        if (!gotResponse) reject(e);
+      });
+      rq.end(JSON.stringify({ project: "web", task: "x".repeat(2 * 1024 * 1024) }));
+    });
+    expect(status).toBe(413);
+  });
+});
+
+describe("errors", () => {
+  it("a throwing dep gives a generic 500 without the message", async () => {
+    const orig = deps.readAsk;
+    deps.readAsk = () => {
+      throw new Error("ENOENT: /secret/path");
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await call("GET", "/api/ask?project=web&run=r1");
+    spy.mockRestore();
+    deps.readAsk = orig;
+    expect(r.status).toBe(500);
+    expect(JSON.stringify(r.json)).not.toContain("secret");
   });
 });

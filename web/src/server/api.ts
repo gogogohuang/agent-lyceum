@@ -23,9 +23,9 @@ const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8", "Cache
 class BodyTooLarge extends Error {}
 class BadBody extends Error {}
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void {
   if (res.headersSent) return;
-  res.writeHead(status, JSON_HEADERS);
+  res.writeHead(status, { ...JSON_HEADERS, ...extra });
   res.end(JSON.stringify(body));
 }
 
@@ -33,6 +33,7 @@ function readJson(req: IncomingMessage): Promise<Body> {
   return new Promise((resolve, reject) => {
     let size = 0;
     let settled = false;
+    let tooLarge = false;
     const chunks: Buffer[] = [];
     const fail = (e: Error) => {
       if (settled) return;
@@ -42,14 +43,17 @@ function readJson(req: IncomingMessage): Promise<Body> {
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > BODY_LIMIT) {
-        fail(new BodyTooLarge());
-        req.destroy();
+        // Keep draining (without buffering) and answer 413 only once the upload is consumed, so the
+        // client is not reset mid-write before it can read the response.
+        tooLarge = true;
+        chunks.length = 0;
         return;
       }
-      chunks.push(chunk);
+      if (!tooLarge) chunks.push(chunk);
     });
     req.on("end", () => {
       if (settled) return;
+      if (tooLarge) return fail(new BodyTooLarge());
       settled = true;
       try {
         const value: unknown = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
@@ -67,7 +71,7 @@ async function body(req: IncomingMessage, res: ServerResponse): Promise<Body | u
   try {
     return await readJson(req);
   } catch (e) {
-    if (e instanceof BodyTooLarge) send(res, 413, { error: "請求太大。" });
+    if (e instanceof BodyTooLarge) send(res, 413, { error: "請求太大。" }, { Connection: "close" });
     else send(res, 400, { error: "請求格式不對。" });
     return undefined;
   }
@@ -155,7 +159,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
       send(res, 404, { error: "沒有這個 API。" });
     }
   } catch (e) {
-    send(res, 500, { error: (e as Error).message || "伺服器出錯。" });
+    console.error("[web] api error:", e);
+    send(res, 500, { error: "伺服器出錯。" });
   }
   return true;
 }
