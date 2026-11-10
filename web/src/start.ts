@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto";
 import type http from "node:http";
 import type { Socket } from "node:net";
 import type { WatchFactory } from "./server/hub.js";
 import { createWebHub } from "./server/hub.js";
+import { handleApi, type ConsoleDeps } from "./server/api.js";
 import { checkRequest } from "./server/guard.js";
 import { attachEvents, listen as listenHttp, serveStatic } from "./server/http.js";
 import { openBrowser } from "./server/open.js";
@@ -20,9 +22,14 @@ export type StartWebOptions = {
   identity?: WebIdentity;
   /** Extra Host names accepted while bound to a loopback address (`--allow-host`). */
   allowHosts?: string[];
+  /** The command console (the write API). Without it `/api/*` is 404. */
+  console?: ConsoleDeps;
   /** Replaceable so tests can run without a socket. */
   listen?: (port: number, host: string, onRequest: http.RequestListener) => Promise<{ server: http.Server; sockets: Set<Socket> }>;
 };
+
+/** A repeated header arrives as an array; it is never valid for Origin or the token, so it becomes "" (the guard refuses an empty value). */
+const singleHeader = (v: string | string[] | undefined) => (Array.isArray(v) ? "" : v);
 
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 
@@ -31,12 +38,18 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
   const hub = createWebHub(opts.factory);
   const startedAt = new Date().toISOString();
   let boundPort = opts.port;
+  const token = randomBytes(24).toString("hex");
   const { server, sockets } = await (opts.listen ?? listenHttp)(opts.port, opts.host, (req, res) => {
     const pathname = (req.url ?? "/").split("?")[0] ?? "/";
-    const origin = req.headers.origin;
     const rejected = checkRequest(
-      { method: req.method, pathname, host: req.headers.host, origin: Array.isArray(origin) ? origin[0] : origin },
-      { bindHost: opts.host, allowHosts: opts.allowHosts ?? [], port: boundPort },
+      {
+        method: req.method,
+        pathname,
+        host: req.headers.host,
+        origin: singleHeader(req.headers.origin),
+        token: singleHeader(req.headers["x-lyceum-token"]),
+      },
+      { bindHost: opts.host, allowHosts: opts.allowHosts ?? [], port: boundPort, token },
     );
     if (rejected) {
       res.writeHead(rejected);
@@ -83,12 +96,22 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
       );
       return;
     }
+    // Same raw pathname the guard saw: `//api/x`, `/%61pi/x` and `/api` never match, so they cannot reach handleApi.
+    if (pathname.startsWith("/api/")) {
+      if (!opts.console) {
+        res.writeHead(404, JSON_HEADERS);
+        res.end(JSON.stringify({ error: "沒有這個 API。" }));
+        return;
+      }
+      void handleApi(req, res, new URL(`http://127.0.0.1${req.url ?? "/"}`), opts.console);
+      return;
+    }
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405);
       res.end();
       return;
     }
-    serveStatic(opts.staticDir, req, res);
+    serveStatic(opts.staticDir, req, res, token);
   });
   const address = server.address();
   boundPort = typeof address === "object" && address ? address.port : opts.port;

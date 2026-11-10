@@ -1,7 +1,7 @@
 /** Host and Origin checks against DNS rebinding and cross-site writes. Pure: no sockets, no node imports. */
 
 export type GuardOptions = {
-  /** The `--host` bind address. A non-loopback bind disables every check (the user chose to expose the server). */
+  /** The `--host` bind address. On a non-loopback bind the Host/Origin checks are off (the user chose to expose the server), but `POST /api/*` is refused outright. */
   bindHost: string;
   /** Extra names from `--allow-host`. */
   allowHosts: readonly string[];
