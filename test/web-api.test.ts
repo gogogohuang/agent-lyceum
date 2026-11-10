@@ -82,6 +82,17 @@ describe("POST /api/cmd/:id", () => {
     const r = await call("POST", "/api/cmd/project.list", {});
     expect(fs.realpathSync((JSON.parse(r.json.stdout as string) as { cwd: string }).cwd)).toBe(fs.realpathSync(deps.home));
   });
+  it("creates a missing home before a home-scoped command (fresh machine, `init`)", async () => {
+    fs.rmSync(deps.home, { recursive: true, force: true });
+    const r = await call("POST", "/api/cmd/project.list", {});
+    expect(r.status).toBe(200);
+    expect(r.json.exit).toBe(0);
+    expect(String(r.json.stderr)).not.toMatch(/ENOENT/);
+    expect(fs.existsSync(deps.home)).toBe(true);
+    fs.rmSync(deps.home, { recursive: true, force: true });
+    const d = await call("POST", "/api/cmd/demo", {});
+    expect(d.status).toBe(202);
+  });
   it("unknown command 404, unknown project 404", async () => {
     expect((await call("POST", "/api/cmd/nope", {})).status).toBe(404);
     expect((await call("POST", "/api/cmd/__proto__", {})).status).toBe(404);
