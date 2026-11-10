@@ -88,6 +88,7 @@ agents:
 | run 的生命週期、平行 agent、同時多個 run、追加需求、開 PR | [一次執行如何運作](docs/how-it-works.zh-TW.md) |
 | agent 能寫什麼、沙箱等級、已知缺口 | [寫入範圍](docs/write-scope.zh-TW.md) |
 | 讓 agent 搜尋或讀取網頁 | [網路存取](docs/web-access.zh-TW.md) |
+| 在瀏覽器執行指令 | [網頁操作台](docs/web-console.zh-TW.md) |
 | 在 Claude Code 內看即時 run 狀態（每個 agent 一個依狀態上色的外框，樹狀排列；面板或整寬橫幅） | [監控 mod](docs/monitor.zh-TW.md) |
 | 所有指令的完整說明 | [指令](docs/commands.zh-TW.md) |
 | 任務檔範本（範圍、驗收條件、驗證指令） | [任務檔範本](docs/task-template.zh-TW.md) |

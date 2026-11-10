@@ -9,6 +9,7 @@ const PAIRS = [
   ['docs/how-it-works.md', 'docs/how-it-works.zh-TW.md'],
   ['docs/monitor.md', 'docs/monitor.zh-TW.md'],
   ['docs/web-access.md', 'docs/web-access.zh-TW.md'],
+  ['docs/web-console.md', 'docs/web-console.zh-TW.md'],
   ['docs/task-template.md', 'docs/task-template.zh-TW.md'],
   ['docs/write-scope.md', 'docs/write-scope.zh-TW.md'],
 ]
