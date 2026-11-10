@@ -91,8 +91,11 @@ describe("held mail (spec 23 pending/) and tier duplicates (T-15 held)", () => {
 
 const logEvents = (runDir: string, event: string) =>
   fs.readFileSync(path.join(runDir, "log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.event === event);
+// The router reads an outbox oldest-first by mtime and, on a tie, by file name. File clocks are coarse (a few ms on Linux),
+// so mails written back to back often tie: the name must then keep the order they were written in, hence the sequence prefix.
+let mailSeq = 0;
 const mailOut = (p: Parameters<typeof outboxDir>[0], from: string, to: string, subject: string, type: string, fm = "") =>
-  write(path.join(outboxDir(p, from), `${subject.replace(/\W+/g, "-")}-${Math.random().toString(16).slice(2)}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}${fm}---\n\n${type === "done" ? FULL_DONE : withSections(type as "task", `body of ${subject}`)}\n`);
+  write(path.join(outboxDir(p, from), `${String(++mailSeq).padStart(6, "0")}-${subject.replace(/\W+/g, "-")}-${Math.random().toString(16).slice(2)}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}${fm}---\n\n${type === "done" ? FULL_DONE : withSections(type as "task", `body of ${subject}`)}\n`);
 
 async function e2e(o: { ladder: boolean; leadFm: string; memberFm?: string; leadType?: string; leadMails?: number; memberMails?: number }) {
   env = makeEnv();

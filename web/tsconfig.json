@@ -14,5 +14,5 @@
     "sourceMap": false,
     "declaration": false
   },
-  "include": ["src/start.ts", "src/server/**/*.ts", "src/types.ts"]
+  "include": ["src/start.ts", "src/server/**/*.ts", "src/types.ts", "src/commands.ts"]
 }

@@ -1,15 +1,17 @@
-/** Host and Origin checks against DNS rebinding and cross-site `POST /quota`. Pure: no sockets, no node imports. */
+/** Host and Origin checks against DNS rebinding and cross-site writes. Pure: no sockets, no node imports. */
 
 export type GuardOptions = {
-  /** The `--host` bind address. A non-loopback bind disables every check (the user chose to expose the server). */
+  /** The `--host` bind address. On a non-loopback bind the Host/Origin checks are off (the user chose to expose the server), but `POST /api/*` is refused outright. */
   bindHost: string;
   /** Extra names from `--allow-host`. */
   allowHosts: readonly string[];
   /** The port the server is actually listening on. */
   port: number;
+  /** The CSRF token every `POST /api/*` must send. */
+  token?: string;
 };
 
-export type GuardRequest = { method: string | undefined; pathname: string; host: string | undefined; origin?: string | undefined };
+export type GuardRequest = { method: string | undefined; pathname: string; host: string | undefined; origin?: string | undefined; token?: string | undefined };
 
 const LOOPBACK_NAMES = ["127.0.0.1", "localhost", "::1"];
 
@@ -43,25 +45,42 @@ function allowed(opts: GuardOptions): Set<string> {
   return names;
 }
 
+function sameOrigin(origin: string, names: Set<string>, port: number): boolean {
+  if (origin === "null") return false;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:") return false;
+  const name = normalizeHost(url.hostname);
+  if (!name || !names.has(name)) return false;
+  return Number(url.port || 80) === port;
+}
+
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 /** The HTTP status to reject with (400 or 403), or undefined when the request may proceed. */
 export function checkRequest(req: GuardRequest, opts: GuardOptions): 400 | 403 | undefined {
-  if (!isLoopbackHost(opts.bindHost)) return undefined;
+  const apiWrite = req.method === "POST" && req.pathname.startsWith("/api/");
+  if (!isLoopbackHost(opts.bindHost)) return apiWrite ? 403 : undefined;
   const names = allowed(opts);
   const host = normalizeHost(req.host);
   if (!host) return 400;
   if (!names.has(host)) return 403;
+  if (apiWrite) {
+    if (req.origin === undefined || !sameOrigin(req.origin, names, opts.port)) return 403;
+    if (!opts.token || !req.token || !safeEqual(req.token, opts.token)) return 403;
+    return undefined;
+  }
   if (req.method === "POST" && req.pathname === "/quota" && req.origin !== undefined) {
-    if (req.origin === "null") return 403;
-    let url: URL;
-    try {
-      url = new URL(req.origin);
-    } catch {
-      return 403;
-    }
-    if (url.protocol !== "http:") return 403;
-    const name = normalizeHost(url.hostname);
-    if (!name || !names.has(name)) return 403;
-    if (Number(url.port || 80) !== opts.port) return 403;
+    if (!sameOrigin(req.origin, names, opts.port)) return 403;
   }
   return undefined;
 }

@@ -88,6 +88,7 @@ Likewise, older versions refuse a `project.yaml` that contains `verify` ("Unreco
 | Run lifecycle, parallel agents, several runs at once, follow-ups, opening a PR | [How a run works](docs/how-it-works.md) |
 | What agents may write, sandbox levels, known gaps | [Write scope](docs/write-scope.md) |
 | Letting an agent search or fetch the web | [Web access](docs/web-access.md) |
+| Running commands from the browser | [Web console](docs/web-console.md) |
 | Live run status inside Claude Code (a framed, state-coloured tree of agents; pane or full-width band) | [Monitor mod](docs/monitor.md) |
 | All commands in full | [Commands](docs/commands.md) |
 | A task file template (scope, acceptance criteria, verification) | [Task template](docs/task-template.md) |

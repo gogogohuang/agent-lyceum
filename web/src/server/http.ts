@@ -19,8 +19,14 @@ function inside(root: string, file: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-function sendFile(res: http.ServerResponse, file: string): void {
+function sendFile(res: http.ServerResponse, file: string, token?: string): void {
   const ext = path.extname(file);
+  if (ext === ".html" && token !== undefined) {
+    const html = fs.readFileSync(file, "utf8").replaceAll("__LYCEUM_TOKEN__", token);
+    res.writeHead(200, { "Content-Type": MIME[".html"] as string, "Cache-Control": "no-cache" });
+    res.end(html);
+    return;
+  }
   res.writeHead(200, {
     "Content-Type": MIME[ext] ?? "application/octet-stream",
     "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=3600",
@@ -28,7 +34,7 @@ function sendFile(res: http.ServerResponse, file: string): void {
   fs.createReadStream(file).pipe(res);
 }
 
-export function serveStatic(staticDir: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+export function serveStatic(staticDir: string, req: http.IncomingMessage, res: http.ServerResponse, token?: string): void {
   const root = path.resolve(staticDir);
   let pathname = "/";
   try {
@@ -45,7 +51,7 @@ export function serveStatic(staticDir: string, req: http.IncomingMessage, res: h
     return;
   }
   if (fs.existsSync(requested) && fs.statSync(requested).isFile()) {
-    sendFile(res, requested);
+    sendFile(res, requested, token);
     return;
   }
   const ext = path.extname(pathname);
@@ -55,7 +61,7 @@ export function serveStatic(staticDir: string, req: http.IncomingMessage, res: h
     res.end();
     return;
   }
-  sendFile(res, index);
+  sendFile(res, index, token);
 }
 
 export function writeEvent(res: http.ServerResponse, event: WebEvent): void {

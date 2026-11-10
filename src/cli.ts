@@ -32,6 +32,7 @@ import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 import { claudeQuota, codexQuota, type QuotaReport } from "./quota.js";
 import { summarizeProgress } from "./summarize.js";
+import { createConsoleDeps } from "./web-console.js";
 
 const program = new Command();
 program
@@ -721,6 +722,7 @@ program
             heartbeatMs: number;
             identity: { version: string; home: string };
             allowHosts: string[];
+            console?: ReturnType<typeof createConsoleDeps>;
             factory: {
               list: () => string[];
               watch: (name: string, onFrame: (frame: unknown) => void) => { beat: () => void; close: () => void };
@@ -738,6 +740,7 @@ program
           heartbeatMs: beat * 1000,
           identity: { version, home: home() },
           allowHosts: opts.allowHost,
+          console: createConsoleDeps(home(), fileURLToPath(import.meta.url)),
           factory: {
             list: () => listProjects(home()).map((item) => item.name),
             watch: (name, onFrame) =>

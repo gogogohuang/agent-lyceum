@@ -3,6 +3,7 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import type { Run, StatusReport, WatchFrame } from "../types";
 import { AgentTree } from "./AgentTree";
 import { cn } from "./cn";
+import { RunActions } from "./RunActions";
 import { Timeline } from "./Timeline";
 import { TokenChart } from "./TokenChart";
 import { MailBody } from "./MailBody";
@@ -50,6 +51,9 @@ export function ProjectView({
               <p className="text-pretty mt-3 text-sm">註冊的 agent 列在下面。</p>
             </>
           )}
+          <div className="mt-4">
+            <RunActions project={name} run={run} />
+          </div>
         </header>
         {run?.ask && run.ask.unanswered > 0 && (
           <p className="text-pretty mt-4 rounded-lg border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-warn">
@@ -161,7 +165,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
       {steps.length > 0 && (
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
           {steps.map((step) => (
-            <li key={step.text} className={cn("text-pretty", step.done && "text-ink/50 line-through")}>
+            <li key={step.text} className={cn("text-pretty", step.done && "text-ink/60 line-through")}>
               {step.text}
             </li>
           ))}

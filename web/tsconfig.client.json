@@ -13,5 +13,5 @@
     "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/client", "src/types.ts"]
+  "include": ["src/client", "src/types.ts", "src/commands.ts"]
 }

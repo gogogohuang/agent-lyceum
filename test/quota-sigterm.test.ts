@@ -34,7 +34,10 @@ function shim(body: string) {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "quota-sigterm-"));
   pidFile = path.join(dir, "pid");
   const file = path.join(dir, "claude");
-  fs.writeFileSync(file, `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n${body}\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+  // The pid file is the "ready" signal the test waits for, so it is written after `body` (which installs the signal
+  // handler). Written first, a SIGTERM sent the moment the pid appears could land before the handler exists and kill the
+  // child, which made "a child that ignores SIGTERM stays alive" fail on busy CI machines.
+  fs.writeFileSync(file, `#!${process.execPath}\n${body}\nrequire("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
   process.env.PATH = `${dir}${path.delimiter}${oldPath}`;
 }
 
