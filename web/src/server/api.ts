@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import fs from "node:fs";
 import path from "node:path";
 import { ArgError, COMMANDS, type Body, type CommandId } from "../commands.js";
 import { listJobs, readJob, runShort, startJob, type CliLauncher } from "./runner.js";
@@ -100,6 +101,9 @@ async function runCommand(req: IncomingMessage, res: ServerResponse, deps: Conso
     const dir = deps.projectDir(String(b.project));
     if (!dir) return send(res, 404, { error: "沒有這個專案。" });
     cwd = dir;
+  } else {
+    // A fresh machine has no home yet (`init` creates it); spawn fails with ENOENT on a missing cwd.
+    fs.mkdirSync(deps.home, { recursive: true });
   }
   if (def.mode(b) === "short") {
     const result = await runShort(deps.cli, deps.home, argv, { cwd, timeoutMs: deps.shortTimeoutMs ?? 120_000 });
