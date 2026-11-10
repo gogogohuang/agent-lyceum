@@ -18,8 +18,11 @@ export function reduce(state: DialogState, action: DialogAction): DialogState {
       return state.phase === "confirm" ? { ...state, typed: action.value } : state;
     case "back":
     case "reset":
-      return initialState;
+      // Ignored while a request is in flight (the dialog component blocks closing during "running"),
+      // so a late response can never land on a reopened form.
+      return state.phase === "running" ? state : initialState;
     case "result": {
+      if (state.phase !== "running") return state;
       const r = action.result;
       if (r.kind === "short" || r.kind === "job") return { phase: "done", result: r };
       if (r.kind === "need") return { phase: "confirm", need: r.need, ...(r.target !== undefined ? { target: r.target } : {}), typed: "" };

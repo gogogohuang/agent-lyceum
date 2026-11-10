@@ -46,6 +46,24 @@ describe("dialog state machine", () => {
     const running = reduce(initialState, { type: "submit" });
     expect(reduce(running, { type: "submit" })).toBe(running);
   });
+  it("a result is ignored outside the running phase", () => {
+    const confirm = reduce(reduce(initialState, { type: "submit" }), { type: "result", result: { kind: "need", need: "confirm" } });
+    const done = reduce(reduce(initialState, { type: "submit" }), { type: "result", result: short });
+    for (const s of [initialState, confirm, done]) {
+      expect(reduce(s, { type: "result", result: short })).toBe(s);
+    }
+  });
+  it("back and reset are ignored while running", () => {
+    const running = reduce(initialState, { type: "submit" });
+    expect(reduce(running, { type: "back" })).toBe(running);
+    expect(reduce(running, { type: "reset" })).toBe(running);
+  });
+  it("a typed tier without a target is never ready", () => {
+    let s = reduce(reduce(initialState, { type: "submit" }), { type: "result", result: { kind: "need", need: "typed" } });
+    expect(confirmReady(s)).toBe(false);
+    s = reduce(s, { type: "typed", value: "" });
+    expect(confirmReady(s)).toBe(false);
+  });
 });
 
 describe("exitInfo", () => {
