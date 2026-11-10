@@ -29,7 +29,7 @@
 
 ## 安全
 
-- **重大變更：**整個 `/api/*`（讀取與寫入）都只限本機。`--host` 不是 loopback 位址時，`/api/*` 的每種 method 都回 HTTP 403，無法執行任何指令。沒有旗標可以開啟；不支援把操作台暴露到網路上。在此之前，非 loopback 的 `--host` 會關掉寫入路由的檢查。
+- **限制：**整個 `/api/*`（讀取與寫入）都只限本機。`--host` 不是 loopback 位址時，`/api/*` 的每種 method 都回 HTTP 403，無法執行任何指令。沒有旗標可以開啟；不支援把操作台暴露到網路上。在此之前，非 loopback 的 `--host` 會關掉寫入路由的檢查。
 - `POST /api/*` 需要有效的 `Host`、同源的 `Origin`（一定要有）與放在 `X-Lyceum-Token` 的每次啟動專屬 token。token 在每次伺服器啟動時隨機產生，並注入 `index.html` 的 `<meta name="lyceum-token">`。重複出現的 `Origin` 或 token 標頭會被拒絕。`POST /quota` 維持原規則（`Origin` 可有可無）。
 - 每個指令都以 `process.execPath` 加參數陣列啟動，不經過 shell。任務這類自由文字放在 `--` 之後，不會被當成選項。
 - 500 回應只有通用訊息；細節印在伺服器的 console。

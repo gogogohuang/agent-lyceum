@@ -29,7 +29,7 @@ The server enforces the tier; the page only asks first. The tier can depend on t
 
 ## Security
 
-- **Breaking:** the whole `/api/*` surface, reads and writes, is local-only. When `--host` is not a loopback address, every method on `/api/*` answers HTTP 403 and no command can run. There is no flag to turn it on; exposing the console to a network is not supported. Before this change, a non-loopback `--host` switched the write-route checks off.
+- **Restriction:** the whole `/api/*` surface, reads and writes, is local-only. When `--host` is not a loopback address, every method on `/api/*` answers HTTP 403 and no command can run. There is no flag to turn it on; exposing the console to a network is not supported. Before this change, a non-loopback `--host` switched the write-route checks off.
 - `POST /api/*` needs a valid `Host`, a same-origin `Origin` (it must be present) and the per-start token in `X-Lyceum-Token`. The token is random on every server start and is injected into `index.html` as `<meta name="lyceum-token">`. An `Origin` or token header that is repeated is rejected. `POST /quota` keeps its old rule (`Origin` optional).
 - Every command is started as `process.execPath` plus an argument array, never through a shell. Free text such as the task is passed after `--`, so it cannot be read as an option.
 - A 500 response is generic; the detail goes to the server's console.
