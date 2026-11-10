@@ -64,10 +64,13 @@ describe("runShort", () => {
         "setTimeout(() => {}, 60000);",
       ].join("\n"),
     );
+    // The pid file is written after the SIGTERM handler is installed; start the clock only once the child is ready.
     const t0 = Date.now();
-    const r = await runShort({ execPath: process.execPath, args: [stubborn] }, "/h", [], { cwd: dir, timeoutMs: 200 });
+    const pending = runShort({ execPath: process.execPath, args: [stubborn] }, "/h", [], { cwd: dir, timeoutMs: 1500 });
+    await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8") !== "", 1200);
+    const r = await pending;
     expect(r.timedOut).toBe(true);
-    expect(Date.now() - t0).toBeLessThan(4500);
+    expect(Date.now() - t0).toBeLessThan(5500);
     const gc = Number(fs.readFileSync(pidFile, "utf8"));
     await until(() => {
       try {
