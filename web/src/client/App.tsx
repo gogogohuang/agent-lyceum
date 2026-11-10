@@ -187,7 +187,7 @@ function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: 
             )}
           </p>
         ))}
-        <Button type="button" disabled={pending} className="min-h-9 rounded-md border border-line px-3 py-1 text-xs hover:bg-wall disabled:opacity-60 sm:min-h-0" onClick={refresh}>
+        <Button type="button" disabled={pending} className="min-h-11 rounded-md border border-line px-3 py-1 text-xs hover:bg-wall disabled:opacity-60 sm:min-h-0" onClick={refresh}>
           {pending ? "正在取得" : "重新取得"}
         </Button>
         {error && <span className="text-pretty text-sm text-failed">{error}</span>}

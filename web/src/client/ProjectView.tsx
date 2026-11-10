@@ -165,7 +165,7 @@ function Facts({ report }: { report: StatusReport | undefined }) {
       {steps.length > 0 && (
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
           {steps.map((step) => (
-            <li key={step.text} className={cn("text-pretty", step.done && "text-ink/50 line-through")}>
+            <li key={step.text} className={cn("text-pretty", step.done && "text-ink/60 line-through")}>
               {step.text}
             </li>
           ))}
