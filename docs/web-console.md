@@ -37,5 +37,5 @@ The server enforces the tier; the page only asks first. The tier can depend on t
 ## Limits
 
 - A request body is at most 256 KB; a short command is stopped after 120 seconds and its output so far is returned.
-- If the server was restarted while the page was open, the page asks you to reload (the token changed).
+- If the server was restarted while the page was open, the next action is refused and the page asks you to refresh (the token changed).
 - A job's exit code is kept in `exit.json`. If the job's process is gone and it never wrote one, the page shows "已結束（結束碼不明）".
