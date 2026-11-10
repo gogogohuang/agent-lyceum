@@ -181,3 +181,32 @@ describe("the router and the guard agree on /api paths", () => {
     }
   });
 });
+
+describe("local-only console and dot-segment paths", () => {
+  it("refuses every /api method on a non-loopback bind", async () => {
+    const { opts, state } = boot({ host: "0.0.0.0" });
+    const page = await startWebServer(opts);
+    try {
+      for (const [method, url] of [["GET", "/api/jobs"], ["GET", "/api/ask/p/r1"], ["POST", "/api/cmd/init"]]) {
+        const r = request(state.handler as http.RequestListener, method as string, url as string, { host: "x" });
+        await r.done;
+        expect(r.out.status).toBe(403);
+        expect(r.out.body).not.toContain("jobs");
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("answers 404 (does not hang) for /api/../health", async () => {
+    const { opts, state } = boot();
+    const page = await startWebServer(opts);
+    try {
+      const r = request(state.handler as http.RequestListener, "GET", "/api/../health", { host: "127.0.0.1:8787" });
+      await Promise.race([r.done, new Promise((_, rej) => setTimeout(() => rej(new Error("hung")), 2000))]);
+      expect(r.out.status).toBe(404);
+    } finally {
+      await page.close();
+    }
+  });
+});

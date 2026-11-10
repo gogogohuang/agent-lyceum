@@ -4,7 +4,7 @@ import type { Socket } from "node:net";
 import type { WatchFactory } from "./server/hub.js";
 import { createWebHub } from "./server/hub.js";
 import { handleApi, type ConsoleDeps } from "./server/api.js";
-import { checkRequest } from "./server/guard.js";
+import { checkRequest, isLoopbackHost } from "./server/guard.js";
 import { attachEvents, listen as listenHttp, serveStatic } from "./server/http.js";
 import { openBrowser } from "./server/open.js";
 import { handleSummary } from "./server/summary.js";
@@ -103,7 +103,23 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
         res.end(JSON.stringify({ error: "沒有這個 API。" }));
         return;
       }
-      void handleApi(req, res, new URL(`http://127.0.0.1${req.url ?? "/"}`), opts.console);
+      if (!isLoopbackHost(opts.host)) {
+        res.writeHead(403, JSON_HEADERS);
+        res.end(JSON.stringify({ error: "指令控制台只限本機使用，不能在非 loopback 的 --host 上開放。" }));
+        return;
+      }
+      const fail = (status: number, error: string) => {
+        if (res.headersSent) return;
+        res.writeHead(status, JSON_HEADERS);
+        res.end(JSON.stringify({ error }));
+      };
+      // handleApi sees the normalized URL: `/api/../health` passes the raw test above but is not an API path.
+      void handleApi(req, res, new URL(`http://127.0.0.1${req.url ?? "/"}`), opts.console).then(
+        (handled) => {
+          if (!handled) fail(404, "沒有這個 API。");
+        },
+        () => fail(500, "伺服器出錯。"),
+      );
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
