@@ -142,7 +142,7 @@ describe("the router and the guard agree on /api paths", () => {
       for (const url of ["//api/cmd/init", "/%61pi/cmd/init", "/api", "/API/cmd/init", "/api%2Fcmd/init"]) {
         const r = request(state.handler as http.RequestListener, "POST", url, goodHeaders(token), {});
         await r.done;
-        expect([403, 404, 405]).toContain(r.out.status);
+        expect(r.out.status).toBe(405);
         expect(r.out.body).not.toContain("stdout");
       }
     } finally {
