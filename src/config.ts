@@ -3,10 +3,10 @@ import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
 import {
-  absPath,
   canonicalPath,
   escapesParent,
   expandHome,
+  configPath,
   homePaths,
   projectPaths,
   type ProjectPaths,
@@ -135,11 +135,11 @@ export function loadProjectRaw(home: string, name: string) {
 function resolveLayer(p: AgentPartialT | undefined, base: string): AgentPartialT {
   if (!p) return {};
   const out: AgentPartialT = { ...p };
-  if (p.agent_md) out.agent_md = absPath(p.agent_md, base);
+  if (p.agent_md) out.agent_md = configPath(p.agent_md, base);
   if (p.memory) {
     out.memory = {};
-    if (p.memory.global) out.memory.global = absPath(p.memory.global, base);
-    if (p.memory.project) out.memory.project = absPath(p.memory.project, base);
+    if (p.memory.global) out.memory.global = configPath(p.memory.global, base);
+    if (p.memory.project) out.memory.project = configPath(p.memory.project, base);
   }
   return out;
 }
@@ -300,7 +300,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
   return {
     home,
     name,
-    dir: absPath(p.dir, paths.root),
+    dir: configPath(p.dir, paths.root),
     lead,
     dispatcher,
     agents,
@@ -358,7 +358,7 @@ export function listProjects(home: string): { name: string; dir: string }[] {
     if (!entry.isDirectory()) continue;
     try {
       const raw = loadProjectRaw(home, entry.name);
-      out.push({ name: entry.name, dir: absPath(raw.dir, projectPaths(home, entry.name).root) });
+      out.push({ name: entry.name, dir: configPath(raw.dir, projectPaths(home, entry.name).root) });
     } catch {
       /* ignore broken project */
     }

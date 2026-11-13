@@ -14,7 +14,7 @@
     └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
 
-`team.yaml` 定義可重複使用的 agent；`project.yaml` 選擇團隊並覆寫欄位。物件會逐欄位合併，陣列（`can_message`）則整個取代。相對路徑以寫入該路徑的檔案所在資料夾為基準；允許使用 `~`。
+`team.yaml` 定義可重複使用的 agent；`project.yaml` 選擇團隊並覆寫欄位。物件會逐欄位合併，陣列（`can_message`）則整個取代。相對路徑以寫入該路徑的檔案所在資料夾為基準；允許使用 `~`。`dir`、`agent_md`、`memory.*` 也接受 `$VAR`／`${VAR}`（變數未設定會報錯），讓同步到多台電腦的同一份設定可寫成 `dir: ${WORK_ROOT}/web-app`；`sandbox.*` 路徑仍不展開變數。設定根目錄本身依序為 `--home`、`$AGENT_LYCEUM_HOME`、`~/agent-lyceum-config`。
 
 ```yaml
 # project.yaml

@@ -14,7 +14,7 @@
     └── runs/<run-id>/{task.md, log.jsonl, state.json, result.md, done-<n>.md, followups/<n>.md, snapshots/, agents/, mail/{inbox,outbox}/<agent>/}
 ```
 
-`team.yaml` defines reusable agents; `project.yaml` picks the team and overrides fields. Objects merge field by field, arrays (`can_message`) are replaced. Relative paths resolve against the folder of the file they are written in; `~` is allowed.
+`team.yaml` defines reusable agents; `project.yaml` picks the team and overrides fields. Objects merge field by field, arrays (`can_message`) are replaced. Relative paths resolve against the folder of the file they are written in; `~` is allowed. `dir`, `agent_md` and `memory.*` also accept `$VAR` / `${VAR}` (an unset variable is an error), so one config synced between machines can use e.g. `dir: ${WORK_ROOT}/web-app`; `sandbox.*` paths still do not expand variables. The config home itself is `--home`, else `$AGENT_LYCEUM_HOME`, else `~/agent-lyceum-config`.
 
 ```yaml
 # project.yaml

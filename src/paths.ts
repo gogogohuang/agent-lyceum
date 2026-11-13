@@ -15,6 +15,21 @@ export function absPath(p: string, base: string): string {
   return path.resolve(base, expandHome(p));
 }
 
+/** Expand `$VAR` / `${VAR}` from the environment. An unset variable is an error, never an empty string (that would turn `$ROOT/x` into `/x`). */
+export function expandEnv(p: string, env: NodeJS.ProcessEnv = process.env): string {
+  return p.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (_m, a: string | undefined, b: string | undefined) => {
+    const name = (a ?? b) as string;
+    const v = env[name];
+    if (v === undefined || v === "") throw new Error(`Environment variable ${name} is not set (used in path "${p}").`);
+    return v;
+  });
+}
+
+/** Like absPath, for paths written in config files: `$VAR` / `${VAR}` and `~` are expanded, so one synced config works on machines with different layouts. */
+export function configPath(p: string, base: string, env: NodeJS.ProcessEnv = process.env): string {
+  return absPath(expandEnv(p, env), base);
+}
+
 export function resolveHome(opt?: string): string {
   const raw = opt ?? process.env.AGENT_LYCEUM_HOME ?? path.join(os.homedir(), "agent-lyceum-config");
   return path.resolve(expandHome(raw));
