@@ -49,7 +49,7 @@
 2. *containment*：`approvals/`、`requests/`、`executors.yaml`，以及每個執行器的 `command[0]`、其真實路徑、所在目錄與 shebang 直譯器（*第一版 `command` 只能恰有一個元素*：不允許 `["/usr/bin/python3", "<repo 內腳本>"]` 這種把 agent 可改寫的腳本藏在參數裡的寫法；需要參數或腳本時，用位於 containment 之內的包裝程式），*除了「該 agent 自己的 `proposals/`」（見 4.1）外*，都不得位於任何 agent 可寫範圍之內；祖先目錄的可寫權限也不得涵蓋其他 slot 的 `proposals/` 或 `approvals/`。可寫範圍包含：`writePolicy` 的 `allowDirs`、專案目錄（含 `dir: ~` 這類涵蓋 home 的設定）、worktree、`sandbox.write`。全部用 `canonicalPath` 真實路徑比對。（現況只有 `call` 檢查「`--dir` 不得在 home 之內或之上」，一般 run 沒有，所以這項要新增。）
 3. *列入的 agent 不得設* `sandbox.unix_sockets`、`sandbox.network`、`sandbox.local_binding`，*也不得設* `allow_web: search|fetch`（對外通道）。另外要*驗證預設網路確實被擋*（見 8），而不只是檢查「沒有設定」。
 4. *列入的 agent 不得有 MCP*：Claude 於建構呼叫時加 `--strict-mcp-config` 並給空設定（不事後偵測，因為使用者 MCP 在 `~/.claude.json`、專案 `.mcp.json` 在 agent 可寫的 repo 內）。旗標集中加在 `buildClaudeInvocation`（`adapters/claude.ts` 約 63–93 行）；fallback 與 tier 只換 runtime 與 model（`fallback.ts:51-56`），所以只要以「列入」標記為依據就會一致套用。*實作需新增*：`ResolvedAgent` 與 `WakeInput` 的「列入」欄位，並確認 solo 與 `call` 的 wake 也套用。*前提重驗不可掛在 `invokeWithSandboxChecks`*：它對沒有 `sandbox` 設定的 agent 與帶 `policy` 的 wake 直接放行（`sandbox-invocation.ts` 約 170 行），需另設進入點。Codex 沒有已知的對應旗標，也不能事後偵測，所以*列入的 agent 不得使用 Codex*，包含 `fallback` 候選中含 Codex 的情況，`doctor` 必須擋。前提 3 的禁用以每個候選的有效設定判斷，不只看 primary。同時禁止 `--dangerously-bypass-approvals-and-sandbox` 與 `danger-full-access`。*另外，Claude 對列入的 agent 必須加 `--setting-sources user`*（`claude --help` 列有此旗標，值為 user、project、local；`--bare` 只讀 API key、不讀 OAuth，不適用）：現況 `adapters/claude.ts` 只傳 `--settings`、沒有任何來源隔離，agent 可寫的 repo 內 `.claude/settings.json` 與 `.claude/settings.local.json`（`policy.ts` 只保護 `CLAUDE.md`／`AGENTS.md`）會被合併，其中 `apiKeyHelper`、`statusLine`、`env`、`sandbox.excludedCommands`、`permissions.allow` 等由 Claude 本體處理、不在 OS 沙盒內，等於又一條沙盒外執行的通道。縱深防禦：同時把這兩個檔案加進列入 agent 的 `deny`。*沙盒必須是硬性的*：對列入的 Claude agent 在 `--settings` 加 `sandbox.failIfUnavailable: true`（現況 `buildClaudeSettings` 只設 `enabled: true` 與 `allowUnsandboxedCommands: false`；`claude` 的預設是沙盒後端起不來時讓 shell *無沙盒*執行，訊息為「a missing backend would run the shell unconfined」，所以前提 1 只探測 `bwrap` 存在是不夠的）。*user 層設定也會被合併*：`~/.claude/settings.json` 的 `sandbox.excludedCommands`（例如 `git`、`docker`，被排除的命令在沙盒外執行，agent 可借 `git -c alias.x='!…'` 之類執行任意指令）、不帶路徑的 `permissions.allow`（Edit 工具在 Claude 行程內，不受 OS 沙盒管）、`additionalDirectories`、`sandbox.filesystem.allowWrite` 都可能擴大權限。因此：(i) 優先驗證 `--setting-sources ""`（空來源）是否仍能以 OAuth 登入，可行就改用空來源（第 0 步 (f)）；(ii) 否則 `doctor` 與每次 wake 前對 user 層的 `sandbox.*` 與 `permissions.*` 整個命名空間做*白名單*檢查（涵蓋 `sandbox.network.*`、`permissions.allow` 內的 `WebFetch`／`WebSearch` 等，不逐鍵列舉），不在白名單內就拒絕；(iii) 無論如何，把 `approvals/`、`executors.yaml`、各執行器檔案，以及*其他 slot 的*請求目錄以*逐項*方式加進列入 agent 的 `deny`（不可對 `requests/` 整個加 deny，否則會蓋掉自己 `proposals/` 的 allow；仿 `runDenyPaths` 逐項列）。
-5. *列入的 agent 只收到白名單環境變數*：adapter 現況以 `...process.env` 啟動 agent（`adapters/claude.ts:98`、`adapters/codex.ts:91`）。對列入的 agent 改為只傳 runtime 運作所需的白名單（`PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR`；第一版*不猜*登入所需的其他變數，Claude 在此白名單下能否登入與運作列為*人工發布證據*，於第 0 步一併在真機驗證，不通過就不上線該 runtime）。其他 agent 不變。（`AGENT_LYCEUM_AGENT` 也會消失；正式程式碼沒有其他處讀它；`test/fixtures/runtime/fake-claude.mjs` 與 `test/adapters.test.ts` 會用，測列入的 agent 時要改用別的方式傳身分。）
+5. *列入的 agent 只收到白名單環境變數*：adapter 現況以 `...process.env` 啟動 agent（`adapters/claude.ts:98`、`adapters/codex.ts:91`）。對列入的 agent 改為只傳 runtime 運作所需的白名單（`PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR`、`USER`；macOS 實測只有前五項時 Claude 回「Not logged in」，加上 `USER` 即可登入，其他變數第一版*不猜*；Linux 未驗證，Claude 在此白名單下能否登入與運作仍列為*人工發布證據*，於第 0 步在真機驗證，不通過就不上線該 runtime）。其他 agent 不變。（`AGENT_LYCEUM_AGENT` 也會消失；正式程式碼沒有其他處讀它；`test/fixtures/runtime/fake-claude.mjs` 與 `test/adapters.test.ts` 會用，測列入的 agent 時要改用別的方式傳身分。）
 6. 平台不是 Windows。
 7. *dispatcher 在沙盒外執行的 repo 內指令*：`project.verify.commands`（`verify.ts` 以 `sh -c` 在 agent 可寫的 repo 或 worktree 內執行，環境為完整的 `process.env`，由 `settle()` 在 done 時觸發）屬於「agent 可改寫其內容、卻在沙盒外執行」的通道，會完全繞過核可關卡。*列入的 agent 所在的專案若設有非空的 `verify.commands`，`doctor` 報錯、拒收請求*（agent 的可寫範圍涵蓋專案目錄，所以這兩者不能並存；要用 `verify` 的專案，請用沒有列入的團隊成員）。`open_pr` *不是專案設定*，而是 lead 在 `done` 郵件中帶的欄位（`run-session.ts` 約 1085 行）：dispatcher 推送 agent 寫的分支並開 PR，不執行 agent 的程式碼，但會把內容送出去。所以 `doctor` 對*任何列入 agent 所在的專案*警告「lead 可請求 `open_pr`」；run 中 `done` 真的帶 `open_pr` 時，在 run log 與結束輸出再警告一次（只警告，不阻擋）。dispatcher 對 agent worktree 的 git 呼叫已關閉 hooks、fsmonitor 等（`write-scope.md`），不另列。
 8. *帶 `policy` 的 wake*（tidy、verify、format 等）雖不配置 `proposals/`（4.1），但對列入的 agent 仍必須套用 `--strict-mcp-config` 與環境白名單（第 3 節 4、5）；`invokeWithSandboxChecks` 對這類 wake 直接放行，所以需明確套用。
@@ -176,7 +176,7 @@ limits:
 
    配額是近似的*軟限制*：不上鎖，且只能在收走時檢查、無法阻止 agent 在 `proposals/` 內寫入；並行 run 同時收走可略微超額，由 `max_total_pending` 兜底，兩者都不是硬上限。`denied` 前 100 筆（每個專案或 call 與角色）保留完整記錄，其後只累計次數（`approvals/.denied-count/`；沒有 `record.json`，崩潰重入可能重複計數，屬近似值，測試不假設精確）。`denied` 記錄與其他記錄一樣是 `record.json`（內含不可變的 `disposition: denied` 與原因代碼），*不建立狀態檔*。
 
-殘留風險（寫進文件）：逃逸的背景程序可在輪替之後寫入新的 `proposals/`，下次 pass 才會被看到，它只能新增請求（受配額限制），不能改變已收走的複本；若它持有已輪替檔案的 fd，也只能改動 `collected/` 內的檔案，而複本已在 `approvals/`。「沙盒下 agent 無法替換 `proposals/` 本身」的假設（8.0 (c)）不成立時，輪替步驟 1 的 `lstat` 檢查是第一道防線；`rename` 目錄不穿越 symlink 是第二道。
+殘留風險（寫進文件）：逃逸的背景程序可在輪替之後寫入新的 `proposals/`，下次 pass 才會被看到，它只能新增請求（受配額限制），不能改變已收走的複本；若它持有已輪替檔案的 fd，也只能改動 `collected/` 內的檔案，而複本已在 `approvals/`。「沙盒下 agent 無法替換 `proposals/` 本身」的假設（8.0 (c)）*已在 macOS 實測不成立*（見第 8 節實測紀錄），所以輪替步驟 1 的 `lstat` 檢查是第一道防線；`rename` 目錄不穿越 symlink 是第二道。
 
 ### 4.5 id 與狀態機（序號狀態檔，無鎖）
 
@@ -324,11 +324,20 @@ dispatcher 在列入 agent *下次被喚醒*時，於 user prompt 末尾附「�
 
 1. *序號狀態檔、`payload` 與 `record.json` 的 `linkSync` 獨佔寫入、確定性 id 原型*：在 macOS 與 Linux 上驗證對已存在目標必定 EEXIST、並行建立同一個 n+1（或同一個 `record.json`）只有一個成功、暫存檔與目標需同目錄同檔案系統；驗證 `executing` 建立者崩潰後，其他行程能以嚴格存活判定寫入 `unknown`。這是新設計的組合，最先做原型。
 2. Codex 是否有關閉 MCP 的旗標（目前假設沒有，列入者不可用 Codex）。（`disableAllHooks` 已升為第 0 步 (f)。）
-3. 兩個 runtime 在白名單環境（`PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR`）下是否仍能登入與運作（真機，列為人工發布證據）；不通過就不上線該 runtime，不用猜測補變數。
+3. 兩個 runtime 在白名單環境（`PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR`、`USER`）下是否仍能登入與運作（macOS 上的 Claude 已實測通過，見實測紀錄；Linux 與 Codex 未驗證）（真機，列為人工發布證據）；不通過就不上線該 runtime，不用猜測補變數。
 4. 收走步驟放在 `settle()` 的位置，與 `routeOutboxes`、`integrateMember`、`commitClaim` 的順序（4.4）；以故障注入（`fault(...)`，`message-store.ts` 既有）覆蓋輪替的每一步之後、`.done` 之前、`commitClaim` 之前的崩潰。
 5. （程式碼面已答）把 home 下目錄加入 `allowDirs` 不被 `overlapsForeign`、`sandboxPathConflicts`、`instance-containment`、`deny`、`sandboxCaps` 拒絕；需新做的是每個 wake 前確保空 `proposals/`、canonical 化。
 6. 最後做第 6 節的逐字比對測試（`doctor`、prompt、CLI 參數、環境變數）。
 7. 舊版忽略 home 下未知目錄與 `executors.yaml`（見 6.14）。
+
+*macOS 實測紀錄*（2026-11-14，`claude` 2.1.325，arm64，`scripts/approval-gate-step0-wizard.sh` 試跑兩次；證據檔在 `~/agent-lyceum-config/evidence/`）：
+- (a) 通過：沙盒內 Bash、pty 子行程、巢狀 shell 都寫不進受保護目錄。
+- (b) 通過：對外 HTTPS、本機 127.0.0.1、unix socket、osascript 皆被擋（Apple Events 的 `open`、`launchctl` 未測）。
+- (c) *假設不成立*：agent 能執行 `rm -rf proposals && ln -s approvals proposals`（結束碼 0），即能把 `proposals/` 換成 symlink；但經該 symlink 寫入沒有進到 `approvals/`（沙盒仍擋）。dispatcher 對 symlink 的 `proposals/` 做目錄 `rename`，搬走的是連結本身、目錄外檔案未動；所以防線是輪替前的 `lstat`、處理 `collected/<seq>` 前的 `lstat`（4.1、§10 實作注意事項），而不是「agent 換不掉 `proposals/`」。`mv` 搬走 `proposals/` 本身被拒（Operation not permitted）。
+- (e) 通過：8 個行程並行 `rename` 到同名非空目標，恰好 1 個成功。
+- (f) 通過：不加旗標時 repo 內 `.claude/settings.local.json` 的 `env` 會被套用（通道確實存在）；`--setting-sources user` 與空來源（`""`）都不套用，且空來源可正常登入。專案的 `excludedCommands` 與 hooks 在 `disableAllHooks` 下，連不加旗標也沒有生效（此版本）。
+- 登入與環境白名單：只有 `PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR` 時回「Not logged in」；加上 `USER` 後 `--setting-sources user` 與空來源都登入成功（各 3 次重複測試）。
+- 未驗證：Linux 全部、Codex、(d) symlink 處理、user 層設定的合併、`failIfUnavailable` 在後端不可用時的行為、外掛帶入的 MCP 與 hooks、專案 agents／skills／commands 的 frontmatter。
 
 ## 9. 驗收條件
 
@@ -423,3 +432,5 @@ dispatcher 在列入 agent *下次被喚醒*時，於 user prompt 末尾附「�
 - v11（第 10 版審查：嚴重 1 項）：(S1) 現況 Claude 呼叫沒有設定來源隔離，agent 可寫的 repo 內 `.claude/settings.json`／`settings.local.json` 會被合併，其 `apiKeyHelper`、`statusLine`、`env`、`sandbox.excludedCommands`、`permissions.allow` 在沙盒外執行 → 列入的 Claude agent 加 `--setting-sources user`（`--bare` 不讀 OAuth，不適用）、兩個檔案加進 `deny`、第 0 步 (f) 擴大為驗證整體設定不生效。實作時處理已納入：快照排除 task memory、wake 前檢查與 claim 的先後、attempt 的數字排序與嚴格讀取、slot 層級 try/catch、park 重入冪等、`collected/<seq>` 處理前 `lstat`、`refused` 機制措辭、`requests gc` 保留高水位、1.1 保證 3 標明 `open_pr` 例外、檔頭格式不符的 `bad_header`、文字瑕疵。
 - v12（第 11 版審查：嚴重 3 項，皆在第 3 節前提）：(S1) 執行器 containment 只管 `command[0]`，可把 agent 可改寫的腳本放在參數裡 → 第一版 `command` 只能一個元素。(S2) Claude 預設在沙盒後端不可用時無沙盒執行 → 列入的 agent 加 `sandbox.failIfUnavailable: true`（已在本機 `claude 2.1.325` 二進位確認該設定存在）。(S3) `--setting-sources user` 仍合併 user 層的 `sandbox.excludedCommands`、不帶路徑的 `permissions.allow` 等 → 優先驗證空來源、否則 `doctor` 與每次 wake 前檢查、並逐項 `deny` 保護路徑，(f) 擴大驗證。實作時處理已納入：wake 前判定只看 claim 狀態、結局表新增「前提不成立」列、call 的 gc 條件定義、快照以 `writePolicy` 扣除 run 專屬項定義、`Default_Ignorable_Code_Point`、id 前綴確認僅防誤操作、§10 任務 1 補 loader 與快照函式、跨專案 containment 掃描、`linkSync` fail-closed、`opendir` 計數、回饋用計算狀態。
 - v12 定稿（第 12 版審查：GO，無嚴重問題）：補 user 層 `sandbox.*`／`permissions.*` 白名單檢查、`instanceCap` 落點、`AGENT_LYCEUM_AGENT` 測試說明、各種不喚醒路徑、回饋對計算狀態的延遲、控制字元 `Cc` 表述、(f) 追加驗證項。
+
+- v12.1（macOS 真機實測）：環境白名單加入 `USER`；(c) 的假設在 macOS 實測不成立，防線改以 `lstat` 為準；§8 新增實測紀錄。
