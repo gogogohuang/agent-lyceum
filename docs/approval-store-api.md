@@ -24,9 +24,9 @@ Names below are module names, not links to undelivered source files.
 | `origin` | Pure `staticWritable`, `qualificationHash`; injected `resolveOrigin`, `revalidateOrigin`. |
 | `io`, `store` | Read-only `readApprovalFile`, `readRecord`; mutations `publishExclusive`, `publishRecord`. |
 | `transition`, `liveness`, `state` | Pure `decideTransition`; probing `creatorLiveness`; read-only `readCurrent`; mutating `transition`. |
-| `display`, `json` | Pure `computeDisplay`, `serializeApprovalList`; versioned list types, no scanner or CLI. |
+| `display`, `json` | **Not delivered in stage 1** (the run stopped at its round limit): `computeDisplay`, `serializeApprovalList` and the versioned `approvals list --json` types do not exist yet; the intended contract is described below and is deferred to stage 2. |
 | `high-water` | `readHighWater`, `maxCollectedSequence`, `nextCollectedSequence`; mutating `advanceHighWater`. |
-| `rotation` | **Types only:** `Rotate`, `Park`, `ProposalsOf`, destination/result types. No callable rotate/park/proposalsOf implementation or stub. |
+| `rotation` | **Not delivered in stage 1:** no `Rotate`, `Park` or `ProposalsOf` types or implementation exist yet; the signatures are specified in the design spec (sections 4.1, 4.4) and are deferred to stage 3. |
 
 Identity example (relative imports assume a caller in `src/`):
 
@@ -137,7 +137,7 @@ timeout. Unverifiable start is alive only before
 It uses exported `pidStart()` but does not reuse fail-open `lockHolderAlive` or assume
 its quarter-hour tolerance proves a match. Incomparable locale/TZ results are unverifiable.
 
-`computeDisplay(current, nowMs, creator)` computes unwritten expired/unknown without
+*Planned, not implemented in stage 1.* `computeDisplay(current, nowMs, creator)` computes unwritten expired/unknown without
 changing persisted sequence/time; executing requires supplied liveness evidence.
 `serializeApprovalList({ schema_version: 1, requests, problems })` validates and sorts
 requests by ID and problems by `(id,path,code)`, returning JSON plus LF. Items include
