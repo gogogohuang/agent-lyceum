@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { ApprovalError } from './approval-error.js';
-import { defaultApprovalIo, publishExclusive, readApprovalFile } from './approval-io.js';
+import { assertRealDir, defaultApprovalIo, publishExclusive, readApprovalFile } from './approval-io.js';
 import type { ApprovalIo, FaultPoint } from './approval-io.js';
 import { recordPaths } from './approval-paths.js';
 import { parseApprovalState } from './approval-schema.js';
@@ -61,9 +61,11 @@ export function readCurrent(home: string, id: ApprovalId, io: ApprovalIo = defau
   for (let attempt = 0; ; attempt++) {
     let names: string[];
     try {
+      assertRealDir(io, paths.state);
       names = io.readdirSync(paths.state) as string[];
     } catch (e) {
       if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return { record, n: 0, state: null };
+      if (e instanceof ApprovalError) throw e;
       throw new ApprovalError('IO_ERROR', `readdir failed: ${paths.state}`, paths.state, { cause: e });
     }
     const n = highestN(paths.state, names);

@@ -48,7 +48,7 @@ function ancestorsBelow(root: string, target: string): string[] {
   return out;
 }
 
-function assertRealDir(io: ApprovalIo, dir: string): void {
+export function assertRealDir(io: ApprovalIo, dir: string): void {
   const st = io.lstatSync(dir);
   if (!st.isDirectory()) {
     throw new ApprovalError('UNSAFE_PATH', 'Approval path component is not a real directory (symlink?)', dir);

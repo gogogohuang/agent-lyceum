@@ -1,0 +1,38 @@
+{
+  "project": "demo",
+  "ok": true,
+  "checks": [
+    {
+      "level": "ok",
+      "subject": "config",
+      "message": "Configuration is valid."
+    },
+    {
+      "level": "info",
+      "subject": "git",
+      "message": "Runs work directly in <ROOT>/user, one agent at a time (not a git repository)."
+    },
+    {
+      "level": "ok",
+      "subject": "claude-code",
+      "message": "claude claude fixture-version"
+    },
+    {
+      "level": "info",
+      "subject": "login",
+      "message": "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on."
+    }
+  ],
+  "runtimes": [
+    {
+      "runtime": "claude-code",
+      "binary": "found",
+      "json": "yes",
+      "resume": "yes",
+      "sandbox": "yes",
+      "effort": "yes",
+      "notes": [],
+      "version": "claude fixture-version"
+    }
+  ]
+}

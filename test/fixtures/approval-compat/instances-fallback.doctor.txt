@@ -1,0 +1,15 @@
+Project: demo
+
+ok     Configuration is valid.
+ok     git repo with a commit: runs and agents work in their own worktrees.
+warn   agent "fe-member--2" has the name instance 2 of "fe-member" would get, so "fe-member" runs at most 1 instance(s) at a time
+info   A run cannot open a pull request (a lead asks for one with `open_pr: true`): `gh` is not on PATH; the repo has no `origin` remote.
+ok     claude claude fixture-version
+ok     codex codex fixture-version
+info   Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on.
+
+Runtime capabilities (yes / no / unknown):
+  claude-code: claude fixture-version; json yes, resume yes, sandbox yes, effort yes
+  codex: codex fixture-version; json yes, resume yes, sandbox yes, effort yes
+
+No errors; 1 warning to review (marked warn above).

@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ApprovalError } from './approval-error.js';
 import { approvalId, encodeSourceKey } from './approval-id.js';
-import { defaultApprovalIo, publishExclusive, readApprovalFile } from './approval-io.js';
+import { assertRealDir, defaultApprovalIo, publishExclusive, readApprovalFile } from './approval-io.js';
 import type { ApprovalIo, FaultPoint } from './approval-io.js';
+import type { ApprovalListProblem } from './approval-json.js';
 import { recordPaths, storePaths } from './approval-paths.js';
 import { parseApprovalRecord } from './approval-schema.js';
 import type { ApprovalId, ApprovalRecord } from './approval-types.js';
@@ -40,17 +41,34 @@ export function readRecord(home: string, id: ApprovalId, io: ApprovalIo = defaul
   return record;
 }
 
-/** Ids whose record.json is committed. Incomplete entries (payload only) and non-id names are skipped. */
-export function listCommittedIds(home: string, io: ApprovalIo = defaultApprovalIo): ApprovalId[] {
+/** Valid committed ids plus per-record read/validation problems. Incomplete/non-id entries are skipped.
+ * An unsafe/unreadable approvals root fails the operation; one bad record does not hide other records.
+ */
+export function listCommittedIds(home: string, io: ApprovalIo = defaultApprovalIo): {
+  readonly ids: readonly ApprovalId[];
+  readonly problems: readonly ApprovalListProblem[];
+} {
   const dir = storePaths(home).approvals;
   let names: string[];
   try {
+    assertRealDir(io, dir);
     names = io.readdirSync(dir) as string[];
   } catch (e) {
-    if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return { ids: [], problems: [] };
+    if (e instanceof ApprovalError) throw e;
     throw new ApprovalError('IO_ERROR', `readdir failed: ${dir}`, dir, { cause: e });
   }
-  return names.filter((n) => ID_RE.test(n)).sort().filter((id) => readRecord(home, id, io) !== null);
+  const ids: ApprovalId[] = [];
+  const problems: ApprovalListProblem[] = [];
+  for (const id of names.filter((n) => ID_RE.test(n)).sort()) {
+    try {
+      if (readRecord(home, id, io) !== null) ids.push(id);
+    } catch (e) {
+      if (!(e instanceof ApprovalError)) throw e;
+      problems.push({ id, path: e.path ?? recordPaths(home, id).record, code: e.code, hint: 'Committed approval could not be read' });
+    }
+  }
+  return { ids, problems };
 }
 
 function checkInput(record: ApprovalRecord, payload: Buffer | null): ApprovalRecord {
