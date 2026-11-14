@@ -1,32 +1,32 @@
-# Approval store API (stage 1)
+# Approval store API (stage 1 + stage 2a helpers)
 
-**Unreleased contract reference.** This describes the independently approved
-[stage-1 plan](superpowers/plans/2026-11-14-approval-store-stage1.md), based on the
-[v12/v12.1 spec](superpowers/specs/2026-11-13-approval-gate-design.md).
-Implementation delivery, final export reconciliation and test evidence are pending.
-Examples below target the planned TypeScript ESM API; they are not verified runtime examples.
+**Unreleased API reference.** The stage-1 store and stage-2a part-1 helpers are
+implemented, following the [stage-1 plan](superpowers/plans/2026-11-14-approval-store-stage1.md)
+and [v12/v12.1 spec](superpowers/specs/2026-11-13-approval-gate-design.md).
+Examples below illustrate the TypeScript ESM API; they are not verified runtime examples.
 
 Stage 1 is a self-contained, default-off module set. No existing runtime imports it:
 there is no integration with `settle()`, `doctor`, `call`, `run-session`, adapters or
 CLI, no automatic config read and no import-time I/O. No approvals commands or
 executor runner are delivered. Existing `ResolvedAgent`/`WakeInput` membership
-integration is deferred; `ApprovalQualification` is a standalone wrapper.
+integration and doctor premise checks are pending final reconciliation after their
+implementation; `ApprovalQualification` is currently a standalone wrapper.
 
 ## Modules and direct calls
 
-Names below are module names, not links to undelivered source files.
+Names below identify source modules in `src/`.
 
 | Module (`approval-*.ts`) | Exports by responsibility |
 |---|---|
-| `types`, `schema`, `paths` | Readonly record/state/source/output types; `ApprovalError`; strict `parseApprovalRecord`, `parseApprovalState`; pure `storePaths`, `requestPaths`, `recordPaths`. |
+| `types`, `error`, `schema`, `paths` | Readonly record/state/source/output types; `ApprovalError`; strict `parseApprovalRecord`, `parseApprovalState`; pure `storePaths`, `requestPaths`, `recordPaths`. |
 | `id` | Pure `encodeSourceKey(key): Buffer`, `approvalId(key): ApprovalId`. |
 | `executors` | Pure `parseExecutors`, `qualificationOf`; explicitly called `loadExecutors(home, userHome, io?)`. |
 | `origin` | Pure `staticWritable`, `qualificationHash`; injected `resolveOrigin`, `revalidateOrigin`. |
-| `io`, `store` | Read-only `readApprovalFile`, `readRecord`; mutations `publishExclusive`, `publishRecord`. |
+| `io`, `store` | Read-only `assertRealDir`, `readApprovalFile`, `readRecord`, `listCommittedIds`; mutations `publishExclusive`, `publishRecord`. |
 | `transition`, `liveness`, `state` | Pure `decideTransition`; probing `creatorLiveness`; read-only `readCurrent`; mutating `transition`. |
-| `display`, `json` | **Not delivered in stage 1** (the run stopped at its round limit): `computeDisplay`, `serializeApprovalList` and the versioned `approvals list --json` types do not exist yet; the intended contract is described below and is deferred to stage 2. |
+| `display`, `json` | Pure `computeDisplay`, `serializeApprovalList`; `Display`, `ApprovalListItemV1`, `ApprovalListV1`, `ApprovalListProblem` and aliases `ApprovalListItem`, `ApprovalListJson`. |
 | `high-water` | `readHighWater`, `maxCollectedSequence`, `nextCollectedSequence`; mutating `advanceHighWater`. |
-| `rotation` | **Not delivered in stage 1:** no `Rotate`, `Park` or `ProposalsOf` types or implementation exist yet; the signatures are specified in the design spec (sections 4.1, 4.4) and are deferred to stage 3. |
+| `rotation` | Type-only `Rotate`, `Park`, `ProposalsOf`, `RotationDestination`, `RotationResult`, `ParkResult`; no implementation or runtime exports. |
 
 Identity example (relative imports assume a caller in `src/`):
 
@@ -105,6 +105,15 @@ Metadata/executors are capped at 1 MiB, payload at 65536 bytes, high-water at 32
 
 ## Publication, transitions and display
 
+`listCommittedIds(home, io?)` returns `{ ids, problems }`, with IDs sorted. It skips
+non-ID names and incomplete entries without `record.json`; a missing approvals root
+returns empty arrays. It checks that the root is a real directory before enumeration;
+an unsafe/unreadable root throws. Per-record `ApprovalError`s become
+`{ id, path, code, hint }` problems without hiding valid records. It reads records,
+not state: a listed ID does not establish that its current state is readable.
+`readCurrent` likewise checks its state directory before enumeration and still
+throws on unsafe paths or corrupt state; it does not turn failures into problems.
+
 `publishRecord(home, record, payload, deps?)` returns `{ kind: "created"|"existing",
 record }`. Payload and record use same-directory exclusive temp files, fsync, then
 `linkSync`: first writer wins. Existing payload bytes must match before record commit;
@@ -137,13 +146,53 @@ timeout. Unverifiable start is alive only before
 It uses exported `pidStart()` but does not reuse fail-open `lockHolderAlive` or assume
 its quarter-hour tolerance proves a match. Incomparable locale/TZ results are unverifiable.
 
-*Planned, not implemented in stage 1.* `computeDisplay(current, nowMs, creator)` computes unwritten expired/unknown without
-changing persisted sequence/time; executing requires supplied liveness evidence.
-`serializeApprovalList({ schema_version: 1, requests, problems })` validates and sorts
-requests by ID and problems by `(id,path,code)`, returning JSON plus LF. Items include
-origin, proposer, executor, timestamps, display, reason and payload hash/size; omit
-payload, summary, snapshot/env and executor output. Problems explicitly report corruption.
-This is only the future list output contract; existing `status --json` is unchanged.
+`computeDisplay(current: Current, nowMs: number, creator: Liveness | null): Display`
+returns `Display` with `persisted`,
+`computed`, `unrecorded`, `n` and `updated_at`. Pending becomes computed expired
+only when `nowMs > expires_at`; executing becomes computed unknown only with
+supplied dead-creator evidence. Executing without evidence throws `INVALID_INPUT`;
+the helper never probes a PID. Other statuses stay as persisted. `unrecorded` means
+computed differs from persisted; `n` and `updated_at` remain the persisted sequence
+and time (0 and record creation time without state). No transition is written.
+
+`serializeApprovalList(value: unknown): string` validates the versioned envelope
+`{ schema_version: 1, requests, problems }` and returns JSON plus LF, with fixed key
+order, requests sorted by ID and problems by `(id,path,code)`. `ApprovalListV1`
+(alias `ApprovalListJson`) contains `ApprovalListItemV1[]` (alias item type
+`ApprovalListItem`) and `ApprovalListProblem[]`, all readonly. Items contain only
+id, origin, proposer, executor, creation/expiry times, display, reason and payload
+hash/size. Payload content, summary, qualification snapshot/env and executor output
+are excluded; extra item fields make the item invalid rather than being emitted.
+
+Invalid request items are omitted from requests and reported as `CORRUPT_RECORD`
+problems with path `requests[index]`, a valid ID if available (otherwise `<unknown>`),
+and fixed hint `Invalid approval list item`; raw invalid fields/exception messages
+are not copied. Invalid envelopes or problem metadata throw `INVALID_INPUT`;
+unsupported versions throw `UNSUPPORTED_VERSION`. Caller-supplied problem strings
+must already be safe metadata. The serializer neither scans the store nor selects
+CLI filters. These helpers support a future `approvals list --json`; no approvals
+CLI is delivered and existing `status --json` is unchanged.
+
+`approval-rotation.ts` provides only these type contracts:
+
+```ts
+type RotationDestination =
+  | { readonly kind: "collected"; readonly seq: Sequence }
+  | { readonly kind: "parked"; readonly attempt_id: string };
+type RotationResult =
+  | { readonly kind: "rotated"; readonly destination: string; readonly proposals: string }
+  | { readonly kind: "empty"; readonly proposals: string };
+type ParkResult = RotationResult;
+type Rotate = (home: string, slot: SlotRef, dest: RotationDestination) => RotationResult;
+type Park = (home: string, slot: SlotRef, attemptId: string) => ParkResult;
+type ProposalsOf = (agent: string) => string | undefined;
+```
+
+`Sequence` and `SlotRef` are existing types from `approval-types.ts` and
+`approval-paths.ts`. The comments specify future coordinated directory rotation,
+park-before-abandon recovery and a trusted proposals-path lookup (undefined when
+absent). They supply no callable exports, collection, rotation, parking or recovery
+implementation, and no wake enforcement.
 
 ## Origin, coordination and trust limits
 

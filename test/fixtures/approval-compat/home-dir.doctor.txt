@@ -1,0 +1,11 @@
+Project: demo
+
+ok     Configuration is valid.
+info   Runs work directly in <ROOT>/user, one agent at a time (not a git repository).
+ok     claude claude fixture-version
+info   Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on.
+
+Runtime capabilities (yes / no / unknown):
+  claude-code: claude fixture-version; json yes, resume yes, sandbox yes, effort yes
+
+No problems found.

@@ -123,9 +123,9 @@ describe('publishRecord', () => {
       fs.rmSync(path.join(home, 'approvals'), { recursive: true, force: true });
       expect(() => publishRecord(home, rec, PAYLOAD, crashAt(point))).toThrow(`crash at ${point}`);
       expect(readRecord(home, rec.id)).toBeNull();
-      expect(listCommittedIds(home)).toEqual([]);
+      expect(listCommittedIds(home)).toEqual({ ids: [], problems: [] });
       expect(publishRecord(home, rec, PAYLOAD).kind).toBe('created');
-      expect(listCommittedIds(home)).toEqual([rec.id]);
+      expect(listCommittedIds(home)).toEqual({ ids: [rec.id], problems: [] });
       expect(fs.readFileSync(recordPaths(home, rec.id).payload).equals(PAYLOAD)).toBe(true);
     }
   });
@@ -238,11 +238,11 @@ describe('readRecord / listCommittedIds', () => {
     expect(codeOf(() => readRecord(home, wrong))).toBe('CORRUPT_RECORD');
   });
   it('listCommittedIds ignores incomplete, dot and non-id entries; missing dir is empty', () => {
-    expect(listCommittedIds(home)).toEqual([]);
+    expect(listCommittedIds(home)).toEqual({ ids: [], problems: [] });
     const a = pendingFor(PAYLOAD);
     publishRecord(home, a, PAYLOAD);
     fs.mkdirSync(path.join(home, 'approvals', 'a'.repeat(24)));
     fs.mkdirSync(path.join(home, 'approvals', '.trash'));
-    expect(listCommittedIds(home)).toEqual([a.id]);
+    expect(listCommittedIds(home)).toEqual({ ids: [a.id], problems: [] });
   });
 });
