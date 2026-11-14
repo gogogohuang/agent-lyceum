@@ -4,6 +4,7 @@ import { repoDirFor, scratchCwd, writePolicy, type WritePolicy } from "../policy
 import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { ErrorKind } from "../schema.js";
 import { canonicalPath } from "../paths.js";
+import { applyShipToWake } from "../ship-wire.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 /** Claude Code path rules: `//abs/path` — a leading "/" plus the absolute path. */
@@ -60,7 +61,8 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
   };
 }
 
-export function buildClaudeInvocation(input: WakeInput): Invocation {
+export function buildClaudeInvocation(raw: WakeInput): Invocation {
+  const { input, ship } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
   fs.mkdirSync(workDir, { recursive: true });
   const settingsFile = path.join(workDir, "claude-settings.json");
@@ -73,6 +75,8 @@ export function buildClaudeInvocation(input: WakeInput): Invocation {
 
   const pol = input.policy ?? writePolicy(project, agent);
   const addDirs = [...pol.allowDirs, ...pol.readDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
+  // So Bash can read the ship session file under the run's agent workDir.
+  if (ship) addDirs.push(workDir);
 
   const args = [
     "-p",

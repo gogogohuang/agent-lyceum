@@ -69,6 +69,18 @@ export const SandboxPartial = z
   .strict();
 export type SandboxPartialT = z.infer<typeof SandboxPartial>;
 
+/** Per-agent ship tool (search/replace + verify + rollback). `true` = on with defaults; object may set verify. */
+export const ShipPartial = z.union([
+  z.boolean(),
+  z
+    .object({
+      verify: z.string().min(1).optional(),
+      timeout_sec: z.number().int().min(1).max(7200).optional(),
+    })
+    .strict(),
+]);
+export type ShipPartialT = z.infer<typeof ShipPartial>;
+
 export const AgentPartial = z
   .object({
     runtime: z.enum(RUNTIMES).optional(),
@@ -83,6 +95,8 @@ export const AgentPartial = z
     allow_web: z.enum(WEB_LEVELS).optional(),
     fallback: z.array(FallbackEntryPartial).optional(),
     sandbox: SandboxPartial.optional(),
+    /** Opt-in: wake writes a ship session and documents the `agent-lyceum ship` CLI (Claude Code and Codex). */
+    ship: ShipPartial.optional(),
     /** Removed setting: still accepted (any value) so old files load; ignored, with a warning from `validate`. */
     owns: z.unknown().optional(),
   })

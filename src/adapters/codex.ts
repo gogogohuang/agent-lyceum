@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectCommonDir, projectCommonDirAllowed, repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
+import { applyShipToWake } from "../ship-wire.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 export function codexWritableRoots(input: WakeInput): string[] {
@@ -56,12 +57,14 @@ export function codexOutputTokens(jsonl: string): number | undefined {
 /** Codex has one `web_search` setting: `cached` answers from an index, `live` browses. */
 const CODEX_WEB_SEARCH = { none: "disabled", search: "cached", fetch: "live" } as const;
 
-export function buildCodexInvocation(input: WakeInput): Invocation {
+export function buildCodexInvocation(raw: WakeInput): Invocation {
+  const { input } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });
   if (input.policy) fs.mkdirSync(repo, { recursive: true });
   const lastFile = path.join(workDir, "codex-last-message.txt");
+  // Do not add workDir to writable_roots: the ship session must not become agent-writable.
   const roots = codexWritableRoots(input);
   const common = [
     "-c",

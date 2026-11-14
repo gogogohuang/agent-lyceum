@@ -74,6 +74,8 @@ export interface ResolvedAgent {
   instance?: { role: string; k: number };
   /** Instances 2 and up: the role's global/project memory, which only instance 1 may write. */
   sharedMemory?: { global?: string; project?: string };
+  /** Opt-in ship CLI on Claude Code and Codex wakes; absent = off. */
+  ship?: { verify?: string; timeoutSec?: number };
 }
 
 export interface ResolvedProject {
@@ -267,6 +269,17 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     const canAsk = pick("can_ask_user");
     const allowWeb = pick("allow_web");
     const sandbox = resolveSandbox(agentName, pick("sandbox"));
+    const shipRaw = pick("ship");
+    const ship =
+      shipRaw === true
+        ? {}
+        : shipRaw && typeof shipRaw === "object"
+          ? {
+              ...(shipRaw.verify ? { verify: shipRaw.verify } : {}),
+              ...(shipRaw.timeout_sec !== undefined ? { timeoutSec: shipRaw.timeout_sec } : {}),
+            }
+          : undefined;
+    // `ship: false` is explicit off (same as unset for resolution).
     for (const [k, v] of [
       ["resume", resume],
       ["can_message", canMessage],
@@ -275,6 +288,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     ] as const) {
       if (v === undefined) sources[k] = "default";
     }
+    if (shipRaw === undefined) sources.ship = "default";
 
     agents[agentName] = {
       name: agentName,
@@ -289,6 +303,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canAskUser: canAsk ?? isLead,
       allowWeb,
       ...(sandbox ? { sandbox } : {}),
+      ...(ship ? { ship } : {}),
       fallback,
       fallbackShared,
       fallbackInvalid,
@@ -386,7 +401,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback", "sandbox"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback", "sandbox", "ship"] as const;
 
 /** Claude pattern metacharacters and control characters: refused in sandbox paths instead of escaped (spec 25.4.1). */
 const PATH_CHARS = /[*?[\]{}()!\\]/;
@@ -486,6 +501,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
+    if (a.ship) v[`${p}.ship`] = a.ship;
     if (a.fallback.length) v[`${p}.fallback`] = a.fallback;
     if (a.sandbox) v[`${p}.sandbox`] = { write: a.sandbox.write, network: a.sandbox.network, local_binding: a.sandbox.localBinding, unix_sockets: a.sandbox.unixSockets };
     if (a.tiers) v[`${p}.model_tiers`] = a.tiers;
