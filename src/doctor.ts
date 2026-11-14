@@ -12,6 +12,7 @@ import { checkDecisions, listProposals, oldestPending, pendingProposals } from "
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
+import { diagnoseApproval } from "./doctor-approval.js";
 import { diagnoseInstances } from "./doctor-instances.js";
 import { dirtyPaths, git, isolationBlocker } from "./worktree.js";
 
@@ -267,6 +268,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     if (pr.problems.length && (pr.status === undefined || pr.status === "proposed")) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: ${pr.problems.join("; ")}.` });
   }
   for (const d of checkDecisions(listProposals(project), project)) checks.push({ level: "warn", subject: "proposals", message: `${d.file}: ${d.problem}.` });
+  checks.push(...diagnoseApproval(project));
 
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));
