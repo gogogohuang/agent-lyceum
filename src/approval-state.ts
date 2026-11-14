@@ -26,7 +26,7 @@ const corrupt = (file: string, why: string, cause?: unknown): ApprovalError =>
 /** Read and strictly parse state/<n>.json; null only when the file does not exist. */
 function readState(home: string, dir: string, n: number, io: ApprovalIo): ApprovalState | null {
   const file = path.join(dir, `${n}.json`);
-  const buf = readApprovalFile(file, STATE_LIMIT, io, home);
+  const buf = readApprovalFile(file, STATE_LIMIT, home, io);
   if (buf === null) return null;
   let value: unknown;
   try { value = JSON.parse(buf.toString('utf8')); } catch (e) { throw corrupt(file, 'not valid JSON', e); }
