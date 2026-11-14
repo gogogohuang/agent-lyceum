@@ -10,6 +10,7 @@ import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
+import { diagnoseApproval } from "./doctor-approval.js";
 import { diagnoseInstances } from "./doctor-instances.js";
 import { dirtyPaths, git, isolationBlocker } from "./worktree.js";
 
@@ -252,6 +253,8 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       for (const s of r.supersedes) if (!ids.has(s)) checks.push({ level: "warn", subject: "records", message: `${r.file}: supersedes "${s}", but no ${kind} entry has that id.` });
     }
   }
+
+  checks.push(...diagnoseApproval(project));
 
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));

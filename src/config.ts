@@ -60,6 +60,8 @@ export interface ResolvedAgent {
   allowWeb?: WebLevel;
   /** Spec 25 allowances; unset when none is requested (the only switch that keeps output identical). Paths are absolute, `~` expanded, not yet canonical. */
   sandbox?: SandboxAllowances;
+  /** Approval gate: set (true) only when `<home>/executors.yaml` exists and lists this agent's role; omitted otherwise. Never persisted. */
+  enrolled?: boolean;
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
   fallback: FallbackEntry[];
   /** True when the chain came from `dispatcher.fallback` rather than the agent's own setting. */

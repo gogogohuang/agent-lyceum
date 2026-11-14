@@ -5,12 +5,14 @@ implemented, following the [stage-1 plan](superpowers/plans/2026-11-14-approval-
 and [v12/v12.1 spec](superpowers/specs/2026-11-13-approval-gate-design.md).
 Examples below illustrate the TypeScript ESM API; they are not verified runtime examples.
 
-Stage 1 is a self-contained, default-off module set. No existing runtime imports it:
-there is no integration with `settle()`, `doctor`, `call`, `run-session`, adapters or
-CLI, no automatic config read and no import-time I/O. No approvals commands or
-executor runner are delivered. Existing `ResolvedAgent`/`WakeInput` membership
-integration and doctor premise checks are pending final reconciliation after their
-implementation; `ApprovalQualification` is currently a standalone wrapper.
+Everything here is default-off. The only existing code path that uses these modules is
+`doctor`: it loads `executors.yaml` and runs read-only diagnostics (see
+[Doctor checks (stage 2a)](#doctor-checks-stage-2a); `src/doctor.ts:235`,
+`src/doctor-approval.ts:32`). There is no integration with `settle()`, `call`,
+`run-session`, wake, adapters or other CLI commands, and no import-time I/O. No approvals
+commands or executor runner are delivered. `ResolvedAgent` has an optional `enrolled` field
+(`src/config.ts:64`) that only `doctor` sets; `WakeInput` has no enrollment field, and nothing
+is enforced at wake, run or call.
 
 ## Modules and direct calls
 
@@ -216,7 +218,12 @@ not proof. Helpers supply no lock or concurrent allocator: next is
 `collected.seq` is canonical decimal plus LF; corrupt content fails closed.
 Replace-rename for advancing this file is not an atomic concurrent maximum.
 
-Errors are separate domains. `ApprovalError` carries code/path/cause without secrets:
+Errors are separate domains. `ApprovalError` carries `code`, `path` and an optional `cause`
+(`src/approval-error.ts:7-13`). Its generated messages are fixed diagnostics, but it also keeps
+caller-supplied strings, and `cause` can be a raw underlying error: for a record that is not
+valid JSON, `src/approval-store.ts:35-37` wraps the original `JSON.parse` error, which can
+contain file content. Treat `cause` and caller strings as potentially sensitive; do not log or
+display them unfiltered. Codes:
 `UNSUPPORTED_PLATFORM`, `UNSUPPORTED_LINK`, `UNSUPPORTED_VERSION`, `UNSAFE_PATH`,
 `IO_ERROR`, `CORRUPT_RECORD`, `CORRUPT_STATE`, `CORRUPT_HIGH_WATER`, `PAYLOAD_MISMATCH`,
 `SOURCE_MISMATCH`, `SEQUENCE_OVERFLOW`, `INVALID_INPUT`.
@@ -233,3 +240,94 @@ are unsupported. Pure proofs do not enforce sandbox, containment or human confir
 The spec §8 records human-run macOS observations, not new verification here; Linux
 and remaining real sandbox/login release conditions remain unverified. This API
 reference supplies no release-readiness evidence.
+
+## Doctor checks (stage 2a)
+
+`diagnoseApproval(project, opts?)` (`src/doctor-approval.ts`) is called only from `doctor`
+(`src/doctor.ts:235`). It is read-only diagnostics, not enforcement.
+
+- **Default off.** With no `<home>/executors.yaml`, or one whose `allow` lists are all empty,
+  it returns no checks and `doctor` output does not change (`src/approval-executors.ts:73-75`).
+- **Invalid file.** One error: `Approval executors configuration is invalid: <file>: <why>`
+  (`src/doctor-approval.ts:40`). `command` must be one absolute path (`src/approval-executors.ts:28`).
+- **Enrolled.** An agent is enrolled when its role appears in some executor's `allow`, matched
+  by exact project (or `call`) and role; instance names map to their role through `roleOfName`,
+  not a name pattern (`src/approval-enrollment.ts:13-16`). A same-named agent in a project that is
+  not in `allow` is not enrolled.
+- **Instance cap.** `instanceCap` returns 1 for an enrolled role (`src/instances.ts:47`). Only
+  `doctor` sets the `enrolled` flag (`applyEnrollment`, `src/approval-enrollment.ts:19-27`), so
+  real runs are unchanged today.
+
+Checks (subject `approval`; stems copied from source). Per enrolled agent, per candidate
+(primary, then each fallback) at its effective settings, `src/doctor-approval-premises.ts:20-37`:
+
+| Level | Message stem |
+|---|---|
+| error | `Approval enrollment is unsupported on Windows:` |
+| error | `Approval enrollment requires an OS sandbox:` |
+| error | `Approval-enrolled candidate permits sandbox.unix_sockets:` / `sandbox.network:` / `sandbox.local_binding:` |
+| error | `Approval-enrolled candidate permits allow_web=` (`search` or `fetch`) |
+| error | `Approval-enrolled candidate uses Codex:` |
+| warn | `Approval-enrolled agent has can_edit_agent_md:` |
+
+The capability and Codex errors are reported per candidate; the Windows, OS-sandbox and
+`can_edit_agent_md` checks once per agent.
+
+Once per project that has an enrolled agent (`src/doctor-approval-premises.ts:43-56`):
+
+| Level | Message stem |
+|---|---|
+| error | `Approval-enrolled project has verify.commands:` |
+| warn | `Approval-enrolled project lead may request open_pr:` |
+| warn | `Approval-enrolled role has effective instance cap 1:` (whenever the effective `dispatcher.max_instances` is not 1; an omitted value means the default 4, so it warns too) |
+
+For any project, also one without an enrolled agent (`src/doctor-approval-premises.ts:57-69`):
+
+| Level | Message stem |
+|---|---|
+| warn | `Agent is not approval-enrolled despite matching an enrolled role name:` |
+
+Containment (stems at `src/doctor-approval-containment.ts:32-35`), compared on canonical paths
+in both directions across all projects and global call agents:
+
+| Level | Message stem |
+|---|---|
+| error | `Approval protected path overlaps an agent writable range:` |
+| error | `Approval executable or path cannot be verified:` |
+| error | `Approval containment scan is incomplete:` |
+| warn | `Approval containment does not validate future call --dir values:` |
+
+Protected set (`src/doctor-approval-containment.ts`; source locations below name functions, since line numbers move): the `approvals directory`,
+`requests directory` and `executors.yaml` paths, plus, for each executor, its `command`, real path,
+directory and real directory, and its direct absolute shebang interpreter with the same four kinds.
+Every symlink hop on those paths (and the hop's directory) is added as `<kind> symlink hop` and
+`<kind> symlink hop directory` (`symlinkHops`). Hops compare one way only: a grant that equals or
+contains the hop or its directory matches; a grant strictly inside does not (`Protected.oneWay`).
+More than 40 links is "cannot be verified".
+A `command` or interpreter with more than one hard link is "cannot be verified".
+A `command`, shebang interpreter or home path whose spelling contains a `.` or `..` component, or an
+empty one (`//`, trailing `/`), is "cannot be verified" without being resolved (`hasDotComponent`):
+`link/..` would otherwise be shortened before `link` is followed. Spell such paths without them.
+
+Writable ranges: per agent and candidate, the write policy dirs/files, the project dir, the project
+`worktrees` root and `sandbox.write`. The envelopes of each project's `runs`,
+`task-memory`, git common dir and the home `calls` root are walked for symlink aliases, following symlinked directories
+transitively, within 20000 entries and depth 8 (`MAX_WALK_ENTRIES`, `MAX_WALK_DEPTH`, `aliasesBelow`); exceeding a bound is a
+`scan is incomplete` error. The project `worktrees` envelope and the git checkouts (project dir,
+worktrees) are not alias-walked.
+All approval messages escape control characters as `\uXXXX` (`escapeControl`, applied again to every
+approval message at `src/doctor-approval.ts:40,49`).
+
+Limits:
+
+- No enforcement at wake, run or call; that is stage 2b.
+- On Linux, premise 1 only checks that `bwrap` exists (`osSandboxAvailable`); the message says backend startup is unverified.
+- A future `call --dir` is not checked (the warning above).
+- Overlaps are conservative: the message states it is not proof the agent can change the path.
+- No same-UID TOCTOU guarantee.
+- Runtime or user settings and MCP configuration are not checked.
+- Linux and a real sandbox are unverified.
+- Git checkouts are not alias-walked: an agent-made symlink there relies on the OS sandbox resolving symlink writes; Claude Edit-tool write-through is unverified.
+- Executor `env` values are not checked.
+- Hard links are detected only on the command or interpreter itself; other hard links are not searched for.
+- Links or hard links created after `doctor` runs are not seen.
