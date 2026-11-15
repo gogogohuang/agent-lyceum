@@ -927,6 +927,21 @@ program
     }
   });
 
+program
+  .command("ship")
+  .description("Apply search/replace edits with verify+rollback (Claude Code and Codex; session from the wake)")
+  .requiredOption("--session <file>", "ship-session.json written for this wake")
+  .option("--edits <file>", "edits JSON file (default: stdin)")
+  .action(async (opts: { session: string; edits?: string }) => {
+    try {
+      const { runShipCli } = await import("./ship-cli.js");
+      const code = await runShipCli({ session: opts.session, editsFile: opts.edits });
+      process.exitCode = code;
+    } catch (e) {
+      fail((e as Error).message);
+    }
+  });
+
 // `--help` lists the commands in three layers.
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],

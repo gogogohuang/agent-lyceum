@@ -108,6 +108,26 @@ describe("diagnoseProject", () => {
     for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
   });
 
+  describe("ship without a verify command", () => {
+    const shipWarns = async () => {
+      const { bin } = fakeBin(env.root);
+      const r = await diagnoseProject(env.project(), { env: envWith(bin, "full") });
+      return r.checks.filter((c) => c.level === "warn" && c.subject === "config" && /ship/.test(c.message));
+    };
+    const shipOn = (t: string) => t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship: true\n    can_message");
+
+    it("reports ship on without verify, naming the agent; clean with a verify chain or ship off", async () => {
+      env = makeEnv();
+      expect(await shipWarns()).toEqual([]);
+      env.editProjectYaml(shipOn);
+      const w = await shipWarns();
+      expect(w).toHaveLength(1);
+      expect(w[0]!.message).toContain('"fe-member"');
+      env.editProjectYaml((t) => t.replace(/\n$/, "\nverify:\n  commands:\n    - { name: unit, run: npm test }\n"));
+      expect(await shipWarns()).toEqual([]);
+    });
+  });
+
   describe("project records", () => {
     const rec = (extra = "") => `---\nstatus: active\ndate: 2026-01-02\ntitle: t\n${extra}---\nbody\n`;
     const recChecks = async () => {

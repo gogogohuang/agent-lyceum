@@ -181,4 +181,28 @@ describe("validate fallback", () => {
       expect(errors(env)).toEqual([]);
     });
   });
+
+  describe("ship without a verify command", () => {
+    const warns = (e: TestEnv) => validateProject(e.project()).issues.filter((i) => i.level === "warn" && /ship/.test(i.message)).map((i) => i.message);
+    const shipOn = (t: string) => t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship: true\n    can_message");
+
+    it("warns, naming the agent and the fix, when ship is on and nothing resolves", () => {
+      env = makeEnv();
+      env.editProjectYaml(shipOn);
+      const w = warns(env);
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain('"fe-member"');
+      expect(w[0]).toContain("ship.verify");
+      expect(w[0]).toContain("verify:");
+    });
+
+    it("is clean with a project verify chain or ship.verify, and when ship is off", () => {
+      env = makeEnv();
+      expect(warns(env)).toEqual([]);
+      env.editProjectYaml((t) => shipOn(t).replace(/\n$/, "\nverify:\n  commands:\n    - { name: unit, run: npm test }\n"));
+      expect(warns(env)).toEqual([]);
+      env.editProjectYaml((t) => t.replace("ship: true\n", "ship:\n      verify: npm test\n").replace(/\nverify:[\s\S]*$/, "\n"));
+      expect(warns(env)).toEqual([]);
+    });
+  });
 });

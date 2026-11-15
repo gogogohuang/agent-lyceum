@@ -28,7 +28,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead；成員仍可寫自己的 `agents/<name>/AGENT.md`，這不會開放改別人的人設或 repo 指令檔）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）。
+Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead；成員仍可寫自己的 `agents/<name>/AGENT.md`，這不會開放改別人的人設或 repo 指令檔）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）、`ship`（`true` 或 `{ verify?, timeout_sec? }`：Claude Code **與** Codex 喚醒時寫入 ship session，並在 prompt 給出 `agent-lyceum ship` CLI；預設關閉；見 [Ship](#ship測試過才留下的編輯)）。
 
 `doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在，以及記憶資料夾互不重疊。零設定並行變更中移除的設定（見[升級](upgrading-run-v2.md)）仍可載入，只會產生警告。
 
@@ -106,6 +106,27 @@ agents:
 帶 policy override 的喚醒（例如記憶整理）不會套用任何放寬。沒有 OS sandbox（Windows、沒有 `bwrap` 的 Linux）時：Claude 的 `write` 只擴大 `Edit` 工具規則，Bash 可繞過，其他鍵無作用；Codex 只靠提示，沒有任何放寬被強制。`doctor` 會逐 agent 說明。各鍵真正放行的範圍見 [寫入範圍](write-scope.zh-TW.md#sandbox-放寬)。
 
 `doctor` 逐 agent 列出要求的放寬（`writes outside repo`、`network`、`local_binding`、`unix_sockets`，以及 runtime 是否套用）和上述警告；`doctor --resolved` 只對有設定的 agent 顯示 `agents.<name>.sandbox`。它顯示的是 agent-lyceum 產生的內容，不是 runtime 算出的合併後 policy（使用者層級的 Claude `settings.json` 可能再疊加；未驗證）。每次帶放寬的喚醒會在 run log 寫一筆 `sandbox` 事件，並列要求值與實際套用值。
+
+## Ship（測試過才留下的編輯）
+
+單一 agent 在 wake 內透過 **本套件 CLI**（`agent-lyceum ship`，不是 Turnpack／外部 MCP）一次套用多檔 search/replace、跑 verify，失敗則逐 byte 還原。Claude Code 與 Codex 共用同一入口。不改 mail／dispatcher／`done` 契約；與專案層 `verify`（lead `done` 後）互補。設計見 [spec](superpowers/specs/2026-11-15-agent-ship-design.md)。
+
+```yaml
+# project.yaml
+agents:
+  fe-member:
+    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code 或 Codex 皆可
+```
+
+- **預設關閉。** `ship: true` 或 `{ verify: … }` 才開啟；至少要能解析出一條 verify 指令：`ship.verify`（單一指令），否則用**整條** `project.verify.commands`。兩者都沒有時不寫 session、agent 不會拿到 ship，且 `validate`／`doctor` 會警告。
+- **雙 runtime：** wake 寫入 `ship-session.json`（root／verify `commands`／deny），並把**完整 CLI 命令**寫進 system prompt；agent 用 Bash（或同等）執行，stdin 只傳 `edits` JSON。
+- **verify 固定：** 只跑 session 裡的指令，依序執行、遇到第一個失敗就停（結果會指出是哪個指令）；請求 body 不可帶別的 verify。指令在 agent 行程的 shell 環境執行（與內建 Bash 同類；文件需知會風險）。
+- **逾時：** 用專案指令鏈時，每條指令用自己的 `timeout_sec`；`ship.verify` 是單一指令，使用 `ship.timeout_sec`（預設 120）。若設了 `ship.timeout_sec`，會覆蓋每條指令的逾時。prompt 會告知 agent 最長總驗證時間，讓它把 shell 工具的逾時設得更長。
+- **中斷：** 收到 SIGINT／SIGTERM／SIGHUP 時，CLI 會取消 verify、還原所有檔案，並以 exit 1 結束。SIGKILL 無法攔截，被強制砍掉時可能留下已修改的檔案。
+- **路徑：** 只能改工作目錄內相對路徑；套用 `writePolicy.deny`、拒絕 symlink 與 `.git`。只差大小寫的路徑會一併拒絕（在不分大小寫的檔案系統上可能是同一個檔案），`.git` 與 deny 的比對也不分大小寫。
+- **檔案權限：** 成功與還原時都會保留原檔的權限位元。檔案是寫成暫存檔再 rename 覆蓋原檔，所以指向該檔的 hard link 與擁有者不會保留。
+- **不強制：** agent 仍可用內建 Edit；prompt 會建議多檔／需過測時用 ship CLI。
+- Policy 喚醒（例如 `tidy`）不寫 ship session。
 
 ## 備援模型
 

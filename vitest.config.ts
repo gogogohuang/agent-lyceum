@@ -10,5 +10,5 @@ export default defineConfig({
   resolve: {
     alias: { 'claude-code/testing': fileURLToPath(new URL('./test/shims/claude-code-testing.ts', import.meta.url)) },
   },
-  test: { exclude: ['**/node_modules/**', '**/dist/**', 'plugins/**/*.mod.test.ts'] },
+  test: { exclude: ['**/node_modules/**', '**/dist/**', '**/.worktrees/**', 'plugins/**/*.mod.test.ts'] },
 })

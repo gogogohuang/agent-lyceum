@@ -28,7 +28,7 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)).
+Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)), `ship` (`true` or `{ verify?, timeout_sec? }`; Claude Code **and** Codex wakes get a ship session plus the `agent-lyceum ship` CLI in the prompt; off by default; see [Ship](#ship-edits-that-stay-only-if-tests-pass)).
 
 Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, and memory dirs don't overlap. Settings removed in the zero-config concurrency change (see [Upgrading](upgrading-run-v2.md)) still load and only produce a warning.
 
@@ -104,6 +104,27 @@ All four keys are optional; `[]` and `false` mean the same as leaving them out. 
 A wake-up that runs with a policy override (such as the memory tidy) gets none of the allowances. With no OS sandbox (Windows, Linux without `bwrap`): Claude's `write` only widens the `Edit` tool rules and Bash can bypass them, the other keys have no effect; Codex is prompt-only, so no allowance is enforced. `doctor` says so per agent. What each key really allows is in [Write scope](write-scope.md#sandbox-allowances).
 
 `doctor` lists the requested allowances per agent (`writes outside repo`, `network`, `local_binding`, `unix_sockets`, with whether the runtime applies them) and the warnings above; `doctor --resolved` shows `agents.<name>.sandbox` only for agents that set it. It shows what agent-lyceum generates, not the merged policy the runtime computes (a user-level Claude `settings.json` may add to it; unverified). Each wake-up with allowances writes a `sandbox` event to the run log, requested and applied values side by side.
+
+## Ship (edits that stay only if tests pass)
+
+A per-agent wake path through this package's **CLI** (`agent-lyceum ship` — not Turnpack or an external MCP): multi-file search/replace, verify, byte-exact rollback on failure. Shared by Claude Code and Codex. Does not change mail, the dispatcher, or the `done` contract; complements project-level `verify` (after the lead's `done`). Design: [spec](superpowers/specs/2026-11-15-agent-ship-design.md).
+
+```yaml
+# project.yaml
+agents:
+  fe-member:
+    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code or Codex
+```
+
+- **Off by default.** Set `ship: true` or `{ verify: … }`. At least one verify command must resolve: `ship.verify` (one command), otherwise the **whole** `project.verify.commands` chain. If neither exists, no session is written, the agent is not offered ship, and `validate` / `doctor` warn about it.
+- **Both runtimes:** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
+- **Fixed verify:** only the session commands run, in order, and stop at the first failure (the result names the failing command); the request body must not supply another verify. They run in the agent's shell environment (same class of risk as built-in Bash).
+- **Timeouts:** with the project chain, each command uses its own `timeout_sec`; `ship.verify` is a single command that uses `ship.timeout_sec` (default 120). If `ship.timeout_sec` is set it overrides every command's timeout. The prompt tells the agent the total maximum verify time so it can set its shell tool timeout above it.
+- **Interruption:** on SIGINT / SIGTERM / SIGHUP the CLI cancels verify and restores every file, then exits 1. SIGKILL cannot be caught, so a hard kill can leave edited files behind.
+- **Paths:** relative to the work directory only; `writePolicy.deny` is enforced; symlinks and `.git` are refused. Paths that differ only in letter case are rejected together (they may be one file on a case-insensitive filesystem), and `.git` / deny matching ignores case.
+- **File mode:** the original permission bits are kept on success and on rollback. Files are replaced by writing a temp file and renaming it over the original, so hard links to the file and its owner are not preserved.
+- **Not mandatory:** the agent may still use built-in Edit; the prompt recommends the ship CLI for multi-file or must-pass-tests changes.
+- Policy wakes (e.g. `tidy`) do not write a ship session.
 
 ## Fallback models
 
