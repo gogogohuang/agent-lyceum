@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { extractClaudeResult } from "../src/adapters/claude.js";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
+import { ProjectConfig } from "../src/schema.js";
+import { parse as parseYaml } from "yaml";
 import { diagnoseProject, formatDoctor, preflightRuntimes, probeRuntime, type DoctorReport } from "../src/doctor.js";
 import { recordsDir, setOsSandboxForTest } from "../src/policy.js";
 import { acquireProjectLock } from "../src/project-lock.js";
@@ -385,5 +387,53 @@ describe("formatDoctor footer", () => {
     const r = report(["ok"]);
     r.checks.push({ level: "error", subject: "task-file", message: "missing" });
     expect(formatDoctor(r).split("\n").at(-1)).toBe("Problems found: 1 error (marked ERROR above).");
+  });
+});
+
+describe("diagnoseProject verify suggestion", () => {
+  const verifyChecks = async (pkg?: string) => {
+    env = makeEnv();
+    if (pkg !== undefined) write(path.join(env.project().dir, "package.json"), pkg);
+    const { bin } = fakeBin(env.root);
+    return (await diagnoseProject(env.project(), { env: envWith(bin, "full") })).checks.filter((c) => c.subject === "verify");
+  };
+
+  it("suggests all three commands as a yaml block that passes the verify schema", async () => {
+    const checks = await verifyChecks(JSON.stringify({ scripts: { test: "x", lint: "x", typecheck: "x", build: "x" } }));
+    expect(checks).toHaveLength(1);
+    expect(checks[0].level).toBe("info");
+    const m = checks[0].message;
+    expect(m).toContain("docs/configuration.md#verify");
+    expect(m).toContain("outside the sandbox");
+    expect(m.indexOf("npm run typecheck")).toBeLessThan(m.indexOf("npm run lint"));
+    expect(m.indexOf("npm run lint")).toBeLessThan(m.indexOf("npm test"));
+    expect(m).not.toContain("build");
+    const block = m.slice(m.indexOf("  verify:"), m.indexOf("\nSee docs"));
+    const parsed = parseYaml(block) as { verify: unknown };
+    const res = ProjectConfig.safeParse({ dir: "/x", team: { lead: "l" }, verify: parsed.verify });
+    expect(res.success).toBe(true);
+  });
+
+  it("lists only the scripts that exist", async () => {
+    const m = (await verifyChecks(JSON.stringify({ scripts: { test: "x" } })))[0].message;
+    expect(m).toContain("npm test");
+    expect(m).not.toContain("npm run");
+  });
+
+  it("is silent without package.json, with invalid JSON, or without the three scripts", async () => {
+    expect(await verifyChecks()).toEqual([]);
+    expect(await verifyChecks("{not json")).toEqual([]);
+    expect(await verifyChecks(JSON.stringify({ scripts: { build: "x" } }))).toEqual([]);
+    expect(await verifyChecks("null")).toEqual([]);
+  });
+
+  it("keeps the existing warn and no suggestion when verify is set", async () => {
+    env = makeEnv();
+    write(path.join(env.project().dir, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
+    const project = { ...env.project(), verify: { max_rejections: 2, commands: [{ name: "t", run: "npm test", timeout_sec: 600 }] } };
+    const { bin } = fakeBin(env.root);
+    const checks = (await diagnoseProject(project, { env: envWith(bin, "full") })).checks.filter((c) => c.subject === "verify");
+    expect(checks).toHaveLength(1);
+    expect(checks[0].level).toBe("warn");
   });
 });

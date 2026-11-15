@@ -13,6 +13,23 @@ import { validateProject } from "./validate.js";
 import { diagnoseInstances } from "./doctor-instances.js";
 import { dirtyPaths, git, isolationBlocker } from "./worktree.js";
 
+/** A ready-to-paste `verify:` block built from the project's package.json scripts; undefined when there is nothing to suggest. Never throws. */
+export function suggestVerify(dir: string): string | undefined {
+  let scripts: Record<string, unknown>;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as { scripts?: unknown };
+    if (!pkg || typeof pkg.scripts !== "object" || pkg.scripts === null || Array.isArray(pkg.scripts)) return undefined;
+    scripts = pkg.scripts as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+  const lines = ["typecheck", "lint", "test"]
+    .filter((n) => typeof scripts[n] === "string")
+    .map((n) => `    - { name: ${n}, run: "${n === "test" ? "npm test" : `npm run ${n}`}" }`);
+  if (!lines.length) return undefined;
+  return `\`verify\` is not set, so a lead's \`done\` is not checked. To check it, add to project.yaml:\n  verify:\n    commands:\n${lines.map((l) => `  ${l}`).join("\n")}\nSee docs/configuration.md#verify. These commands run outside the sandbox.`;
+}
+
 export type Cap = "yes" | "no" | "unknown";
 
 export interface RuntimeCapabilities {
@@ -203,6 +220,11 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       subject: "verify",
       message: `Before it accepts a lead's \`completed\` done, the dispatcher runs ${project.verify.commands.length} verify command(s), up to ${project.verify.max_rejections} rejection(s): ${cmds}. They run OUTSIDE the agents' sandbox with your permissions and execute code the agents wrote, in the lead's worktree, or directly in ${project.dir} when runs do not use worktrees. Only you can change them (project.yaml).`,
     });
+  }
+
+  else {
+    const suggestion = suggestVerify(project.dir);
+    if (suggestion) checks.push({ level: "info", subject: "verify", message: suggestion });
   }
 
   for (const lock of listRunLocks(project.paths.root)) {

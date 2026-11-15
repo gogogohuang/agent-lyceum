@@ -77,3 +77,26 @@ export function taskMessageBody(task: PreparedTask): { subject: string; body: st
       `First lines:\n\n${task.content.split("\n").slice(0, 10).join("\n")}\n`,
   };
 }
+
+/** Warn-only lint for task FILES: does it say how the work is checked? Headings only; fenced code does not count. */
+export function lintTaskContent(content: string): string[] {
+  const headings: string[] = [];
+  let fence: string | undefined;
+  for (const line of content.split(/\r?\n/)) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) {
+      const mark = f[1]![0]!;
+      if (fence === undefined) fence = mark;
+      else if (fence === mark) fence = undefined;
+      continue;
+    }
+    if (fence !== undefined) continue;
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    if (h) headings.push(h[1]!.toLowerCase());
+  }
+  const has = (...words: string[]) => headings.some((h) => words.some((w) => h.includes(w)));
+  const out: string[] = [];
+  if (!has("acceptance", "驗收")) out.push("has no Acceptance criteria section: say how the work is checked, or the lead cannot tell when it is done. See docs/task-template.md.");
+  if (!has("verification", "驗證")) out.push("has no Verification section: give the exact command(s) that must pass. See docs/task-template.md.");
+  return out;
+}
