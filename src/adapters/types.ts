@@ -5,6 +5,7 @@ import type { AgentWorkspace } from "../worktree.js";
 
 export interface WakeInput {
   project: ResolvedProject;
+  /** Approval enrollment travels only as `agent.enrolled` / `agent.approval`; there is deliberately no separate top-level flag that could disagree. */
   agent: ResolvedAgent;
   /** Scratch dir for generated per-agent files (inside the run dir, never in the repo). */
   workDir: string;

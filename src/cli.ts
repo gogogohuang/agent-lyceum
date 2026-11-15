@@ -20,6 +20,7 @@ import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
 import { lintTaskContent, prepareTask, readTaskFile, taskMessageBody } from "./task.js";
+import { assertApprovalConfig } from "./approval-runtime.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
@@ -268,6 +269,7 @@ program
   .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
+      assertApprovalConfig(pr);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
@@ -345,6 +347,7 @@ program
   .action(async (runArg: string | undefined, textArg: string | undefined, opts: { project?: string; taskFile?: string; answer?: boolean; edit: boolean; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
+      assertApprovalConfig(pr);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
@@ -647,6 +650,7 @@ program
         if (dry.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or use --layer global)." : "Set `memory.global` for an agent."}`);
         return;
       }
+      assertApprovalConfig(pr);
       const res = validateProject(pr);
       for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
       if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");

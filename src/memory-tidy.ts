@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { realInvoker, type Invoker } from "./adapters/index.js";
+import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
@@ -364,29 +364,36 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
     return { ...base, status: "failed", ...(recPart ? { recordsDir: recDir } : {}), problems };
   };
 
-  // The runtime may write only the directories being tidied (and read what it could read before): not the repo, outbox or shared files.
-  const normal = writePolicy(project, agent);
-  const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : [])];
-  const policy: WritePolicy = {
-    allowDirs,
-    allowFiles: [],
-    readDirs: [...new Set([repoDirFor(project, t.agent), ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
-    deny: normal.deny,
-  };
+  // Everything from here to the end of the wake-up (policy construction, a builder that throws synchronously, an invoke that rejects)
+  // is one failed tidy: restore, clean the snapshot, report, and let the next independent job run.
+  let result: WakeResult;
+  try {
+    // The runtime may write only the directories being tidied (and read what it could read before): not the repo, outbox or shared files.
+    const normal = writePolicy(project, agent);
+    const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : [])];
+    const policy: WritePolicy = {
+      allowDirs,
+      allowFiles: [],
+      readDirs: [...new Set([repoDirFor(project, t.agent), ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
+      deny: normal.deny,
+    };
 
-  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}) …`);
-  const invoke = o.invoker ?? realInvoker;
-  const result = await invoke({
-    project,
-    agent,
-    workDir,
-    systemPrompt: prompts.systemPrompt,
-    userPrompt: prompts.userPrompt,
-    timeoutSec: project.dispatcher.wake_timeout_sec,
-    signal: o.signal,
-    logDir: path.join(workDir, "log"),
-    policy,
-  }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+    say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}) …`);
+    const invoke = o.invoker ?? realInvoker;
+    result = await invoke({
+      project,
+      agent,
+      workDir,
+      systemPrompt: prompts.systemPrompt,
+      userPrompt: prompts.userPrompt,
+      timeoutSec: project.dispatcher.wake_timeout_sec,
+      signal: o.signal,
+      logDir: path.join(workDir, "log"),
+      policy,
+    });
+  } catch (e) {
+    result = { ok: false, text: "", exitCode: null, timedOut: false, error: (e as Error).message };
+  }
   if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
 
   // Anything that throws from here on (a report path that is a directory, a state file that cannot be written) is a failed tidy that is rolled back.

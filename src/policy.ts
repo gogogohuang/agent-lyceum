@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { approvalDenyPaths } from "./approval-policy.js";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
@@ -224,6 +225,9 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   // Defence in depth: the dispatcher pins git's dir, common dir and work tree and never reads these, but a runtime that can
   // forbid single files should not let the agent rewrite them either. Codex cannot; it relies on the pinning alone.
   if (ws) deny.push(path.join(ws.root, ".git"), ...["commondir", "config.worktree", "gitdir"].map((f) => path.join(ws.gitDir, f)));
+
+  // Approval-enrolled agents: itemized, never filtered by the allow lists above. Non-enrolled agents do no I/O here.
+  if (agent.enrolled) deny.push(...approvalDenyPaths(project, agent));
 
   return {
     allowDirs,

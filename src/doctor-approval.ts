@@ -17,7 +17,8 @@ export interface DoctorApprovalOptions {
 }
 
 /**
- * Approval-gate diagnostics for `doctor` (spec section 3). The only reader of `executors.yaml` outside its own module.
+ * Approval-gate diagnostics for `doctor` (spec section 3). Since stage 2b-1 the runtime resolver (`approval-runtime.ts`) also reads
+ * `executors.yaml`, for enrollment only; this module stays the one that reports problems with it.
  * A missing file, or one whose `allow` entries are all empty, returns `[]` with no further I/O, so doctor output stays byte-identical.
  * Read-only diagnostics, not enforcement.
  */
