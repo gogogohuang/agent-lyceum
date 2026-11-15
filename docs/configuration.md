@@ -116,9 +116,11 @@ agents:
     ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code or Codex
 ```
 
-- **Off by default.** Set `ship: true` or `{ verify: … }`; a resolvable verify command is **required** (`ship.verify` or the first `project.verify.commands[].run`), otherwise no session is written.
-- **Both runtimes:** the wake writes `ship-session.json` (root / verify / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
-- **Fixed verify:** only the session command runs; the request body must not supply another verify. It runs in the agent's shell environment (same class of risk as built-in Bash).
+- **Off by default.** Set `ship: true` or `{ verify: … }`. At least one verify command must resolve: `ship.verify` (one command), otherwise the **whole** `project.verify.commands` chain. If neither exists, no session is written, the agent is not offered ship, and `validate` / `doctor` warn about it.
+- **Both runtimes:** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
+- **Fixed verify:** only the session commands run, in order, and stop at the first failure (the result names the failing command); the request body must not supply another verify. They run in the agent's shell environment (same class of risk as built-in Bash).
+- **Timeouts:** with the project chain, each command uses its own `timeout_sec`; `ship.verify` is a single command that uses `ship.timeout_sec` (default 120). If `ship.timeout_sec` is set it overrides every command's timeout. The prompt tells the agent the total maximum verify time so it can set its shell tool timeout above it.
+- **Interruption:** on SIGINT / SIGTERM / SIGHUP the CLI cancels verify and restores every file, then exits 1. SIGKILL cannot be caught, so a hard kill can leave edited files behind.
 - **Paths:** relative to the work directory only; `writePolicy.deny` is enforced; symlinks and `.git` are refused.
 - **Not mandatory:** the agent may still use built-in Edit; the prompt recommends the ship CLI for multi-file or must-pass-tests changes.
 - Policy wakes (e.g. `tidy`) do not write a ship session.

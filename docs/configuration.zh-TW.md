@@ -118,9 +118,11 @@ agents:
     ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code 或 Codex 皆可
 ```
 
-- **預設關閉。** `ship: true` 或 `{ verify: … }` 才開啟；**必須**能解析出 verify（`ship.verify` 或 `project.verify.commands[0].run`），否則不寫 session。
-- **雙 runtime：** wake 寫入 `ship-session.json`（root／verify／deny），並把**完整 CLI 命令**寫進 system prompt；agent 用 Bash（或同等）執行，stdin 只傳 `edits` JSON。
-- **verify 固定：** 只跑 session 裡的那一條；請求 body 不可帶別的 verify。指令在 agent 行程的 shell 環境執行（與內建 Bash 同類；文件需知會風險）。
+- **預設關閉。** `ship: true` 或 `{ verify: … }` 才開啟；至少要能解析出一條 verify 指令：`ship.verify`（單一指令），否則用**整條** `project.verify.commands`。兩者都沒有時不寫 session、agent 不會拿到 ship，且 `validate`／`doctor` 會警告。
+- **雙 runtime：** wake 寫入 `ship-session.json`（root／verify `commands`／deny），並把**完整 CLI 命令**寫進 system prompt；agent 用 Bash（或同等）執行，stdin 只傳 `edits` JSON。
+- **verify 固定：** 只跑 session 裡的指令，依序執行、遇到第一個失敗就停（結果會指出是哪個指令）；請求 body 不可帶別的 verify。指令在 agent 行程的 shell 環境執行（與內建 Bash 同類；文件需知會風險）。
+- **逾時：** 用專案指令鏈時，每條指令用自己的 `timeout_sec`；`ship.verify` 是單一指令，使用 `ship.timeout_sec`（預設 120）。若設了 `ship.timeout_sec`，會覆蓋每條指令的逾時。prompt 會告知 agent 最長總驗證時間，讓它把 shell 工具的逾時設得更長。
+- **中斷：** 收到 SIGINT／SIGTERM／SIGHUP 時，CLI 會取消 verify、還原所有檔案，並以 exit 1 結束。SIGKILL 無法攔截，被強制砍掉時可能留下已修改的檔案。
 - **路徑：** 只能改工作目錄內相對路徑；套用 `writePolicy.deny`、拒絕 symlink 與 `.git`。
 - **不強制：** agent 仍可用內建 Edit；prompt 會建議多檔／需過測時用 ship CLI。
 - Policy 喚醒（例如 `tidy`）不寫 ship session。

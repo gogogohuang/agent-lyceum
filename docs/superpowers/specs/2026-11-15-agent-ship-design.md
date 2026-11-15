@@ -24,7 +24,7 @@
 
 ### 3.2 Wake 掛載（雙 runtime）
 
-1. `ship` 開啟且能解析 verify 時，在 agent `workDir` 寫入 `ship-session.json`：`{ root, verify, deny, timeoutSec }`。
+1. `ship` 開啟且能解析 verify 時，在 agent `workDir` 寫入 `ship-session.json`：`{ root, commands: [{ name, run, timeout_sec }], deny }`（舊格式 `{ root, verify, deny, timeoutSec }` 仍可讀取）。`ship.verify` 為單一指令；否則使用整條專案 `verify.commands`，依序 fail-fast、各自逾時。
 2. `applyShipToWake` 把**完整 CLI 命令**附加到 system prompt（Claude 與 Codex 皆然）。
 3. Agent 以 Bash／同等執行：`… ship --session <abs> <<'EOF'` + `{"edits":[…]}`。
 4. 請求 body **不可**帶 `verify`；只使用 session 內指令。
