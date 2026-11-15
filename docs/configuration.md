@@ -168,6 +168,7 @@ agents:
   | 2 | 1st | 2nd | 2nd |
   | 3 | 1st | 2nd | 3rd |
 
+- **Suggestion:** when `verify` is not set and the project has a `package.json` with a `typecheck`, `lint` or `test` script, `agent-lyceum doctor` prints a ready-to-paste `verify:` block for them.
 - **Off by default:** no ladder, or a task without `tier`, means the member's own `model`, exactly as before. The lead's own model is never tiered. (24.1)
 
 Config fails to load (`doctor` and `run` report an error) when: (24.3.4)

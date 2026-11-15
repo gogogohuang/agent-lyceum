@@ -170,6 +170,7 @@ agents:
   | 2 | 第 1 項 | 第 2 項 | 第 2 項 |
   | 3 | 第 1 項 | 第 2 項 | 第 3 項 |
 
+- **建議：** 沒設 `verify`、且專案的 `package.json` 有 `typecheck`、`lint` 或 `test` script 時，`agent-lyceum doctor` 會印出可直接貼上的 `verify:` 區塊。
 - **預設關閉：** 沒有階梯、或 task 沒寫 `tier`，就用成員自己的 `model`，與先前完全相同。lead 自己的模型不分級。（24.1）
 
 下列情況設定載入失敗（`doctor` 與 `run` 回報錯誤）：（24.3.4）
