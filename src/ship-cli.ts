@@ -56,13 +56,24 @@ export async function runShipCli(opts: { session: string; editsFile?: string }):
     throw new Error(`edits JSON is invalid: ${e instanceof Error ? e.message : String(e)}`);
   }
   const edits = parseShipEditsPayload(raw);
-  const result = await runShip({
-    root: session.root,
-    edits,
-    verify: session.verify,
-    timeoutSec: session.timeoutSec,
-    deny: session.deny,
-  });
+  // Interrupted ship must roll back: abort verify (kills its process group), then runShip restores the files.
+  const controller = new AbortController();
+  const onSignal = () => controller.abort();
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  for (const sig of signals) process.on(sig, onSignal);
+  let result: Awaited<ReturnType<typeof runShip>>;
+  try {
+    result = await runShip({
+      root: session.root,
+      edits,
+      verify: session.verify,
+      timeoutSec: session.timeoutSec,
+      deny: session.deny,
+      signal: controller.signal,
+    });
+  } finally {
+    for (const sig of signals) process.off(sig, onSignal);
+  }
   process.stdout.write(`${result.status}\n${result.summary}\nfiles: ${result.filesModified.join(", ") || "(none)"}\n`);
   return result.status === "SHIPPED_AND_VERIFIED" ? 0 : 1;
 }

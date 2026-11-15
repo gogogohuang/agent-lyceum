@@ -115,3 +115,37 @@ describe("ship CLI", () => {
     expect(fs.readFileSync(path.join(root, "x.js"), "utf8")).toBe("const n = 2;\n");
   });
 });
+
+describe("ship CLI interruption", () => {
+  function setup(verify: string) {
+    env = makeEnv();
+    fs.writeFileSync(path.join(env.repo, "x.js"), "const n = 1;\n");
+    const sessionPath = path.join(env.root, "ship-session.json");
+    fs.writeFileSync(sessionPath, JSON.stringify({ root: env.repo, verify, deny: [], timeoutSec: 30 }));
+    const editsPath = path.join(env.root, "edits.json");
+    fs.writeFileSync(editsPath, JSON.stringify({ edits: [{ path: "x.js", search: "const n = 1;", replace: "const n = 2;" }] }));
+    return { sessionPath, editsPath };
+  }
+
+  it("exits non-zero and restores files on SIGHUP during verify, then removes its handlers", async () => {
+    const { sessionPath, editsPath } = setup("sleep 30");
+    const before = process.listenerCount("SIGHUP");
+    const p = runShipCli({ session: sessionPath, editsFile: editsPath });
+    const deadline = Date.now() + 5000;
+    while (process.listenerCount("SIGHUP") === before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    expect(process.listenerCount("SIGHUP")).toBe(before + 1);
+    await new Promise((r) => setTimeout(r, 200));
+    process.emit("SIGHUP");
+    const code = await p;
+    expect(code).toBe(1);
+    expect(fs.readFileSync(path.join(env.repo, "x.js"), "utf8")).toBe("const n = 1;\n");
+    expect(process.listenerCount("SIGHUP")).toBe(before);
+  });
+
+  it("removes signal handlers after a normal run", async () => {
+    const { sessionPath, editsPath } = setup("true");
+    const counts = (["SIGINT", "SIGTERM", "SIGHUP"] as const).map((s) => process.listenerCount(s));
+    expect(await runShipCli({ session: sessionPath, editsFile: editsPath })).toBe(0);
+    expect((["SIGINT", "SIGTERM", "SIGHUP"] as const).map((s) => process.listenerCount(s))).toEqual(counts);
+  });
+});

@@ -18,7 +18,15 @@ export interface ShipResult {
   filesModified: string[];
 }
 
-export type ShipVerifyRunner = (cmd: string, cwd: string, timeoutSec: number) => Promise<{ ok: boolean; exit: number | null; output: string }>;
+export interface ShipVerifyOutcome {
+  ok: boolean;
+  exit: number | null;
+  output: string;
+  /** The verify run was cancelled through the signal; its verdict is withheld and the edits are rolled back. */
+  cancelled?: boolean;
+}
+
+export type ShipVerifyRunner = (cmd: string, cwd: string, timeoutSec: number, signal?: AbortSignal) => Promise<ShipVerifyOutcome>;
 
 export interface RunShipArgs {
   root: string;
@@ -29,6 +37,8 @@ export interface RunShipArgs {
   deny?: string[];
   /** Injected for tests; default runs `sh -c` via `runCommand`. */
   runVerify?: ShipVerifyRunner;
+  /** Aborts a running verify; ship then rolls every edit back. Process signal handlers belong to the CLI, not here. */
+  signal?: AbortSignal;
 }
 
 /** True when `abs` equals or sits under a deny entry (canonical comparison). */
@@ -70,9 +80,9 @@ interface Planned {
   snap: Snapshot;
 }
 
-function defaultVerify(cmd: string, cwd: string, timeoutSec: number): Promise<{ ok: boolean; exit: number | null; output: string }> {
-  return runCommand(cmd, { cwd, timeoutSec }).then((r) => {
-    if (r.cancelled) return { ok: false, exit: null, output: "(cancelled)" };
+function defaultVerify(cmd: string, cwd: string, timeoutSec: number, signal?: AbortSignal): Promise<ShipVerifyOutcome> {
+  return runCommand(cmd, { cwd, timeoutSec, signal }).then((r) => {
+    if (r.cancelled) return { ok: false, exit: null, output: "(cancelled)", cancelled: true };
     const output = tailText(r.output, VERIFY_TAIL_BYTES);
     if (r.timedOut) return { ok: false, exit: r.exit, output: `${output}\n(timed out)` };
     if (r.error) return { ok: false, exit: r.exit, output: r.error };
@@ -271,8 +281,12 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
 
   const filesModified = planned.map((p) => p.rel);
   const runVerify = args.runVerify ?? defaultVerify;
-  const verified = await runVerify(args.verify, root, args.timeoutSec ?? 120);
-  if (verified.ok) {
+  // An abort that arrived before verify started (or that verify did not report) still ends in a restored tree.
+  const verified: ShipVerifyOutcome = args.signal?.aborted
+    ? { ok: false, exit: null, output: "", cancelled: true }
+    : await runVerify(args.verify, root, args.timeoutSec ?? 120, args.signal);
+  const cancelled = verified.cancelled === true || args.signal?.aborted === true;
+  if (verified.ok && !cancelled) {
     return {
       status: "SHIPPED_AND_VERIFIED",
       summary: `Shipped ${filesModified.length} file(s); verify passed.\n${verified.output}`.trim(),
@@ -281,16 +295,17 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
   }
 
   const rollbackErrors = restore(planned.map((p) => p.snap));
+  const what = cancelled ? "ship was interrupted (verify cancelled)" : `verify failed (exit ${verified.exit})`;
   if (rollbackErrors.length) {
     return {
       status: "FAILED_ROLLBACK_PARTIAL",
-      summary: `Verify failed (exit ${verified.exit}); rollback incomplete: ${rollbackErrors.join("; ")}\n${verified.output}`.trim(),
+      summary: `${what[0]!.toUpperCase()}${what.slice(1)}; rollback incomplete: ${rollbackErrors.join("; ")}\n${verified.output}`.trim(),
       filesModified,
     };
   }
   return {
     status: "FAILED_AND_ROLLED_BACK",
-    summary: `FAILED_AND_ROLLED_BACK: verify failed (exit ${verified.exit}). Restored ${filesModified.length} file(s).\n${verified.output}`.trim(),
+    summary: `FAILED_AND_ROLLED_BACK: ${what}. Restored ${filesModified.length} file(s).\n${verified.output}`.trim(),
     filesModified,
   };
 }

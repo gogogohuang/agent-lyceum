@@ -287,3 +287,68 @@ describe("runShip non-file targets", () => {
     expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("x\n");
   });
 });
+
+describe("runShip interruption", () => {
+  const edit = { path: "a.ts", search: "const a = 1;", replace: "const a = 2;" };
+
+  it("rolls back byte-for-byte when the signal aborts verify mid-run", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const before = fs.readFileSync(path.join(root, "a.ts"));
+    const ac = new AbortController();
+    let started!: () => void;
+    const running = new Promise<void>((r) => (started = r));
+    const waitsOnSignal: ShipVerifyRunner = (_c, _d, _t, signal) =>
+      new Promise((resolve) => {
+        started();
+        signal?.addEventListener("abort", () => resolve({ ok: false, exit: null, output: "(cancelled)", cancelled: true }));
+      });
+    const p = runShip({ root, edits: [edit], verify: "x", runVerify: waitsOnSignal, signal: ac.signal });
+    await running;
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 2;\n");
+    ac.abort();
+    const r = await p;
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(r.summary).toMatch(/interrupted/);
+    expect(fs.readFileSync(path.join(root, "a.ts")).equals(before)).toBe(true);
+  });
+
+  it("rolls back and never starts verify when already aborted", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const ac = new AbortController();
+    ac.abort();
+    let called = false;
+    const r = await runShip({
+      root,
+      edits: [edit],
+      verify: "x",
+      signal: ac.signal,
+      runVerify: async () => {
+        called = true;
+        return { ok: true, exit: 0, output: "" };
+      },
+    });
+    expect(called).toBe(false);
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 1;\n");
+  });
+
+  it("does not report success when verify passes but the signal aborted", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const ac = new AbortController();
+    const r = await runShip({
+      root,
+      edits: [edit],
+      verify: "x",
+      signal: ac.signal,
+      runVerify: async () => {
+        ac.abort();
+        return { ok: true, exit: 0, output: "" };
+      },
+    });
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 1;\n");
+  });
+});
