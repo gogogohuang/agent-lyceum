@@ -279,7 +279,8 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
               ...(shipRaw.timeout_sec !== undefined ? { timeoutSec: shipRaw.timeout_sec } : {}),
             }
           : undefined;
-    // `ship: false` is explicit off (same as unset for resolution).
+    // `ship: false` is explicit off (same as unset for resolution). Do not invent a `sources.ship`
+    // default when unset: doctor --resolved fixtures and "sources ⊆ values" assume absent optional keys stay absent.
     for (const [k, v] of [
       ["resume", resume],
       ["can_message", canMessage],
@@ -288,7 +289,6 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     ] as const) {
       if (v === undefined) sources[k] = "default";
     }
-    if (shipRaw === undefined) sources.ship = "default";
 
     agents[agentName] = {
       name: agentName,

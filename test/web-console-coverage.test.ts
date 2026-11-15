@@ -29,6 +29,7 @@ const COVERED: Record<string, string[]> = {
 /** Commands the web console deliberately does not run, with the reason. */
 const UNSUPPORTED: Record<string, string> = {
   status: "read-only: the live page is the status view, and `status --web` is the server itself",
+  ship: "agent-facing wake CLI (edits+verify+rollback); not a console user action",
 };
 
 describe("web console covers the CLI", () => {

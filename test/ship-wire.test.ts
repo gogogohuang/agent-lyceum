@@ -23,7 +23,7 @@ describe("ship wiring (CLI for Claude Code and Codex)", () => {
     );
     const p = env.project();
     expect(shipDefaultVerify(p, p.agents["fe-member"]!)).toBe("npm test -w pkg");
-    env.editProjectYaml((t) => t.replace(/ship:\n      verify: npm test -w pkg\n/, "ship: true\n"));
+    env.editProjectYaml((t) => t.replace(/ship:\n {6}verify: npm test -w pkg\n/, "ship: true\n"));
     const p2 = env.project();
     expect(shipDefaultVerify(p2, p2.agents["fe-member"]!)).toBe("npm test");
   });
