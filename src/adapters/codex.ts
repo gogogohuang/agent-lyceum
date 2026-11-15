@@ -3,6 +3,8 @@ import path from "node:path";
 import { projectCommonDir, projectCommonDirAllowed, repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import { applyShipToWake } from "../ship-wire.js";
+import { ApprovalError } from "../approval-error.js";
+import { runtimeEnv } from "./env.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 export function codexWritableRoots(input: WakeInput): string[] {
@@ -60,6 +62,8 @@ const CODEX_WEB_SEARCH = { none: "disabled", search: "cached", fetch: "live" } a
 export function buildCodexInvocation(raw: WakeInput): Invocation {
   const { input } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
+  // Codex has no deny list inside a writable root and no env/MCP/settings hardening: an enrolled agent is refused before anything is created.
+  if (agent.enrolled) throw new ApprovalError("INVALID_INPUT", `Approval-enrolled agent cannot use Codex: ${agent.name}`);
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });
   if (input.policy) fs.mkdirSync(repo, { recursive: true });
@@ -91,7 +95,7 @@ export function buildCodexInvocation(raw: WakeInput): Invocation {
     // Codex has no flag for a custom instruction file, so the persona travels in the prompt.
     stdin: `${input.systemPrompt}\n\n=====\n\n${input.userPrompt}`,
     cwd: repo,
-    env: { ...process.env, AGENT_LYCEUM_AGENT: agent.name },
+    env: runtimeEnv(agent),
     parse({ stdout, stderr, code }) {
       return finishCodex(lastFile, findSessionId(stdout), codexOutputTokens(stdout), stdout, stderr, code);
     },

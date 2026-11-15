@@ -25,13 +25,11 @@
 - direct builder/override 空 deny：slice 3 驗證強化無法由 policy 取代。
 - whitelist 消除 fake 控制環境：slice 3 用專用 wrapper；未列入原行為保持。
 
-## Open decision D1 — first-load membership is unknowable (awaiting user)
+## Decision D1 — first-load failure stops the command (user answer b08ae562, 2026-11-15)
 
-`loadExecutors` throws on invalid/unreadable files (`src/approval-executors.ts:48–75`). Fresh `resolveProject`/`resolveCallAgent` have no trusted previous membership; resume resolves afresh (`src/config.ts:149`, `src/call.ts:55`, `src/cli.ts:346`). Two unreadable files can enroll different roles but produce identical errors. Error metadata cannot identify which slot to harden.
+`loadExecutors` throws on invalid/unreadable files (`src/approval-executors.ts:48–75`); a fresh process has no trusted membership. **User decision:** when `<home>/executors.yaml` exists but cannot be read or parsed, `run`, `resume`, solo (`run --agent`) and `call` stop with a clear, secret-free configuration error **before any agent is invoked** (no wake, no worktree side effects beyond what already happens before resolution). This explicitly relaxes "never crash non-enrolled agents" for this one configuration error. Missing file and valid empty allow lists stay byte-identical. Other commands (`status`, `status --json`, `doctor`, `clear`, `project …`, `init`) must NOT fail because of it: `resolveProject` itself never throws for this; it records the load error, and only the agent-invoking entry points refuse. Rejected: continue with unknown membership (breaks fail-closed), salvage/last-known cache (no trusted source, new format).
 
-There is **no default A and no approved relaxation**. The lead asks the user once: stop the command before invoking any agent on first-load errors (recommended, relaxes unrelated-agent availability/no-refusal), or continue agents with unknown membership and a safe error reason (relaxes selective fail-closed). Do not implement the unknown branch until answered. Do not add persistent membership/cache or salvage malformed YAML. Remove speculative `previous`/`lastKnownConfig` machinery: no production caller supports it.
-
-Use one in-memory enrollment context, with identity, an immutable projection of executor command paths and scan limit, or safe file/code/reason error metadata. Never attach full `ExecutorsConfig` with executor env secrets to agents. Exact error behavior follows the user's answer. Reuse `loadExecutors` and `applyEnrollment`; valid absence/empty allows removes runtime metadata and stays byte-identical. Project resolution uses `{project:name}`; call resolution uses `{project:null}` after the pure merge. No module-global or persisted cache. Reasons never contain YAML values or secrets. Only present whitelist env keys are copied, including empty string values.
+Use one in-memory enrollment context, with identity, an immutable projection of executor command paths and scan limit, or safe file/code/reason error metadata. Never attach full `ExecutorsConfig` with executor env secrets to agents. Error behavior: see Decision D1. Reuse `loadExecutors` and `applyEnrollment`; valid absence/empty allows removes runtime metadata and stays byte-identical. Project resolution uses `{project:name}`; call resolution uses `{project:null}` after the pure merge. No module-global or persisted cache. Reasons never contain YAML values or secrets. Only present whitelist env keys are copied, including empty string values.
 
 ## Deliverable mapping / 介面
 
@@ -64,7 +62,7 @@ Use one in-memory enrollment context, with identity, an immutable projection of 
 
 - [ ] 擴充 compatibility test，先在 `/private/tmp` 的 `git archive f4936b0` 實體複本生成並提交回本次工作樹的 fixture；copy test driver 只 import baseline 已有 API，不能讓 baseline 讀新模組。固定 env 全集合（含假的 secret/USER）、os.homedir、PATH、run/call/workDir/session id、sandbox probe、time；只替換 disposable root/real root，不正規化排序、args、settings 或文字。參照既有 fixture 流程（`test/approval-compat.test.ts:11–14,37–48,55–61`）。
 - [ ] fixtures 覆蓋兩 adapter args/env/stdin/cwd、Claude settings 原始 bytes、一般/override/session/worktree；writePolicy/enforcementFor/protectedPathsFor 與所有 system/user/solo/call/tidy prompt builders（`src/prompt.ts:147,201,209,384,482`）。無 executors 與合法空 allows 兩種情境跑同一 fixture；另測同名但未列入的 project/call。先在 baseline **不開 update** 比對，再在 head 比對，保留兩次原始輸出。既有政策 fixture 已覆蓋 doctor（`test/approval-compat.test.ts:86–100`），不要重產舊檔掩蓋差異。
-- [ ] 使用者回答 D1 後，實作 helper、精簡 ResolvedAgent.approval、兩 resolution wrapper；不改純 merge、schema、state/prompt 或 dispatcher 行為。測 project/call tuple、empty/absent、malformed/duplicate YAML/alias/oversize/FIFO/symlink/EACCES、D1 選定的 first-load 錯誤行為、未知不猜名單、跨 project 不繼承；fallback/tier/solo/bind/resume instance metadata 及 cap=1。
+- [ ] 依 Decision D1 實作 helper、精簡 ResolvedAgent.approval、兩 resolution wrapper；不改純 merge、schema、state/prompt 或 dispatcher 行為。測 project/call tuple、empty/absent、malformed/duplicate YAML/alias/oversize/FIFO/symlink/EACCES、D1 選定的 first-load 錯誤行為、未知不猜名單、跨 project 不繼承；fallback/tier/solo/bind/resume instance metadata 及 cap=1。
 - [ ] 只修改 stage2a 的 doctor-only boundary assertions（`test/doctor-approval.test.ts:155–173`）為新 runtime loader 與 error metadata 契約；更新該模組舊註解（`src/doctor-approval.ts:19–22`）。非列入 adapter/fake-runtime 測試不改。
 - [ ] 每片 gate：先 `npm run typecheck`，再 `npm run lint && npm run typecheck && npm test`；若前者缺依賴/EPERM，仍分別嘗試 lint/typecheck/test 並保存 exit/output，不能把短路當 suite attempt。只有已知 sandbox 阻礙可明列 unverified 後由 lead 決定續片；任何新邏輯失敗先修。
 
@@ -98,7 +96,7 @@ Allowed: adapters、上述 test/fixtures；call/run-session 只在捕獲測試�
 
 ## Risks / lead 必須記錄的選擇
 
-- D1 未決，已向使用者提問，沒有 default A。未知首讀無法同時滿足選擇性 fail-closed 與不阻止無關 agent；不得以列 limitation 代替授權放寬。無可信 previous caller，移除 last-known 設計。
+- D1 已由使用者決定：首讀失敗時 run/resume/solo/call 在喚醒任何 agent 前停止；其他指令不受影響。無可信 previous caller，移除 last-known 設計。
 - 使用者指定 user source 優先於 spec 空來源建議；拒絕自行切換。user sandbox/permissions 合併檢查與每 wake 重驗不在本片；真機效果未驗證，不能用 mock 稱已證實（spec :51、:340）。
 - 單一 `WakeInput.agent.enrolled` 解讀替代獨立頂層欄位，拒絕兩個可不一致的 boolean；lead 記錄此介面解讀。`approval` context 是無 executor env 的最小投影，僅記憶體，故重啟未知不能靠舊 state 推論。
 - 額外 safety 選擇：inventory 異常時 inspection 回 unavailable、嚴格 invocation 建構失敗而非使用部分 deny/擴大 deny；全局 scan cap 沿用 limits.max_scan_entries 而非新 config，舊 requests 太大可能影響列入 invocation。失敗不是持久 slot refused；lead 記錄與「不新增 wake refusal」的區別。

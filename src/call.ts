@@ -3,6 +3,7 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
+import { assertApprovalConfig, enrollProject } from "./approval-runtime.js";
 import { ConfigError, loadGlobal, loadProjectRaw, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
 import { agentForCandidate, type Candidate, candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
@@ -55,7 +56,8 @@ export function resolveCallAgent(home: string, name: string): ResolvedAgent {
   if (!g.agents[name]) {
     throw new ConfigError(`"${name}" is not an agent of the global library (${homePaths(home).globalConfig}). Global agents: ${Object.keys(g.agents).join(", ") || "(none)"}.`);
   }
-  const p = resolveProjectFrom(home, CALL_PROJECT, g, { dir: home, team: { lead: name }, dispatcher: {}, agents: { [name]: {} } });
+  const p = enrollProject(resolveProjectFrom(home, CALL_PROJECT, g, { dir: home, team: { lead: name }, dispatcher: {}, agents: { [name]: {} } }), { project: null });
+  assertApprovalConfig(p);
   const a = must(p.agents[name], "the resolved agent");
   if (!a.runtime) throw new ConfigError(`Agent "${name}" has no runtime: set runtime (or a model) for it in team.yaml.`);
   if (!fs.existsSync(a.agentMd)) throw new ConfigError(`AGENT.md of "${name}" not found: ${a.agentMd}`);

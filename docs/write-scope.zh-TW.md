@@ -41,6 +41,27 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 
 **會啟動子行程的測試。** 在 Claude 的 sandbox 下，`tsx` 子行程開不了 IPC socket 時 `npm test` 會失敗（`listen EPERM .../tsx-<uid>/*.pipe`）；診斷見 [Sandbox 阻擋](sandbox-blocks.md)。`unix_sockets: [<你的 $TMPDIR>/tsx-<uid>]`（請自行解出 `$TMPDIR`，不會自動展開）是預期的修法，但端到端**未驗證**，且有 Claude Code 2.1.89 的回報指出限定路徑的 Unix 放行只涵蓋 connect（[claude-code#41817](https://github.com/anthropics/claude-code/issues/41817)）。已知的替代做法仍是用 `NODE_OPTIONS="--import stub.mjs"` 的 stub，讓 `*.pipe` 路徑的 `net.Server.listen` 變成 no-op。
 
+## 核准閘門登錄的 agent（階段 2b-1，尚非可運作的核准閘門）
+
+這是核准閘門（[store API](approval-store-api.md)、[設計](superpowers/specs/2026-11-13-approval-gate-design.md)）的第一部分，只加固「已登錄」agent 的啟動方式。目前 agent 還不能提出核准請求，也沒有人能核准。
+
+- **預設關閉。** 沒有 `<home>/executors.yaml`，或所有 `allow` 清單皆為空時，沒有 agent 被登錄，參數、`--settings`、環境變數與寫入範圍都不變（`src/approval-runtime.ts:21`；`src/adapters/env.ts:11`）。
+- **誰被登錄。** 角色列在某個 executor 的 `allow`（針對該專案或 `call`）的 agent（`src/approval-enrollment.ts:12-14`）。`run`、`resume`、`run --agent`、`call` 在檔案存在時載入它（`src/config.ts:166`、`src/call.ts:56`）。fallback 與 tier 候選都沿用該 agent 的登錄（`src/fallback.ts:53-55` 以 `...agent` 複製 agent）。
+- **`executors.yaml` 無法讀取。** 檔案存在但讀不到或解析失敗時，`run`、`resume`、`run --agent`、`call`、`tidy`（`tidy --dry-run` 與 `--undo` 除外）會在啟動任何 agent 前停止，錯誤訊息指出檔名與固定的原因文字（`src/approval-runtime.ts:56-63`；`src/cli.ts:272,349,652`；`src/call.ts:57`）。原因不會引用檔案內容。`status`、`doctor`、`clear`、`project` 不會拒絕啟動；`doctor` 會載入此檔並回報錯誤（`src/doctor-approval.ts:33-41`）。
+- **Claude，僅限已登錄**（`src/adapters/claude.ts`）：
+  - `--strict-mcp-config` 搭配空的 MCP 設定，使用者 MCP 與專案 `.mcp.json` 都不載入（`:14,100`）。
+  - `--setting-sources user`，專案的 `.claude/settings*.json` 不載入（`:12,100`）。
+  - `--settings` 內加入 `sandbox.failIfUnavailable: true`，與 `enabled`、`allowUnsandboxedCommands: false` 並列（`:63`）。hook 仍維持停用（`disableAllHooks`）。
+  - 自帶寫入政策的喚醒（如 tidy）與 solo/`call` 喚醒同樣適用，因為這寫在 invocation 建構裡，而不是 `invokeWithSandboxChecks`（`:35-37,76-77`）。
+- **環境變數，僅限已登錄，兩種 runtime：** 只有 `PATH`、`HOME`、`LANG`、`TERM`、`TMPDIR`、`USER`，而且只含有設定的那些。因此沒有 `AGENT_LYCEUM_AGENT`（`src/adapters/env.ts:4,10-14`）。macOS 登入需要 `USER`（spec 第 8 節）。其他 agent 保持完整環境。
+- **寫入禁止，僅限已登錄**（`src/approval-policy.ts:21-30`、`src/policy.ts:229-230`）：`approvals/`、`executors.yaml`、每個 executor 的 `command[0]`、專案與該 agent worktree 的 `.claude/settings.json`、`.claude/settings.local.json`，以及每個*其他* slot 的請求目錄，逐項列出（不會整個禁止 `requests/`，也不含該 agent 自己的 slot）。每一項都先照原樣輸出，若 canonical 形式不同則再輸出一次，所以以 symlink 指向的 executor command 也會以真實目標被禁止（`src/approval-policy.ts:22-34`）。
+- **請求目錄不安全時喚醒失敗。** 列舉請求目錄時遇到 symlink、非預期項目或超過掃描上限，已登錄的喚醒會失敗，而不是帶著不完整的清單執行（`src/approval-policy.ts:48-98,129-133`；`src/adapters/claude.ts:76-77`）。
+- **Codex 被拒絕：** 已登錄 agent 不能用 Codex（含作為 fallback runtime），在 Codex invocation 寫入任何檔案或啟動 Codex 之前就拒絕（`src/adapters/codex.ts:63-66`）；對 `call` 而言，該 call 的 log、`task.md` 與 memory 資料夾此時已建立，失敗的 `result.md` 仍會寫入（`src/call.ts:165-167,216`）。`doctor` 已將此列為錯誤。
+
+**已知限制：** 即使用 `--setting-sources user`，使用者層級的 `~/.claude/settings.json` 仍會套用到已登錄的 agent；對此的檢查（spec 第 3 節前提 4 (ii)）尚未實作。`doctor` 可能印出無效 `executors.yaml` 的欄位名稱（`src/approval-executors.ts:60`、`src/doctor-approval.ts:40`）。
+
+**尚未實作：** 每次喚醒重新檢查登錄並拒絕喚醒某個 slot、`status` 的原因顯示、`proposals/` 寫入權限、收集請求、核准 CLI、executor 執行器。真實 Claude CLI 是否接受新旗標、真實 sandbox 的效果、Linux 皆**未驗證**；macOS 第 0 步的量測見 spec 第 8 節。
+
 ## 平行實例的共用記憶
 
 當一位成員以多個實例執行（見[同一成員的平行實例](how-it-works.zh-TW.md#同一成員的平行實例)），只有實例 1（成員本名）會寫該成員的共用記憶（`memory.global`、`memory.project`）。編號 2 以上的實例把那份記憶當唯讀的背景資料，只寫自己的 task memory（`task-memory/<run-id>/<member>--2`）與 outbox；提示會要求它們把值得保留的教訓寫在給 lead 的回信裡。編號 2 以上的實例 `can_edit_agent_md` 一律是 `false`。（規格 23.11、23.12）

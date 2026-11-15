@@ -152,21 +152,23 @@ describe("enabled", () => {
   });
 });
 
-describe("boundary: nothing but doctor reads executors.yaml", () => {
+describe("boundary: who reads executors.yaml (stage 2b-1: doctor and the runtime resolver)", () => {
   const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []));
   const users = (re: RegExp): string[] => files(path.join(here, "..", "src")).filter((f) => re.test(fs.readFileSync(f, "utf8"))).map((f) => path.basename(f)).sort();
-  it("loadExecutors / parseExecutors are used only by their module and doctor-approval", () => {
-    expect(users(/\b(loadExecutors|parseExecutors)\b/)).toEqual(["approval-executors.ts", "doctor-approval.ts"]);
+  it("loadExecutors / parseExecutors are used only by their module, doctor-approval and approval-runtime", () => {
+    expect(users(/\b(loadExecutors|parseExecutors)\b/)).toEqual(["approval-executors.ts", "approval-runtime.ts", "doctor-approval.ts"]);
   });
-  it("applyEnrollment is used only by its module and the doctor premise module", () => {
-    expect(users(/\bapplyEnrollment\b/)).toEqual(["approval-enrollment.ts", "doctor-approval-premises.ts"]);
+  it("applyEnrollment is used only by its module, the doctor premise module and approval-runtime", () => {
+    expect(users(/\bapplyEnrollment\b/)).toEqual(["approval-enrollment.ts", "approval-runtime.ts", "doctor-approval-premises.ts"]);
   });
-  it("resolveProject and doctor --resolved ignore even an invalid executors.yaml", () => {
+  it("resolveProject records an invalid executors.yaml instead of throwing, and doctor --resolved still works", () => {
     setup({ p: "" });
-    const before = JSON.stringify(proj("p"));
+    const before = proj("p");
     writeExec("executors: [\n");
-    expect(JSON.stringify(proj("p"))).toBe(before);
-    expect(Object.values(proj("p").agents).every((a) => a.enrolled === undefined)).toBe(true);
+    const after = proj("p");
+    expect(after.approvalError?.file).toBe(path.join(home, "executors.yaml"));
+    expect(JSON.stringify({ ...after, approvalError: undefined })).toBe(JSON.stringify(before));
+    expect(Object.values(after.agents).every((a) => a.enrolled === undefined)).toBe(true);
     const tsx = path.join(here, "..", "node_modules", ".bin", "tsx");
     const r = spawnSync(tsx, [path.join(here, "..", "src", "cli.ts"), "--home", home, "doctor", "--resolved", "-p", "p"], { encoding: "utf8", env: process.env });
     expect(r.status).toBe(0);

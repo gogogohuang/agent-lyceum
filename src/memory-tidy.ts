@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { realInvoker, type Invoker } from "./adapters/index.js";
+import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
