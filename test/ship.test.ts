@@ -182,3 +182,21 @@ describe("runShip", () => {
     expect(fs.readFileSync(path.join(root, "real.ts"), "utf8")).toBe("const x = 1;\n");
   });
 });
+
+describe("runShip replacement text is literal", () => {
+  const tricky = "a$$b $& $` $' $1 z";
+  for (const replaceAll of [false, true]) {
+    it(`writes $-patterns verbatim (replace_all=${replaceAll})`, async () => {
+      tmp();
+      write("a.ts", "MARK\n");
+      const r = await runShip({
+        root,
+        verify: "true",
+        runVerify: passVerify,
+        edits: [{ path: "a.ts", search: "MARK", replace: tricky, replace_all: replaceAll }],
+      });
+      expect(r.status).toBe("SHIPPED_AND_VERIFIED");
+      expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe(`${tricky}\n`);
+    });
+  }
+});

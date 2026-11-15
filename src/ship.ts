@@ -136,7 +136,7 @@ export function applyExactEdit(
     return { ok: false, message: `search text matches ${n} places (ambiguous). Pass replace_all: true or add neighbouring context.` };
   }
   if (replaceAll) return { ok: true, text: text.split(search).join(replace), count: n };
-  return { ok: true, text: text.replace(search, replace), count: 1 };
+  return { ok: true, text: text.replace(search, () => replace), count: 1 };
 }
 
 function snapshot(abs: string, rel: string): Snapshot {
