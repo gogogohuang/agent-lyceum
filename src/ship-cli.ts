@@ -66,8 +66,7 @@ export async function runShipCli(opts: { session: string; editsFile?: string }):
     result = await runShip({
       root: session.root,
       edits,
-      verify: session.verify,
-      timeoutSec: session.timeoutSec,
+      commands: session.commands,
       deny: session.deny,
       signal: controller.signal,
     });

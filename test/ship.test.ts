@@ -34,7 +34,7 @@ describe("runShip", () => {
         { path: "a.ts", search: "export const x = 1;", replace: "export const x = 2;" },
         { path: "b.ts", search: "import { x } from './a.js';", replace: "import { x } from './a.js'; // ok" },
       ],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("SHIPPED_AND_VERIFIED");
@@ -55,7 +55,7 @@ describe("runShip", () => {
         { path: "a.ts", search: "const a = 1;", replace: "const a = 99;" },
         { path: "b.ts", search: "const b = 1;", replace: "const b = 99;" },
       ],
-      verify: "false",
+      commands: [{ name: "verify", run: "false", timeout_sec: 120 }],
       runVerify: failVerify,
     });
     expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
@@ -71,7 +71,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "a.ts", search: "missing", replace: "x" }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
@@ -84,7 +84,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "../outside.ts", search: "x", replace: "y" }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
@@ -97,7 +97,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "a.ts", search: "foo", replace: "bar", replace_all: true }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("SHIPPED_AND_VERIFIED");
@@ -110,7 +110,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "a.ts", search: "foo", replace: "bar" }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
@@ -124,7 +124,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "CLAUDE.md", search: "keep", replace: "gone" }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       deny: [denied],
       runVerify: passVerify,
     });
@@ -155,7 +155,7 @@ describe("runShip", () => {
           { path: "a.ts", search: "const a = 1;", replace: "const a = 9;" },
           { path: "b.ts", search: "const b = 1;", replace: "const b = 9;" },
         ],
-        verify: "true",
+        commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
         runVerify: passVerify,
       });
       expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
@@ -174,7 +174,7 @@ describe("runShip", () => {
     const r = await runShip({
       root,
       edits: [{ path: "alias.ts", search: "const x = 1;", replace: "const x = 2;" }],
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
     });
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
@@ -191,7 +191,7 @@ describe("runShip replacement text is literal", () => {
       write("a.ts", "MARK\n");
       const r = await runShip({
         root,
-        verify: "true",
+        commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
         runVerify: passVerify,
         edits: [{ path: "a.ts", search: "MARK", replace: tricky, replace_all: replaceAll }],
       });
@@ -205,7 +205,7 @@ describe("runShip path handling", () => {
   for (const p of [".GIT/config", ".Git/hooks/x", "sub/.gIt/y"]) {
     it(`refuses ${p} case-insensitively`, async () => {
       tmp();
-      const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: p, search: "a", replace: "b" }] });
+      const r = await runShip({ root, commands: [{ name: "verify", run: "true", timeout_sec: 120 }], runVerify: passVerify, edits: [{ path: p, search: "a", replace: "b" }] });
       expect(r.status).toBe("ABORTED_BEFORE_WRITE");
       expect(r.summary).toMatch(/\.git/);
     });
@@ -214,14 +214,14 @@ describe("runShip path handling", () => {
   it("allows names that merely start with two dots", async () => {
     tmp();
     write("..foo", "old\n");
-    const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: "..foo", search: "old", replace: "new" }] });
+    const r = await runShip({ root, commands: [{ name: "verify", run: "true", timeout_sec: 120 }], runVerify: passVerify, edits: [{ path: "..foo", search: "old", replace: "new" }] });
     expect(r.status).toBe("SHIPPED_AND_VERIFIED");
     expect(fs.readFileSync(path.join(root, "..foo"), "utf8")).toBe("new\n");
   });
 
   it("still rejects .. escapes", async () => {
     tmp();
-    const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: "../x", search: "a", replace: "b" }] });
+    const r = await runShip({ root, commands: [{ name: "verify", run: "true", timeout_sec: 120 }], runVerify: passVerify, edits: [{ path: "../x", search: "a", replace: "b" }] });
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
     expect(r.summary).toMatch(/escapes/);
   });
@@ -231,7 +231,7 @@ describe("runShip path handling", () => {
     write("a.ts", "x\n");
     const r = await runShip({
       root,
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
       edits: [
         { path: "a.ts", search: "x", replace: "y" },
@@ -248,7 +248,7 @@ describe("runShip path handling", () => {
     fs.mkdirSync(path.join(root, "secret"));
     const r = await runShip({
       root,
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
       deny: [path.join(root, "secret")],
       edits: [{ path: "SECRET/k", search: "a", replace: "b" }],
@@ -263,7 +263,7 @@ describe("runShip non-file targets", () => {
     it(`aborts structurally for directory path ${JSON.stringify(p)}`, async () => {
       tmp();
       write("src/a.ts", "x\n");
-      const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: p, search: "x", replace: "y" }] });
+      const r = await runShip({ root, commands: [{ name: "verify", run: "true", timeout_sec: 120 }], runVerify: passVerify, edits: [{ path: p, search: "x", replace: "y" }] });
       expect(r.status).toBe("ABORTED_BEFORE_WRITE");
       expect(r.summary).toMatch(/regular file/);
     });
@@ -275,7 +275,7 @@ describe("runShip non-file targets", () => {
     write("src/b.ts", "x\n");
     const r = await runShip({
       root,
-      verify: "true",
+      commands: [{ name: "verify", run: "true", timeout_sec: 120 }],
       runVerify: passVerify,
       edits: [
         { path: "a.ts", search: "x", replace: "y" },
@@ -303,7 +303,7 @@ describe("runShip interruption", () => {
         started();
         signal?.addEventListener("abort", () => resolve({ ok: false, exit: null, output: "(cancelled)", cancelled: true }));
       });
-    const p = runShip({ root, edits: [edit], verify: "x", runVerify: waitsOnSignal, signal: ac.signal });
+    const p = runShip({ root, edits: [edit], commands: [{ name: "verify", run: "x", timeout_sec: 120 }], runVerify: waitsOnSignal, signal: ac.signal });
     await running;
     expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 2;\n");
     ac.abort();
@@ -322,7 +322,7 @@ describe("runShip interruption", () => {
     const r = await runShip({
       root,
       edits: [edit],
-      verify: "x",
+      commands: [{ name: "verify", run: "x", timeout_sec: 120 }],
       signal: ac.signal,
       runVerify: async () => {
         called = true;
@@ -341,7 +341,7 @@ describe("runShip interruption", () => {
     const r = await runShip({
       root,
       edits: [edit],
-      verify: "x",
+      commands: [{ name: "verify", run: "x", timeout_sec: 120 }],
       signal: ac.signal,
       runVerify: async () => {
         ac.abort();
@@ -350,5 +350,77 @@ describe("runShip interruption", () => {
     });
     expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
     expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 1;\n");
+  });
+});
+
+describe("runShip verify chain", () => {
+  const edit = { path: "a.ts", search: "const a = 1;", replace: "const a = 2;" };
+
+  it("stops at the first failing command, rolls back and names it", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const ran: string[] = [];
+    const r = await runShip({
+      root,
+      edits: [edit],
+      commands: [
+        { name: "one", run: "c1", timeout_sec: 5 },
+        { name: "two", run: "c2", timeout_sec: 6 },
+        { name: "three", run: "c3", timeout_sec: 7 },
+      ],
+      runVerify: async (cmd) => {
+        ran.push(cmd);
+        return cmd === "c2" ? { ok: false, exit: 3, output: "boom-tail\n" } : { ok: true, exit: 0, output: "" };
+      },
+    });
+    expect(ran).toEqual(["c1", "c2"]);
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(r.summary).toContain('"two"');
+    expect(r.summary).toContain("boom-tail");
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 1;\n");
+  });
+
+  it("passes each command its own timeout", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const seen: number[] = [];
+    const r = await runShip({
+      root,
+      edits: [edit],
+      commands: [
+        { name: "one", run: "c1", timeout_sec: 5 },
+        { name: "two", run: "c2", timeout_sec: 9 },
+      ],
+      runVerify: async (_c, _d, t) => {
+        seen.push(t);
+        return { ok: true, exit: 0, output: "" };
+      },
+    });
+    expect(r.status).toBe("SHIPPED_AND_VERIFIED");
+    expect(seen).toEqual([5, 9]);
+  });
+
+  it("enforces a per-command timeout with the real runner (small timeout)", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const r = await runShip({
+      root,
+      edits: [edit],
+      commands: [
+        { name: "fast", run: "true", timeout_sec: 5 },
+        { name: "slow", run: "sleep 30", timeout_sec: 1 },
+      ],
+    });
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(r.summary).toContain('"slow"');
+    expect(r.summary).toContain("timed out");
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("const a = 1;\n");
+  }, 20000);
+
+  it("rejects an empty chain before writing", async () => {
+    tmp();
+    write("a.ts", "const a = 1;\n");
+    const r = await runShip({ root, edits: [edit], commands: [] });
+    expect(r.status).toBe("ABORTED_BEFORE_WRITE");
   });
 });

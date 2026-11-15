@@ -28,11 +28,17 @@ export interface ShipVerifyOutcome {
 
 export type ShipVerifyRunner = (cmd: string, cwd: string, timeoutSec: number, signal?: AbortSignal) => Promise<ShipVerifyOutcome>;
 
+export interface ShipCommand {
+  name: string;
+  run: string;
+  timeout_sec: number;
+}
+
 export interface RunShipArgs {
   root: string;
   edits: ShipEdit[];
-  verify: string;
-  timeoutSec?: number;
+  /** Verify chain, run in order and fail-fast; every command must pass. */
+  commands: ShipCommand[];
   /** Absolute paths (and their descendants) ship must not write. */
   deny?: string[];
   /** Injected for tests; default runs `sh -c` via `runCommand`. */
@@ -187,8 +193,8 @@ function restore(snaps: Snapshot[]): string[] {
  */
 export async function runShip(args: RunShipArgs): Promise<ShipResult> {
   const root = canonicalPath(args.root);
-  if (!args.verify?.trim()) {
-    return { status: "ABORTED_BEFORE_WRITE", summary: "verify command is required", filesModified: [] };
+  if (!args.commands?.length || args.commands.some((c) => !c.run?.trim())) {
+    return { status: "ABORTED_BEFORE_WRITE", summary: "at least one verify command is required", filesModified: [] };
   }
   if (!args.edits.length) {
     return { status: "ABORTED_BEFORE_WRITE", summary: "edits must not be empty", filesModified: [] };
@@ -281,21 +287,31 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
 
   const filesModified = planned.map((p) => p.rel);
   const runVerify = args.runVerify ?? defaultVerify;
-  // An abort that arrived before verify started (or that verify did not report) still ends in a restored tree.
-  const verified: ShipVerifyOutcome = args.signal?.aborted
-    ? { ok: false, exit: null, output: "", cancelled: true }
-    : await runVerify(args.verify, root, args.timeoutSec ?? 120, args.signal);
+  // Fail-fast chain. An abort that arrived before a command started (or that a runner did not report) still ends in a restored tree.
+  let verified: ShipVerifyOutcome = { ok: true, exit: 0, output: "" };
+  let failedName: string | undefined;
+  for (const c of args.commands) {
+    verified = args.signal?.aborted
+      ? { ok: false, exit: null, output: "", cancelled: true }
+      : await runVerify(c.run, root, c.timeout_sec, args.signal);
+    if (!verified.ok || verified.cancelled || args.signal?.aborted) {
+      failedName = c.name;
+      break;
+    }
+  }
   const cancelled = verified.cancelled === true || args.signal?.aborted === true;
   if (verified.ok && !cancelled) {
     return {
       status: "SHIPPED_AND_VERIFIED",
-      summary: `Shipped ${filesModified.length} file(s); verify passed.\n${verified.output}`.trim(),
+      summary: `Shipped ${filesModified.length} file(s); verify passed (${args.commands.length} command(s)).\n${verified.output}`.trim(),
       filesModified,
     };
   }
 
   const rollbackErrors = restore(planned.map((p) => p.snap));
-  const what = cancelled ? "ship was interrupted (verify cancelled)" : `verify failed (exit ${verified.exit})`;
+  const what = cancelled
+    ? `ship was interrupted (verify command "${failedName}" cancelled)`
+    : `verify command "${failedName}" failed (exit ${verified.exit})`;
   if (rollbackErrors.length) {
     return {
       status: "FAILED_ROLLBACK_PARTIAL",

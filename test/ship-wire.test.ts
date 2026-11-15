@@ -4,28 +4,69 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { parseShipEditsPayload, runShipCli } from "../src/ship-cli.js";
-import { applyShipToWake, shipDefaultVerify, writeShipSession } from "../src/ship-wire.js";
+import { applyShipToWake, formatShipPrompt, readShipSession, shipCommands, writeShipSession } from "../src/ship-wire.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 describe("ship wiring (CLI for Claude Code and Codex)", () => {
-  it("resolves default verify from agent.ship.verify then project.verify", () => {
+  const chainYaml = "\nverify:\n  commands:\n    - { name: types, run: npm run typecheck, timeout_sec: 30 }\n    - { name: unit, run: npm test, timeout_sec: 90 }\n";
+
+  it("agent.ship.verify wins and is one command with ship.timeoutSec ?? 120", () => {
     env = makeEnv();
     env.editProjectYaml((t) =>
-      t
-        .replace(
-          "  fe-member:\n    can_message",
-          "  fe-member:\n    ship:\n      verify: npm test -w pkg\n    can_message",
-        )
-        .replace(/\n$/, "\nverify:\n  commands:\n    - { name: unit, run: npm test }\n"),
+      t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship:\n      verify: npm test -w pkg\n    can_message").replace(/\n$/, chainYaml),
     );
     const p = env.project();
-    expect(shipDefaultVerify(p, p.agents["fe-member"]!)).toBe("npm test -w pkg");
-    env.editProjectYaml((t) => t.replace(/ship:\n {6}verify: npm test -w pkg\n/, "ship: true\n"));
+    expect(shipCommands(p, p.agents["fe-member"]!)).toEqual([{ name: "verify", run: "npm test -w pkg", timeout_sec: 120 }]);
+    env.editProjectYaml((t) => t.replace("verify: npm test -w pkg\n", "verify: npm test -w pkg\n      timeout_sec: 7\n"));
     const p2 = env.project();
-    expect(shipDefaultVerify(p2, p2.agents["fe-member"]!)).toBe("npm test");
+    expect(shipCommands(p2, p2.agents["fe-member"]!)[0]!.timeout_sec).toBe(7);
+  });
+
+  it("falls back to the whole project chain with each timeout; ship.timeoutSec overrides all", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship: true\n    can_message").replace(/\n$/, chainYaml));
+    const p = env.project();
+    expect(shipCommands(p, p.agents["fe-member"]!)).toEqual([
+      { name: "types", run: "npm run typecheck", timeout_sec: 30 },
+      { name: "unit", run: "npm test", timeout_sec: 90 },
+    ]);
+    env.editProjectYaml((t) => t.replace("ship: true\n", "ship:\n      timeout_sec: 5\n"));
+    const p2 = env.project();
+    expect(shipCommands(p2, p2.agents["fe-member"]!).map((c) => c.timeout_sec)).toEqual([5, 5]);
+  });
+
+  it("yields no commands without ship.verify or a project chain", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship: true\n    can_message"));
+    const p = env.project();
+    expect(shipCommands(p, p.agents["fe-member"]!)).toEqual([]);
+  });
+
+  it("reads a new session and still reads the old single-verify form", () => {
+    env = makeEnv();
+    const f = path.join(env.root, "s.json");
+    fs.writeFileSync(f, JSON.stringify({ root: "/r", commands: [{ name: "a", run: "true", timeout_sec: 3 }], deny: [] }));
+    expect(readShipSession(f).commands).toEqual([{ name: "a", run: "true", timeout_sec: 3 }]);
+    fs.writeFileSync(f, JSON.stringify({ root: "/r", verify: " npm test ", deny: [], timeoutSec: 9 }));
+    expect(readShipSession(f).commands).toEqual([{ name: "verify", run: "npm test", timeout_sec: 9 }]);
+    fs.writeFileSync(f, JSON.stringify({ root: "/r", verify: "x", deny: [] }));
+    expect(readShipSession(f).commands[0]!.timeout_sec).toBe(120);
+    fs.writeFileSync(f, JSON.stringify({ root: "/r", commands: [{ name: "a", run: "x" }], deny: [] }));
+    expect(() => readShipSession(f)).toThrow(/timeout_sec/);
+  });
+
+  it("tells the agent the total verify seconds in the prompt", () => {
+    expect(formatShipPrompt("cmd", "/s.json", 120)).toMatch(/up to 120 seconds in total[\s\S]*above 120 seconds/);
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n    can_message", "  fe-member:\n    ship: true\n    can_message").replace(/\n$/, chainYaml));
+    const p = env.project();
+    const w = writeShipSession(p, p.agents["fe-member"]!, path.join(env.root, "wp"));
+    expect(w?.totalTimeoutSec).toBe(120);
+    const { input } = applyShipToWake({ project: p, agent: p.agents["fe-member"]!, workDir: path.join(env.root, "wp2"), systemPrompt: "S", userPrompt: "U", timeoutSec: 60 });
+    expect(input.systemPrompt).toContain("up to 120 seconds in total");
   });
 
   it("writes a ship session and appends the CLI to both Claude and Codex prompts", () => {
@@ -41,8 +82,8 @@ describe("ship wiring (CLI for Claude Code and Codex)", () => {
 
     const session = writeShipSession(project, agentClaude, workDir);
     expect(session?.sessionPath).toBe(path.join(workDir, "ship-session.json"));
-    const body = JSON.parse(fs.readFileSync(session!.sessionPath, "utf8")) as { verify: string; deny: string[] };
-    expect(body.verify).toBe("true");
+    const body = JSON.parse(fs.readFileSync(session!.sessionPath, "utf8")) as { commands: { run: string }[]; deny: string[] };
+    expect(body.commands.map((c) => c.run)).toEqual(["true"]);
     expect(body.deny).toEqual(expect.any(Array));
 
     const base = {
