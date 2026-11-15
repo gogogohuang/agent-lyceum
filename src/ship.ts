@@ -206,7 +206,17 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
 
   const planned: Planned[] = [];
   for (const file of byFile.values()) {
-    const snap = snapshot(file.abs, file.rel);
+    const label = file.rel || ".";
+    let snap: Snapshot;
+    try {
+      const st = fs.existsSync(file.abs) ? fs.statSync(file.abs) : undefined;
+      if (st && !st.isFile()) {
+        return { status: "ABORTED_BEFORE_WRITE", summary: `${label}: target is not a regular file`, filesModified: [] };
+      }
+      snap = snapshot(file.abs, file.rel);
+    } catch (e) {
+      return { status: "ABORTED_BEFORE_WRITE", summary: `${label}: cannot read target (${(e as Error).message})`, filesModified: [] };
+    }
     let text = snap.existed ? snap.bytes.toString("utf8") : "";
     if (snap.existed && Buffer.from(text, "utf8").compare(snap.bytes) !== 0) {
       return { status: "ABORTED_BEFORE_WRITE", summary: `${file.rel}: file is not valid UTF-8 text`, filesModified: [] };

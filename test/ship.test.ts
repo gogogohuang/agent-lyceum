@@ -257,3 +257,33 @@ describe("runShip path handling", () => {
     expect(r.summary).toMatch(/denied/);
   });
 });
+
+describe("runShip non-file targets", () => {
+  for (const p of ["src", "."]) {
+    it(`aborts structurally for directory path ${JSON.stringify(p)}`, async () => {
+      tmp();
+      write("src/a.ts", "x\n");
+      const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: p, search: "x", replace: "y" }] });
+      expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+      expect(r.summary).toMatch(/regular file/);
+    });
+  }
+
+  it("modifies nothing when one entry of a multi-file request is a directory", async () => {
+    tmp();
+    write("a.ts", "x\n");
+    write("src/b.ts", "x\n");
+    const r = await runShip({
+      root,
+      verify: "true",
+      runVerify: passVerify,
+      edits: [
+        { path: "a.ts", search: "x", replace: "y" },
+        { path: "src", search: "x", replace: "y" },
+      ],
+    });
+    expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+    expect(r.filesModified).toEqual([]);
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("x\n");
+  });
+});
