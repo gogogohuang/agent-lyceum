@@ -279,7 +279,9 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
               ...(shipRaw.timeout_sec !== undefined ? { timeoutSec: shipRaw.timeout_sec } : {}),
             }
           : undefined;
-    // `ship: false` is explicit off (same as unset for resolution). Do not invent a `sources.ship`
+    if (!ship) delete sources.ship;
+    // `ship: false` is explicit off (same as unset for resolution): `pick` recorded a source but no
+    // `ship` value is flattened, so drop it to keep "sources ⊆ values". Do not invent a `sources.ship`
     // default when unset: doctor --resolved fixtures and "sources ⊆ values" assume absent optional keys stay absent.
     for (const [k, v] of [
       ["resume", resume],

@@ -149,6 +149,41 @@ describe("resolved configuration with sources", () => {
   });
 });
 
+describe("ship: false and sources", () => {
+  const check = (env: TestEnv) => {
+    const r = resolveProjectWithSources(env.home, "demo");
+    const values = flattenResolved(r.project);
+    for (const key of Object.keys(r.sources)) expect(key in values).toBe(true);
+    return { r, values };
+  };
+
+  it("records no ship source for ship: false", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n", "  fe-member:\n    ship: false\n"));
+    const { values } = check(env);
+    expect(values["agents.fe-member.ship"]).toBeUndefined();
+  });
+
+  it("ship: false in the project overrides a global ship: true without a dangling source", () => {
+    env = makeEnv();
+    fs.writeFileSync(
+      path.join(env.home, "team.yaml"),
+      "agents:\n  lead: { runtime: claude-code }\n  fe-member: { runtime: claude-code, ship: true }\n  qa-member: { runtime: claude-code }\n",
+    );
+    env.editProjectYaml((t) => t.replace("  fe-member:\n", "  fe-member:\n    ship: false\n"));
+    const { r } = check(env);
+    expect(r.project.agents["fe-member"].ship).toBeUndefined();
+    expect("ship" in r.project.agents["fe-member"].sources).toBe(false);
+  });
+
+  it("keeps the source when ship: true yields a value", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => t.replace("  fe-member:\n", "  fe-member:\n    ship: true\n"));
+    const { values } = check(env);
+    expect(values["agents.fe-member.ship"]).toBeDefined();
+  });
+});
+
 describe("can_ask_user", () => {
   it("defaults to true for the lead and false for everyone else", () => {
     env = makeEnv();
