@@ -121,7 +121,8 @@ agents:
 - **Fixed verify:** only the session commands run, in order, and stop at the first failure (the result names the failing command); the request body must not supply another verify. They run in the agent's shell environment (same class of risk as built-in Bash).
 - **Timeouts:** with the project chain, each command uses its own `timeout_sec`; `ship.verify` is a single command that uses `ship.timeout_sec` (default 120). If `ship.timeout_sec` is set it overrides every command's timeout. The prompt tells the agent the total maximum verify time so it can set its shell tool timeout above it.
 - **Interruption:** on SIGINT / SIGTERM / SIGHUP the CLI cancels verify and restores every file, then exits 1. SIGKILL cannot be caught, so a hard kill can leave edited files behind.
-- **Paths:** relative to the work directory only; `writePolicy.deny` is enforced; symlinks and `.git` are refused.
+- **Paths:** relative to the work directory only; `writePolicy.deny` is enforced; symlinks and `.git` are refused. Paths that differ only in letter case are rejected together (they may be one file on a case-insensitive filesystem), and `.git` / deny matching ignores case.
+- **File mode:** the original permission bits are kept on success and on rollback. Files are replaced by writing a temp file and renaming it over the original, so hard links to the file and its owner are not preserved.
 - **Not mandatory:** the agent may still use built-in Edit; the prompt recommends the ship CLI for multi-file or must-pass-tests changes.
 - Policy wakes (e.g. `tidy`) do not write a ship session.
 

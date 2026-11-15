@@ -424,3 +424,62 @@ describe("runShip verify chain", () => {
     expect(r.status).toBe("ABORTED_BEFORE_WRITE");
   });
 });
+
+describe("runShip keeps the file mode on success", () => {
+  // A tight umask makes `writeFileSync(..., { mode })` produce a different mode than the original,
+  // which is exactly what a successful ship must not do. process.umask(mask) is unavailable in
+  // worker threads; then the test cannot set up its precondition and is skipped.
+  function withUmask<T>(mask: number, fn: () => Promise<T>): Promise<T> | undefined {
+    let old: number;
+    try {
+      old = process.umask(mask);
+    } catch {
+      return undefined;
+    }
+    return fn().finally(() => {
+      process.umask(old);
+    });
+  }
+
+  const modeOf = (rel: string) => fs.statSync(path.join(root, rel)).mode & 0o7777;
+  const cmds = [{ name: "ok", run: "true", timeout_sec: 5 }];
+
+  it("does not change the mode of edited files when verify passes", async () => {
+    tmp();
+    write("run.sh", "echo a\n");
+    write("lib.ts", "const a = 1;\n");
+    fs.chmodSync(path.join(root, "run.sh"), 0o775);
+    fs.chmodSync(path.join(root, "lib.ts"), 0o664);
+    const done = withUmask(0o077, () =>
+      runShip({
+        root,
+        edits: [
+          { path: "run.sh", search: "echo a", replace: "echo b" },
+          { path: "lib.ts", search: "1", replace: "2" },
+        ],
+        commands: cmds,
+        runVerify: passVerify,
+      }),
+    );
+    if (!done) return;
+    const r = await done;
+    expect(r.status).toBe("SHIPPED_AND_VERIFIED");
+    expect(fs.readFileSync(path.join(root, "run.sh"), "utf8")).toBe("echo b\n");
+    expect(modeOf("run.sh")).toBe(0o775);
+    expect(modeOf("lib.ts")).toBe(0o664);
+  });
+
+  it("restores the original mode when verify fails", async () => {
+    tmp();
+    write("run.sh", "echo a\n");
+    fs.chmodSync(path.join(root, "run.sh"), 0o775);
+    const done = withUmask(0o077, () =>
+      runShip({ root, edits: [{ path: "run.sh", search: "echo a", replace: "echo b" }], commands: cmds, runVerify: failVerify }),
+    );
+    if (!done) return;
+    const r = await done;
+    expect(r.status).toBe("FAILED_AND_ROLLED_BACK");
+    expect(modeOf("run.sh")).toBe(0o775);
+    expect(fs.readFileSync(path.join(root, "run.sh"), "utf8")).toBe("echo a\n");
+  });
+});

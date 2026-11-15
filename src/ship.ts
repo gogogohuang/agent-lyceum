@@ -258,6 +258,8 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
       tmps.push(tmp);
       const writeOpts = p.snap.mode !== undefined ? { mode: p.snap.mode } : undefined;
       fs.writeFileSync(tmp, p.next, writeOpts);
+      // `mode` in writeFileSync is filtered by the umask; chmod sets the original permission bits exactly.
+      if (p.snap.mode !== undefined) fs.chmodSync(tmp, p.snap.mode & 0o7777);
       fs.renameSync(tmp, p.abs);
       tmps.pop();
     }

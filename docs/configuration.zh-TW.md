@@ -123,7 +123,8 @@ agents:
 - **verify 固定：** 只跑 session 裡的指令，依序執行、遇到第一個失敗就停（結果會指出是哪個指令）；請求 body 不可帶別的 verify。指令在 agent 行程的 shell 環境執行（與內建 Bash 同類；文件需知會風險）。
 - **逾時：** 用專案指令鏈時，每條指令用自己的 `timeout_sec`；`ship.verify` 是單一指令，使用 `ship.timeout_sec`（預設 120）。若設了 `ship.timeout_sec`，會覆蓋每條指令的逾時。prompt 會告知 agent 最長總驗證時間，讓它把 shell 工具的逾時設得更長。
 - **中斷：** 收到 SIGINT／SIGTERM／SIGHUP 時，CLI 會取消 verify、還原所有檔案，並以 exit 1 結束。SIGKILL 無法攔截，被強制砍掉時可能留下已修改的檔案。
-- **路徑：** 只能改工作目錄內相對路徑；套用 `writePolicy.deny`、拒絕 symlink 與 `.git`。
+- **路徑：** 只能改工作目錄內相對路徑；套用 `writePolicy.deny`、拒絕 symlink 與 `.git`。只差大小寫的路徑會一併拒絕（在不分大小寫的檔案系統上可能是同一個檔案），`.git` 與 deny 的比對也不分大小寫。
+- **檔案權限：** 成功與還原時都會保留原檔的權限位元。檔案是寫成暫存檔再 rename 覆蓋原檔，所以指向該檔的 hard link 與擁有者不會保留。
 - **不強制：** agent 仍可用內建 Edit；prompt 會建議多檔／需過測時用 ship CLI。
 - Policy 喚醒（例如 `tidy`）不寫 ship session。
 
