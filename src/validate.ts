@@ -3,6 +3,7 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from "./policy.js";
 import { describeConflict, fallbackCapExcess, sandboxConflictsOf } from "./sandbox-invocation.js";
 import { isInside } from "./paths.js";
+import { shipCommands, shipEnabled } from "./ship-wire.js";
 import { inferRuntime, RUNTIME_EFFORTS, RUNTIMES } from "./schema.js";
 import { ladderIndex } from "./tiers.js";
 import { must } from "./assert.js";
@@ -63,6 +64,10 @@ export function validateProject(project: ResolvedProject): ValidationResult {
     for (const c of sandboxConflictsOf(project, a, false)) err(describeConflict(a.name, c, "load"));
     for (const f of fallbackCapExcess(a)) err(`agent ${a.name}: fallback ${f.label} would apply more sandbox allowance than the primary (${f.excess.join("; ")}).`);
     if (!fs.existsSync(a.agentMd)) err(`Agent "${a.name}": AGENT.md not found at ${a.agentMd}`);
+    // Warning, like other "setting has no effect" checks: the run still works, but ship is silently not offered to the agent.
+    if (shipEnabled(a) && !shipCommands(project, a).length) {
+      warn(`Agent "${a.name}" has ship enabled but nothing to verify with, so ship is NOT offered to it. Set agents.${a.name}.ship.verify or add a project-level verify: block (commands).`);
+    }
     if (!a.memory.global && !a.memory.project) warn(`Agent "${a.name}" has no long-term memory configured.`);
     if (a.canMessage !== "all") {
       for (const t of a.canMessage) {
