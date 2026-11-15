@@ -96,6 +96,8 @@ describe('readApprovalFile', () => {
     const swap = io({
       closeSync: (fd) => {
         fs.closeSync(fd);
+        // Keep the old inode alive: Linux reuses a freed inode number at once, which would make dev/ino match and hide the swap.
+        fs.linkSync(path.join(root, 'a'), path.join(root, 'a.keep'));
         fs.rmSync(path.join(root, 'a'));
         fs.writeFileSync(path.join(root, 'a'), 'y');
       },
