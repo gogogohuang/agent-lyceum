@@ -19,7 +19,7 @@ import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
 import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
-import { prepareTask, readTaskFile, taskMessageBody } from "./task.js";
+import { lintTaskContent, prepareTask, readTaskFile, taskMessageBody } from "./task.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
 import { must } from "./assert.js";
@@ -297,6 +297,7 @@ program
         const prepared = prepareTask({ text: task, file: opts.taskFile, cwd: process.cwd(), runDir });
         console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
+        if (prepared.source === "file") for (const w of lintTaskContent(prepared.content)) console.error(`warning: task file ${w}`);
         const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
         summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
       } finally {
@@ -533,7 +534,7 @@ program
       let taskError: string | undefined;
       if (opts.taskFile) {
         try {
-          readTaskFile(absPath(opts.taskFile, process.cwd()));
+          for (const w of lintTaskContent(readTaskFile(absPath(opts.taskFile, process.cwd())))) report.checks.push({ level: "warn", subject: "task", message: `task file ${w}` });
         } catch (e) {
           taskError = (e as Error).message;
           report.checks.push({ level: "error", subject: "task", message: taskError });

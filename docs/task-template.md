@@ -1,6 +1,6 @@
 # Task file template
 
-Copy this to `spec.md` and fill it in, then run `agent-lyceum run --task-file spec.md`. A task that states its scope, acceptance criteria and verification command up front lets the lead send all independent work in one wake-up and skip the QA layer for a small fix (see [Saving tokens](configuration.md#saving-tokens)). Delete the hints in parentheses.
+Copy this to `spec.md` and fill it in, then run `agent-lyceum run --task-file spec.md`. A task that states its scope, acceptance criteria and verification command up front lets the lead send all independent work in one wake-up and skip the QA layer for a small fix (see [Saving tokens](configuration.md#saving-tokens)). A task file without an Acceptance criteria or a Verification section gets a warning (it still runs). Delete the hints in parentheses.
 
 ```markdown
 # <One-line title>
@@ -16,6 +16,12 @@ Copy this to `spec.md` and fill it in, then run `agent-lyceum run --task-file sp
 
 ## Verification
 (The exact commands that must pass, for example `npm run lint && npm run typecheck && npm test`.)
+
+## If blocked
+(Stop, send a reply listing what was tried, and do not guess.)
+
+## Needs approval
+(Actions that need the user's yes first, for example touching production.)
 
 ## Small change?
 (yes / no. Answer yes only when it is a few lines, has a test that fails before and passes after, and changes no user-visible behaviour. A yes lets the lead skip QA after an approving code review.)
