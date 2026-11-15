@@ -200,3 +200,60 @@ describe("runShip replacement text is literal", () => {
     });
   }
 });
+
+describe("runShip path handling", () => {
+  for (const p of [".GIT/config", ".Git/hooks/x", "sub/.gIt/y"]) {
+    it(`refuses ${p} case-insensitively`, async () => {
+      tmp();
+      const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: p, search: "a", replace: "b" }] });
+      expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+      expect(r.summary).toMatch(/\.git/);
+    });
+  }
+
+  it("allows names that merely start with two dots", async () => {
+    tmp();
+    write("..foo", "old\n");
+    const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: "..foo", search: "old", replace: "new" }] });
+    expect(r.status).toBe("SHIPPED_AND_VERIFIED");
+    expect(fs.readFileSync(path.join(root, "..foo"), "utf8")).toBe("new\n");
+  });
+
+  it("still rejects .. escapes", async () => {
+    tmp();
+    const r = await runShip({ root, verify: "true", runVerify: passVerify, edits: [{ path: "../x", search: "a", replace: "b" }] });
+    expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+    expect(r.summary).toMatch(/escapes/);
+  });
+
+  it("aborts when two spellings differing only in case name one file", async () => {
+    tmp();
+    write("a.ts", "x\n");
+    const r = await runShip({
+      root,
+      verify: "true",
+      runVerify: passVerify,
+      edits: [
+        { path: "a.ts", search: "x", replace: "y" },
+        { path: "A.ts", search: "x", replace: "z" },
+      ],
+    });
+    expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+    expect(r.summary).toMatch(/case/);
+    expect(fs.readFileSync(path.join(root, "a.ts"), "utf8")).toBe("x\n");
+  });
+
+  it("matches the deny list case-insensitively", async () => {
+    tmp();
+    fs.mkdirSync(path.join(root, "secret"));
+    const r = await runShip({
+      root,
+      verify: "true",
+      runVerify: passVerify,
+      deny: [path.join(root, "secret")],
+      edits: [{ path: "SECRET/k", search: "a", replace: "b" }],
+    });
+    expect(r.status).toBe("ABORTED_BEFORE_WRITE");
+    expect(r.summary).toMatch(/denied/);
+  });
+});

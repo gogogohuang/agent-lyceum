@@ -47,7 +47,10 @@ export function isDeniedPath(abs: string, deny: string[] | undefined): boolean {
     } catch {
       denied = path.resolve(d);
     }
-    if (target === denied || target.startsWith(denied + path.sep)) return true;
+    // Case-folded: on case-insensitive filesystems `SECRET/x` is the same file as `secret/x`.
+    const t = target.toLowerCase();
+    const dl = denied.toLowerCase();
+    if (t === dl || t.startsWith(dl + path.sep)) return true;
   }
   return false;
 }
@@ -88,7 +91,7 @@ export function resolveUnderRoot(
   const rootReal = canonicalPath(root);
   const abs = path.resolve(rootReal, rel);
   const relPosix = path.relative(rootReal, abs);
-  if (relPosix.startsWith("..") || path.isAbsolute(relPosix)) {
+  if (relPosix === ".." || relPosix.startsWith(`..${path.sep}`) || path.isAbsolute(relPosix)) {
     return { ok: false, reason: `path escapes the ship root: ${rel}` };
   }
   // Refuse editing through symlinks (aliases to the same inode / escape). Missing path is fine.
@@ -106,7 +109,7 @@ export function resolveUnderRoot(
   if (isDeniedPath(abs, deny)) return { ok: false, reason: `path is denied by write policy: ${rel}` };
   // Also refuse `.git` anywhere under the ship root (defence in depth).
   const parts = relPosix.split(path.sep);
-  if (parts.includes(".git")) return { ok: false, reason: `path must not touch .git: ${rel}` };
+  if (parts.some((part) => part.toLowerCase() === ".git")) return { ok: false, reason: `path must not touch .git: ${rel}` };
   return { ok: true, abs, rel: relPosix.split(path.sep).join("/") };
 }
 
@@ -182,9 +185,20 @@ export async function runShip(args: RunShipArgs): Promise<ShipResult> {
   }
 
   const byFile = new Map<string, { abs: string; rel: string; edits: ShipEdit[] }>();
+  const foldedSpelling = new Map<string, string>();
   for (const edit of args.edits) {
     const resolved = resolveUnderRoot(root, edit.path, args.deny);
     if (!resolved.ok) return { status: "ABORTED_BEFORE_WRITE", summary: resolved.reason, filesModified: [] };
+    const folded = resolved.rel.toLowerCase();
+    const prior = foldedSpelling.get(folded);
+    if (prior !== undefined && prior !== resolved.rel) {
+      return {
+        status: "ABORTED_BEFORE_WRITE",
+        summary: `paths differ only in letter case and may name one file on a case-insensitive filesystem: ${prior} vs ${resolved.rel}`,
+        filesModified: [],
+      };
+    }
+    foldedSpelling.set(folded, resolved.rel);
     const cur = byFile.get(resolved.rel) ?? { abs: resolved.abs, rel: resolved.rel, edits: [] };
     cur.edits.push(edit);
     byFile.set(resolved.rel, cur);
