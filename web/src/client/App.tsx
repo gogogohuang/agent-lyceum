@@ -1,6 +1,7 @@
 import { Button } from "@base-ui/react/button";
 import { useEffect, useState } from "react";
 import type { QuotaReport, WatchFrame, WebEvent } from "../types";
+import { Allowance } from "./Allowance";
 import { cn } from "./cn";
 import { JobsPage } from "./JobsPage";
 import { ProjectView } from "./ProjectView";
@@ -149,55 +150,6 @@ function readHash(): { project?: string; run?: string; view?: "tools" | "jobs" }
   } catch {
     return {};
   }
-}
-
-function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: (reports: QuotaReport[]) => void }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-
-  const refresh = () => {
-    setPending(true);
-    setError(undefined);
-    void fetch("/quota", { method: "POST" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("重新取得失敗");
-        onReports((await response.json()) as QuotaReport[]);
-      })
-      .catch(() => setError("重新取得失敗"))
-      .finally(() => setPending(false));
-  };
-
-  return (
-    <div className="sticky top-0 z-10 border-b border-line bg-paper/90 px-3 py-2 sm:px-4 backdrop-blur">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-        {reports.map((report) => (
-          <p key={report.runtime} className="text-sm">
-            <span className="eyebrow">{report.runtime}</span>
-            {report.error ? (
-              <span className="text-pretty ml-3 text-failed">{report.error}</span>
-            ) : report.windows.length === 0 ? (
-              <span className="ml-3 text-ink/60">沒有讀到額度</span>
-            ) : (
-              report.windows.map((window) => (
-                <span key={window.label} className="ml-3 tabular-nums">
-                  {window.label}剩餘 {percent(window.remaining_percent)}%
-                  <span className="text-ink/60"> 重設 {window.resets}</span>
-                </span>
-              ))
-            )}
-          </p>
-        ))}
-        <Button type="button" disabled={pending} className="min-h-11 rounded-md border border-line px-3 py-1 text-xs hover:bg-wall disabled:opacity-60 sm:min-h-0" onClick={refresh}>
-          {pending ? "正在取得" : "重新取得"}
-        </Button>
-        {error && <span className="text-pretty text-sm text-failed">{error}</span>}
-      </div>
-    </div>
-  );
-}
-
-function percent(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
 function apply(prev: Map<string, WatchFrame>, event: WebEvent): Map<string, WatchFrame> {
