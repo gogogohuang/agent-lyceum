@@ -337,8 +337,10 @@ export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap
       try {
         for (let ent = dir.readSync(); ent !== null; ent = dir.readSync()) {
           const name = ent.name;
-          if (!name.endsWith(".json")) continue; // recovery looks at `.json` names only
+          // Every entry counts toward the cap, `.json` or not: a folder of junk names must overflow too. This bounds only this scan, not the
+          // later legacy readdirSync inside recoverRunMail.
           if (++count > cap) { overflow = true; break; }
+          if (!name.endsWith(".json")) continue; // recovery looks at `.json` names only
           const owner = MAIL_FILE.exec(name)?.[1];
           const r = readRegularFileCappedNoFollow(path.join(dirPath, name), GATE_FILE_LIMIT);
           const readable = r.ok && !r.truncated;
