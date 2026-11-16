@@ -1,7 +1,11 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
+import { loadFreshEnrollment } from "./approval-runtime.js";
+import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, quarantinedSlots, slotDirVerdict, slotFileFilter, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
+import type { PremiseOptions } from "./doctor-approval-premises.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
 import type { DispatcherSettings, VerifySettings } from "./schema.js";
@@ -17,7 +21,7 @@ import { DEFAULT_MAX_INSTANCES, assertInstancesResumable, heldStallKey, instance
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { inboxDir, outboxDir, proposalsDir, sharedIndex } from "./policy.js";
+import { inboxDir, osSandboxAvailable, outboxDir, proposalsDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
@@ -158,6 +162,26 @@ export interface RunOptions {
   instanceCheck?: (role: string, k: number) => string | undefined;
   /** Spec 27: kill grace and pipe wait of verify commands (milliseconds); tests shorten them. */
   verifyTiming?: { killGraceMs?: number; settleWaitMs?: number };
+  /** Approval gate (stage 2b-2) test seam: replaces parts of the per-wake gate. Only used when an agent is enrolled. */
+  approvalGate?: Partial<GateDeps>;
+  /** Approval gate: platform and sandbox facts for the premise checks; tests inject them. Default: this process. */
+  approvalPremise?: PremiseOptions;
+}
+
+/** Per-session state of the approval wake gate; exists only when some agent is enrolled. */
+interface GateState {
+  deps: GateDeps;
+  baselines: Map<string, SlotBaseline>;
+  /** The baseline could not be computed at all (executors.yaml unreadable at session start). */
+  baselineBroken: boolean;
+  /** Slots whose attempt or claim files are unsafe: not woken in this process, and recovery leaves their files alone. */
+  quarantined: Set<string>;
+  entries: Record<string, GateEntry>;
+  /** The side file content last attempted, so an unchanged state is not written (or reported) again. */
+  attempted: string;
+  logged: Set<string>;
+  /** One pass per loop round: the fresh view is read at most once and each slot is judged once. */
+  pass: { view?: ReturnType<GateDeps["loadFresh"]>; verdicts: Map<string, GateVerdict> };
 }
 
 /**
@@ -248,6 +272,8 @@ export class RunSession {
   private readonly leadSpace: AgentWorkspace | undefined;
   /** The attempt that produced each batch member's output; committed together with its claim. */
   private readonly attempts = new Map<string, AttemptRecord>();
+  private readonly soloName: string | undefined;
+  private gate: GateState | undefined;
 
   constructor(opts: RunOptions) {
 
@@ -397,6 +423,7 @@ export class RunSession {
     this.leadSpace = leadSpace;
 
     this.opts = opts;
+    this.soloName = soloName;
     this.prRunner = opts.pr ?? realRunner;
     this.resume = resume;
     this.invoke = invoke;
@@ -654,6 +681,153 @@ export class RunSession {
     return fresh ? "notified" : "idle";
   }
 
+
+  /** The approval gate (stage 2b-2): before anything is claimed, check each enrolled slot that has mail. A no-op without an enrolled agent. */
+  private initGate(): void {
+    const { project, runDir, opts, log } = this;
+    const slots = Object.values(project.agents).filter((a) => a.enrolled).map((a) => a.name);
+    if (slots.length === 0) return;
+    const premise = opts.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable };
+    const userHome = os.homedir();
+    const bind = (p: ResolvedProject): ResolvedProject => bindRunProject(this.soloName ? soloProject(p, this.soloName) : p, runDir, this.layout, this.state.instances);
+    const baselines = new Map<string, SlotBaseline>();
+    let maxScan = 200;
+    let baselineBroken = false;
+    const fresh = loadFreshEnrollment(this.base, { project: project.name }, { userHome });
+    if (fresh.ok) {
+      maxScan = fresh.config.limits.max_scan_entries;
+      for (const slot of slots) {
+        try {
+          baselines.set(slot, baselineFor(project, slot, fresh.config, this.runId));
+        } catch {
+          baselineBroken = true;
+        }
+      }
+    } else baselineBroken = true;
+    const deps: GateDeps = {
+      loadFresh: () => loadFreshView({ home: project.home, project: project.name, userHome, bind, premise }),
+      slotDir: (slot) => slotDirVerdict(project.home, { kind: "run", project: project.name, run_id: this.runId, slot }, runDir, slot, maxScan),
+      now: () => new Date(),
+      ...opts.approvalGate,
+    };
+    this.gate = { deps, baselines, baselineBroken, quarantined: new Set(), entries: {}, attempted: "", logged: new Set(), pass: { verdicts: new Map() } };
+    this.persistGate("reset");
+    if (this.resume) {
+      this.gate.quarantined = quarantinedSlots(runDir, slots);
+      if (this.gate.quarantined.size) log("approval_gate_quarantine", { slots: [...this.gate.quarantined].sort() });
+    }
+  }
+
+  /** Write the reasons file when its content changed. A failure never unblocks a slot: it is logged (fixed event) and reported once. */
+  private persistGate(phase: "reset" | "update"): void {
+    const g = this.gate;
+    if (!g) return;
+    const json = JSON.stringify(g.entries);
+    if (json === g.attempted) return;
+    g.attempted = json;
+    try {
+      writeGateFile(this.runDir, g.entries);
+    } catch {
+      this.log("approval_gate_file_error", { phase });
+      this.say("  approval gate: the reason file could not be written; blocked slots stay blocked");
+    }
+  }
+
+  private evaluateSlot(slot: string): GateVerdict {
+    const g = this.gate as GateState;
+    try {
+      if (g.quarantined.has(slot)) return { kind: "skipped", code: "UNDETERMINABLE" };
+      const base = g.baselines.get(slot);
+      if (!base) return { kind: "refused", code: g.baselineBroken ? "ORIGIN_UNREADABLE" : "NO_BASELINE" };
+      if (!g.pass.view) {
+        try {
+          g.pass.view = g.deps.loadFresh();
+        } catch {
+          g.pass.view = { ok: false, code: "CONFIG_INVALID" };
+        }
+      }
+      if (!g.pass.view.ok) return { kind: "refused", code: g.pass.view.code };
+      const q = qualificationVerdict(base, g.pass.view.view);
+      return q.kind === "wake" ? g.deps.slotDir(slot) : q;
+    } catch {
+      return { kind: "skipped", code: "UNDETERMINABLE" };
+    }
+  }
+
+  /** Record a verdict: side file, log, terminal line, and one notice to the lead (never to itself). True when a new notice was delivered. */
+  private applyVerdict(slot: string, v: GateVerdict): boolean {
+    const g = this.gate as GateState;
+    const { project, runId } = this;
+    if (v.kind === "wake") {
+      if (g.entries[slot]) {
+        delete g.entries[slot];
+        this.persistGate("update");
+      }
+      return false;
+    }
+    const prev = g.entries[slot];
+    g.entries[slot] = { class: v.kind, code: v.code, at: prev && prev.class === v.kind && prev.code === v.code ? prev.at : g.deps.now().toISOString() };
+    this.persistGate("update");
+    const seen = `${slot}:${v.kind}:${v.code}`;
+    if (!g.logged.has(seen)) {
+      g.logged.add(seen);
+      this.log("approval_gate", { slot, class: v.kind, code: v.code, ...(v.premises ? { premises: v.premises } : {}) });
+      this.say(`  ${slot} not woken: ${GATE_TEXT[v.code].status}`);
+    }
+    if (v.kind === "refused") this.refused.add(slot);
+    if (slot === project.lead) {
+      // The lead cannot be told by mail it will never read: a refused lead ends the run (as a refused lead worktree does).
+      if (v.kind === "refused") this.endReason = "lead_failed";
+      return false;
+    }
+    const failed = v.premises?.length ? ` Failed checks: ${v.premises.join(", ")} (run \`agent-lyceum doctor\`).` : "";
+    const key = v.kind === "refused" ? `approval-refused:${runId}:${slot}` : `approval-skip:${runId}:${slot}:${v.code}`;
+    const tail = v.kind === "refused" ? "It is not woken again in this run; resume the run after the cause is fixed to check it again." : "It is checked again before every wake and is woken as soon as the cause is gone.";
+    const { fresh } = deliverOnce(
+      project,
+      this.journal(),
+      key,
+      {
+        from: "dispatcher",
+        to: project.lead,
+        type: "failure",
+        subject: `${slot} cannot be woken: approval check`,
+        body: `${slot} has unread mail, but it is not woken: ${GATE_TEXT[v.code].mail}${failed}\n\nIts unread mail stays unread. ${tail} Do its work yourself or give it to another agent; do not wait for ${slot}.`,
+      },
+      this.state.instances?.roles[roleOfName(project.agents, slot)] ? { about: slot } : {},
+    );
+    return fresh;
+  }
+
+  private gateSlot(a: ResolvedAgent): { wake: boolean; mailed: boolean } {
+    const g = this.gate;
+    if (!g || !a.enrolled) return { wake: true, mailed: false };
+    let v = g.pass.verdicts.get(a.name);
+    let mailed = false;
+    if (!v) {
+      v = this.evaluateSlot(a.name);
+      g.pass.verdicts.set(a.name, v);
+      mailed = this.applyVerdict(a.name, v);
+    }
+    return { wake: v.kind === "wake", mailed };
+  }
+
+  /** `pendingAgents`, minus the enrolled slots the gate does not let wake. A new notice makes the lead wakeable, so the list is built again. */
+  private gatedPending(): ResolvedAgent[] {
+    if (!this.gate) return this.pendingAgents();
+    let kept: ResolvedAgent[] = [];
+    for (let n = 0; n < 3; n++) {
+      let mailed = false;
+      kept = [];
+      for (const a of this.pendingAgents()) {
+        const r = this.gateSlot(a);
+        mailed ||= r.mailed;
+        if (r.wake) kept.push(a);
+      }
+      if (!mailed || this.endReason) break;
+    }
+    return this.endReason ? [] : kept;
+  }
 
   private pendingAgents(): ResolvedAgent[] {
     const { project } = this;
@@ -1394,7 +1568,8 @@ export class RunSession {
   private async recover(): Promise<void> {
     const { say, runId, runDir, project, wsMode, log } = this;
     if (this.resume?.end_reason === "waiting") this.deliverAnswers();
-    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent) });
+    const quarantined = this.gate?.quarantined;
+    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(quarantined?.size ? { skipFile: slotFileFilter(quarantined) } : {}) });
     for (const i of rec.interrupted) {
       this.note(
         `${i.attempt.agent} attempt ${i.attempt.n} was interrupted${i.parked.length ? `; ${i.parked.length} output file(s) set aside in ${path.join("mail", "attempts", i.attempt.id, "outbox")}` : ""}. ` +
@@ -1420,6 +1595,7 @@ export class RunSession {
 
 
   async run(): Promise<RunSummary> {
+    this.initGate();
     if (this.resume) await this.recover();
 
     const { say, runId, runDir, wsMode, log, state, opts } = this;
@@ -1434,7 +1610,9 @@ export class RunSession {
       }
       this.assignHeld();
       project = this.project;
-      let pending = this.pendingAgents();
+      if (this.gate) this.gate.pass = { verdicts: new Map() };
+      let pending = this.gatedPending();
+      if (this.endReason) break;
       if (pending.length === 0 && leadWasLast && !nudged) {
         nudged = true;
         say("  lead left no mail and no done: reminding it to send one");
@@ -1446,7 +1624,8 @@ export class RunSession {
           subject: "No done message sent",
           body: `All mailboxes are empty and you have not sent a \`done\` message, so the run would end without a final report. If the job is finished and verified, send \`type: done\` now (with \`outcome: completed|partial|blocked|failed\` in the frontmatter and \`## Result\`, \`## Files\`, \`## Verification\`, \`## Decisions\`, \`## Not done\`${state.steps ? " and the full `## Steps` checklist" : ""}). If work remains, send the \`task\` that continues it. Writing a summary in your reply text does not count: only mail is delivered.`,
         });
-        pending = this.pendingAgents();
+        pending = this.gatedPending();
+        if (this.endReason) break;
       }
       if (pending.length === 0) {
         const stalled = await this.stallHeld();
@@ -1455,7 +1634,8 @@ export class RunSession {
           break;
         }
         if (stalled === "retry") continue;
-        if (stalled === "notified") pending = this.pendingAgents();
+        if (stalled === "notified") pending = this.gatedPending();
+        if (this.endReason) break;
       }
       if (pending.length === 0) {
         this.endReason = "idle";

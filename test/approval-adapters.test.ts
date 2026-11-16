@@ -214,15 +214,22 @@ describe("B5 every entry gets the same treatment", () => {
   it("the WakeInput that reaches the invoker carries enrolled: run (lead), solo, resume, call and tidy", async () => {
     const seen: Record<string, WakeInput[]> = {};
     const record = (key: string): Invoker => async (i) => { seen[key] = [...(seen[key] ?? []), i]; if (key !== "resume" && key !== "tidy") write(path.join(outboxDir(i.project, i.agent.name), "d.md"), `---\nto: ${i.agent.name}\ntype: done\nsubject: s\noutcome: completed\n---\n\n${FULL_DONE}\n`); return OK; };
-    const p0 = enrolledEnv();
+    let p0 = enrolledEnv();
+    // The per-wake approval gate (stage 2b-2) refuses an enrolled agent whose executor cannot be verified: give the fixture a real one.
+    const realTool = path.join(env.root, "bin", "tool");
+    write(realTool, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(realTool, 0o755);
+    fs.writeFileSync(path.join(env.home, "executors.yaml"), fs.readFileSync(path.join(env.home, "executors.yaml"), "utf8").replace("/opt/x/tool", realTool));
+    p0 = env.project();
+    const approvalPremise = { platform: "linux" as const, sandboxAvailable: () => true };
     // run
     const runDir = path.join(p0.paths.runs, "run-a");
-    await runTeam({ project: p0, task: prepareTask({ text: "t", cwd: env.root, runDir }), runDir, invoker: record("run"), log: () => {} });
+    await runTeam({ project: p0, task: prepareTask({ text: "t", cwd: env.root, runDir }), runDir, invoker: record("run"), log: () => {}, approvalPremise });
     expect(seen.run![0]!.agent).toMatchObject({ name: "lead", enrolled: true });
     expect(seen.run![0]!.agent.approval).toBeDefined();
     // solo
     const soloDir = path.join(p0.paths.runs, "run-solo");
-    await runTeam({ project: p0, task: prepareTask({ text: "t", cwd: env.root, runDir: soloDir }), runDir: soloDir, soloAgent: "fe-member", invoker: record("solo"), log: () => {} });
+    await runTeam({ project: p0, task: prepareTask({ text: "t", cwd: env.root, runDir: soloDir }), runDir: soloDir, soloAgent: "fe-member", invoker: record("solo"), log: () => {}, approvalPremise });
     expect(seen.solo![0]!.agent.enrolled).toBe(true);
     // resume: a waiting task and a stored session
     const resDir = path.join(p0.paths.runs, "run-res");
@@ -230,11 +237,11 @@ describe("B5 every entry gets the same treatment", () => {
     const rp = { ...p0, agents: { ...p0.agents, "fe-member": { ...p0.agents["fe-member"]!, resume: true } } };
     deliver(bindRunProject(rp, resDir, "run"), { from: "lead", to: "fe-member", type: "task", subject: "job", body: "x" });
     saveRunState(resDir, { ...newRunState({ run_id: "run-res", project: "demo", max_rounds: 3, rounds: 1, pid: 1, task_summary: "t" }), sessions: { "fe-member": "sess-9" } });
-    await runTeam({ project: rp, resume: loadRunState(resDir), runDir: resDir, invoker: record("resume"), log: () => {}, sleep: async () => {} });
+    await runTeam({ project: rp, resume: loadRunState(resDir), runDir: resDir, invoker: record("resume"), log: () => {}, sleep: async () => {}, approvalPremise });
     const first = seen.resume!.find((i) => i.agent.name === "fe-member")!;
     expect(first.agent.enrolled).toBe(true);
     // call
-    await callAgent({ home: env.home, agent: "fe-member", task: "t", dir: env.repo, invoker: record("call"), say: () => {} });
+    await callAgent({ home: env.home, agent: "fe-member", task: "t", dir: env.repo, invoker: record("call"), say: () => {}, approvalPremise });
     expect(seen.call![0]!.agent.enrolled).toBe(true);
   });
 

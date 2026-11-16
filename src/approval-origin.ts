@@ -111,13 +111,18 @@ export function resolveOrigin(origin: Origin, executor: string, resolver: Origin
   } catch { return bad('CONFIG_INVALID', 'The resolver returned malformed data.'); }
 }
 
-export function revalidateOrigin(record: ApprovalRecord, resolver: OriginResolver): OriginResult {
-  if (record.disposition !== 'pending') return bad('NOT_ALLOWED', 'A denied request cannot be approved.');
-  const r = resolveOrigin(record.origin, record.executor, resolver);
+/** Resolve `origin` fresh and compare the hash of what it resolves to with `expected`; the checks of `resolveOrigin` come first. */
+export function revalidateQualification(origin: Origin, executor: string, expected: Sha256, resolver: OriginResolver): OriginResult {
+  const r = resolveOrigin(origin, executor, resolver);
   if (!r.ok) return r;
   let hash: string;
   try { hash = qualificationHash(r.resolved.snapshot_input); }
   catch { return bad('CONFIG_INVALID', 'The effective configuration could not be hashed.'); }
-  return hash === record.qualification.sha256 ? r
+  return hash === expected ? r
     : bad('SNAPSHOT_MISMATCH', 'The effective configuration changed since the request was made.');
+}
+
+export function revalidateOrigin(record: ApprovalRecord, resolver: OriginResolver): OriginResult {
+  if (record.disposition !== 'pending') return bad('NOT_ALLOWED', 'A denied request cannot be approved.');
+  return revalidateQualification(record.origin, record.executor, record.qualification.sha256, resolver);
 }
