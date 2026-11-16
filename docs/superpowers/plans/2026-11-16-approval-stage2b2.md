@@ -157,3 +157,168 @@ Reviewer verdict: request-changes（3 major、2 minor）。以下修正**取代*
 - **R5 minor overstated-scan-bound → 接受。** 修正成本描述：containment 會重讀所有專案的 global/project YAML，20000 是每次 alias walk 的拒絕門檻、在 `readdirSync` 配置之後計數，不是全 home 工作上限；gate 同步執行期間 Ctrl-C 為 best-effort（gate 結束後才處理）。寫入 Risks 與 docs，不新增 scanner（O1 不重開）。
 
 Lead 另外決定：fixed-text sentinel 測試要做整合層（通知、log、側檔、人類 status 全部掃 sentinel secret 與 sentinel 路徑），不只測 `GATE_TEXT` 常數。
+
+## Amendment A — mutable containment / retained premises（task d8dbebd3）
+
+本節取代 D3、O1、R5 中「完整 doctor alias 掃描結果直接當成 wake 前提」以及 D2/D6 的 fresh-only 前提敘述；其餘決策不變。不增加設計 reviewer 或人工核准輪，由 lead 依本節與獨立安全報告決定。只交付設計，未實作以下契約。
+
+### Context / checked evidence
+
+安全報告 `_shared/security-review-full.md` 的兩條靜態鏈經重新核對：
+
+- `src/approval-wake-gate.ts:184–186` 把 fresh project checks 與全域 containment errors 轉成前提；`src/doctor-approval-containment.ts:280–294,370–381` 會走訪 agent 可寫的後代，深度上限或 alias overlap 造成 error；`src/run-session.ts:744–747` 讓 enrolled lead 的 refused 結束 run。
+- P7 在 `src/doctor-approval-premises.ts:49`，但只對 fresh project 執行；hash inputs 不含 verify（`src/approval-wake-gate.ts:74–108`）。實際 shell verifier 使用 retained `project.verify`（`src/run-session.ts:1204–1205,1302–1311`，`src/verify.ts:51`）。因此「磁碟修好了」不等於「執行中的 verifier 消失」。
+
+2026-11-16 重跑 security 的三份原 probe（不是修補後測試）：在既有 disposable `git archive 95f76cf` 副本 `/private/tmp/claude-501/arch2b2.QIH1`，臨時 HOME 與 AGENT_LYCEUM_HOME，執行 `node node_modules/vitest/vitest.mjs run --configLoader runner test/sec-probe-dos.test.ts test/sec-probe-crossproject.test.ts test/sec-probe-p7.test.ts --reporter verbose`。結果 `Test Files 3 passed (3); Tests 7 passed (7)`、exit 0，表示缺陷重現，並非修補驗收：
+
+- cross-project `before={"kind":"wake"} after={"kind":"refused","code":"PREMISE_FAILED","premises":["containment"]}`。
+- `[lead enrolled] wakes=["lead","qa-member"] end=lead_failed outcome=failed`。
+- 指向 executors.yaml 的 memory alias 讓 member refused；dangling alias 控制組仍 wake。
+- `inMemoryVerify=["unit"] diskHasVerify=false wakes=["lead","fe-member","lead"] end=done`；`staleVerifyExecuted=stale-verify`。
+
+先前失敗 wake 的原始輸出保存在 task memory `cli-architect/probe-head-95f76cf.out.txt`；本次重跑得到相同上述結果。真 runtime、Linux 與修補效果尚未驗證。
+
+### Decision A1 — wake gate 檢查授權根目錄，doctor 保留後代診斷
+
+**界線：** grant 是設定或實際 invocation 明確授予的目錄／檔案／cwd，含其 canonical 目標；祖先與 symlink hop 會決定這個授權或 protected 路徑到底落在哪裡。grant 內新建的任意後代並不是新的 grant。把後代 alias 當作獨立 grant，會讓「可以建立連結」錯當成「已被授予連結目標的寫入權」。因此修正的是權限輸入模型，不是把不完整的安全檢查當成功。
+
+在 `ApprovalContainmentOptions` 加內部可選 `mode?: 'diagnostic' | 'grants'`（預設 diagnostic）及 `executionProjects?: readonly ResolvedProject[]`。不改 public CLI 或持久化 schema。
+
+1. diagnostic 模式保持現有 doctor 的順序、文字、alias 掃描與限額完全不變；不解析 DoctorCheck.message 來分類。
+2. grants 模式保留所有專案與所有 global call 的設定讀取、grant 根目錄及 conservative envelope 根目錄、git common dir inventory、protected set 建構、canonical 雙向 overlap 比對與所有 I/O error 的 fail-closed 結果。只略過 `envelope` 的 `aliasesBelow` 遞迴，不把任意 mutable descendant 變成 grant。`sandbox.write`、allowFiles、project dir、worktrees、calls、task-memory、runs 等根目錄不得漏掉。
+3. configured grant 自身或其祖先若是 symlink，仍解析其 canonical target；protected command/interpreter 的每個 kernel-order hop 與 hop directory 保護原樣保留。`link/../x` 的拒絕、middle-hop、root canonical 失敗／循環的 error 不能弱化。grant 等於、包含或落在 protected 範圍內仍 refused；root 正好是指向 executors 的 symlink 與 root 內任意新增的 link 是不同案例。
+4. `executionProjects` **加到**既有磁碟 inventory，絕不取代它。抽出既有 agent × candidate grant 收集迴圈共用；保留 actual 與 fresh 的聯集，包含 `writePolicy` allowDirs/allowFiles、repo/cwd、workspace root/gitDir、sandbox.write。收集時去掉 agent.enrolled，避免 `writePolicy` 為 deny inventory 另做 I/O；allow 集合不依賴 enrolled（`src/policy.ts:178–203,230`）。不可用 `staticWritable`：實際 run-only grants 也須檢查。以來源標籤區分 retained/session，doctor 訊息不改。
+5. grants 模式不掃自己或他人 memory 的後代，不引入 own-grants map、reason id 或 skipped 特例。合法深目錄／alias 既不拒絕 unrelated slot，也不終止 enrolled lead。真正配置錯誤仍走原 `PREMISE_FAILED / containment` refused；slot requests/proposals 目錄檢查、quarantine 與恢復修訂不變。
+
+**alias 的權限解釋與限制：** Claude adapter 將實際 cwd、allowDirs/allowFiles 寫入 sandbox filesystem.allowWrite、deny 寫入 denyWrite（`src/adapters/claude.ts:60–69`），Edit 另有 allow/deny 規則（:35–49）；enrolled denies union strict approval raw/canonical paths（:35–39）。Codex roots 由實際 policy 推導，沒有 deny list，enrolled Codex 直接拒絕（`src/adapters/codex.ts:11–18,64–66`）。在依 canonical 目標執行的 OS sandbox 下，memory 內建立 `link -> executors.yaml/project.yaml` 不新增目標的 allowWrite；spec §8 :336 記載 shell 經 proposals symlink 寫 approvals 被擋。不能把這項有限證據擴充成 Claude Edit 或 Linux 的實測保證：Edit 的 alias 規則解析、user settings 仍未驗證。若 Edit 本身可經 alias 逃逸，這是 adapter/發布前提失效，全面拒絕別的 slot 並不能撤銷攻擊者既有 authority；既有 doctor 與 stage-0/stage-3 blocker 保留，不宣稱此片建立完整安全屏障。沒有新的 prompt-only 或 post-hoc 保護；真正強制仍依 OS 與 runtime tool rules，guard 不是 containment 的替代。
+
+**Rejected：** (a) 調高遞迴限額：一個更深目錄即可再觸發；(b) 把所有 containment error 降成 skipped：真正 protected grant 也會被錯當成可恢復目錄雜訊；(c) 只檢查本 slot：漏跨專案 configured grant；(d) 自己 alias 才 skipped、他人忽略：增加 owner map 與每輪掃描，且任意後代仍不是 authority；(e) 移除 containment 或忽略 canonical error：漏實際 root/hop 重疊。
+
+### Decision A2 — actual 與 fresh 都是 premise inputs
+
+`loadFreshView` 加必填 `actual: ResolvedProject`，只在已啟用 gate 路徑使用。每輪以當下 `this.project` 傳入，不能在 `initGate()` destructuring 的舊 project 上閉包（`rebind()` 會替換它，`src/run-session.ts:466`）。fresh 仍做原 bounded loader、enrollment、solo/bind 與 hash 檢查。
+
+- `project-premises` 成功須 actual **與** fresh bound project 的 `projectPremiseChecks` 都沒有 error；使用現有函式，不複製 verify 或候選判斷。fresh executor allow 被移除時仍先／另由 qualification 判定拒絕，不能因沒有 enrolledNames 而放行 actual。保留 actual enrollment 的 slot 身分；不得用 fresh agent 覆寫 actual agent。
+- containment 使用 A1 grants 模式，executionProjects 至少包含 actual 與 fresh bound project。磁碟 inventory 仍涵蓋其他專案；因此隊友的 retained grants 在磁碟修好後仍是拒絕依據。不把 grant 變更偷偷合併回 session，也不動 verify 的執行語意。
+- run：actual 是目前 execution project；fresh 以相同 runId/layout/instance table 綁定。solo：兩邊都以同一 `soloProject` 處理，保留它實際留下的 verify；resume：重新解析並重新綁定，但仍同時檢查兩邊，不假設它們相等。工作區已準備者包含 actual workspace roots/gitDir；尚未準備者沿用 project/worktrees/git-common conservative roots，不為 gate 建 workspace。
+- instances：每輪使用現有 slot table；actual 的每個 slot 均納入 grant inventory，role enrollment 與 cap=1 不變；未知 enrolled baseline 仍 NO_BASELINE。fallback/tier：兩邊均跑既有逐候選檢查與 grant 收集，tier 不產生另一套配置。此片不新增每次 fallback 的磁碟掃描。
+- call：`callGateVerdict` 不能只拿 agent。在 enrolled 分支先純計算 callId/callDir 與 `callProject(home, actualAgent, actualDir, callDir)`，傳 actual project；gate 後才 lock/mkdir/invoke。沿用同一 id 與 project 執行，不重新計算。fresh global call agent 使用 containment inventory 已解析的 `calls` 同 role 項目，加上 `agentPremiseChecks`；缺角色或 error 拒絕。以同一 actualDir/callDir 建 fresh callProject，與 actual 一起納入 executionProjects，覆蓋記憶體、sandbox.write、實際 --dir。call 無 verify；仍無 hash/requests 檢查。非 enrolled call 的路徑與 I/O 原樣不變。
+
+**Rejected：** (a) verify 加入 hash：改 SnapshotInput 契約且沒涵蓋隊友 grants；(b) 只重驗 fresh：原缺陷；(c) 整個 project 深比較：納入非 premise 的無關差異，增加契約；(d) 執行 verify 時才重讀：改 spec 27 retained 設定語意、也晚於 enrolled wake；(e) call 解析與執行「同一瞬間」：兩次 I/O 間仍可能有磁碟變化，必須保留 actual binding。
+
+### Bounded corrective slices / implementation-ready AC
+
+兩個相依的小片；不承諾一片包辦（call actual cwd 與 retained union 需要介面接線）。node-engineer 依序實作，每片測試恢復綠燈才交付；cli-reviewer 做實作審查，不新增設計審查。以下不授權修改並行中的 recovery 修訂。
+
+**C1 authority inventory：** allowed `src/doctor-approval-containment.ts`、新增 `test/approval-containment-grants.test.ts`。只加 options、共用收集 helper、grants-mode branch。AC：
+
+- diagnostic 預設與現有 doctor tests/fixtures 不變；grants 模式不呼叫 aliasesBelow，對同專案／跨專案 depth-9、超過 walk cap、symlink 到 executors/config、dangling/cyclic descendant 均不產生 error。
+- configured root 本身與其祖先 symlink 指向 protected、sandbox.write equal/ancestor/descendant、allowFiles、actual cwd、workspace gitDir、retained 隊友 grant 均 error。executor command 多 hop、中間 hop 目錄可寫、link/../x 既有拒絕保留。
+- executionProjects 聯集測試：disk 安全 actual 不安全，以及 disk 不安全 actual 安全，都拒絕；config FIFO/oversize/root resolution failure 仍 error、不阻塞。doctor 不傳新 options 時逐字相容。
+
+**C2 gate bindings：** allowed `src/approval-wake-gate.ts`、`src/run-session.ts`（只 gate deps 接線）、`src/call.ts`（僅 enrolled gate 前的純 binding 與傳參）、新 `test/approval-wake-gate-amend.test.ts`／call gate 新測試。AC：
+
+- 原 DoS probes 改成正向測試：non-enrolled agent 合法 own-memory 深目錄或 executors/config alias，不影響 enrolled member 或 lead；lead 正常 done，不多 claim/attempt/refusal；跨專案同樣 wake。自己 memory 也不因任意後代產生新 grant。原 dangling control 保留。
+- 原 P7 probe 改成成員從不 invoke、理由 project-premises、無 member claim/attempt；不得用「marker 必不出現」代替這項斷言，非 enrolled lead 的 verifier 仍屬既有未 gate 路徑。另測 fresh 新增 verify、actual retained verify 磁碟刪除、solo/resume、兩邊都是安全的控制組。
+- actual 隊友 sandbox.write/grant 指向 requests/executor，磁碟移除後仍 refused containment；不要讓 snapshot mismatch 掩蓋它（變更非待喚醒 slot 的隊友）。actual fallback 的危險設定與 instance grants 都被檢查；rebind 後新的 this.project 真正傳入（spy 比對物件／欄位）。
+- call 實際 --dir 若包含 executor 仍拒絕，雖然不與 home overlap；actual call retained grant 與 fresh repaired／fresh unsafe 兩方向都測；拒絕時無 lease、call 目錄或 invocation；其他專案 memory 深目錄不擋 call。
+- default-off absent／empty allow：loadFreshView/containment 額外呼叫 0、fixtures 不改、side/log 不新增；status --json 不讀或輸出新資料。24 fixtures 原樣通過，含原 20 個 baseline。
+
+兩片皆不得碰 policy/adapters、schema/config/run-store、mailbox、message-store/recovery、status、locks、manifest/lockfile、既有 fixture 內容；不修改既有測試來掩蓋相容性。測試以 temp home/repo、fake invoker、固定命名／注入 now、注入 sandbox availability；無 real claude/codex、無真實家目錄。時間不需等待、alias 不靠隨機數；I/O spy 檢查不遞迴 mutable descendants。qa 重跑原 probes 的新正向版與 root/hop 負向控制、完整四項 gate 命令，保留實際結尾；本設計沒有聲稱這些修補測試已通過。
+
+**docs-writer：** 在 `docs/approval-store-api.md` 區分 doctor conservative alias diagnostic 與 wake grants validation；說明 actual+fresh、call cwd、仍未驗證的 Edit/Linux、非 enrolled verifier 不被此片停用。既有 status reason 格式與 JSON 規則不變；check:docs 必須通過。
+
+### Dimension coverage（本修訂）
+
+1. **Compatibility & Format：** 無新公開格式／schema／CLI；options 僅內部；舊 YAML/run/state 照舊載入、舊 binary 忽略既有 gate 側檔；default-off 零新增 gate I/O。R3 人類 status 既定 side-file open 例外保留，不宣稱整個人類 status 零 I/O。
+2. **File & Process Safety：** 實際 grants canonical 雙向比較、root/ancestor/hop 保護與固定錯誤維持；mutable alias 非授權；沒有加權限、無新 child/injection surface；Edit/user-settings 缺口未解。
+3. **Concurrency & Recovery：** current this.project 每 pass 取得，聯集不熱更新；既有 TOCTOU 未消除，未加鎖；no claim 前拒絕。crash mid-write、stale locks、Ctrl-C、timeout、partial mail、odd runtime exit 沿用 lifecycle/側檔 atomicWrite 與並行 recovery 修訂，本片不改。
+4. **Platform & Operability：** Node >=20、TS ESM；沿用 package 0.42.1 的 commander ^14.0.3、yaml ^2.5.0、zod ^4.6.5、Vitest ^4.1.11、TS ^7.0.2、Biome ^2.5.15，實際版本依 lockfile；零新依賴。macOS/Linux，Windows 保留既有 unsupported 提示與拒絕，不新增支援。取消 gate 的 descendant walk，仍有全專案讀取與既有 git timeout，非全 home 固定時間保證。
+5. **Testability & Maintainability：** 既有小型 containment 收集迴圈共用，無新 registry/owner abstraction；純 binding、fake invoker、temp I/O、current-project spy 為 seam。
+6. **Observability & Diagnosability：** 不增 reason id，仍 project-premises/containment、log/mail/側檔與人類 status 固定類別；doctor 繼續能指出 alias 或實際設定的路徑。violations/state 不承擔新的記錄角色。
+7. **Liveness / authority：** 不讓合法 mutable descendant 產生全域永久 refusal；實際 protected grant 則保留 refusal／lead_failed，安全性不以靜默略過錯誤換取。
+
+### Risks / decisions made for the lead / open items
+
+- **選擇 grants-mode 而非 full diagnostic 成為 wake 前提。** 這是對 O1/R5 的明確修正；不接受 agent-controlled cross-project refusal。替代 rejected：完整掃描一有 error 就永久拒絕。doctor 的額外保守 alias 警告可能與 wake verdict 不同，docs 必須解釋；不能再寫「doctor 任意 error 等價於 wake refusal」。
+- **信任邊界假設：** canonical OS grant 才是 shell authority；任意 alias 不新增它。Claude Edit／Linux／user settings 實際效果未驗證；替代 rejected：從 adapter 輸出宣稱已證明所有 runtime enforcement。若安全複驗證明 tool alias 真的擴權，lead 應阻擋安全發布，不能以加回 DoS 掃描稱為修復。
+- **未擴張範圍：** other-project mutable .git/config 信任、同 UID 祖先置換、gate→spawn/fallback TOCTOU、已列 O2–O5、stage-3 approve/executor 重驗仍未解；替代 rejected：此片重構 git inventory、鎖或熱載入。自己的 memory 內深目錄／alias 不再觸發 git inventory 差異；不主張消除所有可能的全域 DoS。
+- **Retained verifier 不被關閉。** 此片保證 enrolled wake 被擋，不保證非 enrolled lead 不能執行既有 verify；替代 rejected：改 settle/verify 行為。actual+fresh 同時不安全仍使用既有固定 premise code。
+- **Call binding 前移只限 enrolled 路徑。** 純 newRunId/callProject 不寫檔；替代 rejected：gate 後再生成不同 binding，或非 enrolled 增加 fresh I/O。
+- **O6（stage-3 architect，預設不在本片實作）：** approve/執行前沿用哪種 containment diagnostic/authority contract 需明確另定，不可默認本片授權放寬 stage 3。
+- **O7（lead/security，預設依上述兩片交 node-engineer，無新人工核准）：** 修補後獨立安全複驗與 QA 尚待執行；本設計重跑的是原缺陷，不是實作驗收。無其他阻擋設計的開放選項。
+
+
+## Amendment B — K1 foreign inventory uncertainty（task 3330b976）
+
+**Goal / disposition：** 保留 fail-closed，但把「已知前提不成立」與「無法建立外部專案 inventory」分開。此節取代 Amendment A 所有 inventory error 一律 sticky refusal 的敘述，以及其把 foreign config/git 風險完全留待後續的部分。C1 仍只交付 A 的 inventory API；以下 typed 分類與 gate 行為放 C2，不在並行的 C1 偷改語意。不增加設計／人工核准輪、不動產品碼。
+
+**Evidence：** 已讀 `_shared/risk-review-full.md`、`risk/probes/risk-probe.test.ts` 與 `_shared/security-independent-recheck.txt`。2026-11-16 在 disposable archive 95f76cf `/private/tmp/claude-501/arch2b2.QIH1`，以臨時 HOME/AGENT_LYCEUM_HOME 重跑 `node node_modules/vitest/vitest.mjs run --configLoader runner test/risk-probe.test.ts -t R-XPROJ --reporter verbose`：`Test Files 1 passed (1); Tests 1 passed | 1 skipped (2)`，exit 0。輸出 `R-XPROJ woke=["lead","fe-member"] end=lead_failed`，側檔 lead 為 refused/PREMISE_FAILED。這重現修補前缺陷，不是 C2 成功證據。靜態鏈 `src/doctor-approval-containment.ts:409`（foreign YAML catch）及 :420–423（git catch）→ :312–313（error）→ `src/approval-wake-gate.ts:185` → `src/run-session.ts:744–747`；git timeout 5s 目前只靜態核對（containment :252），未以真實 timeout 重跑。
+
+### B1 typed outcome — 不解析 DoctorCheck 文字
+
+C2 在 containment 模組加內部型別與 options，範圍僅錯誤產生點的來源標記及聚合，不重構 git/inventory：
+
+```ts
+export type ContainmentDisposition = 'clear' | 'foreign-incomplete' | 'blocked';
+// ApprovalContainmentOptions 新增：
+// activeProject?: string | null; // grants mode: run 的專案名；call = null；未給則保守 blocked
+// ApprovalInventory 新增：
+// disposition?: ContainmentDisposition; // grants mode 必定給，diagnostic 不加欄位
+// FreshView 新增必填 containment: ContainmentDisposition;
+```
+
+- **聚合優先序：** blocked > foreign-incomplete > clear。只要任何已知 protected overlap 或本地／共用硬失敗，foreign uncertainty 不得覆蓋它。讀取失敗後繼續比較已成功建立的 grants；不因第一個 foreign error 提早回傳，以免遮蔽真正 overlap。
+- **blocked：** 任意專案／call／actual/fresh 的已解析 canonical grant 與 protected set 重疊；protected/executor/interpreter/hop 無法驗證；active project 或 actual/fresh executionProjects 的設定／grant／git 無法驗證；global config、project listing 等共用 inventory 失敗；已成功讀取的配置證明 executor allow 身分不存在。這些沿用 refused PREMISE_FAILED/containment。未分類例外與缺少 typed disposition 一律 blocked，不能當成 foreign-incomplete。
+- **foreign-incomplete：** activeProject 已明確給定時，另一個 project entry 的型別／YAML 安全讀取／解析／merge 失敗，或該 foreign project 的 grant canonicalization／git common-dir 探測失敗，致 authority inventory 尚無法建立。每個錯誤在原始 catch/emit 點以 project name 或 execution-project source 判定，不能靠字串 stem、路徑 substring 或 message matching。call 的 activeProject=null，所有磁碟 project 是 foreign，但 actual call/executionProjects 與 global call library 的失敗仍 blocked。foreign git 非 checkout 的既有 undefined 不是 error；只有既有 helper throw 的情況才不完整。
+- **無雙重升級：** 某 foreign project YAML 讀不出來時，後續 allow-reference validation 不得把同一「未知 agent 清單」又升為 blocked；只有成功 parse/resolve 後證實缺角色，或完整 projects listing 證實缺 project 才是既有硬錯誤。不完整 listing 本身是共用 blocked。可用本次掃描的 `Set<projectName>` 標示 failed foreign resolution；不用新 registry、持久檔或快取。
+- **diagnostic 相容：** 保留現有 DoctorCheck 的 level/順序/文字及 sort/dedup；分類在 emit 點用固定內部 disposition 傳給累加器，最後只在 grants mode 回傳新欄位。diagnostic 預設不輸出新欄位；不改 doctor CLI，也不把 error 降 warn。
+
+### B2 C2 gate integration / precedence
+
+`loadFreshView` 以 activeProject=當前 run 專案名傳入 A1 的 grants-mode inventory；actual/fresh 都在 executionProjects。回傳 typed containment 並保持 `PremiseResult('containment').ok=false` 當 blocked **或** foreign-incomplete，只有 clear 是 true。未知絕不可被偽裝成通過。
+
+`qualificationVerdict` 仍用既有 revalidateQualification，不改 approval-origin 或 SnapshotInput 契約。其 PREMISE_FAILED 在 hash 前回傳（`src/approval-origin.ts:108–123`），所以須明確補齊以下分支：
+
+1. 缺 baseline、origin/path、allow/executor、agent、actual/fresh project-premises 錯誤、typed blocked：維持原 refused。已知不安全優先於 uncertainty。
+2. 若 revalidateQualification 只因 containment foreign-incomplete 回 PREMISE_FAILED，暫存 unknown，**仍**對該 executor 的既有 SnapshotInput 呼叫 qualificationHash 比對 baseline（throw→固定 CONFIG_INVALID refused）；繼續檢查其他 executor 與集合增減。任何 hash/身分錯誤仍 refused，不得直接跳成 skipped 而遮蔽配置變更。其餘成功路徑不重算 hash。不要複製 hash 正規化演算法或把 false premise 改 true 呼叫 resolver。
+3. 所有可確定的資格檢查通過，僅剩 foreign-incomplete 時回 `{kind:'skipped', code:'UNDETERMINABLE', premises:['containment']}`，否則 wake。這重用現有 code/premise id，不增加 public reason、schema 或 side-file 欄位。每 pass 新建的 view 重驗，不把 slot 加 this.refused，也不永久 quarantine。
+4. enrolled call 同樣從 typed inventory 判定：blocked 拒絕；foreign-incomplete 回同一 skipped verdict，由 callAgent 的既有 non-wake 分支以固定 ConfigError 結束、無 lease/目錄/invoke。call 沒有 run-loop、自動重試或 side file；修好後使用者重下 call。actual/fresh agent checks 與 actual cwd/grants 都必須先確認，不能因 foreign-incomplete 被遮蔽。
+
+### B3 truthful liveness / diagnostics
+
+`src/run-session.ts:1548–1580` 每輪重設 gate pass；有其他可執行工作時，下一輪可在 foreign YAML/git 修復後清除 skipped 並喚醒。不增加 timer、poll/retry、睡眠或額外 round；沒有可執行工作時維持既有 idle（不是 lead_failed），原因側檔保留 skipped。idle 後修好需 resume；不是背景等待／保證自動恢復。enrolled lead 被 skipped 不寄自己、不設 lead_failed；其他成員可在原流程前進，但 lead 的 mail 可留到 resume。
+
+- `GATE_TEXT.UNDETERMINABLE.mail` 改為一般固定文字：「Approval safety or output state could not be determined; this slot is not woken. Run doctor for containment diagnostics.」避免把 foreign inventory 說成 earlier output。status 的既有 generic approval-state text 與 class 足夠，不改 status 程式或 JSON。
+- skipped 通知的 tail 改固定文字：「Rechecked on each dispatch pass that occurs. If the run ends idle, fix the cause and resume; no background retry is scheduled.」適用既有 skipped 路徑，取代目前 :752 保證原因消失就會自動喚醒的敘述。保留 unread mail，不通知做 gated 工作的替代繞路；此片只改時機敘述，不重設 mailbox 協定。
+- log 使用既有 approval_gate、code=UNDETERMINABLE、class=skipped、premises=[containment]，不放 foreign path/parser/git stderr；doctor 仍提供檔案與設定定位。側檔不加欄位；人類 status 已顯示 skipped/時間，docs 必須解釋 idle 後 resume。diagnostic 寫入失敗仍不 invoke。
+
+### C2 addition — acceptance tests / ownership / allowed files
+
+在 A 的 C2 allowed 加 `src/doctor-approval-containment.ts`，只做 B1 累加器／來源分類；其餘仍限 `approval-wake-gate.ts`、RunSession gate/通知固定文字、call enrolled gate 接線及新測試。不得動並行 recovery、policy/adapters、approval-origin、verify/settle、schema/state、status、locks、dependencies、既有 fixture。node-engineer 等 C1 收集後依本節完成 C2；qa 獨立驗收，下列均須先失敗再成功：
+
+- 新 `test/approval-containment-disposition.test.ts`：foreign invalid YAML→foreign-incomplete；repair→clear；foreign git helper throw（vi.mock child_process.execFileSync，僅命中指定 foreign cwd；不等 5s）→foreign-incomplete；active/actual git 同樣 throw→blocked。safe/safe 控制 clear；任何 foreign actual canonical overlap→blocked；unknown+overlap 混合→blocked。diagnostic 原文字／順序不變。foreign root canonical error 為 unknown，protected canonical error 為 blocked。
+- 新 `test/approval-wake-gate-foreign-inventory.test.ts` 用 temp home/repo、fake invoker、固定事件順序：lead 先排兩個獨立 non-enrolled 工作，其中第一個製造 foreign invalid YAML、第二個健康 wake 修復；中間 gate 必 skipped（lead 無新增 claim/attempt/invoke，側檔 class=skipped），再下一 pass lead 成功 wake、skipped 清除、不 sticky refused。用固定不同 subject 避免 duplicate-mail artifact；不要靠 setTimeout/fs race。
+- enrolled lead 已無其他可執行工作且 foreign 仍壞：run idle、未 lead_failed，mail 保留、round 不因 blocked pass 增加；repair 後 resume 能 invoke。測試必分辨「between-pass repair」與「idle 後 resume」，不能只斷言最終有 wake。
+- 混合控制：foreign YAML/git unknown 同時 actual/fresh 有 unsafe protected grant、verify 或 snapshot 差異，必 refused 而非 skipped；同一專案 unsafe grant 的已知負向控制仍 sticky，enrolled lead 仍 lead_failed。foreign repaired 不能擦掉先前真正 refused。
+- call：foreign unknown 無 lease/call-dir/invoke，repair 後重下成功；實際 cwd/protected overlap 優先 blocked；default-off spy 無新增 I/O。status --json、24 fixtures 原樣；sentinel 診斷不洩漏 parser/path/stderr。
+
+時間由既有 now seam 控制，git 失敗只 mock 不執行 runtime；所有檔案限 temp home/repo。qa 跑四項 gate `npm run lint && npm run typecheck && npm test && npm run check:docs` 並保存結尾與沙盒限制；本次只驗證原 R-XPROJ。docs-writer 在 API wake-gate 區補 proven-failure/unknown、blocked precedence、call 重下、idle/resume 與 doctor 差異；不改 README/JSON。
+
+### P7 expectation — enrolled boundary, not unrelated verifier shutdown
+
+確認 security-reviewer 的必要 AC 是「unsafe retained verify 存在時，不 invoke enrolled slot，無該次 claim/attempt」。不能要求所有 marker 消失：`src/run-session.ts:1204–1205` 在合規 completed done 上依 retained project.verify 執行，:1302–1311 明確保留 initial settings，`src/verify.ts:51` 為 shell；non-enrolled lead 不進 gate（`src/run-session.ts:776`）。原 probe 的 marker 證明原 bypass，但修補後獨立 non-enrolled lead 仍可能送 completed done 並觸發既有 verify。新增測試分兩項：P7 拒絕 enrolled/no claim；另由 non-enrolled lead 獨立送 done 的控制測試允許既有 verifier 執行 inert marker。不得改 verify、settle、done 路由或禁用無關 verify 來滿足錯誤 marker AC。這不是完整 sandbox 安全保證。
+
+### Dimension coverage / risks / open items（本修訂）
+
+1. **Compatibility & Format：** 只新增內部 typed outcome，diagnostic 預設無新欄位；持久格式、reason id、YAML/state/mailbox/CLI/JSON 不變，舊 binary 與舊 run 照 A。default-off 不建 gate、無新增 I/O（R3 人類 status 例外仍在）。
+2. **File & Process Safety：** unknown 從不 claim/invoke；proven overlap 與 protected/hop failure 仍 blocked；未新增寫入授權、OS/tool enforcement 或 post-hoc 假保證。
+3. **Concurrency & Recovery：** pass 才重驗、無 timer；暫時失敗可導致 idle，resume 才重啟。crash/atomic 側檔/stale locks/Ctrl-C/timeout/partial mail/odd CLI exit 沿用 A 與既有 lifecycle，未知不增加 attempt；未解 TOCTOU。
+4. **Platform & Operability：** 沿用 A 的 Node/TS/libraries/versions，無新依賴；macOS/Linux、Windows 既有拒絕／警示不變；git timeout 不變，型別分類無第二次掃描。真 git timeout、Linux/real runtime 未驗證。
+5. **Testability & Maintainability：** emit-site enum + 聚合，非訊息解析；existing fake invoker/now 與 execFileSync mock；不建立 owner registry/跨 pass 快取。
+6. **Observability & Diagnosability：** skipped UNDETERMINABLE + containment log、側檔、人類 status、doctor 詳細定位；固定訊息說清 idle/resume。state/violations 不添角色、不漏解析訊息。
+7. **Liveness：** 選擇安全的暫停而非成功；另一專案可持續造成 denial/idle，這個剩餘 availability impact 無法在未知 authority 時安全地完全消除。
+
+**Risks / decisions made for lead：** 選 foreign-incomplete 暫停而非 sticky refusal（拒絕替代：一個半寫 YAML 永久終止 enrolled lead）；保留已知不安全優先（拒絕替代：unknown 遮蔽 unsafe）；只把可具名 foreign project 的未知當暫時，共用/local/protected/未分類仍硬拒絕（拒絕替代：任何 exception 都 skipped）；重用 UNDETERMINABLE 與 generic text（拒絕替代：新 public reason/format）；接受 idle 後需 resume（拒絕替代：增加 watcher/backoff、或聲稱背景自動恢復）。這是對原任務「前提失敗 refused」的限縮解讀：證實失敗仍 refused，foreign evidence unavailable 是無法判定，不是前提已成立。diagnostic doctor 仍 error，文件不能等同所有 doctor error 的 sticky 語意。
+
+**Open items：** O8（lead/risk，預設採本節交 C2）：持續 foreign failure 仍可能讓 run idle；安全不允許在未知全域 authority 時繼續 enrolled wake，不能承諾完全排除此 DoS。無新增人工核准；修補證據由既有 cli-reviewer、安全複驗與 qa 驗證。O6/O7 及先前 real-runtime/user-settings/stage-3 blockers 保留，不由本節解除。

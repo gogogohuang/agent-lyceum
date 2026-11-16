@@ -4,7 +4,7 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { loadFreshEnrollment } from "./approval-runtime.js";
-import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, quarantinedSlots, slotDirVerdict, slotFileFilter, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
+import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, recoverySkipFile, scanRecoveryInputs, slotDirVerdict, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
 import type { PremiseOptions } from "./doctor-approval-premises.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
@@ -176,6 +176,8 @@ interface GateState {
   baselineBroken: boolean;
   /** Slots whose attempt or claim files are unsafe: not woken in this process, and recovery leaves their files alone. */
   quarantined: Set<string>;
+  /** The verified recovery inputs of an enrolled resume (see `scanRecoveryInputs`). */
+  recovery?: ReturnType<typeof scanRecoveryInputs>;
   entries: Record<string, GateEntry>;
   /** The side file content last attempted, so an unchanged state is not written (or reported) again. */
   attempted: string;
@@ -713,8 +715,10 @@ export class RunSession {
     this.gate = { deps, baselines, baselineBroken, quarantined: new Set(), entries: {}, attempted: "", logged: new Set(), pass: { verdicts: new Map() } };
     this.persistGate("reset");
     if (this.resume) {
-      this.gate.quarantined = quarantinedSlots(runDir, slots);
-      if (this.gate.quarantined.size) log("approval_gate_quarantine", { slots: [...this.gate.quarantined].sort() });
+      const scan = scanRecoveryInputs(runDir, slots);
+      this.gate.recovery = scan;
+      this.gate.quarantined = scan.quarantined;
+      if (scan.quarantined.size || scan.excluded || scan.overflow) log("approval_gate_quarantine", { slots: [...scan.quarantined].sort(), excluded: scan.excluded, overflow: scan.overflow });
     }
   }
 
@@ -1568,8 +1572,8 @@ export class RunSession {
   private async recover(): Promise<void> {
     const { say, runId, runDir, project, wsMode, log } = this;
     if (this.resume?.end_reason === "waiting") this.deliverAnswers();
-    const quarantined = this.gate?.quarantined;
-    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(quarantined?.size ? { skipFile: slotFileFilter(quarantined) } : {}) });
+    const scan = this.gate?.recovery;
+    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(scan ? { skipFile: recoverySkipFile(scan) } : {}) });
     for (const i of rec.interrupted) {
       this.note(
         `${i.attempt.agent} attempt ${i.attempt.n} was interrupted${i.parked.length ? `; ${i.parked.length} output file(s) set aside in ${path.join("mail", "attempts", i.attempt.id, "outbox")}` : ""}. ` +

@@ -257,6 +257,16 @@ describe('R2: resume with a bad attempt file of an enrolled slot', () => {
     expect(gateEntries()['fe-member']).toMatchObject({ class: 'skipped', code: 'UNDETERMINABLE' });
     expect(JSON.parse(fs.readFileSync(path.join(runDirOf(), 'mail', 'claims', '1abd-qa-member-bbbbbb.json'), 'utf8')).status).not.toBe('claimed');
   });
+  it('a claim of A with a matching name and agent but missing recovery fields: quarantined before recovery, B progresses', async () => {
+    await prep();
+    write(path.join(runDirOf(), 'mail', 'claims', '1abc-fe-member-aaaaaa.json'), JSON.stringify({ id: '1abc-fe-member-aaaaaa', agent: 'fe-member', status: 'committed' }));
+    const { s, seen } = await resume();
+    expect(s.endReason).toBe('done');
+    expect(seen).not.toContain('fe-member');
+    expect(seen).toContain('qa-member');
+    expect(gateEntries()['fe-member']).toMatchObject({ class: 'skipped', code: 'UNDETERMINABLE' });
+    expect(events().some((e) => e.event === 'approval_gate_quarantine' && JSON.stringify(e).includes('fe-member') && !JSON.stringify(e).includes(env.root))).toBe(true);
+  });
   it('a parseable but malformed attempt file: A is not woken, B progresses', async () => {
     const f = await prep();
     write(f, JSON.stringify({ id: 'x', claim_id: 'y', agent: 'fe-member', n: 'one', status: 'started', started_at: 'when' }));

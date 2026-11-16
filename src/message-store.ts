@@ -285,13 +285,14 @@ export function loadAttempt(runDir: string, id: string): AttemptRecord {
   return JSON.parse(fs.readFileSync(attemptFile(runDir, id), "utf8")) as AttemptRecord;
 }
 
-/** `skipFile` (by file name) is asked before a file is opened, so the files of a quarantined slot are never read; unset, nothing changes. */
-export function listAttempts(runDir: string, skipFile?: (name: string) => boolean): AttemptRecord[] {
+/** `skipFile` (file name, and which folder it is in) is asked before a file is opened, so an enrolled run reads only names it has verified; unset, nothing changes. */
+export type SkipFile = (name: string, kind: "attempts" | "claims") => boolean;
+export function listAttempts(runDir: string, skipFile?: SkipFile): AttemptRecord[] {
   const dir = path.join(mailDir(runDir), "attempts");
   if (!fs.existsSync(dir)) return [];
   const out: AttemptRecord[] = [];
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
-    if (skipFile?.(f)) continue;
+    if (skipFile?.(f, "attempts")) continue;
     try {
       out.push(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AttemptRecord);
     } catch {
@@ -309,7 +310,7 @@ export type LatestAttempt =
 const STRICT_READ_LIMIT = 64 * 1024;
 /** Claim ids are `<base36>-<agent>-<6 hex>`; an attempt file is `<claim id>-a<n>.json`. The name only selects whose file it is, never the order. */
 const ATTEMPT_NAME = /^[0-9a-z]+-(.+)-[0-9a-f]{6}-a\d+\.json$/;
-const StrictAttempt = z.object({
+export const StrictAttempt = z.object({
   id: z.string(),
   claim_id: z.string().regex(/^[0-9A-Za-z][0-9A-Za-z._-]*$/),
   agent: z.string(),
@@ -446,7 +447,7 @@ export interface RecoveryReport {
 }
 
 /** Bring a run's claims back to a consistent state. Call before waking anyone on resume. */
-export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string; skipFile?: (name: string) => boolean } = {}): RecoveryReport {
+export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string; skipFile?: SkipFile } = {}): RecoveryReport {
   const report: RecoveryReport = { finalized: [], abandoned: [], ready: [], interrupted: [] };
   for (const a of listAttempts(runDir, opts.skipFile)) {
     if (a.status !== "started") continue;
@@ -457,7 +458,7 @@ export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string
   const dir = path.join(mailDir(runDir), "claims");
   if (!fs.existsSync(dir)) return report;
   for (const name of fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
-    if (opts.skipFile?.(name)) continue;
+    if (opts.skipFile?.(name, "claims")) continue;
     let c: ClaimRecord;
     try {
       c = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as ClaimRecord;

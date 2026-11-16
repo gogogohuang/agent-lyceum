@@ -1,18 +1,26 @@
-# Approval store API (stage 1 + stage 2a helpers)
+# Approval store API (stages 1–2b-2)
 
-**Unreleased API reference.** The stage-1 store and stage-2a part-1 helpers are
-implemented, following the [stage-1 plan](superpowers/plans/2026-11-14-approval-store-stage1.md)
+**Unreleased API reference.** The store, doctor helpers, runtime enrollment and
+per-wake gate follow the [stage-1 plan](superpowers/plans/2026-11-14-approval-store-stage1.md),
+[stage-2b-1 plan](superpowers/plans/2026-11-14-approval-stage2b1.md),
+[stage-2b-2 plan](superpowers/plans/2026-11-16-approval-stage2b2.md)
 and [v12/v12.1 spec](superpowers/specs/2026-11-13-approval-gate-design.md).
 Examples below illustrate the TypeScript ESM API; they are not verified runtime examples.
 
-Everything here is default-off. The only existing code path that uses these modules is
-`doctor`: it loads `executors.yaml` and runs read-only diagnostics (see
-[Doctor checks (stage 2a)](#doctor-checks-stage-2a); `src/doctor.ts:235`,
-`src/doctor-approval.ts:32`). There is no integration with `settle()`, `call`,
-`run-session`, wake, adapters or other CLI commands, and no import-time I/O. No approvals
-commands or executor runner are delivered. `ResolvedAgent` has an optional `enrolled` field
-(`src/config.ts:64`) that only `doctor` sets; `WakeInput` has no enrollment field, and nothing
-is enforced at wake, run or call.
+Enrollment is default-off: a missing `executors.yaml` or all-empty `allow` lists
+leave agents unenrolled. Runtime resolution now loads that file; `run`, resume,
+solo (`run --agent`), `call` and tidy stop before invoking agents if it is invalid
+or unreadable. Doctor remains diagnostic (see [Doctor checks (stage 2a)](#doctor-checks-stage-2a));
+status does not enforce qualification.
+`ResolvedAgent.enrolled` and its minimal approval context travel through
+`WakeInput.agent`; they are not new team/project YAML or run-state fields
+(`src/approval-runtime.ts:16–40`, `src/cli.ts:272,350,653`, `src/call.ts:55–62`).
+
+Stage 2b-2 gates enrolled run/resume/solo slots before claims, and checks enrolled
+calls before creating their directory or lease. It does not deliver the full approval
+workflow: no proposals grant, collection, rotation, approval CLI or executor launch.
+The corrective containment/retained-configuration contract below is **pending final
+implementation verification**; it must not be read as a security-release claim.
 
 ## Modules and direct calls
 
@@ -28,6 +36,9 @@ Names below identify source modules in `src/`.
 | `transition`, `liveness`, `state` | Pure `decideTransition`; probing `creatorLiveness`; read-only `readCurrent`; mutating `transition`. |
 | `display`, `json` | Pure `computeDisplay`, `serializeApprovalList`; `Display`, `ApprovalListItemV1`, `ApprovalListV1`, `ApprovalListProblem` and aliases `ApprovalListItem`, `ApprovalListJson`. |
 | `high-water` | `readHighWater`, `maxCollectedSequence`, `nextCollectedSequence`; mutating `advanceHighWater`. |
+| `enrollment`, `runtime` | Role-based enrollment; initial configuration refusal; fresh configuration/enrollment loading. |
+| `policy` | Itemized raw/canonical deny inventory; strict invocation-boundary refusal on incomplete inventory. |
+| `wake-gate` | Qualification baselines/verdicts, fresh bounded loading, request-directory checks, recovery allowed-name scan and diagnostic side-file I/O. |
 | `rotation` | Type-only `Rotate`, `Park`, `ProposalsOf`, `RotationDestination`, `RotationResult`, `ParkResult`; no implementation or runtime exports. |
 
 Identity example (relative imports assume a caller in `src/`):
@@ -194,7 +205,7 @@ type ProposalsOf = (agent: string) => string | undefined;
 `approval-paths.ts`. The comments specify future coordinated directory rotation,
 park-before-abandon recovery and a trusted proposals-path lookup (undefined when
 absent). They supply no callable exports, collection, rotation, parking or recovery
-implementation, and no wake enforcement.
+implementation; the separate wake gate only withholds wakes.
 
 ## Origin, coordination and trust limits
 
@@ -254,9 +265,9 @@ reference supplies no release-readiness evidence.
   by exact project (or `call`) and role; instance names map to their role through `roleOfName`,
   not a name pattern (`src/approval-enrollment.ts:13-16`). A same-named agent in a project that is
   not in `allow` is not enrolled.
-- **Instance cap.** `instanceCap` returns 1 for an enrolled role (`src/instances.ts:47`). Only
-  `doctor` sets the `enrolled` flag (`applyEnrollment`, `src/approval-enrollment.ts:19-27`), so
-  real runs are unchanged today.
+- **Instance cap.** `instanceCap` returns 1 for an enrolled role (`src/instances.ts:47`). The
+  `applyEnrollment` helper sets the `enrolled` flag (`src/approval-enrollment.ts:19-27`);
+  runtime resolution also applies enrollment (`src/approval-runtime.ts:30`).
 
 Checks (subject `approval`; stems copied from source). Per enrolled agent, per candidate
 (primary, then each fallback) at its effective settings, `src/doctor-approval-premises.ts:20-37`:
@@ -320,7 +331,7 @@ approval message at `src/doctor-approval.ts:40,49`).
 
 Limits:
 
-- No enforcement at wake, run or call; that is stage 2b.
+- Doctor itself does not enforce; the runtime gate is described below.
 - On Linux, premise 1 only checks that `bwrap` exists (`osSandboxAvailable`); the message says backend startup is unverified.
 - A future `call --dir` is not checked (the warning above).
 - Overlaps are conservative: the message states it is not proof the agent can change the path.
@@ -331,3 +342,146 @@ Limits:
 - Executor `env` values are not checked.
 - Hard links are detected only on the command or interpreter itself; other hard links are not searched for.
 - Links or hard links created after `doctor` runs are not seen.
+
+
+## Runtime enrollment and wake gate (stages 2b-1 and 2b-2)
+
+Enrolled Claude invocations use strict empty MCP configuration, retain
+`--setting-sources user`, set `sandbox.failIfUnavailable: true`, disable hooks and
+unsandboxed commands, and inherit only present `PATH`, `HOME`, `LANG`, `TERM`,
+`TMPDIR`, `USER` values. Enrolled Codex is refused, including as a fallback.
+The adapter unions fixed raw/canonical denies and other request-slot roots with
+its policy, including when a policy override is supplied. An incomplete request
+inventory prevents invocation; it is not permission to use a partial deny list
+(`src/adapters/claude.ts:13–15,35–39,65–67,108–123`,
+`src/adapters/env.ts:4–16`, `src/adapters/codex.ts:64–66`,
+`src/approval-policy.ts:152–186`). These settings are construction behavior,
+not proof that user settings, Edit aliases or OS sandbox enforcement are safe.
+
+For enrolled run/resume/solo slots with pending mail, the dispatcher compares the
+current qualification and canonical origin against the session baseline, using
+`revalidateQualification` and `qualificationHash`. It checks each baseline executor
+and the current allow union. Fresh YAML is capped at 1 MiB per file; failed,
+non-regular, symlink or oversized reads fail closed with fixed categories.
+A fresh view is shared within a dispatch pass; verdicts are evaluated before
+`claimMessages`, not atomically with spawn or again for every fallback candidate
+(`src/approval-wake-gate.ts:112–195`, `src/run-session.ts:655–721,773–800,836,1550`).
+
+A qualification/premise refusal enters the existing in-memory `refused` set for
+the rest of this run session. Fixing configuration alone does not clear it;
+a new run or resume revalidates. A refused lead ends the run with `lead_failed`.
+Skipped directory/residual-output verdicts withhold a wake before claiming mail;
+slot-local exceptions do not reject the whole batch. Unread mail remains unread.
+Member notices, terminal output and log events use fixed reason categories rather
+than raw parser errors, paths or executor values (`src/run-session.ts:707–800`).
+**Open classification:** the treatment of uncertain foreign configuration, git
+inventory failures and scan limits as retryable skips versus persistent refusals
+is under architectural review (K1); this reference does not establish its final
+classification. Consult the final implementation review before enabling enrollment.
+
+### Attempts and resume recovery
+
+`latestSlotAttempt` uses parsed `started_at` descending, then numeric `AttemptRecord.n`
+descending, never lexical filename order: at equal start times, `a10` follows `a2`.
+An equal `(started_at, n)` pair is ambiguous. Matching damaged JSON, invalid fields,
+unsafe/oversized files, unreadable claims or scan failure return `undeterminable`,
+without falling back to an older attempt. Reads are no-follow, nonblocking regular-file
+reads capped at 64 KiB; the entry scan is capped. This is stricter than legacy
+`listAttempts`, which silently skips parse failures (`src/message-store.ts:285–400`).
+
+Before enrolled resume recovery, `scanRecoveryInputs` builds allowed filename sets
+for attempts and claims. It checks dispatcher-shaped names and bounded plain files;
+enrolled records also have consumed fields and ownership/identity validated. Unknown
+names and unsafe files are excluded. A damaged enrolled slot is quarantined for
+that session; its files are removed from the allowed sets. Scan failure/overflow
+allows no files and quarantines all enrolled slots. `recoverRunMail` receives a
+skip predicate before opening excluded names; other verified slots can recover.
+Quarantine does not collect, park or delete proposals, and needs repair plus resume
+for another recovery scan (`src/approval-wake-gate.ts:286–396`,
+`src/run-session.ts:684–688,1508–1509`). Request-directory anomalies and nonempty
+`proposals/` also withhold wakes; stage-3 collection/parking is not implemented here
+(`src/approval-wake-gate.ts:198–238`).
+
+### Diagnostic side file and human status
+
+`<runDir>/approval-gate.json` is a separate diagnostic file, not run state. Its v1
+shape is `{ schema_version: 1, slots: { <slot>: { class, code, at } } }`, where
+`class` is `refused` or `skipped`. The reader caps it at 64 KiB and rejects symlinks,
+FIFOs, truncation, bad JSON, unknown versions or invalid fields. Human formatting
+shows a fixed unreadable-file warning on failure. Writes use `atomicWrite`;
+that is not fsync or power-loss durability proof. Reset/update failures leave
+in-memory blocking intact and emit `approval_gate_file_error` plus fixed terminal
+text (`src/approval-wake-gate.ts:242–280`, `src/run-session.ts:693–704`).
+
+Only the current-run human status formatter reads these reasons, even if enrollment
+has since been removed. `status --json` adds **no fields**, with or without
+`executors.yaml`, and never reads this side file. Run-detail output (`status <run-id>`) and per-run monitor details do not show
+these reasons; the monitor's current-project header uses the human status formatter.
+The JSON-driven status-monitor pane lacks them
+(`src/status.ts:564–591,633,668–689,718`, `src/cli.ts:839–854`).
+
+Entries are **recorded observations**, not proof of an active refusal. They can
+survive a resume with no enrolled agents or a failed reset. `at` records the reason's
+observation time; it does not prove current blocking or freshness. Current formatter
+wording still describes an active refusal/skip; its historical-observation wording
+correction is pending. After rollback, read that text with this limitation.
+
+### Containment correction pending final verification (Amendment A)
+
+Amendment A distinguishes doctor's conservative descendant-alias diagnostics from
+wake-time validation of granted authority. Its C1/C2 corrections must be rechecked
+against final source before being described as delivered:
+
+- Doctor keeps its existing alias walk and diagnostics. Wake validation uses configured
+  or actual invocation grant roots and their canonical targets, not arbitrary mutable
+  descendants as additional grants. New links/deep directories inside memory alone
+  must not create cross-slot or cross-project refusal authority.
+- Canonical roots, ancestor resolution, protected command/interpreter symlink hops
+  and hop directories remain checked; real protected grant overlaps and canonical
+  resolution failures remain failures. This does not relax root/hop checks.
+- Both retained execution configuration (**actual**) and freshly loaded/bound
+  configuration (**fresh**) must pass premises. Containment inventories their union,
+  including teammates, candidates, instances and run-only grants, in addition to
+  all-project/global-call disk inventory. A repaired disk file cannot erase actual
+  retained `verify.commands` or unsafe grants. This does not hot-reload the session.
+- Enrolled call checks must use actual `--dir` and the same call binding later used
+  for invocation, plus the fresh global role's premises/grants. Calls are new, so
+  they have no prior qualification hash or request-directory recovery check.
+
+The inspected pre-correction code uses fresh-only project premises/full diagnostic
+containment and does not pass the actual call binding into its gate
+(`src/approval-wake-gate.ts:181–186,399–412`, `src/call.ts:166–185`).
+The pending correction is therefore not evidence of those gaps being closed.
+
+### Limits, trial and rollback
+
+The lead scoped tidy, verify, format and web-summary spawning outside the 2b-2 gate;
+these are implementation scope interpretations, not explicit exclusions in the
+original user request. Stage-2b-1 adapter hardening still applies to enrolled adapter
+invocations. An unenrolled lead's existing shell verifier is not disabled by this
+change; withholding an enrolled wake is not proof that no verifier runs.
+
+After the containment correction, all-project YAML reads and synchronous git-common-dir
+inventory remain a cost; this is not a fixed whole-home work/time bound. Ctrl-C is
+best-effort while synchronous checks run and is handled after control returns.
+Doctor's 20000-entry descendant limit is per walk, counted after `readdirSync`
+allocation, not a wake-time total-work guarantee. Amendment A removes that
+mutable-descendant walk from wake validation, not the all-project/git inventory
+(`src/doctor-approval-containment.ts:242–294,392–445`; Amendment A above).
+
+There is no atomic gate-to-spawn/fallback guarantee, same-UID ancestor-replacement
+protection proof, read isolation, or new Linux/real OS sandbox safety evidence.
+`--setting-sources user` remains unchanged; user-settings merging/allowlisting and
+Claude Edit alias behavior remain unverified safety blockers. Do not infer stage-3
+readiness from a clean doctor report, fixture, example or fake runtime.
+No proposals grant, collect/settle integration, request parking, call `ok.json`,
+approvals CLI, executor, feedback or gc is delivered by stage 2b-2.
+
+Keep enrollment off until the security corrections and independent review are complete.
+Only then stage a trial in a dedicated temporary home/repository, initially with one
+unenrolled lead and one enrolled member, no verifier commands, followed by resume.
+Do not use production homes or credentials for that trial. Roll back by removing
+allow entries (or `executors.yaml`) and resuming; enrollment is recalculated, while
+historical diagnostic entries may remain. This adds no team/project YAML or run-state
+migration. The existing no-enrollment byte fixtures remain the compatibility contract;
+this documentation change neither modifies them nor supplies fresh fixture/runtime proof.

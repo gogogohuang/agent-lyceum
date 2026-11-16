@@ -15,7 +15,7 @@ import { type PremiseOptions, agentPremiseChecks, projectPremiseChecks } from ".
 import { agentForCandidate, candidatesFor } from "./fallback.js";
 import { atomicWrite, readRegularFileCappedNoFollow } from "./fs-util.js";
 import { roleOfName } from "./instances.js";
-import { latestSlotAttempt, mailDir } from "./message-store.js";
+import { StrictAttempt, latestSlotAttempt, mailDir } from "./message-store.js";
 import { canonicalPath, homePaths, projectPaths } from "./paths.js";
 import { outboxDir, sharedDir, sharedIndex, writePolicy } from "./policy.js";
 import { GlobalConfig, ProjectConfig } from "./schema.js";
@@ -261,60 +261,111 @@ export function readGateFile(runDir: string): { slots: Record<string, GateEntry>
 const RECOVERY_SCAN_CAP = 100_000;
 /** `<claim id>.json` and `<claim id>-a<n>.json`, where a claim id is `<base36>-<agent>-<6 hex>`: names only select whose file it is. */
 const MAIL_FILE = /^[0-9a-z]+-(.+)-[0-9a-f]{6}(?:-a\d+)?\.json$/;
+const SAFE_ID = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
+/** Everything `recoverRunMail` consumes of a claim: `id` (it rewrites that file), `agent`, the `status` branch, `files` (it moves them) and `message_ids`. */
+const FullClaim = z.object({
+  id: z.string().regex(SAFE_ID),
+  agent: z.string(),
+  message_ids: z.array(z.string().max(512)).max(5000),
+  files: z.array(z.string().max(4096).refine((f) => !f.includes("\0"))).max(5000),
+  status: z.enum(["claimed", "output_ready", "committed", "abandoned"]),
+  created: z.string(),
+});
 
-/** True for the claim or attempt file name of one of `slots`: what recovery must not open for a quarantined slot. */
-export function slotFileFilter(slots: ReadonlySet<string>): (name: string) => boolean {
-  return (name) => {
-    const agent = MAIL_FILE.exec(name)?.[1];
-    return agent !== undefined && slots.has(agent);
-  };
+export interface RecoveryScan {
+  /** Enrolled slots with an attempt or claim file recovery must not touch (damaged, unsafe, incomplete, ambiguous, or the scan could not finish). */
+  quarantined: Set<string>;
+  /** The only names recovery may open, per folder: verified regular files. Everything else (unknown names, FIFOs, symlinks, oversize, a quarantined slot's files) is skipped. */
+  allowed: { attempts: Set<string>; claims: Set<string> };
+  /** How many entries were left out (a count only: names are never reported). */
+  excluded: number;
+  /** The scan hit its entry cap or an I/O error: nothing is allowed and every enrolled slot is quarantined. */
+  overflow: boolean;
 }
+
+/** Pass to `recoverRunMail`: skips every name the scan did not verify. */
+export const recoverySkipFile = (scan: RecoveryScan): ((name: string, kind: "attempts" | "claims") => boolean) => (name, kind) => !scan.allowed[kind].has(name);
 
 /**
- * Before `recoverRunMail` reads anything: which of `slots` own an attempt or claim file that is damaged, not a regular file, over 64 KiB,
- * ambiguous or too many to scan. Those slots are not woken in this process (and recovery leaves their files alone); a later run or resume looks again.
- * Files of other agents are never opened. Never throws, never blocks.
+ * Before `recoverRunMail` reads anything on an enrolled resume: classify every `.json` entry of `mail/attempts` and `mail/claims` with bounded,
+ * non-blocking, no-follow reads (64 KiB each, at most `cap` entries in all). A file of an enrolled slot is validated in full (what recovery consumes);
+ * one that fails quarantines its slot. A file of any other agent is allowed if it is a plain readable file, as before. A name that matches no
+ * dispatcher-written pattern is never allowed. A slot is also quarantined when its latest attempt cannot be judged (see `latestSlotAttempt`).
+ * Any scan failure fails closed. Never throws, never blocks.
  */
-export function quarantinedSlots(runDir: string, slots: readonly string[]): Set<string> {
-  const bad = new Set<string>();
-  for (const slot of slots) {
-    try {
-      if (latestSlotAttempt(runDir, slot, RECOVERY_SCAN_CAP).kind === "undeterminable") bad.add(slot);
-    } catch {
-      bad.add(slot);
-    }
-  }
-  const dirPath = path.join(mailDir(runDir), "claims");
-  let dir: fs.Dir | undefined;
+export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap = RECOVERY_SCAN_CAP): RecoveryScan {
+  const scan: RecoveryScan = { quarantined: new Set(), allowed: { attempts: new Set(), claims: new Set() }, excluded: 0, overflow: false };
+  const failClosed = (): RecoveryScan => {
+    scan.overflow = true;
+    scan.allowed = { attempts: new Set(), claims: new Set() };
+    for (const s of slots) scan.quarantined.add(s);
+    return scan;
+  };
+  const enrolled = new Set(slots);
+  const owners = { attempts: new Map<string, string | undefined>(), claims: new Map<string, string | undefined>() };
   try {
-    dir = fs.opendirSync(dirPath);
+    for (const slot of slots) if (latestSlotAttempt(runDir, slot, cap).kind === "undeterminable") scan.quarantined.add(slot);
     let count = 0;
-    for (let ent = dir.readSync(); ent !== null; ent = dir.readSync()) {
-      const slot = MAIL_FILE.exec(ent.name)?.[1];
-      if (slot === undefined || !slots.includes(slot) || bad.has(slot)) continue;
-      if (++count > RECOVERY_SCAN_CAP) { for (const s of slots) bad.add(s); break; }
-      const r = readRegularFileCappedNoFollow(path.join(dirPath, ent.name), GATE_FILE_LIMIT);
-      let ok = r.ok && !r.truncated;
-      if (r.ok && ok) {
-        try {
-          const j = JSON.parse(r.buf.toString("utf8")) as { agent?: unknown; status?: unknown };
-          ok = j.agent === slot && typeof j.status === "string";
-        } catch {
-          ok = false;
-        }
+    for (const kind of ["attempts", "claims"] as const) {
+      const dirPath = path.join(mailDir(runDir), kind);
+      let dir: fs.Dir;
+      try {
+        dir = fs.opendirSync(dirPath);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+        return failClosed();
       }
-      if (!ok) bad.add(slot);
+      let overflow = false;
+      try {
+        for (let ent = dir.readSync(); ent !== null; ent = dir.readSync()) {
+          const name = ent.name;
+          if (!name.endsWith(".json")) continue; // recovery looks at `.json` names only
+          if (++count > cap) { overflow = true; break; }
+          const owner = MAIL_FILE.exec(name)?.[1];
+          const r = readRegularFileCappedNoFollow(path.join(dirPath, name), GATE_FILE_LIMIT);
+          const readable = r.ok && !r.truncated;
+          if (owner !== undefined && enrolled.has(owner)) {
+            let valid = false;
+            if (readable) {
+              try {
+                const j: unknown = JSON.parse((r as { buf: Buffer }).buf.toString("utf8"));
+                const base = name.slice(0, -".json".length);
+                if (kind === "claims") {
+                  const c = FullClaim.safeParse(j);
+                  valid = c.success && c.data.id === base && c.data.agent === owner;
+                } else {
+                  const a = StrictAttempt.safeParse(j);
+                  valid = a.success && a.data.id === base && a.data.agent === owner && a.data.id === `${a.data.claim_id}-a${a.data.n}`;
+                }
+              } catch {
+                valid = false;
+              }
+            }
+            if (valid) { scan.allowed[kind].add(name); owners[kind].set(name, owner); } else { scan.quarantined.add(owner); scan.excluded++; }
+          } else if (owner !== undefined && readable) {
+            scan.allowed[kind].add(name); // another agent's plain file: legacy recovery handles it as before
+            owners[kind].set(name, owner);
+          } else scan.excluded++; // unknown name, or another agent's file that is not a plain readable file
+        }
+      } catch {
+        overflow = true;
+      }
+      try {
+        dir.closeSync();
+      } catch {
+        overflow = true;
+      }
+      if (overflow) return failClosed();
     }
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") for (const s of slots) bad.add(s);
-  }
-  try {
-    dir?.closeSync();
+    for (const kind of ["attempts", "claims"] as const) for (const [name, owner] of owners[kind]) if (owner !== undefined && scan.quarantined.has(owner)) scan.allowed[kind].delete(name);
+    return scan;
   } catch {
-    for (const s of slots) bad.add(s);
+    return failClosed();
   }
-  return bad;
 }
+
+/** The slots `scanRecoveryInputs` quarantines. */
+export const quarantinedSlots = (runDir: string, slots: readonly string[]): Set<string> => scanRecoveryInputs(runDir, slots).quarantined;
 
 /** `call`: the premises and containment for one enrolled global agent, judged like doctor does. No hash and no request directory: the call is new. */
 export function callGateVerdict(o: { home: string; agent: ResolvedAgent; userHome: string; premise: PremiseOptions; io?: ApprovalIo }): GateVerdict {
