@@ -52,6 +52,34 @@ function readIndex(file: string | undefined): string | undefined {
 /** The `state.sessions` key of the session an agent runs in on candidate `c`: a backup has a session of its own. */
 const sessionKeyOf = (agent: ResolvedAgent, c: Candidate): string => (c.primary ? agent.name : `${agent.name}@${c.key}`);
 
+/** A backup's key is `name@runtime/model`; the primary's key is the agent name. */
+const ownsSessionKey = (agent: string, key: string): boolean => key === agent || key.startsWith(`${agent}@`);
+
+/** Stable identity of the mail this wake is handling, so a saved session can be matched to that mail only. */
+const mailTag = (ids: string[]): string => [...ids].sort().join("\n");
+
+/** Drop this agent's stored sessions. A new mail must not resume another mail's transcript. */
+function dropAgentSessions(state: RunState, agent: string): void {
+  for (const key of Object.keys(state.sessions)) {
+    if (!ownsSessionKey(agent, key)) continue;
+    delete state.sessions[key];
+    if (state.session_mail) delete state.session_mail[key];
+  }
+}
+
+/**
+ * Keep only sessions saved for `tag` (this mail). Anything else is another mail's transcript:
+ * a redo must not load it, and a retry must not fall back to it.
+ */
+function retainSessionsForMail(state: RunState, agent: string, tag: string): void {
+  for (const key of Object.keys(state.sessions)) {
+    if (!ownsSessionKey(agent, key)) continue;
+    if (state.session_mail?.[key] === tag && state.sessions[key]) continue;
+    delete state.sessions[key];
+    if (state.session_mail) delete state.session_mail[key];
+  }
+}
+
 /** Why `key` is cooling down, for a message. */
 const cooldownKind = (cd: Cooldowns, key: string): string => cd.toJSON()[key]?.kind ?? "unknown";
 
@@ -671,6 +699,14 @@ export class RunSession {
     };
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
     // A lead's `tier` (spec 24.5.3): only for an agent with a ladder, and only a valid value counts.
+    const messageIds = unread.map((m) => m.meta.id);
+    const tag = mailTag(messageIds);
+    // A new mail drops every stored transcript. A redo keeps only a session saved for this same mail.
+    if (agent.resume) {
+      const opening = priorFailedAttempts(runDir, agent.name, messageIds, "wake");
+      if (opening.prior.length > 0) retainSessionsForMail(state, agent.name, tag);
+      else dropAgentSessions(state, agent.name);
+    }
     const tier = agent.tiers && agent.tiers.length >= 2 ? wakeTier(unread.map((m) => m.meta.tier)) : undefined;
     const all = candidatesFor(agent, tier && agent.tiers ? modelForTier(agent.tiers, tier) : undefined);
     const chain = all.length > 1;
@@ -745,11 +781,12 @@ export class RunSession {
         const started = Date.now();
         const att = beginAttempt(runDir, claim.id);
         // Looked up again for every call: a retry sees what the attempt before it just set aside.
-        const redo = this.redoContext(agent.name, unread.map((m) => m.meta.id), att.id, attempt);
-        const userPrompt = redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
+        const redo = this.redoContext(agent.name, messageIds, att.id, attempt);
         const retryN = chain ? ctx.candidateAttempt : attempt;
         say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime}${c.tiered ? `, tier ${tier}` : ""})${retryN ? ` — retry ${retryN}` : ""}`);
-        const sessionId = agent.resume ? state.sessions[sessionKey] : undefined;
+        // Retry and redo load the session stored before this attempt. A new mail stored nothing (it was dropped above).
+        const sessionId = agent.resume && (attempt > 0 || redo.prior.length > 0) ? state.sessions[sessionKey] : undefined;
+        const userPrompt = redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
         const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
         // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
         const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
@@ -775,7 +812,10 @@ export class RunSession {
           timedOut: false,
           error: e.message,
         }));
-        if (result.sessionId && agent.resume) state.sessions[sessionKey] = result.sessionId;
+        if (result.ok && result.sessionId && agent.resume) {
+          state.sessions[sessionKey] = result.sessionId;
+          state.session_mail = { ...state.session_mail, [sessionKey]: tag };
+        }
         if (result.outputTokens) state.output_tokens += result.outputTokens;
         state.cache_read_tokens += result.cacheReadTokens ?? 0;
         state.cache_write_tokens += result.cacheWriteTokens ?? 0;

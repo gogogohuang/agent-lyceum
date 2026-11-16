@@ -165,15 +165,15 @@ describe("a tiered wake (T-7, T-8)", () => {
     expect(w.map((x) => x.tier)).toEqual(["low", "mid", "high", undefined]);
   });
 
-  it("T-8a/b: ceiling -> low -> ceiling -> low use the ceiling's and the low model's own sessions", async () => {
+  it("T-8a/b: a new mail does not resume an earlier mail's session on either tier", async () => {
     const r = await go({ resume: true, mails: [undefined, "low", undefined, "low"] });
     expect(r.seen.map((s) => [s.model, s.sessionId])).toEqual([
       ["opus", undefined],
       ["haiku", undefined],
-      ["opus", "S-opus"],
-      ["haiku", "S-haiku"],
+      ["opus", undefined],
+      ["haiku", undefined],
     ]);
-    expect(loadRunState(r.runDir).sessions).toEqual({ [MEMBER]: "S-opus", [sessionKey("haiku")]: "S-haiku" });
+    expect(loadRunState(r.runDir).sessions).toEqual({ [sessionKey("haiku")]: "S-haiku" });
   });
 
   it("T-8c: a session first created on the low model never reaches the ceiling", async () => {
@@ -182,13 +182,13 @@ describe("a tiered wake (T-7, T-8)", () => {
       ["haiku", undefined],
       ["opus", undefined],
     ]);
-    expect(Object.keys(loadRunState(r.runDir).sessions).sort()).toEqual([MEMBER, sessionKey("haiku")].sort());
+    expect(Object.keys(loadRunState(r.runDir).sessions).sort()).toEqual([MEMBER]);
   });
 
-  it("T-8d: a chain entry on the tier's model shares its session key (on purpose)", async () => {
+  it("T-8d: a new mail does not resume a seeded session that is not tagged for it", async () => {
     const chain: FallbackEntry[] = [{ runtime: "claude-code", model: "Haiku" }];
     const r = await go({ resume: true, chain, mails: ["low"], sessions: { [sessionKey("haiku")]: "S-shared" } });
-    expect(r.seen.map((s) => [s.model, s.sessionId])).toEqual([["haiku", "S-shared"]]);
+    expect(r.seen.map((s) => [s.model, s.sessionId])).toEqual([["haiku", undefined]]);
   });
 
   it("T-8e: resume:false never passes a session id and keeps state.sessions empty", async () => {
@@ -395,7 +395,7 @@ describe("back-compat (T-13)", () => {
 });
 
 describe("interrupted tiered wakes resume on the tier (T-17)", () => {
-  it("T-17a/c: a cancel mid-wake keeps the mail unread; the resume starts on the low model with its own session", async () => {
+  it("T-17a/c: a cancel mid-wake keeps the mail unread; the resume starts on the low model without an untagged session", async () => {
     const ac = new AbortController();
     const r = await go({
       resume: true,
@@ -408,7 +408,7 @@ describe("interrupted tiered wakes resume on the tier (T-17)", () => {
       },
     });
     expect(r.s.endReason).toBe("cancelled");
-    expect(r.seen.map((s) => [s.model, s.sessionId])).toEqual([["haiku", "S-low"]]);
+    expect(r.seen.map((s) => [s.model, s.sessionId])).toEqual([["haiku", undefined]]);
     expect(listUnread(r.p, MEMBER)).toHaveLength(1);
     const again = await runTeam({ project: r.project, resume: loadRunState(r.runDir), runDir: r.runDir, invoker: async (i) => {
       r.seen.push({ model: i.agent.model, sessionId: i.sessionId, userPrompt: "", systemPrompt: "" });
@@ -417,7 +417,7 @@ describe("interrupted tiered wakes resume on the tier (T-17)", () => {
       return OK;
     }, log: () => {}, sleep: async () => {} });
     expect(again.endReason).toBe("done");
-    expect(r.seen.slice(1).find((s) => s.model === "haiku" || s.model === "opus")).toMatchObject({ model: "haiku", sessionId: "S-low" });
+    expect(r.seen.slice(1).find((s) => s.model === "haiku" || s.model === "opus")).toMatchObject({ model: "haiku", sessionId: undefined });
   });
 
   it("T-17b: timeouts on every candidate stop the run; the resume's first call is still the low model (no cooldown)", async () => {

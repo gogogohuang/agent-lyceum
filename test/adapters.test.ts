@@ -113,7 +113,7 @@ describe("Claude Code adapter", () => {
     expect(inv.stdin).toBe("USER");
     expect(inv.cwd).toBe(env.repo);
     expect(inv.args).toContain("--append-system-prompt-file");
-    expect(inv.args).toEqual(expect.arrayContaining(["--permission-mode", "dontAsk", "--resume", "sess-1"]));
+    expect(inv.args).toEqual(expect.arrayContaining(["--permission-mode", "dontAsk", "--resume", "sess-1", "--fork-session"]));
     const i = inv.args.indexOf("--add-dir");
     expect(inv.args[i + 1]).toBe(path.join(env.home, "agents/fe-member/memory"));
     expect(inv.args.every((a) => a !== "USER")).toBe(true);
