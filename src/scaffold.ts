@@ -118,7 +118,7 @@ dispatcher:
 agents:
   # Fields not set here are inherited from the global team.yaml.
   lead:
-    resume: true        # keep the lead's session between wake-ups
+    resume: true        # retry and redo of the same mail may resume its session; a new mail starts fresh
     can_message: all
     can_edit_agent_md: true
   fe-member:
