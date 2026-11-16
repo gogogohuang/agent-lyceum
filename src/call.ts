@@ -175,17 +175,23 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
   if (!o.task.trim()) throw new Error("No task given: pass it as text or with --task-file.");
   const ref = o.project ? resolveProjectRef(o.home, o.project) : undefined;
 
+  // The id, directory and project are only computed here (nothing is created); the gate sees the very project the call will run with.
+  const callId = newRunId();
+  const callDir = path.join(callsDir(o.home), callId);
+  const base = callProject(o.home, agent, dir, callDir);
+  const project: ResolvedProject = ref
+    ? { ...base, proposalsRef: { projectRoot: ref.paths.root, recordsRoot: path.join(ref.paths.shared, "common", "records"), proposalsRoot: path.join(ref.paths.root, "proposals"), dir: ref.dir, shortId: shortIdOf(callId) } }
+    : base;
+
   // An enrolled agent is checked again now (premises and containment, as doctor does) before any call directory or lease exists.
   if (agent.enrolled) {
-    const v = callGateVerdict({ home: o.home, agent, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
+    const v = callGateVerdict({ home: o.home, agent, actual: project, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
     if (v.kind !== "wake") {
       const failed = v.premises?.length ? ` (failed: ${v.premises.join(", ")})` : "";
       throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started. Run \`agent-lyceum doctor\` for details.`);
     }
   }
 
-  const callId = newRunId();
-  const callDir = path.join(callsDir(o.home), callId);
   const lease = lockAgent(o.home, agent.name, callId);
   let projectLease: ProjectLease | undefined;
   try {
@@ -194,10 +200,6 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     fs.mkdirSync(path.join(callDir, "log"), { recursive: true });
     fs.writeFileSync(path.join(callDir, "task.md"), o.task);
     for (const d of memoryDirs(agent)) fs.mkdirSync(d, { recursive: true });
-    const base = callProject(o.home, agent, dir, callDir);
-    const project: ResolvedProject = ref
-      ? { ...base, proposalsRef: { projectRoot: ref.paths.root, recordsRoot: path.join(ref.paths.shared, "common", "records"), proposalsRoot: path.join(ref.paths.root, "proposals"), dir: ref.dir, shortId: shortIdOf(callId) } }
-      : base;
     if (project.proposalsRef) fs.mkdirSync(project.proposalsRef.proposalsRoot, { recursive: true });
     // Another run of the project that is live, or began and ended while this call worked, may have written the shared files legitimately; this call may not.
     const guard = ref

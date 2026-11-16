@@ -707,7 +707,7 @@ export class RunSession {
       }
     } else baselineBroken = true;
     const deps: GateDeps = {
-      loadFresh: () => loadFreshView({ home: project.home, project: project.name, userHome, bind, premise }),
+      loadFresh: () => loadFreshView({ home: project.home, project: project.name, userHome, bind, actual: this.project, premise }),
       slotDir: (slot) => slotDirVerdict(project.home, { kind: "run", project: project.name, run_id: this.runId, slot }, runDir, slot, maxScan),
       now: () => new Date(),
       ...opts.approvalGate,
@@ -786,7 +786,7 @@ export class RunSession {
     }
     const failed = v.premises?.length ? ` Failed checks: ${v.premises.join(", ")} (run \`agent-lyceum doctor\`).` : "";
     const key = v.kind === "refused" ? `approval-refused:${runId}:${slot}` : `approval-skip:${runId}:${slot}:${v.code}`;
-    const tail = v.kind === "refused" ? "It is not woken again in this run; resume the run after the cause is fixed to check it again." : "It is checked again before every wake and is woken as soon as the cause is gone.";
+    const tail = v.kind === "refused" ? "It is not woken again in this run; resume the run after the cause is fixed to check it again." : "It is rechecked on each dispatch pass that occurs. If the run ends idle, fix the cause and resume; no background retry is scheduled.";
     const { fresh } = deliverOnce(
       project,
       this.journal(),
