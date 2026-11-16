@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { ApprovalError } from './approval-error.js';
 import { applyEnrollment, type EnrollmentIdentity } from './approval-enrollment.js';
-import { loadExecutors } from './approval-executors.js';
+import { loadExecutors, type ExecutorsConfig } from './approval-executors.js';
 import { defaultApprovalIo, type ApprovalIo } from './approval-io.js';
 import { storePaths } from './approval-paths.js';
 import { ConfigError, type ApprovalContext, type ApprovalLoadError, type ResolvedProject } from './config.js';
@@ -60,4 +60,31 @@ export function approvalConfigError(e: ApprovalLoadError): ConfigError {
 
 export function assertApprovalConfig(project: ResolvedProject): void {
   if (project.approvalError) throw approvalConfigError(project.approvalError);
+}
+
+const NO_EXECUTORS: ExecutorsConfig = { executors: {}, limits: { max_total_pending: 50, max_scan_entries: 200, retention_days: 90 } };
+
+/** The executors configuration as it is on disk now; a missing file or one with no `allow` entry gives an empty or inert config. Fixed code on failure. */
+export function loadFreshConfig(home: string, opts: { io?: ApprovalIo; userHome?: string } = {}): { ok: true; config: ExecutorsConfig } | { ok: false; code: "CONFIG_INVALID" } {
+  try {
+    const loaded = loadExecutors(home, opts.userHome ?? os.homedir(), opts.io ?? defaultApprovalIo);
+    return { ok: true, config: loaded.config ?? NO_EXECUTORS };
+  } catch {
+    return { ok: false, code: "CONFIG_INVALID" };
+  }
+}
+
+/**
+ * For the per-wake gate: read `executors.yaml` again and enroll `project` from it. A missing file, or one with no `allow` entry, gives an empty config and
+ * nothing enrolled (the gate then reports the slot as no longer allowed). Any read or parse failure is a fixed code, never a message.
+ */
+export function loadFreshEnrollment(project: ResolvedProject, identity: EnrollmentIdentity,
+  opts: { io?: ApprovalIo; userHome?: string } = {}): { ok: true; project: ResolvedProject; config: ExecutorsConfig } | { ok: false; code: "CONFIG_INVALID" } {
+  const r = loadFreshConfig(project.home, opts);
+  if (!r.ok) return r;
+  try {
+    return { ok: true, project: applyEnrollment(project, identity, r.config), config: r.config };
+  } catch {
+    return { ok: false, code: "CONFIG_INVALID" };
+  }
 }

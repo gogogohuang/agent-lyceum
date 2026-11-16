@@ -3,13 +3,16 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
+import os from "node:os";
 import { assertApprovalConfig, enrollProject } from "./approval-runtime.js";
+import { GATE_TEXT, callGateVerdict } from "./approval-wake-gate.js";
+import type { PremiseOptions } from "./doctor-approval-premises.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
 import { agentForCandidate, type Candidate, candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
 import { ProtectedGuard } from "./guard.js";
 import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
-import { memoryDirs } from "./policy.js";
+import { memoryDirs, osSandboxAvailable } from "./policy.js";
 import { lockHolderAlive, type LockInfo } from "./project-lock.js";
 import { buildCallUserPrompt, buildSoloSystemPrompt } from "./prompt.js";
 import { newRunId } from "./run-store.js";
@@ -30,6 +33,8 @@ export interface CallOptions {
   say?: (line: string) => void;
   /** Only used with a fallback chain, to wait out a cooldown; tests pass one that does not wait. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** Approval gate: platform and sandbox facts for the premise checks of an enrolled agent; tests inject them. Default: this process. */
+  approvalPremise?: PremiseOptions;
 }
 
 export interface CallResult {
@@ -157,6 +162,15 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     throw new Error(`Working directory ${dir} overlaps the agent-lyceum home ${o.home}: a call could change other agents' files there. Pass a --dir that is neither inside nor above the agent-lyceum home.`);
   }
   if (!o.task.trim()) throw new Error("No task given: pass it as text or with --task-file.");
+
+  // An enrolled agent is checked again now (premises and containment, as doctor does) before any call directory or lease exists.
+  if (agent.enrolled) {
+    const v = callGateVerdict({ home: o.home, agent, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
+    if (v.kind !== "wake") {
+      const failed = v.premises?.length ? ` (failed: ${v.premises.join(", ")})` : "";
+      throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started. Run \`agent-lyceum doctor\` for details.`);
+    }
+  }
 
   const callId = newRunId();
   const callDir = path.join(callsDir(o.home), callId);

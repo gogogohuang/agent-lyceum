@@ -1,3 +1,4 @@
+import { GATE_TEXT, readGateFile } from "./approval-wake-gate.js";
 import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
@@ -660,6 +661,32 @@ function tierLines(report: StatusReport, c: Paint): string[] {
   return out;
 }
 
+/** Plain text safe to print: anything but letters, digits and a few separators is shown as `?` (the side file is data on disk, not trusted). */
+const plain = (t: string): string => t.replace(/[^A-Za-z0-9._:+-]/g, "?").slice(0, 80);
+
+/**
+ * Why the approval gate did not wake some slots of the shown run (stage 2b-2). Read here, at format time, so the `--json` path never
+ * touches the file; shown whenever the run has the file, whatever the current configuration says. Only fixed text and slot names.
+ */
+function gateLines(report: StatusReport, c: Paint): string[] {
+  const dir = report.run?.dir;
+  if (!dir) return [];
+  const g = readGateFile(dir);
+  if (g === undefined) return [];
+  if (g === "unreadable") return [c.yellow("核可關卡：核可關卡狀態檔無法讀取（approval-gate.json）")];
+  const slots = Object.keys(g.slots).sort();
+  if (slots.length === 0) return [];
+  const out = [c.bold("核可關卡：")];
+  for (const slot of slots) {
+    const e = g.slots[slot];
+    if (!e) continue;
+    const when = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(e.at) ? `（${e.at}）` : "";
+    const what = e.class === "refused" ? "本 run 不再喚醒，修正後 resume 重驗" : "暫停喚醒（每輪重驗）";
+    out.push(`  ${c.cyan(plain(slot))} ${c.yellow(what)}：${GATE_TEXT[e.code].status}${when}`);
+  }
+  return out;
+}
+
 export function formatStatusReport(report: StatusReport, now = Date.now(), color = false): string {
   const c = paint(color);
   const run = report.run;
@@ -688,6 +715,8 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   if (fb.length) lines.push("", ...fb);
   const tl = tierLines(report, c);
   if (tl.length) lines.push(...(fb.length ? [] : [""]), ...tl);
+  const gl = gateLines(report, c);
+  if (gl.length) lines.push("", ...gl);
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}${cacheText(run.cache_read_tokens, run.cache_write_tokens) ? `　${cacheText(run.cache_read_tokens, run.cache_write_tokens)}` : ""}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");

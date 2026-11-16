@@ -56,7 +56,7 @@ export function assertRealDir(io: ApprovalIo, dir: string): void {
 }
 
 /** Read-side ancestor check; returns false if an ancestor is missing (file is then absent). */
-function ancestorsExist(io: ApprovalIo, root: string, file: string): boolean {
+export function ancestorsExist(io: ApprovalIo, root: string, file: string): boolean {
   for (const dir of ancestorsBelow(root, file)) {
     try {
       assertRealDir(io, dir);
