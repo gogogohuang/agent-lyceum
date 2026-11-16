@@ -163,23 +163,25 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
   }
   if (!o.task.trim()) throw new Error("No task given: pass it as text or with --task-file.");
 
+  // The id, directory and project are only computed here (nothing is created); the gate sees the very project the call will run with.
+  const callId = newRunId();
+  const callDir = path.join(callsDir(o.home), callId);
+  const project = callProject(o.home, agent, dir, callDir);
+
   // An enrolled agent is checked again now (premises and containment, as doctor does) before any call directory or lease exists.
   if (agent.enrolled) {
-    const v = callGateVerdict({ home: o.home, agent, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
+    const v = callGateVerdict({ home: o.home, agent, actual: project, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
     if (v.kind !== "wake") {
       const failed = v.premises?.length ? ` (failed: ${v.premises.join(", ")})` : "";
       throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started. Run \`agent-lyceum doctor\` for details.`);
     }
   }
 
-  const callId = newRunId();
-  const callDir = path.join(callsDir(o.home), callId);
   const lease = lockAgent(o.home, agent.name, callId);
   try {
     fs.mkdirSync(path.join(callDir, "log"), { recursive: true });
     fs.writeFileSync(path.join(callDir, "task.md"), o.task);
     for (const d of memoryDirs(agent)) fs.mkdirSync(d, { recursive: true });
-    const project = callProject(o.home, agent, dir, callDir);
     const guard = new ProtectedGuard(project);
 
     say(`Calling ${agent.name} in ${dir} (call ${callId})`);

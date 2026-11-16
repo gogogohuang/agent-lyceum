@@ -10,7 +10,7 @@ import { type SlotRef, requestPaths } from "./approval-paths.js";
 import { loadFreshConfig, loadFreshEnrollment } from "./approval-runtime.js";
 import type { Origin, PremiseResult, Sha256, WritableSet } from "./approval-types.js";
 import { type ResolvedAgent, type ResolvedProject, resolveProjectFrom } from "./config.js";
-import { approvalContainmentChecks } from "./doctor-approval-containment.js";
+import { type ContainmentDisposition, approvalContainmentChecks } from "./doctor-approval-containment.js";
 import { type PremiseOptions, agentPremiseChecks, projectPremiseChecks } from "./doctor-approval-premises.js";
 import { agentForCandidate, candidatesFor } from "./fallback.js";
 import { atomicWrite, readRegularFileCappedNoFollow } from "./fs-util.js";
@@ -29,7 +29,8 @@ export type GateCode = OriginErrorCode | "NO_BASELINE" | "DIR_ANOMALY" | "RESIDU
 export type PremiseId = "project-premises" | "containment";
 export type GateVerdict = { kind: "wake" } | { kind: "refused" | "skipped"; code: GateCode; premises?: readonly PremiseId[] };
 export interface SlotBaseline { readonly slot: string; readonly origin: Origin; readonly hashes: ReadonlyMap<string, Sha256> }
-export interface FreshView { readonly project: ResolvedProject; readonly bound: ResolvedProject; readonly config: ExecutorsConfig; readonly premises: readonly PremiseResult[] }
+/** `containment`: why the containment premise failed. Absent on a view that did not come from `loadFreshView`: a failed premise is then `blocked`. */
+export interface FreshView { readonly project: ResolvedProject; readonly bound: ResolvedProject; readonly config: ExecutorsConfig; readonly premises: readonly PremiseResult[]; readonly containment?: ContainmentDisposition }
 export interface GateDeps {
   loadFresh(): { ok: true; view: FreshView } | { ok: false; code: OriginErrorCode };
   slotDir(slot: string): GateVerdict;
@@ -42,7 +43,7 @@ const GATE_FILE_LIMIT = 64 * 1024;
 const PREMISE_IDS: readonly string[] = ["project-premises", "containment"];
 
 const refused = (code: GateCode, premises?: readonly PremiseId[]): GateVerdict => (premises ? { kind: "refused", code, premises } : { kind: "refused", code });
-const skipped = (code: GateCode): GateVerdict => ({ kind: "skipped", code });
+const skipped = (code: GateCode, premises?: readonly PremiseId[]): GateVerdict => (premises ? { kind: "skipped", code, premises } : { kind: "skipped", code });
 
 /** Fixed texts for the lead's mail and for human `status`, one per code. Nothing is interpolated. */
 export const GATE_TEXT: Readonly<Record<GateCode, { mail: string; status: string }>> = {
@@ -58,7 +59,7 @@ export const GATE_TEXT: Readonly<Record<GateCode, { mail: string; status: string
   NO_BASELINE: { mail: "The run has no recorded qualification for this agent, so it is not woken for the rest of this run.", status: "no qualification recorded for this run" },
   DIR_ANOMALY: { mail: "The agent's approval request directory is not a plain directory chain, so it is not woken until that is fixed.", status: "request directory is unsafe" },
   RESIDUAL_OUTPUT: { mail: "Earlier approval output of this agent is still waiting to be collected, so it is not woken until then.", status: "earlier approval output is waiting" },
-  UNDETERMINABLE: { mail: "The state of this agent's earlier approval output could not be determined, so it is not woken until that is resolved.", status: "approval state could not be determined" },
+  UNDETERMINABLE: { mail: "Approval safety or output state could not be determined; this slot is not woken. Run doctor for containment diagnostics.", status: "approval state could not be determined" },
 };
 
 // ---- baseline and qualification ----
@@ -125,14 +126,25 @@ export function qualificationVerdict(baseline: SlotBaseline, view: FreshView): G
     if (!input) return { ok: false, code: view.config.executors[executor] ? "NOT_ALLOWED" : "EXECUTOR_MISSING", hint: "" };
     return { ok: true, resolved: { qualification: q, snapshot_input: input, premises: view.premises } };
   };
+  // Only an unreadable foreign project is "unknown": it is not a failed premise, so everything else is still decided (hash included).
+  const unknownOnly = failedPremises.length === 1 && failedPremises[0] === "containment" && view.containment === "foreign-incomplete";
+  let unknown = false;
   for (const executor of [...baseline.hashes.keys()].sort()) {
-    const r = revalidateQualification(baseline.origin, executor, baseline.hashes.get(executor) as Sha256, resolver);
-    if (!r.ok) return r.code === "PREMISE_FAILED" ? refused("PREMISE_FAILED", failedPremises) : refused(r.code);
+    const expected = baseline.hashes.get(executor) as Sha256;
+    const r = revalidateQualification(baseline.origin, executor, expected, resolver);
+    if (r.ok) continue;
+    if (r.code !== "PREMISE_FAILED") return refused(r.code);
+    if (!unknownOnly) return refused("PREMISE_FAILED", failedPremises);
+    unknown = true;
+    const input = inputs.get(executor) as SnapshotInput; // the resolver succeeded, so it exists
+    let hash: string;
+    try { hash = qualificationHash(input); } catch { return refused("CONFIG_INVALID"); }
+    if (hash !== expected) return refused("SNAPSHOT_MISMATCH");
   }
   const now = [...q.executors].sort();
   const was = [...baseline.hashes.keys()].sort();
   if (now.length !== was.length || now.some((n, i) => n !== was[i])) return refused("SNAPSHOT_MISMATCH");
-  return { kind: "wake" };
+  return unknown ? skipped("UNDETERMINABLE", ["containment"]) : { kind: "wake" };
 }
 
 // ---- fresh view, read with bounds ----
@@ -143,6 +155,8 @@ export interface FreshOptions {
   userHome: string;
   /** The session's own binding (solo, run dir, instances), so run-only entries match the baseline's. */
   bind(project: ResolvedProject): ResolvedProject;
+  /** The session's current project (retained verify, grants, fallbacks, instances): checked in addition to the fresh disk view. */
+  actual?: ResolvedProject;
   premise: PremiseOptions;
   io?: ApprovalIo;
 }
@@ -180,12 +194,16 @@ export function loadFreshView(o: FreshOptions): { ok: true; view: FreshView } | 
     const { project: enrolledProject, config } = fresh;
     const bound = o.bind(enrolledProject);
     const premises: PremiseResult[] = [];
+    let containment: ContainmentDisposition | undefined;
     if (Object.values(enrolledProject.agents).some((a) => a.enrolled)) {
-      const projectOk = !projectPremiseChecks(project, config, o.premise).some((c) => c.level === "error");
-      const contained = !approvalContainmentChecks(o.home, config, { platform: o.premise.platform, userHome: o.userHome }).checks.some((c) => c.level === "error");
+      const failing = (p: ResolvedProject): boolean => projectPremiseChecks(p, config, o.premise).some((c) => c.level === "error");
+      const projectOk = !failing(project) && !(o.actual && failing(o.actual));
+      const inv = approvalContainmentChecks(o.home, config, { platform: o.premise.platform, userHome: o.userHome, mode: "grants", activeProject: o.project, executionProjects: [...(o.actual ? [o.actual] : []), bound] });
+      containment = inv.disposition ?? "blocked";
+      const contained = containment === "clear";
       premises.push({ check: "project-premises", ok: projectOk, code: projectOk ? "ok" : "failed" }, { check: "containment", ok: contained, code: contained ? "ok" : "failed" });
     }
-    return { ok: true, view: { project: enrolledProject, bound, config, premises } };
+    return { ok: true, view: { project: enrolledProject, bound, config, premises, ...(containment ? { containment } : {}) } };
   } catch {
     return { ok: false, code: "CONFIG_INVALID" };
   }
@@ -368,14 +386,17 @@ export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap
 export const quarantinedSlots = (runDir: string, slots: readonly string[]): Set<string> => scanRecoveryInputs(runDir, slots).quarantined;
 
 /** `call`: the premises and containment for one enrolled global agent, judged like doctor does. No hash and no request directory: the call is new. */
-export function callGateVerdict(o: { home: string; agent: ResolvedAgent; userHome: string; premise: PremiseOptions; io?: ApprovalIo }): GateVerdict {
+export function callGateVerdict(o: { home: string; agent: ResolvedAgent; userHome: string; premise: PremiseOptions; io?: ApprovalIo; actual?: ResolvedProject }): GateVerdict {
   try {
     const cfg = loadFreshConfig(o.home, { io: o.io ?? defaultApprovalIo, userHome: o.userHome });
     if (!cfg.ok) return refused("CONFIG_INVALID");
     const failed: PremiseId[] = [];
     if (agentPremiseChecks(`call/${o.agent.name}`, o.agent, o.premise).some((c) => c.level === "error")) failed.push("project-premises");
-    if (approvalContainmentChecks(o.home, cfg.config, { platform: o.premise.platform, userHome: o.userHome }).checks.some((c) => c.level === "error")) failed.push("containment");
-    return failed.length ? refused("PREMISE_FAILED", failed) : { kind: "wake" };
+    const inv = approvalContainmentChecks(o.home, cfg.config, { platform: o.premise.platform, userHome: o.userHome, mode: "grants", activeProject: null, executionProjects: o.actual ? [o.actual] : [] });
+    const disposition = inv.disposition ?? "blocked";
+    if (disposition === "blocked") failed.push("containment");
+    if (failed.length) return refused("PREMISE_FAILED", failed);
+    return disposition === "foreign-incomplete" ? skipped("UNDETERMINABLE", ["containment"]) : { kind: "wake" };
   } catch {
     return refused("CONFIG_INVALID");
   }

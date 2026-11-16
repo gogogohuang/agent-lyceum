@@ -16,12 +16,26 @@ import { GlobalConfig, ProjectConfig } from "./schema.js";
 export interface ApprovalInventory {
   checks: DoctorCheck[];
   calls: { role: string; agent: ResolvedAgent }[];
+  /** Grants mode only: every error tagged at its emit site. Diagnostic mode never sets it. */
+  disposition?: ContainmentDisposition;
 }
+
+/** `blocked` outranks `foreign-incomplete` outranks `clear`: an unreadable foreign project never hides a proven overlap. */
+export type ContainmentDisposition = "clear" | "foreign-incomplete" | "blocked";
 
 export interface ApprovalContainmentOptions {
   /** Reserved: `~` in project configs is expanded by `resolveProjectFrom` from the process environment, as in every other path. */
   userHome?: string;
   platform?: NodeJS.Platform;
+  /** Diagnostic walks mutable descendants; grants checks only configured and actual authority roots. */
+  mode?: "diagnostic" | "grants";
+  /** Retained/session bindings are added to, never substituted for, the disk inventory. */
+  executionProjects?: readonly ResolvedProject[];
+  /**
+   * Grants mode: the run's own project name, or `null` for a call (every disk project is then foreign). A failure to read or resolve
+   * another disk project only makes the inventory incomplete; absent, every error is `blocked`.
+   */
+  activeProject?: string | null;
 }
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -309,9 +323,17 @@ function aliasesBelow(root: string): string[] {
 export function approvalContainmentChecks(home: string, config: ExecutorsConfig, opts: ApprovalContainmentOptions = {}): ApprovalInventory {
   const platform = opts.platform ?? process.platform;
   const checks: DoctorCheck[] = [];
-  const push = (stem: string, msg: string): void => void checks.push({ level: "error", subject: "approval", message: escapeControl(`${stem} ${msg}`) });
-  const incomplete = (msg: string): void => push(STEM_INCOMPLETE, msg);
-  const unverified = (msg: string): void => push(STEM_UNVERIFIED, msg);
+  let sawBlocked = false;
+  let sawForeign = false;
+  /** `foreign` is decided by the caller from the project's name at the emit site, never from the message. */
+  const push = (stem: string, msg: string, foreign = false): void => {
+    if (foreign && opts.activeProject !== undefined) sawForeign = true;
+    else sawBlocked = true;
+    checks.push({ level: "error", subject: "approval", message: escapeControl(`${stem} ${msg}`) });
+  };
+  const incomplete = (msg: string, foreign = false): void => push(STEM_INCOMPLETE, msg, foreign);
+  const unverified = (msg: string, foreign = false): void => push(STEM_UNVERIFIED, msg, foreign);
+  const isForeign = (name: string): boolean => opts.activeProject !== undefined && name !== opts.activeProject;
   const norm = (p: string): string => (platform === "darwin" ? p.toLowerCase() : p);
 
   // 1. The protected set.
@@ -357,19 +379,19 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
   const calls: ApprovalInventory["calls"] = [];
   const grants: Grant[] = [];
   const seenGrant = new Set<string>();
-  const addGrant = (who: string, setting: string, src: string): void => {
+  const addGrant = (who: string, setting: string, src: string, foreign = false): void => {
     const key = `${who}\0${setting}\0${src}`;
     if (seenGrant.has(key)) return;
     seenGrant.add(key);
     try {
       grants.push({ who, setting, src, canon: strictCanonical(src) });
     } catch (e) {
-      unverified(`${who} ${setting} ${src}: ${(e as Error).message}`);
+      unverified(`${who} ${setting} ${src}: ${(e as Error).message}`, foreign);
     }
   };
-  const envelope = (who: string, setting: string, dir: string, walk = true): void => {
-    addGrant(who, `${setting} (conservative envelope)`, dir);
-    if (!walk) return; // git checkouts are not alias-walked (D19): only the root is a grant
+  const envelope = (who: string, setting: string, dir: string, walk = true, foreign = false): void => {
+    addGrant(who, `${setting} (conservative envelope)`, dir, foreign);
+    if (!walk || opts.mode === "grants") return; // checkouts, and all grants-mode envelopes, grant only the root
     let found: string[];
     try {
       found = aliasesBelow(dir);
@@ -378,7 +400,7 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
       incomplete(`cannot cover aliases below ${setting} ${dir} for ${who}: ${code(e) === (e as Error).message ? (e as Error).message : code(e)}`);
       return;
     }
-    for (const a of found) addGrant(who, `${setting} alias (conservative envelope)`, a);
+    for (const a of found) addGrant(who, `${setting} alias (conservative envelope)`, a, foreign);
   };
 
   let global: ReturnType<typeof GlobalConfig.parse> | undefined;
@@ -398,7 +420,7 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
   for (const ent of entries) {
     const pp = projectPaths(home, ent.name);
     if (!ent.isDirectory()) {
-      incomplete(`project entry ${pp.root} is not a real directory (a symlink or file)`);
+      incomplete(`project entry ${pp.root} is not a real directory (a symlink or file)`, isForeign(ent.name));
       continue;
     }
     if (!global) continue;
@@ -406,35 +428,54 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
       const raw = readYamlSafe(pp.config, ProjectConfig);
       projects.set(ent.name, resolveProjectFrom(home, ent.name, global, raw));
     } catch (e) {
-      incomplete(`project "${ent.name}" config ${pp.config} ${(e as Error).message}`);
+      incomplete(`project "${ent.name}" config ${pp.config} ${(e as Error).message}`, isForeign(ent.name));
     }
   }
 
-  // Every agent of every project, primary and each fallback candidate.
-  for (const [pname, project] of [...projects].sort(([a], [b]) => a.localeCompare(b))) {
-    const who = (a: string): string => `project "${pname}" agent "${a}"`;
-    envelope(`project "${pname}"`, "task-memory", project.paths.taskMemory);
-    envelope(`project "${pname}"`, "runs", project.paths.runs);
-    envelope(`project "${pname}"`, "worktrees", path.join(project.paths.root, "worktrees"), false);
-    try {
-      const common = gitCommonDir(project.dir);
-      if (common) envelope(`project "${pname}"`, "git common dir", common);
-    } catch (e) {
-      incomplete(`${(e as Error).message}; project "${pname}" worktree admin directories are not covered`);
-    }
+  // Only collect allows: enrolled deny inventory does extra I/O and cannot change the allow set.
+  const collectAgent = (project: ResolvedProject, agent: ResolvedAgent, tag: string, foreign = false): void => {
+    const { enrolled: _enrolled, ...plain } = agent;
+    const pol = writePolicy(project, plain);
+    for (const d of pol.allowDirs) addGrant(tag, "write allowDirs", d, foreign);
+    for (const f of pol.allowFiles) addGrant(tag, "write allowFiles", f, foreign);
+    for (const w of agent.sandbox?.write ?? []) addGrant(tag, "sandbox.write", w, foreign);
+  };
+  const collectProjectAgents = (project: ResolvedProject, who: (agent: string) => string, foreign = false): void => {
     for (const [aname, agent] of Object.entries(project.agents).sort(([a], [b]) => a.localeCompare(b))) {
       const cands = agent.runtime ? candidatesFor(agent) : [];
       const variants = cands.length ? cands.map((c, i) => ({ label: c.primary ? "primary" : `fallback ${i}`, agent: agentForCandidate(agent, c) })) : [{ label: "primary", agent }];
       for (const v of variants) {
         const tag = v.label === "primary" ? who(aname) : `${who(aname)} (${v.label})`;
-        const pol = writePolicy(project, v.agent);
-        for (const d of pol.allowDirs) addGrant(tag, "write allowDirs", d);
-        for (const f of pol.allowFiles) addGrant(tag, "write allowFiles", f);
-        addGrant(tag, "project dir", project.dir);
-        addGrant(tag, "worktrees root", path.join(project.paths.root, "worktrees"));
-        for (const w of v.agent.sandbox?.write ?? []) addGrant(tag, "sandbox.write", w);
+        collectAgent(project, v.agent, tag, foreign);
+        addGrant(tag, "project dir", project.dir, foreign);
+        addGrant(tag, "worktrees root", path.join(project.paths.root, "worktrees"), foreign);
+        const ws = project.workspaces?.[aname];
+        if (ws) {
+          addGrant(tag, "workspace root", ws.root, foreign);
+          addGrant(tag, "workspace cwd", ws.dir, foreign);
+        }
       }
     }
+  };
+
+  // Every agent of every project, primary and each fallback candidate.
+  for (const [pname, project] of [...projects].sort(([a], [b]) => a.localeCompare(b))) {
+    const who = (a: string): string => `project "${pname}" agent "${a}"`;
+    const foreign = isForeign(pname);
+    envelope(`project "${pname}"`, "task-memory", project.paths.taskMemory, true, foreign);
+    envelope(`project "${pname}"`, "runs", project.paths.runs, true, foreign);
+    envelope(`project "${pname}"`, "worktrees", path.join(project.paths.root, "worktrees"), false, foreign);
+    try {
+      const common = gitCommonDir(project.dir);
+      if (common) envelope(`project "${pname}"`, "git common dir", common, true, foreign);
+    } catch (e) {
+      incomplete(`${(e as Error).message}; project "${pname}" worktree admin directories are not covered`, foreign);
+    }
+    collectProjectAgents(project, who, foreign);
+  }
+  for (const [index, project] of (opts.executionProjects ?? []).entries()) {
+    const who = (a: string): string => `execution project "${project.name}" [${index}] agent "${a}"`;
+    collectProjectAgents(project, who);
   }
 
   // Every global agent as a potential call.
@@ -452,10 +493,7 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
         const variants = cands.length ? cands.map((c, i) => ({ label: c.primary ? "primary" : `fallback ${i}`, agent: agentForCandidate(agent, c) })) : [{ label: "primary", agent }];
         for (const v of variants) {
           const tag = v.label === "primary" ? `call agent "${role}"` : `call agent "${role}" (${v.label})`;
-          const pol = writePolicy(cp, v.agent);
-          for (const d of pol.allowDirs) addGrant(tag, "write allowDirs", d);
-          for (const f of pol.allowFiles) addGrant(tag, "write allowFiles", f);
-          for (const w of v.agent.sandbox?.write ?? []) addGrant(tag, "sandbox.write", w);
+          collectAgent(cp, v.agent, tag);
         }
       } catch (e) {
         incomplete(`global agent "${role}" cannot be resolved as a call agent (${(e as Error).message.split("\n")[0]})`);
@@ -493,5 +531,6 @@ export function approvalContainmentChecks(home: string, config: ExecutorsConfig,
 
   const order = (c: DoctorCheck): string => `${c.level === "error" ? 0 : 1}${c.message}`;
   const unique = [...new Map(checks.map((c) => [order(c), c])).values()].sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
-  return { checks: unique, calls };
+  if (opts.mode !== "grants") return { checks: unique, calls };
+  return { checks: unique, calls, disposition: sawBlocked ? "blocked" : sawForeign ? "foreign-incomplete" : "clear" };
 }
