@@ -79,8 +79,7 @@ describe("fallback in a run", () => {
     expect(s.endReason).toBe("done");
     expect(s.outcome).toBe("completed");
     expect(sleeps).toEqual([]);
-    expect(prompts[1]).toBe(prompts[0]);
-    expect(prompts[1]).not.toMatch(/Retry notice|Redo notice/);
+    expect(prompts[1]).toMatch(/# Retry notice\nYour previous attempt at this wake-up failed \(API Error: 429\)/);
     expect(lines).toContain("  lead falling back to claude-code/backup (rate_limit)");
     const state = loadRunState(runDir);
     expect(state.rounds).toBe(2);
@@ -479,7 +478,7 @@ describe("fallback note says whether the backup resumes a session (T13)", () => 
   });
 });
 
-describe("a backup retry does not attach the draft or another mail's session (T17c)", () => {
+describe("a backup retry carries the draft but not another mail's session (T17c)", () => {
   const MARKER = "T17C-DRAFT-BODY";
   const run = async (sessions: Record<string, string>) => {
     const calls: WakeInput[] = [];
@@ -504,19 +503,18 @@ describe("a backup retry does not attach the draft or another mail's session (T1
     return calls;
   };
 
-  it("drops an untagged backup session and does not carry the draft", async () => {
+  it("drops an untagged backup session and still carries the draft", async () => {
     const calls = await run({ "fe-member@claude-code/backup": "SB" });
     expect(calls.map((c) => c.agent.model ?? "")).toEqual(["", "backup"]);
     expect(calls[1]!.sessionId).toBeUndefined();
-    expect(calls[1]!.userPrompt).not.toContain(MARKER);
-    expect(calls[1]!.userPrompt).toBe(calls[0]!.userPrompt);
+    expect(calls[1]!.userPrompt).toContain(MARKER);
   });
 
-  it("with no session of its own the backup starts fresh and does not carry the draft", async () => {
+  it("with no session of its own the backup starts fresh and still carries the draft", async () => {
     const calls = await run({});
     expect(calls[1]!.agent.model).toBe("backup");
     expect(calls[1]!.sessionId).toBeUndefined();
-    expect(calls[1]!.userPrompt).not.toContain(MARKER);
+    expect(calls[1]!.userPrompt).toContain(MARKER);
   });
 });
 

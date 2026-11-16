@@ -48,7 +48,7 @@ describe("attempts", () => {
           send(i.project, "fe-member", "lead", "stale half result");
           return FAIL;
         }
-        expect(i.userPrompt).not.toMatch(/Retry notice|Redo notice/);
+        expect(i.userPrompt).toMatch(/previous attempt .* failed/i);
         send(i.project, "fe-member", "lead", "fe done");
         return OK;
       }
@@ -174,7 +174,7 @@ const leadFlow = (i: WakeInput): boolean => {
 };
 
 describe("redo context", () => {
-  it("T3: a retry in the same wake reloads nothing new and does not attach the draft", async () => {
+  it("T3: a retry in the same wake gets the failed attempt's draft and no 'discarded'", async () => {
     const prompts: string[] = [];
     const { s, runDir } = await start(async (i) => {
       if (leadFlow(i)) return OK;
@@ -188,11 +188,11 @@ describe("redo context", () => {
     });
     expect(s.endReason).toBe("done");
     expect(prompts[0]).not.toMatch(/Retry notice|Redo notice/);
-    expect(prompts[1]).toBe(prompts[0]);
-    expect(prompts[1]).not.toContain(`${MARK} body`);
+    expect(prompts[1]).toContain("Its mail was set aside, not delivered: see the drafts below.");
+    expect(prompts[1]).not.toContain("discarded");
+    expect(prompts[1]).toContain(`${MARK} body`);
     expect(logEvents(runDir, "redo")[0]).toMatchObject({ agent: "fe-member", notice: "retry" });
-    expect(logEvents(runDir, "draft_inject")).toHaveLength(0);
-    expect(logEvents(runDir, "draft_none")).toHaveLength(1);
+    expect(logEvents(runDir, "draft_inject")).toHaveLength(1);
   });
 
   it("T11: a draft is never delivered or journaled, and stays where it was set aside", async () => {
@@ -226,17 +226,20 @@ describe("redo context", () => {
     expect(fs.readFileSync(path.join(kept, fs.readdirSync(kept)[0]), "utf8")).toContain(`body ${MARK}`);
   });
 
-  it("T4: a retry without a stored session is the original mail and nothing else", async () => {
-    const prompts: string[] = [];
+  it("T4: a retry without a draft is the old text plus the task memory sentence", async () => {
+    const prompts: { text: string; task?: string }[] = [];
     await start(async (i) => {
       if (leadFlow(i)) return OK;
-      prompts.push(i.userPrompt);
+      prompts.push({ text: i.userPrompt, task: i.agent.memory.task });
       if (prompts.length === 1) return FAIL;
       send(i.project, "fe-member", "lead", "fe finished");
       return OK;
     });
-    expect(prompts[1]).toBe(prompts[0]);
-    expect(prompts[1]).not.toMatch(/Retry notice|task memory/);
+    const task = prompts[1]!.task;
+    expect(task).toBeTruthy();
+    const tail = "Check the current state of the repository before redoing the work, and send the mail again.";
+    const g = ` Read your task memory (\`${task}\`) first: progress you recorded there survives a failed attempt.`;
+    expect(prompts[1]!.text).toBe(`${prompts[0]!.text}\n\n# Retry notice\nYour previous attempt at this wake-up failed (boom) after possibly changing files already. Its mail was discarded. ${tail}${g}`);
   });
 
   // The run's task.md (two levels above an agent's work dir), which a non-lead agent's prompt carries as <user_task>.
@@ -403,15 +406,14 @@ describe("a draft is handed back whatever the session state (T17)", () => {
     return calls;
   };
 
-  it("(b) resume: false, the failed call returned a session id: the retry has no session and no draft", async () => {
+  it("(b) resume: false, the failed call returned a session id: the retry has no session but still has the draft", async () => {
     const calls = await runWith(false, { ...FAIL, sessionId: "S1" });
     expect(calls[1]!.sessionId).toBeUndefined();
-    expect(calls[1]!.userPrompt).toBe(calls[0]!.userPrompt);
-    expect(calls[1]!.userPrompt).not.toContain(`T17-${MARK}`);
-    expect(calls[1]!.userPrompt).not.toMatch(/Retry notice|Redo notice/);
+    expect(calls[1]!.userPrompt).toContain(`T17-${MARK}`);
+    expect(calls[1]!.userPrompt).toContain("# Retry notice");
   });
 
-  it("(a) resume: true and a timeout on a new mail: that mail does not resume the previous mail's session, and the retry adds nothing", async () => {
+  it("(a) resume: true and a timeout on a new mail: that mail does not resume the previous mail's session, and the retry still has the draft", async () => {
     env = makeEnv();
     const project = env.project();
     project.agents["fe-member"]!.resume = true;
@@ -447,14 +449,14 @@ describe("a draft is handed back whatever the session state (T17)", () => {
     });
     expect(calls[1]!.sessionId).toBeUndefined();
     expect(calls[2]!.sessionId).toBeUndefined();
-    expect(calls[2]!.userPrompt).toBe(calls[1]!.userPrompt);
-    expect(calls[2]!.userPrompt).not.toContain(`T17-${MARK}`);
+    expect(calls[2]!.userPrompt).toContain("# Retry notice");
+    expect(calls[2]!.userPrompt).toContain(`T17-${MARK}`);
     expect(loadRunState(runDir).sessions["fe-member"]).not.toBe("S0");
   });
 });
 
 describe("a session follows one mail", () => {
-  it("a redo resumes the session saved for this mail; a retry reloads it and adds nothing", async () => {
+  it("a redo resumes the session saved for this mail; a retry reloads it with a Retry notice", async () => {
     env = makeEnv();
     const project = env.project();
     project.agents["fe-member"]!.resume = true;
@@ -494,7 +496,7 @@ describe("a session follows one mail", () => {
     expect(calls[0]!.userPrompt).toContain("# Redo notice");
     expect(calls[0]!.userPrompt).toContain("PARKED-BODY");
     expect(calls[1]!.sessionId).toBe("S-mail");
-    expect(calls[1]!.userPrompt).toBe("");
+    expect(calls[1]!.userPrompt).toContain("# Retry notice");
     const after = loadRunState(runDir);
     expect(after.sessions).toEqual({ "fe-member": "S-fork" });
     expect(after.session_mail).toEqual({ "fe-member": tag });

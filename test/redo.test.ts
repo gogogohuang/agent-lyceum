@@ -401,10 +401,14 @@ describe("redoUserPrompt", () => {
     expect(t).toContain("Read your task memory (`/tm`) first");
     expect(t.endsWith("\n\nDRAFTS")).toBe(true);
   });
-  it("a retry keeps the base text only: no notice, no drafts, no task-memory sentence", () => {
-    expect(redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [], drafts: "" })).toBe("BASE");
-    expect(redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [], drafts: "", taskMemory: "/tm" })).toBe("BASE");
-    expect(redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [p], drafts: "DRAFTS" })).toBe("BASE");
+  it("keeps the old Retry text, plus the task memory sentence only when there is one", () => {
+    const old = "BASE\n\n# Retry notice\nYour previous attempt at this wake-up failed (boom) after possibly changing files already. Its mail was discarded. Check the current state of the repository before redoing the work, and send the mail again.";
+    expect(redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [], drafts: "" })).toBe(old);
+    expect(redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [], drafts: "", taskMemory: "/tm" })).toBe(`${old} Read your task memory (\`/tm\`) first: progress you recorded there survives a failed attempt.`);
+    const withDrafts = redoUserPrompt("BASE", { attempt: 1, error: "boom", prior: [p], drafts: "DRAFTS" });
+    expect(withDrafts).not.toContain("discarded");
+    expect(withDrafts).toContain("Its mail was set aside, not delivered: see the drafts below.");
+    expect(withDrafts.endsWith("\n\nDRAFTS")).toBe(true);
   });
 });
 

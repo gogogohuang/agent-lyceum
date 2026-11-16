@@ -289,16 +289,17 @@ export function collectDrafts(runDir: string, prior: PriorAttempt[], budget = DR
 
 const TASK_MEMORY = (dir?: string) => (dir ? ` Read your task memory (\`${dir}\`) first: progress you recorded there survives a failed attempt.` : "");
 
-/**
- * The user prompt for this invoke. No IO.
- * A retry in the same wake (`attempt > 0`) does not add a notice or drafts: when a session exists the caller
- * sends nothing and only reloads that session; when it does not, the caller sends `base` alone.
- * A redo (a later wake of the same unfinished mail) repeats `base` and attaches the notice and any parked drafts.
- */
+/** Prompt for a repeat attempt in the same wake-up: the earlier one failed and may have changed things already. */
+export function retryPrompt(prompt: string, error: string | undefined, o: { drafts: boolean; taskMemory?: string }): string {
+  const mail = o.drafts ? "Its mail was set aside, not delivered: see the drafts below." : "Its mail was discarded.";
+  return `${prompt}\n\n# Retry notice\nYour previous attempt at this wake-up failed${error ? ` (${error})` : ""} after possibly changing files already. ${mail} Check the current state of the repository before redoing the work, and send the mail again.${TASK_MEMORY(o.taskMemory)}`;
+}
+
+/** The user prompt for this invoke: `base`, a Retry or Redo notice when there is something to redo, then the drafts. No IO. */
 export function redoUserPrompt(base: string, o: { attempt: number; error?: string; prior: PriorAttempt[]; drafts: string; taskMemory?: string }): string {
-  if (o.attempt > 0) return base;
+  const tail = o.drafts ? `\n\n${o.drafts}` : "";
+  if (o.attempt > 0) return `${retryPrompt(base, o.error, { drafts: !!o.drafts, taskMemory: o.taskMemory })}${tail}`;
   const last = o.prior[0];
   if (!last) return base;
-  const tail = o.drafts ? `\n\n${o.drafts}` : "";
   return `${base}\n\n# Redo notice\nAn earlier attempt at this message did not finish (${last.error}; attempt ${last.id}). It may have changed files already, and its mail was set aside, not delivered${o.drafts ? ": see the drafts below" : ""}. Check the current state of the repository before redoing the work, and send the mail again.${TASK_MEMORY(o.taskMemory)}${tail}`;
 }

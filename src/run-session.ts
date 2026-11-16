@@ -786,11 +786,7 @@ export class RunSession {
         say(`[round ${roundsLabel(state.rounds, state.max_rounds)}] waking ${agent.name} (${chain ? modelLabel(c) : agent.runtime}${c.tiered ? `, tier ${tier}` : ""})${retryN ? ` — retry ${retryN}` : ""}`);
         // Retry and redo load the session stored before this attempt. A new mail stored nothing (it was dropped above).
         const sessionId = agent.resume && (attempt > 0 || redo.prior.length > 0) ? state.sessions[sessionKey] : undefined;
-        // A retry that still has that session reloads it and adds nothing. With no session, the original mail is the whole prompt.
-        const userPrompt =
-          attempt > 0 && sessionId
-            ? ""
-            : redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
+        const userPrompt = redoUserPrompt(base.userPrompt, { attempt, error: ctx.previous?.error, prior: redo.prior, drafts: redo.drafts, taskMemory: agent.memory.task });
         const handling = unread.map((m) => ({ from: m.meta.from, type: m.meta.type, subject: m.meta.subject, brief: briefOf(m.body), digest: digestOf(m.meta.type, m.body) }));
         // What the panel shows for the message being worked on is uncut; the wake record below keeps the short digest.
         const activeHandling = unread.map((m, i) => ({ ...handling[i]!, digest: digestOf(m.meta.type, m.body, true) }));
@@ -918,8 +914,7 @@ export class RunSession {
       const found = priorFailedAttempts(runDir, agent, messageIds, attemptId);
       prior = found.prior;
       skipped.push(...found.skipped);
-      // Drafts ride along only on a redo. A retry reloads the session and must not add them.
-      if (prior.length && attempt === 0) {
+      if (prior.length) {
         drafts = collectDrafts(runDir, prior);
         skipped.push(...drafts.skipped);
       }
