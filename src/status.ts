@@ -680,9 +680,10 @@ function gateLines(report: StatusReport, c: Paint): string[] {
   for (const slot of slots) {
     const e = g.slots[slot];
     if (!e) continue;
-    const when = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(e.at) ? `（${e.at}）` : "";
-    const what = e.class === "refused" ? "本 run 不再喚醒，修正後 resume 重驗" : "暫停喚醒（每輪重驗）";
-    out.push(`  ${c.cyan(plain(slot))} ${c.yellow(what)}：${GATE_TEXT[e.code].status}${when}`);
+    const at = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(e.at) ? e.at : "時間不明";
+    // A recorded verdict, not the current state: a later resume without enrollment never rewrites this file (initGate returns early).
+    const what = e.class === "refused" ? "當時判定本 run 不再喚醒，修正後 resume 重驗" : "當時判定暫停喚醒（每輪重驗）";
+    out.push(`  ${c.cyan(plain(slot))} 記錄於 ${at}：${c.yellow(what)}：${GATE_TEXT[e.code].status}`);
   }
   return out;
 }

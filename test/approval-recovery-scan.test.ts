@@ -22,6 +22,29 @@ const claim = (agent: string, status: string, over: Record<string, unknown> = {}
 };
 const SLOTS = ['dev', 'qa'];
 
+describe('scanRecoveryInputs: the entry cap counts every entry, not only .json names', () => {
+  it('overflows on a folder of non-JSON names (cap 3, six junk files)', () => {
+    for (let i = 0; i < 6; i++) put(claimDir(), `junk-${i}`, 'x');
+    const r = scanRecoveryInputs(runDir, SLOTS, 3);
+    expect(r.overflow).toBe(true);
+    expect([...r.quarantined].sort()).toEqual([...SLOTS].sort());
+    expect(r.allowed.claims.size).toBe(0);
+  });
+  it('overflows on mixed json and non-json names (cap 3: two json plus three junk)', () => {
+    const c = claim('dev', 'committed');
+    put(claimDir(), `${c.id}.json`, c);
+    put(claimDir(), 'other-1abc-qa-bbbbbb.json', '{}');
+    for (let i = 0; i < 3; i++) put(claimDir(), `junk-${i}`, 'x');
+    expect(scanRecoveryInputs(runDir, SLOTS, 3).overflow).toBe(true);
+  });
+  it('does not overflow when the total entry count is within the cap', () => {
+    const c = claim('dev', 'committed');
+    put(claimDir(), `${c.id}.json`, c);
+    put(claimDir(), 'junk-0', 'x');
+    expect(scanRecoveryInputs(runDir, SLOTS, 3).overflow).toBe(false);
+  });
+});
+
 describe('scanRecoveryInputs: full validation of what recovery consumes', () => {
   it('a well-formed claim of every status is allowed and quarantines nothing', () => {
     for (const status of ['claimed', 'output_ready', 'committed', 'abandoned']) {

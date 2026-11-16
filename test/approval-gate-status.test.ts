@@ -63,6 +63,15 @@ describe('human status shows the gate reasons', () => {
     expect(text).toContain('不再喚醒');
     expect(fs.existsSync(gateFile(runDir))).toBe(true);
   });
+  it('shows an entry as a recorded verdict with its timestamp, not as the present state', async () => {
+    setup();
+    await runBreaking(() => fs.writeFileSync(execPath(), execYaml('[{project: demo, agent: qa-member}]')));
+    const text = formatStatus(env.project(), NOW);
+    const block = text.slice(text.indexOf('核可關卡：'));
+    expect(block).toMatch(/fe-member 記錄於 \d{4}-\d\d-\d\dT[\d:.]+Z：/);
+    expect(block).toContain('當時判定');
+    expect(block).not.toMatch(/fe-member [^：]*：本 run 不再喚醒/);
+  });
   it('the same after executors.yaml is deleted', async () => {
     setup();
     await runBreaking(() => fs.rmSync(execPath()));
