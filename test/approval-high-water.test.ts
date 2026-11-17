@@ -283,3 +283,15 @@ describe('serialized scenarios (caller holds the per-slot coordination)', () => 
     expect(last).toBe(4);
   });
 });
+
+describe('sequence selection is numeric', () => {
+  it('numeric seq 10 beats 2 and done-only names', () => {
+    mkdirs(2, 10);
+    expect(nextCollectedSequence(slot, home)).toBe(11);
+    fs.writeFileSync(path.join(collected, '12.done'), '');
+    expect(nextCollectedSequence(slot, home)).toBe(13);
+    fs.writeFileSync(hwFile, '20\n');
+    expect(nextCollectedSequence(slot, home)).toBe(21);
+    expect(maxCollectedSequence(slot, home)).toBe(20);
+  });
+});

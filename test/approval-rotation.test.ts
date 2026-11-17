@@ -7,11 +7,12 @@ import { expect, expectTypeOf, it } from 'vitest';
 import type { SlotRef } from '../src/approval-paths.js';
 import type { Rotate, Park, ProposalsOf, RotationDestination, RotationResult } from '../src/approval-rotation.js';
 
-it('exports compile-only Rotate, Park, ProposalsOf contracts and no runtime implementations', async () => {
+it('keeps the compile-only Rotate, Park, ProposalsOf contracts; runtime exports are only the stage-3 implementations', async () => {
   expectTypeOf<Rotate>().toEqualTypeOf<(home: string, slot: SlotRef, dest: RotationDestination) => RotationResult>();
   expectTypeOf<Park>().toEqualTypeOf<(home: string, slot: SlotRef, attempt: string) => RotationResult>();
   expectTypeOf<ProposalsOf>().toEqualTypeOf<(slot: string) => string | undefined>();
-  expect(Object.keys(await import('../src/approval-rotation.js'))).toEqual([]);
+  expect(Object.keys(await import('../src/approval-rotation.js')).sort())
+    .toEqual(['CoordHeldError', 'createRotation', 'park', 'rotate', 'withSlotCoord']);
   const root = fileURLToPath(new URL('../', import.meta.url));
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'approval-types-')));
   try {
@@ -40,7 +41,7 @@ void [rotate, park, proposals, runtime, bad];
       target: 'ES2022', skipLibCheck: true, outDir: output, rootDir: path.join(root, 'src'),
       types: ['node'], typeRoots: [path.join(root, 'node_modules/@types')] }, files: [path.join(root, 'src/approval-rotation.ts')] }));
     execFileSync(path.join(root, 'node_modules/.bin/tsc'), ['-p', emitConfig], { encoding: 'utf8' });
-    expect(fs.readFileSync(path.join(output, 'approval-rotation.js'), 'utf8').trim()).toBe('export {};');
+    expect(fs.existsSync(path.join(output, 'approval-rotation.js'))).toBe(true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
