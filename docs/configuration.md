@@ -28,9 +28,21 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)), `ship` (`true` or `{ verify?, timeout_sec? }`; Claude Code **and** Codex wakes get a ship session plus the `agent-lyceum ship` CLI in the prompt; off by default; see [Ship](#ship-edits-that-stay-only-if-tests-pass)).
+Agent fields: `runtime` (`claude-code`|`codex`|`cursor`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex, `grok-*` → Cursor; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; Cursor: **not supported** — do not set `effort`; unset = CLI default for Claude Code and Codex), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)), `ship` (`true` or `{ verify?, timeout_sec? }`; Claude Code **and** Codex wakes get a ship session plus the `agent-lyceum ship` CLI in the prompt; off by default; see [Ship](#ship-edits-that-stay-only-if-tests-pass)).
 
 Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, and memory dirs don't overlap. Settings removed in the zero-config concurrency change (see [Upgrading](upgrading-run-v2.md)) still load and only produce a warning.
+
+### Cursor runtime
+
+Use the Cursor CLI binary `agent` with a **grok-\*** model (a Grok-capable Cursor account). Explicit `runtime: cursor` requires an explicit grok model; `inferRuntime` maps any recognizable `grok-*` `model` to Cursor.
+
+```yaml
+# project.yaml (or team.yaml)
+agents:
+  grok-reviewer: { runtime: cursor, model: grok-4.7 }
+```
+
+`doctor` probes `agent` like the other runtimes. Approval-enrolled agents cannot use Cursor (same as Codex). See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
 
 Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 
@@ -94,12 +106,12 @@ All four keys are optional; `[]` and `false` mean the same as leaving them out. 
 
 **What each runtime gets:**
 
-| Key | Claude Code | Codex |
-|---|---|---|
-| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` |
-| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns |
-| `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns |
-| `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns |
+| Key | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` | added as `Write(...)` rules in the per-wake `cli-config.json` (`CURSOR_CONFIG_DIR`) with `--sandbox enabled` |
+| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns | all-or-nothing like Codex (any listed domain opens **all hosts**); `doctor` warns |
+| `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns | not applied; `doctor` warns |
+| `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns | not applied; `doctor` warns |
 
 A wake-up that runs with a policy override (such as the memory tidy) gets none of the allowances. With no OS sandbox (Windows, Linux without `bwrap`): Claude's `write` only widens the `Edit` tool rules and Bash can bypass them, the other keys have no effect; Codex is prompt-only, so no allowance is enforced. `doctor` says so per agent. What each key really allows is in [Write scope](write-scope.md#sandbox-allowances).
 

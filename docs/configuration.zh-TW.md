@@ -28,9 +28,21 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm 可以搜尋並讀網頁；其他人沒有網路工具
 ```
 
-Agent 欄位：`runtime`（`claude-code`|`codex`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead；成員仍可寫自己的 `agents/<name>/AGENT.md`，這不會開放改別人的人設或 repo 指令檔）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）、`ship`（`true` 或 `{ verify?, timeout_sec? }`：Claude Code **與** Codex 喚醒時寫入 ship session，並在 prompt 給出 `agent-lyceum ship` CLI；預設關閉；見 [Ship](#ship測試過才留下的編輯)）。
+Agent 欄位：`runtime`（`claude-code`|`codex`|`cursor`；若 `model` 可辨識則可省略：`opus`/`sonnet`/`haiku`/`claude-*` → Claude Code，`gpt-*`/`o3`/`*codex*` → Codex，`grok-*` → Cursor；優先順序：專案 runtime > 專案 model > 全域 runtime > 全域 model）、`model`、`effort`（Claude Code：`low`|`medium`|`high`|`xhigh`|`max`，經 `--effort`；Codex：`minimal`|`low`|`medium`|`high`|`xhigh`，經 `model_reasoning_effort`；Cursor：**不支援** — 不要設 `effort`；Claude Code 與 Codex 未設則用 CLI 預設）、`agent_md`、`memory.global` / `memory.project`、`resume`、`can_message`（`all` 或清單；預設 `[lead]`，lead 預設 `all`）、`can_edit_agent_md`（預設只有 lead；成員仍可寫自己的 `agents/<name>/AGENT.md`，這不會開放改別人的人設或 repo 指令檔）、`can_ask_user`（可用 `type: ask` 信件向你提問並暫停 run 等待回答；預設只有 lead）、`allow_web`（`none`|`search`|`fetch`：agent 可以使用多少網路，不設就是不開；見下方「網路存取」）、`sandbox`（`write`、`network`、`local_binding`、`unix_sockets`：以 agent 為單位的 sandbox 放寬，不設就全關；見 [Sandbox 放寬](#sandbox-放寬)）、`ship`（`true` 或 `{ verify?, timeout_sec? }`：Claude Code **與** Codex 喚醒時寫入 ship session，並在 prompt 給出 `agent-lyceum ship` CLI；預設關閉；見 [Ship](#ship測試過才留下的編輯)）。
 
 `doctor` 檢查的規則：至少 2 個 agent（lead 加一位成員；範本預設是三位）、lead 在 agent 清單內、每個 agent 都有 runtime（明設或由 `model` 推斷）且 `AGENT.md` 存在、`effort` 對該 runtime 合法（若 `runtime` 與可辨識的 `model` 矛盾則警告）、`can_message` 的目標存在，以及記憶資料夾互不重疊。零設定並行變更中移除的設定（見[升級](upgrading-run-v2.md)）仍可載入，只會產生警告。
+
+### Cursor runtime
+
+使用 Cursor CLI 二進位 `agent`，搭配 **grok-\*** 模型（需可使用 Grok 的 Cursor 帳號）。明設 `runtime: cursor` 時必須明設 grok 模型；`inferRuntime` 會把可辨識的 `grok-*` `model` 對應到 Cursor。
+
+```yaml
+# project.yaml（或 team.yaml）
+agents:
+  grok-reviewer: { runtime: cursor, model: grok-4.7 }
+```
+
+`doctor` 會像其他 runtime 一樣 probe `agent`。核准閘門已登錄的 agent 不能使用 Cursor（與 Codex 相同）。sandbox 與 `allow_web` 行為見[寫入範圍](write-scope.zh-TW.md)。
 
 並行不需要設定：在有 commit 的 git repo 裡，每個 run 與每個 agent 都有自己的 worktree；否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
 
@@ -96,12 +108,12 @@ agents:
 
 **各 runtime 實際拿到的：**
 
-| 鍵 | Claude Code | Codex |
-|---|---|---|
-| `write` | 加進 `Edit` 規則、sandbox `allowWrite` 與 `--add-dir` | 加進 `sandbox_workspace_write.writable_roots` |
-| `network` | `sandbox.network.allowedDomains`（逐網域） | 只要有任何網域就開 `network_access=true`：**所有主機**，不只列出的；`doctor` 警告 |
-| `local_binding` | `sandbox.network.allowLocalBinding: true` | 不套用；`doctor` 警告 |
-| `unix_sockets` | `sandbox.network.allowUnixSockets` | 不套用；`doctor` 警告 |
+| 鍵 | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| `write` | 加進 `Edit` 規則、sandbox `allowWrite` 與 `--add-dir` | 加進 `sandbox_workspace_write.writable_roots` | 以每次 wake 的 `cli-config.json`（`CURSOR_CONFIG_DIR`）內 `Write(...)` 規則套用，並加 `--sandbox enabled` |
+| `network` | `sandbox.network.allowedDomains`（逐網域） | 只要有任何網域就開 `network_access=true`：**所有主機**，不只列出的；`doctor` 警告 | 與 Codex 相同全有全無（列任何網域即開放**所有主機**）；`doctor` 警告 |
+| `local_binding` | `sandbox.network.allowLocalBinding: true` | 不套用；`doctor` 警告 | 不套用；`doctor` 警告 |
+| `unix_sockets` | `sandbox.network.allowUnixSockets` | 不套用；`doctor` 警告 | 不套用；`doctor` 警告 |
 
 帶 policy override 的喚醒（例如記憶整理）不會套用任何放寬。沒有 OS sandbox（Windows、沒有 `bwrap` 的 Linux）時：Claude 的 `write` 只擴大 `Edit` 工具規則，Bash 可繞過，其他鍵無作用；Codex 只靠提示，沒有任何放寬被強制。`doctor` 會逐 agent 說明。各鍵真正放行的範圍見 [寫入範圍](write-scope.zh-TW.md#sandbox-放寬)。
 
