@@ -4,7 +4,6 @@ import path from "node:path";
 import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import { applyShipToWake } from "../ship-wire.js";
-import { runtimeEnv } from "./env.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
 const CLI_CONFIG_FILE = "cli-config.json";
@@ -138,7 +137,7 @@ export function buildCursorInvocation(raw: WakeInput): Invocation {
     args,
     stdin: "",
     cwd: repo,
-    env: { ...runtimeEnv(agent), CURSOR_CONFIG_DIR: workDir },
+    env: { ...process.env, AGENT_LYCEUM_AGENT: agent.name, CURSOR_CONFIG_DIR: workDir },
     parse({ stdout, stderr, code }) {
       const s = cursorStream();
       for (const l of stdout.split("\n")) s.line(l);
