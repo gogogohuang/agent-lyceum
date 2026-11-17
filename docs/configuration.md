@@ -42,7 +42,7 @@ agents:
   grok-reviewer: { runtime: cursor, model: grok-4.7 }
 ```
 
-`doctor` probes `agent` like the other runtimes. Resume passes the stored `session_id`; Cursor sessions may be scoped to the config dir (the per-run `workDir`), so resuming across runs is unverified. Approval-enrolled agents cannot use Cursor (same as Codex). See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
+`doctor` probes `agent` like the other runtimes. Resume passes the stored `session_id`; Cursor sessions may be scoped to the config dir (the per-run `workDir`), so resuming across runs is unverified. See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
 
 Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 

@@ -4,7 +4,6 @@ import path from "node:path";
 import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import { applyShipToWake } from "../ship-wire.js";
-import { ApprovalError } from "../approval-error.js";
 import { runtimeEnv } from "./env.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
 
@@ -115,8 +114,6 @@ function promptArg(systemPrompt: string, userPrompt: string): string {
 export function buildCursorInvocation(raw: WakeInput): Invocation {
   const { input } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
-  // Same stance as Codex: no per-path hardening for enrolled agents, so refuse before anything is created.
-  if (agent.enrolled) throw new ApprovalError("INVALID_INPUT", `Approval-enrolled agent cannot use Cursor: ${agent.name}`);
   const prompt = promptArg(input.systemPrompt, input.userPrompt); // before any file is created
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });

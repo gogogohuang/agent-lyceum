@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildInvocation } from "../src/adapters/index.js";
 import { buildCursorInvocation, classifyCursorError, writeCursorCliConfig } from "../src/adapters/cursor.js";
 import type { WakeInput } from "../src/adapters/types.js";
-import { ApprovalError } from "../src/approval-error.js";
 import { outboxDir, writePolicy } from "../src/policy.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -102,14 +101,6 @@ describe("cursor adapter", () => {
     const i = inv.args.indexOf("--resume");
     expect(i).toBeGreaterThanOrEqual(0);
     expect(inv.args[i + 1]).toBe("chat-1");
-  });
-
-  it("refuses enrolled agents", () => {
-    env = makeEnv();
-    const w = wake(env, "fe-member");
-    w.agent = { ...w.agent, enrolled: true };
-    expect(() => buildCursorInvocation(w)).toThrow(ApprovalError);
-    expect(() => buildCursorInvocation(w)).toThrow(/Approval-enrolled agent cannot use Cursor: fe-member/);
   });
 
   it("is wired into buildInvocation", () => {

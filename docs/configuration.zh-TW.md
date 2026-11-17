@@ -42,7 +42,7 @@ agents:
   grok-reviewer: { runtime: cursor, model: grok-4.7 }
 ```
 
-`doctor` 會像其他 runtime 一樣 probe `agent`。Resume 傳入已存的 `session_id`；Cursor 的 session 可能以設定目錄（每次 run 的 `workDir`）為範圍，跨 run 的 resume 尚未驗證。核准閘門已登錄的 agent 不能使用 Cursor（與 Codex 相同）。sandbox 與 `allow_web` 行為見[寫入範圍](write-scope.zh-TW.md)。
+`doctor` 會像其他 runtime 一樣 probe `agent`。Resume 傳入已存的 `session_id`；Cursor 的 session 可能以設定目錄（每次 run 的 `workDir`）為範圍，跨 run 的 resume 尚未驗證。sandbox 與 `allow_web` 行為見[寫入範圍](write-scope.zh-TW.md)。
 
 並行不需要設定：在有 commit 的 git repo 裡，每個 run 與每個 agent 都有自己的 worktree；否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
 
