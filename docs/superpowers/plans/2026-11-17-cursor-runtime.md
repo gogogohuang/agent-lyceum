@@ -473,4 +473,53 @@ npx vitest run test/adapters.test.ts test/doctor-approval-premises.test.ts test/
 
 ## Spike 結果
 
-（Task 1 填寫；執行前可為空標題下「尚未跑」。）
+**環境：** `agent --version` → `2026.11.13-eacade1`（2026-11-17 探測）；`agent status` → 已 login。
+
+### CLI flags（`agent --help`）
+
+| Flag | 存在 | 備註 |
+| --- | --- | --- |
+| `-p` / `--print` | 是 | headless／腳本用；具工具／shell 權限（help 原文） |
+| `--output-format <format>` | 是 | 僅搭配 `-p`：`text` \| `json` \| `stream-json`（預設 `text`） |
+| `--stream-partial-output` | 是 | 僅 `-p` + `stream-json` |
+| `--resume [chatId]` | 是 | 可選 chat id；另有 `--continue` |
+| `--sandbox <mode>` | 是 | `enabled` \| `disabled` |
+| `--workspace <path-or-name>` | 是 | 預設 cwd |
+| `--trust` | 是 | 略過 workspace 信任提示 |
+| `-f` / `--force` | 是 | `--yolo` 為別名 |
+| `--model <model>` | 是 | 例：`grok-4.7`（實測可用） |
+| effort | **無** | help 無 effort flag（doctor `caps.effort = "no"`） |
+
+**Prompt 傳遞：** Usage 為 `agent [options] [command] [prompt...]`；`prompt` 為**位置引數**（可變長 `[prompt...]`），非必須 stdin。Task 4 以合併後 prompt 作為 `-p` 之後的最後一個（或多個）位置引數。
+
+**其他（adapter 可能用到）：** `--add-dir`、`CURSOR_API_KEY`；config 目錄慣例為 `CURSOR_CONFIG_DIR`（見 plan／spec，本 spike 未再實測寫檔）。
+
+### Live headless（已跑）
+
+```bash
+cd /tmp && agent -p "Reply with exactly: pong" --model grok-4.7 --output-format json --trust
+```
+
+**`--output-format json`（單行物件）：**
+
+- `type`: `"result"`
+- `subtype`: `"success"`
+- `is_error`: boolean
+- `result`: 助理文字（本測 `"pong"`）
+- `session_id`: UUID（**釘死優先欄位**；輸出未見 `chatId`／頂層 `id`）
+- `request_id`: UUID
+- `duration_ms` / `duration_api_ms` / `usage`（含 token 統計）
+
+**`--output-format stream-json`（NDJSON，每行一事件）：**
+
+- 首行常見 `type: "system"`, `subtype: "init"`，含 `session_id`、`model`、`cwd`
+- 中間 `type: "assistant"` → `message.content[].text` 或 `type: "thinking"` deltas
+- 末行 `type: "result"`, `subtype: "success"`，含 `result`、`session_id`、`request_id`（與 json 模式同語意）
+- **session id 擷取優先序（v1）：** `session_id`（各事件一致）→ 不採 `chatId`／`id`（本次實測無）
+
+### Task 3／4 釘死項（摘要）
+
+- Invocation：`agent -p --force --trust --sandbox enabled --workspace <repo> --output-format stream-json [--model <grok-*>] [--resume <session_id>] <combined-prompt>`
+- Parse：讀 NDJSON；最終文字取最後一筆 `type==="result"` 的 `result`；串流可併用 `assistant`／`thinking` delta（可選）
+- Session：persist `session_id`；resume 傳 `--resume <session_id>`
+- Model CLI 值範例：`grok-4.7`（init 事件顯示帳號側名稱如 `Grok 4.7 256K High Fast`）
