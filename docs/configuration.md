@@ -42,7 +42,7 @@ agents:
   grok-reviewer: { runtime: cursor, model: grok-4.7 }
 ```
 
-`doctor` probes `agent` like the other runtimes. Approval-enrolled agents cannot use Cursor (same as Codex). See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
+`doctor` probes `agent` like the other runtimes. Resume passes the stored `session_id`; Cursor sessions may be scoped to the config dir (the per-run `workDir`), so resuming across runs is unverified. Approval-enrolled agents cannot use Cursor (same as Codex). See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
 
 Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 
@@ -108,8 +108,8 @@ All four keys are optional; `[]` and `false` mean the same as leaving them out. 
 
 | Key | Claude Code | Codex | Cursor |
 |---|---|---|---|
-| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` | added as `Write(...)` rules in the per-wake `cli-config.json` (`CURSOR_CONFIG_DIR`) with `--sandbox enabled` |
-| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns | all-or-nothing like Codex (any listed domain opens **all hosts**); `doctor` warns |
+| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` | added as `Write(...)` rules in the per-wake `cli-config.json` (`CURSOR_CONFIG_DIR`) with `--sandbox enabled`; paths outside `--workspace` also get `--add-dir` |
+| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns | **not applied** (no network setting is emitted yet; `doctor` says "not applied by cursor") |
 | `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns | not applied; `doctor` warns |
 | `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns | not applied; `doctor` warns |
 
@@ -119,17 +119,17 @@ A wake-up that runs with a policy override (such as the memory tidy) gets none o
 
 ## Ship (edits that stay only if tests pass)
 
-A per-agent wake path through this package's **CLI** (`agent-lyceum ship` — not Turnpack or an external MCP): multi-file search/replace, verify, byte-exact rollback on failure. Shared by Claude Code and Codex. Does not change mail, the dispatcher, or the `done` contract; complements project-level `verify` (after the lead's `done`). Design: [spec](superpowers/specs/2026-11-15-agent-ship-design.md).
+A per-agent wake path through this package's **CLI** (`agent-lyceum ship` — not Turnpack or an external MCP): multi-file search/replace, verify, byte-exact rollback on failure. Shared by Claude Code, Codex and Cursor. Does not change mail, the dispatcher, or the `done` contract; complements project-level `verify` (after the lead's `done`). Design: [spec](superpowers/specs/2026-11-15-agent-ship-design.md).
 
 ```yaml
 # project.yaml
 agents:
   fe-member:
-    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code or Codex
+    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code, Codex or Cursor
 ```
 
 - **Off by default.** Set `ship: true` or `{ verify: … }`. At least one verify command must resolve: `ship.verify` (one command), otherwise the **whole** `project.verify.commands` chain. If neither exists, no session is written, the agent is not offered ship, and `validate` / `doctor` warn about it.
-- **Both runtimes:** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
+- **All runtimes (Claude Code, Codex, Cursor):** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
 - **Fixed verify:** only the session commands run, in order, and stop at the first failure (the result names the failing command); the request body must not supply another verify. They run in the agent's shell environment (same class of risk as built-in Bash).
 - **Timeouts:** with the project chain, each command uses its own `timeout_sec`; `ship.verify` is a single command that uses `ship.timeout_sec` (default 120). If `ship.timeout_sec` is set it overrides every command's timeout. The prompt tells the agent the total maximum verify time so it can set its shell tool timeout above it.
 - **Interruption:** on SIGINT / SIGTERM / SIGHUP the CLI cancels verify and restores every file, then exits 1. SIGKILL cannot be caught, so a hard kill can leave edited files behind.
