@@ -176,3 +176,18 @@ describe('enrolled resume in its own process, under an external timeout', () => 
     });
   }
 });
+
+describe('a file swapped for a FIFO between the scan and recovery', () => {
+  const tsx = path.join(here, '..', 'node_modules', '.bin', 'tsx');
+  const child = path.join(here, 'approval-recovery-swap-child.ts');
+  it('recovery takes the scan-verified text and never opens the swapped file (no hang)', () => {
+    const r = spawnSync(tsx, [child, 'with-read-file'], { encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL', env: process.env });
+    expect(r.error, r.stderr).toBeUndefined();
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout.trim().split('\n').at(-1) as string)).toEqual({ finalized: 0 });
+  });
+  it('control: without the verified text the same swap blocks recovery (the timeout kills it)', () => {
+    const r = spawnSync(tsx, [child, 'legacy'], { encoding: 'utf8', timeout: 8_000, killSignal: 'SIGKILL', env: process.env });
+    expect(r.error?.message ?? '').toMatch(/ETIMEDOUT/);
+  });
+});

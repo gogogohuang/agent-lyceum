@@ -287,14 +287,18 @@ export function loadAttempt(runDir: string, id: string): AttemptRecord {
 
 /** `skipFile` (file name, and which folder it is in) is asked before a file is opened, so an enrolled run reads only names it has verified; unset, nothing changes. */
 export type SkipFile = (name: string, kind: "attempts" | "claims") => boolean;
-export function listAttempts(runDir: string, skipFile?: SkipFile): AttemptRecord[] {
+/** When given, the text of a file is taken from here and the file is never opened by recovery (an enrolled resume passes what its scan verified); `undefined` means skip the name. */
+export type ReadFile = (name: string, kind: "attempts" | "claims") => string | undefined;
+export function listAttempts(runDir: string, skipFile?: SkipFile, readFile?: ReadFile): AttemptRecord[] {
   const dir = path.join(mailDir(runDir), "attempts");
   if (!fs.existsSync(dir)) return [];
   const out: AttemptRecord[] = [];
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
     if (skipFile?.(f, "attempts")) continue;
     try {
-      out.push(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AttemptRecord);
+      const text = readFile ? readFile(f, "attempts") : fs.readFileSync(path.join(dir, f), "utf8");
+      if (text === undefined) continue;
+      out.push(JSON.parse(text) as AttemptRecord);
     } catch {
       /* skip */
     }
@@ -447,9 +451,9 @@ export interface RecoveryReport {
 }
 
 /** Bring a run's claims back to a consistent state. Call before waking anyone on resume. */
-export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string; skipFile?: SkipFile } = {}): RecoveryReport {
+export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string; skipFile?: SkipFile; readFile?: ReadFile } = {}): RecoveryReport {
   const report: RecoveryReport = { finalized: [], abandoned: [], ready: [], interrupted: [] };
-  for (const a of listAttempts(runDir, opts.skipFile)) {
+  for (const a of listAttempts(runDir, opts.skipFile, opts.readFile)) {
     if (a.status !== "started") continue;
     const parked = opts.outboxOf ? parkOutbox(runDir, opts.outboxOf(a.agent), a.id) : [];
     const done = finishAttempt(runDir, a.id, "failed", { error: "interrupted", parked });
@@ -461,7 +465,9 @@ export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string
     if (opts.skipFile?.(name, "claims")) continue;
     let c: ClaimRecord;
     try {
-      c = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as ClaimRecord;
+      const text = opts.readFile ? opts.readFile(name, "claims") : fs.readFileSync(path.join(dir, name), "utf8");
+      if (text === undefined) continue;
+      c = JSON.parse(text) as ClaimRecord;
     } catch {
       continue;
     }

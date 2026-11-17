@@ -295,6 +295,8 @@ export interface RecoveryScan {
   quarantined: Set<string>;
   /** The only names recovery may open, per folder: verified regular files. Everything else (unknown names, FIFOs, symlinks, oversize, a quarantined slot's files) is skipped. */
   allowed: { attempts: Set<string>; claims: Set<string> };
+  /** The exact text the scan verified for each allowed name. Recovery parses this and never re-opens the file, so a name swapped for a FIFO or symlink after the scan cannot be followed or block it. */
+  contents: { attempts: Map<string, string>; claims: Map<string, string> };
   /** How many entries were left out (a count only: names are never reported). */
   excluded: number;
   /** The scan hit its entry cap or an I/O error: nothing is allowed and every enrolled slot is quarantined. */
@@ -304,6 +306,9 @@ export interface RecoveryScan {
 /** Pass to `recoverRunMail`: skips every name the scan did not verify. */
 export const recoverySkipFile = (scan: RecoveryScan): ((name: string, kind: "attempts" | "claims") => boolean) => (name, kind) => !scan.allowed[kind].has(name);
 
+/** Pass to `recoverRunMail`: the text the scan verified, so recovery never opens the file again. */
+export const recoveryReadFile = (scan: RecoveryScan): ((name: string, kind: "attempts" | "claims") => string | undefined) => (name, kind) => scan.contents[kind].get(name);
+
 /**
  * Before `recoverRunMail` reads anything on an enrolled resume: classify every `.json` entry of `mail/attempts` and `mail/claims` with bounded,
  * non-blocking, no-follow reads (64 KiB each, at most `cap` entries in all). A file of an enrolled slot is validated in full (what recovery consumes);
@@ -312,10 +317,11 @@ export const recoverySkipFile = (scan: RecoveryScan): ((name: string, kind: "att
  * Any scan failure fails closed. Never throws, never blocks.
  */
 export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap = RECOVERY_SCAN_CAP): RecoveryScan {
-  const scan: RecoveryScan = { quarantined: new Set(), allowed: { attempts: new Set(), claims: new Set() }, excluded: 0, overflow: false };
+  const scan: RecoveryScan = { quarantined: new Set(), allowed: { attempts: new Set(), claims: new Set() }, contents: { attempts: new Map(), claims: new Map() }, excluded: 0, overflow: false };
   const failClosed = (): RecoveryScan => {
     scan.overflow = true;
     scan.allowed = { attempts: new Set(), claims: new Set() };
+    scan.contents = { attempts: new Map(), claims: new Map() };
     for (const s of slots) scan.quarantined.add(s);
     return scan;
   };
@@ -361,9 +367,10 @@ export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap
                 valid = false;
               }
             }
-            if (valid) { scan.allowed[kind].add(name); owners[kind].set(name, owner); } else { scan.quarantined.add(owner); scan.excluded++; }
+            if (valid) { scan.allowed[kind].add(name); scan.contents[kind].set(name, (r as { buf: Buffer }).buf.toString("utf8")); owners[kind].set(name, owner); } else { scan.quarantined.add(owner); scan.excluded++; }
           } else if (owner !== undefined && readable) {
             scan.allowed[kind].add(name); // another agent's plain file: legacy recovery handles it as before
+            scan.contents[kind].set(name, (r as { buf: Buffer }).buf.toString("utf8"));
             owners[kind].set(name, owner);
           } else scan.excluded++; // unknown name, or another agent's file that is not a plain readable file
         }
@@ -377,7 +384,7 @@ export function scanRecoveryInputs(runDir: string, slots: readonly string[], cap
       }
       if (overflow) return failClosed();
     }
-    for (const kind of ["attempts", "claims"] as const) for (const [name, owner] of owners[kind]) if (owner !== undefined && scan.quarantined.has(owner)) scan.allowed[kind].delete(name);
+    for (const kind of ["attempts", "claims"] as const) for (const [name, owner] of owners[kind]) if (owner !== undefined && scan.quarantined.has(owner)) { scan.allowed[kind].delete(name); scan.contents[kind].delete(name); }
     return scan;
   } catch {
     return failClosed();
