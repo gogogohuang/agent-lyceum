@@ -15,11 +15,13 @@ export function wholePercent(n: number): number {
 }
 
 export function runtimeName(runtime: QuotaReport["runtime"]): string {
-  return runtime === "claude" ? "Claude" : "Codex";
+  if (runtime === "claude") return "Claude";
+  if (runtime === "codex") return "Codex";
+  return "Cursor";
 }
 
-/** Claude first, Codex second, so the two columns never swap places between reads. */
+/** Claude, Codex, then Cursor — fixed column order between reads. */
 export function orderReports(reports: QuotaReport[]): QuotaReport[] {
-  const rank = (runtime: QuotaReport["runtime"]) => (runtime === "claude" ? 0 : 1);
+  const rank = (runtime: QuotaReport["runtime"]) => (runtime === "claude" ? 0 : runtime === "codex" ? 1 : 2);
   return [...reports].sort((a, b) => rank(a.runtime) - rank(b.runtime));
 }

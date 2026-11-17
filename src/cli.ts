@@ -30,7 +30,7 @@ import { createStatusWatcher } from "./status-watch.js";
 import { LAUNCH_PPID, startedByWrapper, watchParent } from "./parent-watch.js";
 import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
-import { claudeQuota, codexQuota, type QuotaReport } from "./quota.js";
+import { claudeQuota, codexQuota, cursorQuota, type QuotaReport } from "./quota.js";
 import { summarizeProgress } from "./summarize.js";
 import { createConsoleDeps } from "./web-console.js";
 
@@ -752,7 +752,7 @@ program
                 debounceMs: 100,
                 allTasks: true,
               }),
-            quota: (signal?: AbortSignal) => Promise.all([claudeQuota(signal), codexQuota(signal)]),
+            quota: (signal?: AbortSignal) => Promise.all([claudeQuota(signal), codexQuota(signal), cursorQuota(signal)]),
             summarize: ({ runtime, prompt }: { runtime: "claude" | "codex"; prompt: string }) => summarizeProgress(runtime, prompt),
           },
         };

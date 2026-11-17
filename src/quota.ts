@@ -1,7 +1,22 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 
 export type QuotaWindow = { label: string; used_percent: number; remaining_percent: number; resets: string };
-export type QuotaReport = { runtime: "claude" | "codex"; windows: QuotaWindow[]; error?: string };
+export type QuotaReport = { runtime: "claude" | "codex" | "cursor"; windows: QuotaWindow[]; error?: string };
+
+export type CursorTokenReaders = {
+  readCliToken?: () => string | undefined;
+  readEnvApiKey?: () => string | undefined;
+  readIdeToken?: () => string | undefined;
+};
+
+export type CursorQuotaDeps = {
+  resolveToken?: () => string | undefined;
+  fetchUsage?: (token: string, signal?: AbortSignal) => Promise<unknown>;
+};
 
 export function parseClaudeUsage(text: string): QuotaWindow[] {
   const session = text.match(/Current session:\s*(\d+(?:\.\d+)?)%\s*used\s*·\s*resets\s+(.+)/);
@@ -61,6 +76,230 @@ export async function codexQuota(signal?: AbortSignal): Promise<QuotaReport> {
     if (isAbort(error)) throw error;
     return { runtime: "codex", windows: [], error: missing("codex", error) };
   }
+}
+
+type CursorPlanUsage = {
+  totalPercentUsed?: number;
+  limit?: number;
+  remaining?: number;
+};
+
+type CursorPeriodUsage = {
+  billingCycleStart?: string | number;
+  billingCycleEnd?: string | number;
+  planUsage?: CursorPlanUsage | null;
+};
+
+/** Map DashboardService/GetCurrentPeriodUsage into the shared QuotaWindow shape. */
+export function parseCursorUsage(data: CursorPeriodUsage): QuotaWindow[] {
+  const used = usedPercentOf(data.planUsage);
+  if (used === undefined) return [];
+  const endMs = millis(data.billingCycleEnd);
+  const startMs = millis(data.billingCycleStart);
+  const resets = endMs === undefined
+    ? "時間不明"
+    : new Date(endMs).toLocaleString("zh-Hant", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return [windowOf(cycleLabel(startMs, endMs), used, resets)];
+}
+
+export function resolveCursorAccessToken(readers: CursorTokenReaders = {}): string | undefined {
+  const readCli = readers.readCliToken ?? defaultReadCliToken;
+  const readEnv = readers.readEnvApiKey ?? (() => process.env.CURSOR_API_KEY);
+  const readIde = readers.readIdeToken ?? defaultReadIdeToken;
+  return firstToken(readCli(), readEnv(), readIde());
+}
+
+export async function cursorQuota(signal?: AbortSignal, deps: CursorQuotaDeps = {}): Promise<QuotaReport> {
+  try {
+    const token = (deps.resolveToken ?? (() => resolveCursorAccessToken()))();
+    if (!token) {
+      return {
+        runtime: "cursor",
+        windows: [],
+        error: "Cursor 未登入。請先執行 agent login，或設定 CURSOR_API_KEY。",
+      };
+    }
+    const fetchUsage = deps.fetchUsage ?? fetchCursorPeriodUsage;
+    const windows = parseCursorUsage((await fetchUsage(token, signal)) as CursorPeriodUsage);
+    if (windows.length === 0) return { runtime: "cursor", windows: [], error: "cursor 沒有回傳額度。" };
+    return { runtime: "cursor", windows };
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return { runtime: "cursor", windows: [], error: (error as Error).message || "cursor 沒有回傳額度。" };
+  }
+}
+
+function usedPercentOf(plan?: CursorPlanUsage | null): number | undefined {
+  if (!plan) return undefined;
+  if (typeof plan.totalPercentUsed === "number" && Number.isFinite(plan.totalPercentUsed)) return plan.totalPercentUsed;
+  const limit = plan.limit;
+  const remaining = plan.remaining;
+  if (typeof limit === "number" && limit > 0 && typeof remaining === "number" && Number.isFinite(remaining)) {
+    return ((limit - remaining) / limit) * 100;
+  }
+  return undefined;
+}
+
+function cycleLabel(startMs?: number, endMs?: number): string {
+  if (startMs === undefined || endMs === undefined || endMs <= startMs) return "計費週期";
+  const days = (endMs - startMs) / 86_400_000;
+  if (days >= 6 && days <= 8) return "本週";
+  if (days >= 27 && days <= 32) return "本月";
+  return "計費週期";
+}
+
+function millis(value: string | number | undefined): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function firstToken(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function defaultReadCliToken(): string | undefined {
+  for (const file of cursorAuthJsonPaths()) {
+    const token = readAccessTokenFromJsonFile(file);
+    if (token) return token;
+  }
+  return readCursorKeychainToken();
+}
+
+function cursorAuthJsonPaths(): string[] {
+  const home = os.homedir();
+  const paths = [path.join(home, ".cursor", "auth.json")];
+  if (process.platform === "linux" || process.env.XDG_CONFIG_HOME) {
+    paths.push(path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "cursor", "auth.json"));
+  }
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    paths.push(path.join(appData, "Cursor", "auth.json"));
+  }
+  return paths;
+}
+
+function readAccessTokenFromJsonFile(file: string): string | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { accessToken?: unknown };
+    return typeof raw.accessToken === "string" ? raw.accessToken : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Cursor Agent CLI stores the session JWT in the macOS keychain as cursor-access-token. */
+function readCursorKeychainToken(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  try {
+    const out = execFileSync("security", ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return out.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function defaultReadIdeToken(): string | undefined {
+  const dbPath = cursorIdeStateDbPath();
+  if (!dbPath || !fs.existsSync(dbPath)) return undefined;
+  const fromNode = readIdeTokenViaNodeSqlite(dbPath);
+  if (fromNode) return fromNode;
+  return readIdeTokenViaSqliteCli(dbPath);
+}
+
+function cursorIdeStateDbPath(): string | undefined {
+  const home = os.homedir();
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    return path.join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  const config = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
+  return path.join(config, "Cursor", "User", "globalStorage", "state.vscdb");
+}
+
+function readIdeTokenViaNodeSqlite(dbPath: string): string | undefined {
+  try {
+    const require = createRequire(import.meta.url);
+    const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, opts?: { readOnly?: boolean }) => { prepare: (sql: string) => { get: (...args: unknown[]) => { value?: unknown } | undefined }; close: () => void } };
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT value FROM ItemTable WHERE key = ?").get("cursorAuth/accessToken");
+      return normalizeSqliteText(row?.value);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+function readIdeTokenViaSqliteCli(dbPath: string): string | undefined {
+  try {
+    const out = execFileSync("sqlite3", [dbPath, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken';"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return normalizeSqliteText(out.trim());
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSqliteText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return typeof parsed === "string" ? parsed : trimmed.slice(1, -1);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  return trimmed;
+}
+
+async function fetchCursorPeriodUsage(token: string, signal?: AbortSignal): Promise<unknown> {
+  const base = (process.env.CURSOR_API_ENDPOINT || "https://api2.cursor.sh").replace(/\/$/, "");
+  const timeout = AbortSignal.timeout(20_000);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  let response: Response;
+  try {
+    response = await fetch(`${base}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1",
+      },
+      body: "{}",
+      signal: combined,
+    });
+  } catch (error) {
+    // Hub aborts → AbortError (discard). Own 20s timeout → plain Error (report, keep Claude/Codex).
+    if (signal?.aborted) throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    if (isAbort(error) || (error as { name?: string }).name === "TimeoutError") {
+      throw new Error("cursor 超過 20 秒沒有回應。");
+    }
+    throw error;
+  }
+  if (!response.ok) {
+    throw new Error(`cursor 額度 API HTTP ${response.status}`);
+  }
+  return response.json();
 }
 
 /** An aborted quota read is a cancelled request, not a report: callers (the hub) discard it. */
