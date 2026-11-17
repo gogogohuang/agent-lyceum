@@ -52,6 +52,20 @@ case "$1 $2" in
   *) echo "AGENT TASK RAN" ;;
 esac`,
   );
+  script(
+    "agent",
+    `case "$FAKE_CASE" in hang) sleep 30 ;; esac
+case "$1" in
+  --version) echo "2026.05.01-cursor" ;;
+  --help)
+    echo "Usage: agent [options]"
+    echo "  --output-format <format>"
+    echo "  --sandbox <mode>"
+    [ "$FAKE_CASE" != noresume ] && echo "  --resume [chatId]"
+    exit 0 ;;
+  *) echo "AGENT TASK RAN" ;;
+esac`,
+  );
   return { bin, calls: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : []) };
 }
 const envWith = (bin: string, fakeCase: string) => ({ ...process.env, PATH: `${bin}:/usr/bin:/bin`, FAKE_CASE: fakeCase });
@@ -64,6 +78,16 @@ describe("probeRuntime", () => {
     expect(c).toMatchObject({ runtime: "claude-code", binary: "found", version: "2.1.9 (Claude Code)", json: "yes", resume: "yes", sandbox: "yes", effort: "yes" });
     const x = await probeRuntime("codex", { env: envWith(bin, "full") });
     expect(x).toMatchObject({ runtime: "codex", binary: "found", version: "codex-cli 0.40.0", json: "yes", resume: "yes", sandbox: "yes", effort: "yes" });
+  });
+
+  it("probes Cursor through the `agent` binary: help flags decide json/resume/sandbox, effort is always no", async () => {
+    env = makeEnv();
+    const { bin } = fakeBin(env.root);
+    const c = await probeRuntime("cursor", { env: envWith(bin, "full") });
+    expect(c).toMatchObject({ runtime: "cursor", binary: "found", version: "2026.05.01-cursor", json: "yes", resume: "yes", sandbox: "yes", effort: "no" });
+    expect((await probeRuntime("cursor", { env: envWith(bin, "noresume") })).resume).toBe("no");
+    const missing = await probeRuntime("cursor", { env: { ...process.env, PATH: path.join(env.root, "empty") } });
+    expect(missing).toMatchObject({ binary: "missing", notes: ["agent not found on PATH"] });
   });
 
   it("tells versions apart: an older CLI lacks resume and effort", async () => {
@@ -107,7 +131,7 @@ describe("diagnoseProject", () => {
     const { bin, calls } = fakeBin(env.root);
     await diagnoseProject(env.project(), { env: envWith(bin, "full") });
     expect(calls().length).toBeGreaterThan(0);
-    for (const c of calls()) expect(c).toMatch(/^(claude|codex) (--version|--help|exec --help|exec resume --help)$/);
+    for (const c of calls()) expect(c).toMatch(/^(claude|codex|agent) (--version|--help|exec --help|exec resume --help)$/);
   });
 
   describe("ship without a verify command", () => {

@@ -55,7 +55,7 @@ export interface ProbeOptions {
   timeoutMs?: number;
 }
 
-const BINARY: Record<Runtime, string> = { "claude-code": "claude", codex: "codex" };
+const BINARY: Record<Runtime, string> = { "claude-code": "claude", codex: "codex", cursor: "agent" };
 
 type Probe = { state: "ok" | "missing" | "timeout" | "failed"; out: string };
 
@@ -102,6 +102,11 @@ export async function probeRuntime(runtime: Runtime, opts: ProbeOptions = {}): P
     caps.resume = has(h.out, /--resume\b/);
     caps.sandbox = has(h.out, /--settings\b/) === "yes" ? "yes" : "unknown";
     caps.effort = has(h.out, /--effort\b/);
+  } else if (runtime === "cursor") {
+    caps.json = has(h.out, /--output-format\b/);
+    caps.resume = has(h.out, /--resume\b/);
+    caps.sandbox = has(h.out, /--sandbox\b/);
+    caps.effort = "no"; // the Cursor CLI has no effort flag
   } else {
     caps.json = has(h.out, /--json\b/);
     caps.sandbox = has(h.out, /--sandbox\b|\s-s,/);

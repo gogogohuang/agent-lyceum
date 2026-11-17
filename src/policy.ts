@@ -262,9 +262,13 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
   } else {
     const lvl: Level = os ? "os" : "prompt-only";
     e = { memory: lvl, agentMd: lvl, otherContext: lvl, shared: isLeadAgent ? "n/a" : os ? "os" : "post-hoc", repoInstructions: "post-hoc" };
-    notes.push("Codex cannot forbid single files inside the repo; CLAUDE.md/AGENTS.md changes are detected and reverted after each wake-up.");
+    notes.push(
+      agent.runtime === "cursor"
+        ? "Cursor cannot forbid single files inside the repo through --sandbox alone; single-file denies rely on permissions rules, and CLAUDE.md/AGENTS.md changes are detected and reverted after each wake-up."
+        : "Codex cannot forbid single files inside the repo; CLAUDE.md/AGENTS.md changes are detected and reverted after each wake-up.",
+    );
     if (!isLeadAgent && !os) notes.push("Without the OS sandbox only the handoff index (_shared/MEMORY.md) is checked after each wake-up; other files in _shared are not protected.");
-    if (agent.canEditAgentMd) notes.push("can_edit_agent_md widens Codex writable roots to whole agent directories.");
+    if (agent.canEditAgentMd) notes.push(`can_edit_agent_md widens ${agent.runtime === "cursor" ? "Cursor" : "Codex"} writable roots to whole agent directories.`);
   }
 
   if (agent.sandbox) notes.push(...sandboxNotes(agent, os));
@@ -283,6 +287,8 @@ function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
   const s = agent.sandbox;
   if (!s) return [];
   const claude = agent.runtime === "claude-code";
+  const rt = agent.runtime === "cursor" ? "cursor" : "codex"; // non-claude runtimes name themselves in notes
+  const Rt = rt === "cursor" ? "Cursor" : "Codex";
   const notes: string[] = [];
   if (!os) {
     notes.push(
@@ -292,16 +298,16 @@ function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
     );
   }
   if (s.network.length) {
-    notes.push(`network: ${s.network.join(", ")} (${claude ? "claude-code: per-domain" : "codex: all hosts"})`);
-    if (!claude) notes.push(`warn: sandbox.network is all-or-nothing on Codex: this agent may reach any host, not only ${s.network.join(", ")}.`);
+    notes.push(`network: ${s.network.join(", ")} (${claude ? "claude-code: per-domain" : `${rt}: all hosts`})`);
+    if (!claude) notes.push(`warn: sandbox.network is all-or-nothing on ${Rt}: this agent may reach any host, not only ${s.network.join(", ")}.`);
   }
   if (s.localBinding) {
-    notes.push(claude ? (process.platform === "darwin" ? "local_binding: on" : "local_binding: requested, no effect on this platform (macOS only)") : "local_binding: requested, not supported by codex");
-    if (!claude) notes.push("warn: sandbox.local_binding has no Codex setting; whether a workspace-write sandbox lets it bind ports is unverified. sandbox.network turns on all network access, not only binding.");
+    notes.push(claude ? (process.platform === "darwin" ? "local_binding: on" : "local_binding: requested, no effect on this platform (macOS only)") : `local_binding: requested, not supported by ${rt}`);
+    if (!claude) notes.push(`warn: sandbox.local_binding has no ${Rt} setting; whether a workspace-write sandbox lets it bind ports is unverified. sandbox.network turns on all network access, not only binding.`);
   }
   if (s.unixSockets.length) {
-    notes.push(`unix_sockets: ${s.unixSockets.map(canonicalPath).join(", ")} (${claude ? "applied" : "not applied by codex"})`);
-    if (!claude) notes.push("warn: sandbox.unix_sockets has no per-socket Codex control; no setting emitted.");
+    notes.push(`unix_sockets: ${s.unixSockets.map(canonicalPath).join(", ")} (${claude ? "applied" : `not applied by ${rt}`})`);
+    if (!claude) notes.push(`warn: sandbox.unix_sockets has no per-socket ${Rt} control; no setting emitted.`);
   }
   for (const [key, list] of [["write", s.write], ["unix_sockets", s.unixSockets]] as const) {
     list.forEach((p, i) => {
