@@ -1,5 +1,7 @@
+import fs from "node:fs";
 import os from "node:os";
 import { ApprovalError } from "./approval-error.js";
+import { checkApprovalLinks } from "./approval-link-check.js";
 import { loadExecutors, qualificationOf } from "./approval-executors.js";
 import { storePaths } from "./approval-paths.js";
 import type { ResolvedProject } from "./config.js";
@@ -14,6 +16,26 @@ export interface DoctorApprovalOptions {
   userHome?: string;
   platform?: NodeJS.Platform;
   sandboxAvailable?: () => boolean;
+  /** Test seam for the D8 hard-link probe; default `checkApprovalLinks`. */
+  linkProbe?: (home: string, dir: string) => void;
+}
+
+/** Fixed texts per probe class: nothing from the error (path, errno text) is ever echoed. */
+const LINK_TEXT: Record<string, string> = {
+  UNSUPPORTED_LINK: "UNSUPPORTED_LINK: the approval store's filesystem does not support hard links; use a filesystem with hard links",
+  UNSAFE_PATH: "UNSAFE_PATH: the approval store path (or an ancestor under the agent-lyceum home) is not a plain directory; make it one",
+  IO_ERROR: "IO_ERROR: the hard-link probe could not complete; check permissions and free space of the agent-lyceum home",
+};
+
+/** Premise form for a failed probe; runs only when enrolled (the caller returned earlier otherwise). The nearest real dir of approvals/requests, else home. */
+function linkProbeChecks(home: string, probe: (home: string, dir: string) => void): DoctorCheck[] {
+  const sp = storePaths(home);
+  const dir = [sp.approvals, sp.requests].find((d) => { try { return fs.lstatSync(d).isDirectory(); } catch { return false; } }) ?? home;
+  try { probe(home, dir); } catch (e) {
+    const code = e instanceof ApprovalError ? e.code : "IO_ERROR";
+    return [{ level: "error", subject: "approval", message: `Approval store hard-link probe failed (${LINK_TEXT[code] ?? LINK_TEXT.IO_ERROR})` }];
+  }
+  return [];
 }
 
 /**
@@ -42,7 +64,7 @@ export function diagnoseApproval(project: ResolvedProject, opts: DoctorApprovalO
   }
 
   const inventory = approvalContainmentChecks(home, config, { platform, userHome });
-  const checks = [...inventory.checks, ...projectPremiseChecks(project, config, popts)];
+  const checks = [...inventory.checks, ...linkProbeChecks(home, opts.linkProbe ?? checkApprovalLinks), ...projectPremiseChecks(project, config, popts)];
   for (const { role, agent } of inventory.calls) {
     if (qualificationOf(config, { project: null, role }).enrolled) checks.push(...agentPremiseChecks(`call/${role}`, agent, popts));
   }

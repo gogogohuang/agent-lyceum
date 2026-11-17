@@ -60,7 +60,55 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 
 **已知限制：** 即使用 `--setting-sources user`，使用者層級的 `~/.claude/settings.json` 仍會套用到已登錄的 agent；對此的檢查（spec 第 3 節前提 4 (ii)）尚未實作。`doctor` 可能印出無效 `executors.yaml` 的欄位名稱（`src/approval-executors.ts:60`、`src/doctor-approval.ts:40`）。
 
-**尚未實作：** 每次喚醒重新檢查登錄並拒絕喚醒某個 slot、`status` 的原因顯示、`proposals/` 寫入權限、收集請求、核准 CLI、executor 執行器。真實 Claude CLI 是否接受新旗標、真實 sandbox 的效果、Linux 皆**未驗證**；macOS 第 0 步的量測見 spec 第 8 節。
+**階段 2b-1 尚未實作：** 每次喚醒重新檢查登錄並拒絕喚醒某個 slot、`status` 的原因顯示、`proposals/` 寫入權限、收集請求、核准 CLI、executor 執行器。階段 3 加入請求收走：見[核准請求收走](#核准請求收走階段-3非可發布)。真實 Claude CLI 是否接受新旗標、真實 sandbox 的效果、Linux 皆**未驗證**；macOS 第 0 步的量測見 spec 第 8 節。
+
+## 核准請求收走（階段 3，非可發布）
+
+**非可發布：第 0 步未驗證**（English: not releasable, step 0 unverified）。下列三項**未驗證**，並阻擋發布：F3（使用者設定層：`--setting-sources user` 仍會對已登錄的 agent 載入 `~/.claude/settings.json`，`src/adapters/claude.ts:13`）、Linux、真實 OS sandbox 的強制效果。以下只描述程式實際做的事，不是安全的證據。細節與 API 見[核准儲存 API](approval-store-api.md#request-collection-stage-3-not-releasable)（英文）。
+
+### 請求檔
+
+- **位置。** 已登錄的 agent 把純文字請求寫進自己 slot 的 `proposals/`：`<home>/requests/projects/<project>/<run-id>/<slot>/proposals/`（`src/approval-paths.ts:57,62`）。該目錄多給一個可寫目錄，路徑寫在 system 與 user prompt（`src/prompt.ts` 的 `approvalRequestsBlock`）。 <!-- S3-dependent -->
+- **誰拿得到。** 只有已登錄 agent 的 claim wake：第一次呼叫、每次重試與每個 fallback，含 solo。lead、tidy、verify、format、`call` 的 wake 一律沒有該目錄、沒有授權、prompt 也沒有相關文字。 <!-- S3-dependent -->
+- **檔名。** `^(?!\.)[A-Za-z0-9._-]{1,64}\.req$`（`src/approval-id.ts:19`）。其他檔名被忽略。
+- **內容。** 標頭、一個空行、payload。標頭最多兩行：`executor: <名稱>`（必填，須為已註冊的 executor）與 `summary: <文字>`（選填，最多 300 個碼點），含空行最多 2048 bytes。payload 受該 executor 的 `max_payload_bytes` 限制（預設 4096、上限 65536）；超過 67584 bytes 的檔案在解析前就被拒。整個檔案必須是 UTF-8 文字，除 LF 與 TAB 外不得有控制字元，不得有格式、分隔或不可見字元（允許 U+3000）；絕不清理內容，壞檔只會被記為 denied（`src/approval-request.ts:9-70`、`src/approval-executors.ts:32-34`）。
+- **不是指令。** 收走的請求只是存起來等人審核；agent 寫了檔並不會執行任何東西。
+
+### dispatcher 做什麼
+
+- **收走。** wake 的輸出路由之後，每個已登錄 slot 的 `proposals/` 整個搬到 `collected/<seq>/`，原處換成新的空目錄；其中的請求成為 `<home>/approvals/` 下的記錄。序號只增不減（高水位檔 `collected.seq`）；空目錄不會被搬，所以不佔序號。`resume` 會收走被中斷的 run 遺留的內容。 <!-- S3-dependent -->
+- **記錄的提交點。** 請求在其 `record.json` 被 link 到位時才算存在，且不會被覆寫。`collected/<seq>.done` 最後才寫，所以在它之前崩潰只會重做；同一請求得到同一個 id（`src/approval-collect.ts:20-26`）。
+- **失敗或取消的 attempt。** 在該 attempt 標為結束之前，slot 的 `proposals/` 先搬到 `parked/<attempt-id>/`。被 park 的請求不會被收走，也不會成為重做草稿（`src/approval-rotation.ts` 的 `Park`；spec 4.4）；agent 必須重新提出。若無法移開，該 slot 在這個 run 內不再被呼叫（run 以 `agent_failed` 結束），殘留物在下次 `resume` 時被 park。 <!-- S3-dependent -->
+- **崩潰後的 resume。** `resume` 先 park 已開始的 attempt 的目錄再標為失敗；對剛轉為 `abandoned` 的 claim，先 park 再存該狀態。這一步失敗的 slot 維持原狀、不被喚醒。 <!-- S3-dependent -->
+- **`full_writable`。** 記錄的 `origin.full_writable` 是*收走那一刻* slot 擁有的可寫路徑集合。崩潰後由 resume 收走時，記的是較晚那次收走的授權，不是原 wake 的。它只供顯示，不拿來比對。 <!-- S3-dependent -->
+- **拒收與配額。** 超限、格式錯誤或不被允許的請求成為 `denied` 記錄，原因為固定代碼（`bad_content`、`bad_header`、`bad_executor`、`too_large`、`not_allowed`、`quota`、`not_regular`、`scan_limit`）。每個 project（或 call）與 role 有一個小計數檔統計被拒請求；計數低於 100 時每筆仍保留完整記錄，之後只計數。計數是近似值（讀、加一、重寫，跨 pass 無鎖）。待處理配額（每個 executor 的 `max_pending`、`max_total_pending`）是軟限制：每個 slot pass 只計一次，不同 slot 的 pass 可能一起超過。每個目錄最多讀 `max_scan_entries`（預設 200）個檔，最舊的先；其餘合計成一筆 `scan_limit` 記錄（`src/approval-collect.ts:61,320-385`）。
+
+### 操作者處置
+
+每個收走問題都以 `approval_collect` 寫入 `log.jsonl`，欄位固定（`slot`、`op`、`class`，另有選填的 `seq`、`id`、`count`）；不記錄路徑、錯誤文字、檔名或 payload（`src/approval-collect.ts:34-38`）。該 slot 在修好之前不被喚醒，其他 slot 照常。人類可讀的 `status` 為被略過的 slot 顯示固定原因（目前是「request directory is unsafe」或「earlier approval output is waiting」，`src/approval-wake-gate.ts:59-60`；階段 3 計畫會改寫前者並加入收走計數，建好之前此處不描述）。
+
+| `class` | 意思 | 處置 |
+|---|---|---|
+| `held` | `<slot>/.coord` 已存在：別的 run 持有該 slot，或崩潰遺留。永不接管 | 停掉該專案**所有** run，用 `agent-lyceum status` 確認沒有存活的 run（也沒有 `requests gc`；它尚不存在），再手動移除殘留的 `.coord` 目錄 |
+| `not_directory`、`symlink` | `proposals/`、`collected/` 或上層是連結、檔案或其他非目錄 | 改回普通目錄；不要跟隨連結 |
+| `missing` | 記錄型別有宣告，但此版 `src/approval-collect.ts` 沒有任何路徑回傳它（缺少的 `proposals/` 會直接重建） | 無須處置 |
+| `corrupt` | `collected.seq`、被拒計數或記錄無法解析 | 手動修復或還原該檔；在那之前該 slot 持續被擋 |
+| `unsupported` | 檔案系統不支援 hard link（link 時 `ENOTSUP`、`EOPNOTSUPP`、`EXDEV`、`ENOSYS`、`EPERM`） | 設定目錄改用支援 hard link 的檔案系統 |
+| `permission` | 其他呼叫出現 `EACCES` 或 `EPERM` | 修正 approval home 的擁有者與權限 |
+| `race` | 檔案或目錄在讀取期間改變或消失 | 下個 pass 重試；若反覆發生，找出是誰在改動該目錄 |
+| `mismatch` | 同一請求已存的記錄 payload 不同 | 不要編輯；保留檔案並回報 |
+| `budget` | 見下 | 見下 |
+| `cancelled` | run 在收走此 slot 之前被取消 | `resume` |
+| `io` | 其他錯誤 | 檢查磁碟與權限後 `resume` |
+
+**工作預算。** 一次 pass 對一個 slot 最多花 65536 單位：每次檔案系統呼叫一單位、每個目錄項一單位（`SCAN_WORK_BUDGET`，`src/approval-budget.ts:19`）。一個合法的檔案花目錄項加一次 `lstat`；檔名不合法的只花一單位、不 stat。溢出時 pass 立即停止：不寫 `.done`、不寫 `scan_limit` 記錄、不刪不搬任何東西；已發布的記錄保留，下次直接沿用。該 slot 不被喚醒（`RESIDUAL_OUTPUT`；若是在計算 store 既有記錄時溢出則為 `UNDETERMINABLE`）。預算限制的是工作量不是時間：掛住的檔案系統上單一呼叫仍可能無限期阻塞。**飢餓：** 某個 `collected/<seq>` 總是超過預算或持續被改動時，該 slot 會被擋到你處理為止：停掉該專案所有 run、檢查該 slot 的 `collected/<seq>/`、把不要的檔搬到 approval home 以外，再 `resume`。若 store 的記錄多到光計算配額就超過預算，所有已登錄 slot 都會被擋；階段 3 沒有任何功能移除記錄（`gc` 未建）。
+
+### 殘留風險、未實作、未驗證
+
+- **殘留程序或檔案描述符（spec 4.4）。** agent 設法留下的背景程序可在搬移之後寫入新的 `proposals/`；下個 pass 才看得到，且只能新增請求（受配額限制）。它持有的已搬移檔案的描述符仍可改動 `collected/` 內的該檔；收走程式只檢查檔案在讀取期間 device 與 inode 沒變，不保證內容沒變。已存進 `approvals/` 的複本不受影響。
+- **寫入範圍不是讀取隔離。** 授權 `proposals/` 只管寫入。本頁沒有任何機制阻止 agent 讀其他 agent 的檔案或請求；不要把請求當機密（見本頁開頭）。
+- **未實作：** 核可、執行、回饋、`requests gc`／`approvals gc`，以及 `call` 的收走。實例（`<role>--N`）目前也不收走。 <!-- S3-dependent -->
+- **未驗證：** F3、Linux、真實 sandbox 的強制效果，以及真實 Claude CLI 對 `proposals/` 授權的處理。除了用完即丟的 home，不要啟用 `executors.yaml`。
 
 ## 平行實例的共用記憶
 

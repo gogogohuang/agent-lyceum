@@ -341,3 +341,32 @@ describe("B8 executor env secrets never leave the config", () => {
     }
   });
 });
+
+describe("stage 3: the request directory of a claim wake", () => {
+  const dir = (): string => path.join(env.root, "req", "proposals");
+  it("is one more writable directory (settings and --add-dir) only when the wake names it; without it the settings are unchanged", () => {
+    const p = bound(enrolledEnv());
+    const plain = wake(p, "fe-member");
+    buildClaudeInvocation(plain);
+    const before = fs.readFileSync(path.join(plain.workDir, "claude-settings.json"), "utf8");
+    const granted = wake(p, "fe-member", { workDir: path.join(env.root, "work", "granted"), proposalsDir: dir() });
+    const inv = buildClaudeInvocation(granted);
+    const s = JSON.parse(fs.readFileSync(path.join(granted.workDir, "claude-settings.json"), "utf8"));
+    expect(s.permissions.allow).toContain(`Edit(/${dir()}/**)`);
+    expect(s.sandbox.filesystem.allowWrite).toContain(dir());
+    expect(inv.args.join("\n")).toContain(`--add-dir\n${dir()}`);
+    expect(buildClaudeSettings(p, p.agents["fe-member"]!)).toEqual(JSON.parse(before));
+    expect(JSON.stringify(buildClaudeSettings(p, p.agents["fe-member"]!, undefined, dir()))).toContain(dir());
+    // the grant never loosens a deny
+    expect(s.sandbox.filesystem.denyWrite).toEqual(JSON.parse(before).sandbox.filesystem.denyWrite);
+  });
+
+  it("is never combined with a policy override (tidy, verify, format keep their minimal authority)", () => {
+    const p = bound(enrolledEnv());
+    const policy: WritePolicy = { allowDirs: [path.join(env.root, "only")], readDirs: [], allowFiles: [], deny: [] };
+    const w = wake(p, "fe-member", { policy, proposalsDir: dir() });
+    buildClaudeInvocation(w);
+    const s = JSON.parse(fs.readFileSync(path.join(w.workDir, "claude-settings.json"), "utf8"));
+    expect(JSON.stringify(s)).not.toContain(dir());
+  });
+});

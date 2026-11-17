@@ -60,7 +60,55 @@ This is the first part of the approval gate ([store API](approval-store-api.md),
 
 **Known limitations.** With `--setting-sources user`, the user-level `~/.claude/settings.json` still applies to enrolled agents; the check for that (spec section 3, premise 4 (ii)) is not built yet. `doctor` may print key names from an invalid `executors.yaml` (`src/approval-executors.ts:60`, `src/doctor-approval.ts:40`).
 
-**Not built yet:** re-checking enrollment at each wake and refusing to wake a slot, `status` reasons, write access to `proposals/`, collecting requests, an approvals CLI, an executor runner. The real Claude CLI's acceptance of the new flags, the real sandbox's effect, and Linux are **unverified**; the macOS step-0 measurements are in spec section 8.
+**Not built in stage 2b-1:** re-checking enrollment at each wake and refusing to wake a slot, `status` reasons, write access to `proposals/`, collecting requests, an approvals CLI, an executor runner. Stage 3 adds request collection: see [Approval request collection](#approval-request-collection-stage-3-not-releasable). The real Claude CLI's acceptance of the new flags, the real sandbox's effect, and Linux are **unverified**; the macOS step-0 measurements are in spec section 8.
+
+## Approval request collection (stage 3, not releasable)
+
+**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). Three things are **UNVERIFIED** and block release: F3 (the user settings layer: `--setting-sources user` still loads `~/.claude/settings.json` for enrolled agents, `src/adapters/claude.ts:13`), Linux, and enforcement by the real OS sandbox. Everything below is what the code does, not evidence that it is safe. Details and the API are in [Approval store API](approval-store-api.md#request-collection-stage-3-not-releasable).
+
+### Request files
+
+- **Where.** An enrolled agent writes plain-text requests into its slot's `proposals/` directory: `<home>/requests/projects/<project>/<run-id>/<slot>/proposals/` (`src/approval-paths.ts:57,62`). It is granted as one more writable directory and the path is named in the system and user prompt (`src/prompt.ts` `approvalRequestsBlock`). <!-- S3-dependent -->
+- **Who gets it.** Only a claim wake of an enrolled agent: the first call, every retry and every fallback, solo included. A lead, tidy, verify, format or `call` wake never gets the directory, the grant or the prompt text. <!-- S3-dependent -->
+- **File name.** `^(?!\.)[A-Za-z0-9._-]{1,64}\.req$` (`src/approval-id.ts:19`). Other names are ignored.
+- **Content.** Header, empty line, payload. The header has at most two lines, `executor: <name>` (required, must be a registered executor) and `summary: <text>` (optional, at most 300 code points), at most 2048 bytes including the empty line. The payload is limited by the executor's `max_payload_bytes` (default 4096, at most 65536); a file over 67584 bytes is refused before parsing. The whole file must be UTF-8 text with no control characters other than LF and TAB, no format, separator or invisible characters (U+3000 is allowed); nothing is sanitized, a bad file is recorded as denied (`src/approval-request.ts:9-70`, `src/approval-executors.ts:32-34`).
+- **Not a command.** A collected request is only stored for a later review. Nothing runs because an agent wrote it.
+
+### What the dispatcher does
+
+- **Collection.** After a wake's output is routed, each enrolled slot's `proposals/` is moved whole to `collected/<seq>/` and replaced by a new empty directory; the requests in it become records under `<home>/approvals/`. Sequence numbers only grow (`collected.seq` high-water file); an empty directory is never moved, so no sequence is used for it. `resume` collects what an interrupted run left. <!-- S3-dependent -->
+- **Record commit point.** A request exists once its `record.json` is linked into place; it is never overwritten. `collected/<seq>.done` is written last, so a crash before it only repeats work, and the same request gets the same id (`src/approval-collect.ts:20-26`).
+- **Failed or cancelled attempt.** The slot's `proposals/` is moved to `parked/<attempt-id>/` before the attempt is finished. Parked requests are never collected and never used as redo drafts (`src/approval-rotation.ts` `Park`; spec 4.4); the agent must ask again. If they cannot be set aside, the slot is not called again in that run (the run ends `agent_failed`) and the leftover is parked at the next `resume`. <!-- S3-dependent -->
+- **Resume after a crash.** `resume` parks a started attempt's directory before it marks the attempt failed, and the directory of a claim it just turned `abandoned` before saving that state. A slot where that fails is left as it was and is not woken. <!-- S3-dependent -->
+- **`full_writable`.** The record's `origin.full_writable` is the set of writable paths the slot has *when the request is collected*. After a crash, a resume records the grant at that later collection, not the original wake's. It is shown for review only and is not compared with anything. <!-- S3-dependent -->
+- **Rejection and quota.** Over-limit, malformed or not-allowed requests become `denied` records with a fixed reason (`bad_content`, `bad_header`, `bad_executor`, `too_large`, `not_allowed`, `quota`, `not_regular`, `scan_limit`). A small counter file per project (or call) and role counts the denied requests; while it is below 100 each one also keeps a full record, after that it is only counted. The count is approximate (read, add one, rewrite, no lock across passes). The pending quota (`max_pending` per executor, `max_total_pending`) is soft: it is counted once per slot pass, so passes of different slots can exceed it together. At most `max_scan_entries` (default 200) files per directory are read, oldest first; the rest are counted in one `scan_limit` record (`src/approval-collect.ts:61,320-385`).
+
+### Operator actions
+
+Every collection problem is logged to `log.jsonl` as `approval_collect` with fixed fields (`slot`, `op`, `class`, optional `seq`, `id`, `count`); no path, error text, file name or payload is logged (`src/approval-collect.ts:34-38`). The slot is not woken until it is fixed; other slots go on. Human `status` shows a fixed reason for the skipped slot (today "request directory is unsafe" or "earlier approval output is waiting", `src/approval-wake-gate.ts:59-60`; the stage 3 plan rewords the first and adds collected counts, which are not described here until built).
+
+| `class` | Meaning | What to do |
+|---|---|---|
+| `held` | `<slot>/.coord` exists: another run holds the slot, or a crash left it. It is never taken over | Stop **every** run of the project, check with `agent-lyceum status` that none is live (and no `requests gc`; it does not exist yet), then remove the stale `.coord` directory by hand |
+| `not_directory`, `symlink` | `proposals/`, `collected/` or a parent is a link, file or other non-directory | Make them plain directories again; do not follow links |
+| `missing` | Declared in the log type but no code path in `src/approval-collect.ts` returns it in this version (a missing `proposals/` is simply recreated) | Nothing to do |
+| `corrupt` | `collected.seq`, the denied counter or a record cannot be parsed | Fix or restore that file by hand; the slot stays blocked until then |
+| `unsupported` | The file system refuses hard links (`ENOTSUP`, `EOPNOTSUPP`, `EXDEV`, `ENOSYS`, `EPERM` on link) | Use a file system with hard links for the config home |
+| `permission` | `EACCES` or `EPERM` on another call | Fix the owner and mode of the approval home |
+| `race` | A file or directory changed or vanished while it was read | Retried at the next pass; if it repeats, find what is changing the directory |
+| `mismatch` | A stored record for the same request has a different payload | Do not edit; keep the files and report it |
+| `budget` | See below | See below |
+| `cancelled` | The run was cancelled before this slot was collected | `resume` |
+| `io` | Any other error | Check the disk and permissions, then `resume` |
+
+**Work budget.** One pass over a slot may spend 65536 units: one per file system call and one per directory entry (`SCAN_WORK_BUDGET`, `src/approval-budget.ts:19`). A valid listed file costs a directory entry plus an `lstat`; a file with an invalid name costs one unit and is not stat'ed. On overflow the pass stops at once: no `.done`, no `scan_limit` record, nothing deleted or moved; records already published stay and are adopted next time. The slot is not woken (`RESIDUAL_OUTPUT`, or `UNDETERMINABLE` when the overflow happened counting the store's existing records). The budget bounds work, not time: one call on a hung file system can still block. **Starvation:** a `collected/<seq>` that always exceeds the budget, or keeps changing, blocks its slot until you act: stop all runs of the project, inspect `collected/<seq>/` of that slot, move the files you do not want to a place outside the approval home, then `resume`. A store with so many records that the quota count alone exceeds the budget blocks every enrolled slot; nothing in stage 3 removes records (`gc` is not built).
+
+### Residual risks, not implemented, unverified
+
+- **Residual process or file descriptor (spec 4.4).** A background process an agent managed to leave behind can write into the new `proposals/` after the move; that is seen at the next pass and can only add requests (quota-limited). A descriptor it holds on a moved file can still change that file inside `collected/`; the collector only checks that the file kept its device and inode while it was read, not that its content stayed the same. Copies already stored in `approvals/` are not changed.
+- **Write scope is not read isolation.** Granting `proposals/` only governs writing. Nothing here stops an agent from reading other agents' files or requests; do not treat requests as confidential (see the top of this page).
+- **Not implemented:** approving, executing, feedback, `requests gc`/`approvals gc`, and collection for `call`. Instances (`<role>--N`) are not collected yet. <!-- S3-dependent -->
+- **UNVERIFIED:** F3, Linux, enforcement by the real sandbox, and the real Claude CLI's use of the `proposals/` grant. Do not enable `executors.yaml` outside a throwaway home.
 
 ## Shared memory of parallel instances
 
