@@ -1,14 +1,28 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildInvocation } from "../src/adapters/index.js";
 import { buildCursorInvocation, classifyCursorError, writeCursorCliConfig } from "../src/adapters/cursor.js";
 import type { WakeInput } from "../src/adapters/types.js";
 import { ApprovalError } from "../src/approval-error.js";
+import { outboxDir, writePolicy } from "../src/policy.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
-afterEach(() => env?.cleanup());
+let srcDir: string;
+const prevConfigDir = process.env.CURSOR_CONFIG_DIR;
+// Never read the user's real ~/.cursor: every test gets an empty temp source config dir.
+beforeEach(() => {
+  srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-src-"));
+  process.env.CURSOR_CONFIG_DIR = srcDir;
+});
+afterEach(() => {
+  env?.cleanup();
+  fs.rmSync(srcDir, { recursive: true, force: true });
+  if (prevConfigDir === undefined) delete process.env.CURSOR_CONFIG_DIR;
+  else process.env.CURSOR_CONFIG_DIR = prevConfigDir;
+});
 
 const wake = (e: TestEnv, name: string, extra: Partial<WakeInput> = {}): WakeInput => {
   const project = e.project();
@@ -85,6 +99,47 @@ describe("cursor adapter", () => {
     const cfg = JSON.parse(fs.readFileSync(writeCursorCliConfig(w.workDir, w), "utf8"));
     expect(cfg.permissions.allow).toContain("WebFetch(*)");
     expect(cfg.permissions.deny).not.toContain("WebFetch(*)");
+  });
+
+  it("allows Write on memory/outbox dirs and policy files so they work outside --workspace", () => {
+    env = makeEnv();
+    const w = wake(env, "fe-member");
+    const cfg = JSON.parse(fs.readFileSync(writeCursorCliConfig(w.workDir, w), "utf8"));
+    const pol = writePolicy(w.project, w.agent);
+    expect(pol.allowDirs.length).toBeGreaterThan(0);
+    expect(cfg.permissions.allow).toContain(`Write(${pol.allowDirs[0]}/**)`);
+    expect(cfg.permissions.allow).toContain(`Write(${outboxDir(w.project, "fe-member")}/**)`);
+    const o = wake(env, "fe-member", { policy: { allowDirs: ["/a/dir"], readDirs: [], allowFiles: ["/a/file.md"], deny: ["/a/dir/secret"] } });
+    const oc = JSON.parse(fs.readFileSync(writeCursorCliConfig(o.workDir, o), "utf8"));
+    expect(oc.permissions.allow).toEqual(expect.arrayContaining(["Write(/a/dir/**)", "Write(/a/file.md)"]));
+    expect(oc.permissions.deny).toContain("Write(/a/dir/secret)");
+  });
+
+  it("carries auth.json and merges cli-config.json from the source config dir", () => {
+    env = makeEnv();
+    fs.writeFileSync(path.join(srcDir, "auth.json"), '{"token":"t"}');
+    fs.writeFileSync(
+      path.join(srcDir, "cli-config.json"),
+      JSON.stringify({ version: 7, editor: { vimMode: true }, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env)"] } }),
+    );
+    const w = wake(env, "fe-member");
+    const file = writeCursorCliConfig(w.workDir, w);
+    expect(fs.readFileSync(path.join(w.workDir, "auth.json"), "utf8")).toBe('{"token":"t"}');
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    expect(cfg.version).toBe(7);
+    expect(cfg.editor).toEqual({ vimMode: true });
+    expect(cfg.permissions.allow).toEqual(expect.arrayContaining(["Shell(ls)", `Write(${outboxDir(w.project, "fe-member")}/**)`]));
+    expect(cfg.permissions.deny).toEqual(expect.arrayContaining(["Read(.env)", "WebFetch(*)"]));
+    // source untouched
+    expect(JSON.parse(fs.readFileSync(path.join(srcDir, "cli-config.json"), "utf8")).version).toBe(7);
+  });
+
+  it("works without auth.json or a source cli-config.json", () => {
+    env = makeEnv();
+    const w = wake(env, "fe-member");
+    const cfg = JSON.parse(fs.readFileSync(writeCursorCliConfig(w.workDir, w), "utf8"));
+    expect(cfg.version).toBe(1);
+    expect(fs.existsSync(path.join(w.workDir, "auth.json"))).toBe(false);
   });
 
   it("classifies auth and rate limit", () => {

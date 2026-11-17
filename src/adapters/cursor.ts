@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
@@ -20,21 +21,69 @@ function denyRules(p: string): string[] {
   return isFile ? [`Write(${p})`] : [`Write(${p})`, `Write(${p}/**)`];
 }
 
+/** Credential files carried from the user's Cursor config dir into the per-run one (`CURSOR_CONFIG_DIR` replaces the whole dir, so login would be lost). */
+const AUTH_FILES = ["auth.json"];
+
+/** The user's own Cursor config dir: the one the CLI would read without our override. */
+function sourceConfigDir(): string {
+  return process.env.CURSOR_CONFIG_DIR || path.join(os.homedir(), ".cursor");
+}
+
+function readJsonObject(file: string): Record<string, unknown> | undefined {
+  try {
+    const j = JSON.parse(fs.readFileSync(file, "utf8"));
+    return j && typeof j === "object" && !Array.isArray(j) ? (j as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined; // missing or malformed: ignore the source config
+  }
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** Copies auth files that exist in `src` into `workDir` (read-only on `src`; never touches cli-config.json). */
+function copyAuthFiles(src: string, workDir: string): void {
+  if (path.resolve(src) === path.resolve(workDir)) return;
+  for (const name of AUTH_FILES) {
+    const from = path.join(src, name);
+    try {
+      if (fs.statSync(from).isFile()) fs.copyFileSync(from, path.join(workDir, name));
+    } catch {
+      /* absent: nothing to carry */
+    }
+  }
+}
+
 /**
  * Writes `cli-config.json` under `workDir` (read via `CURSOR_CONFIG_DIR`, so the repo's own `.cursor/cli.json` is never touched).
+ * Auth files and `cli-config.json` settings of the user's own config dir are carried over (permissions are unioned; our deny is always kept, and deny wins in Cursor).
+ * Allow: `Write` rules for the policy's `allowDirs`/`allowFiles` (memory/outbox live outside `--workspace`).
  * Web: denied unless `allowWeb` is `fetch`. `search` has no Cursor permission token, so it stays denied (documented gap).
  */
 export function writeCursorCliConfig(workDir: string, input: WakeInput): string {
   const { project, agent } = input;
   const pol = input.policy ?? writePolicy(project, agent);
-  const allow: string[] = [];
+  const allow: string[] = [...pol.allowDirs.map((d) => `Write(${d}/**)`), ...pol.allowFiles.map((f) => `Write(${f})`)];
   const deny = pol.deny.flatMap(denyRules);
   if (agent.allowWeb === "fetch" && !input.policy) allow.push("WebFetch(*)");
   else deny.push("WebFetch(*)");
 
   fs.mkdirSync(workDir, { recursive: true });
+  const src = sourceConfigDir();
+  copyAuthFiles(src, workDir);
+  const base = path.resolve(src) === path.resolve(workDir) ? undefined : readJsonObject(path.join(src, CLI_CONFIG_FILE));
+  const srcPerms = base?.permissions as { allow?: unknown; deny?: unknown } | undefined;
+  const version = typeof base?.version === "number" ? base.version : 1;
+  const editor = base?.editor && typeof base.editor === "object" && !Array.isArray(base.editor) ? base.editor : { vimMode: false };
+
   const file = path.join(workDir, CLI_CONFIG_FILE);
-  const cfg = { version: 1, editor: { vimMode: false }, permissions: { allow, deny: [...new Set(deny)] } };
+  const cfg = {
+    version,
+    editor,
+    permissions: {
+      allow: [...new Set([...allow, ...strings(srcPerms?.allow)])],
+      deny: [...new Set([...deny, ...strings(srcPerms?.deny)])],
+    },
+  };
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
   return file;
 }
