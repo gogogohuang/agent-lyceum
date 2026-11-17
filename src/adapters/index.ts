@@ -2,6 +2,7 @@ import path from "node:path";
 import { runInvocation } from "../process-runner.js";
 import { buildClaudeInvocation } from "./claude.js";
 import { buildCodexInvocation } from "./codex.js";
+import { buildCursorInvocation } from "./cursor.js";
 import type { Invocation, Invoker, WakeInput } from "./types.js";
 
 export function buildInvocation(input: WakeInput): Invocation {
@@ -10,6 +11,8 @@ export function buildInvocation(input: WakeInput): Invocation {
       return buildClaudeInvocation(input);
     case "codex":
       return buildCodexInvocation(input);
+    case "cursor":
+      return buildCursorInvocation(input);
     default:
       throw new Error(`Agent "${input.agent.name}" has no runtime`);
   }
