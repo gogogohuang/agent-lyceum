@@ -175,32 +175,73 @@ export function projectCommonDirAllowed(project: ResolvedProject, agent: Resolve
   return !overlapsForeign(project, agent, projectCommonDir(project));
 }
 
-export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
+/** Where a granted path comes from. Run-only sources do not belong to the run-independent qualification hash (see `approval-snapshot.ts`). */
+export type GrantSource =
+  | "memory-global"
+  | "memory-project"
+  | "memory-task"
+  | "outbox"
+  | "git-dir"
+  | "shared"
+  | "records"
+  | "own-dir"
+  | "sandbox-write"
+  | "common-file"
+  | "shared-index"
+  | "agent-md"
+  | "repo-instruction"
+  | "proposals";
+
+export interface GrantEntry {
+  kind: "dir" | "file";
+  path: string;
+  source: GrantSource;
+}
+
+/**
+ * The allow entries of `writePolicy`, in its order, each tagged with its source. Only allow entries: no deny list, no approval I/O.
+ * `proposalsDir` (an enrolled claim wake's canonical request directory) is appended last; without it the entries are the old ones byte for byte.
+ */
+export function grantEntries(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): GrantEntry[] {
   const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
-  // A `call` has no mailboxes at all; a solo member of a run keeps its outbox to send `done`.
   const shared = sharedDir(project);
   const sharedIdx = sharedIndex(project);
   const mayWriteShared = !!shared && agent.name === project.lead;
-  const ownDir = projectAgentDir(project, agent.name);
-  const grantOwnDir = ownAgentDirAllowed(project, agent);
-  const allowDirs = [
-    ...memoryDirs(agent),
-    ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
-    ...(ws ? [ws.gitDir] : []),
-    ...(shared && mayWriteShared ? [shared] : []),
-    ...(isLead ? [recordsDir(project)] : []),
-    ...(grantOwnDir ? [ownDir] : []),
-    // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
-    ...(agent.sandbox?.write ?? []).map(canonicalPath),
-  ];
-  const allowFiles: string[] = [];
-  if (isLead) allowFiles.push(...sharedContextFiles(project));
-  if (mayWriteShared && sharedIdx) allowFiles.push(sharedIdx);
+  const out: GrantEntry[] = [];
+  const dir = (p: string, source: GrantSource) => out.push({ kind: "dir", path: p, source });
+  const file = (p: string, source: GrantSource) => out.push({ kind: "file", path: p, source });
+  if (agent.memory.global) dir(agent.memory.global, "memory-global");
+  if (agent.memory.project) dir(agent.memory.project, "memory-project");
+  if (agent.memory.task) dir(agent.memory.task, "memory-task");
+  // A `call` has no mailboxes at all; a solo member of a run keeps its outbox to send `done`.
+  if (project.solo !== "call") dir(outboxDir(project, agent.name), "outbox");
+  if (ws) dir(ws.gitDir, "git-dir");
+  if (shared && mayWriteShared) dir(shared, "shared");
+  if (isLead) dir(recordsDir(project), "records");
+  if (ownAgentDirAllowed(project, agent)) dir(projectAgentDir(project, agent.name), "own-dir");
+  // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
+  for (const w of agent.sandbox?.write ?? []) dir(canonicalPath(w), "sandbox-write");
+  if (proposalsDir !== undefined) dir(proposalsDir, "proposals");
+  if (isLead) for (const f of sharedContextFiles(project)) file(f, "common-file");
+  if (mayWriteShared && sharedIdx) file(sharedIdx, "shared-index");
   if (agent.canEditAgentMd) {
-    for (const a of Object.values(project.agents)) allowFiles.push(a.agentMd);
-    allowFiles.push(...repoInstructionFiles(project));
+    for (const a of Object.values(project.agents)) file(a.agentMd, "agent-md");
+    for (const f of repoInstructionFiles(project)) file(f, "repo-instruction");
   }
+  return out;
+}
+
+export function writePolicy(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): WritePolicy {
+  const isLead = agent.name === project.lead && !project.solo;
+  const ws = project.workspaces?.[agent.name];
+  const shared = sharedDir(project);
+  const mayWriteShared = !!shared && agent.name === project.lead;
+  const ownDir = projectAgentDir(project, agent.name);
+  const granted = grantEntries(project, agent, proposalsDir);
+  const grantOwnDir = granted.some((g) => g.source === "own-dir");
+  const allowDirs = granted.filter((g) => g.kind === "dir").map((g) => g.path);
+  const allowFiles = granted.filter((g) => g.kind === "file").map((g) => g.path);
 
   const deny: string[] = [];
   const allowedFileSet = new Set(allowFiles);

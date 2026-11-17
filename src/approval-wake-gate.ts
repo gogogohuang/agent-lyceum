@@ -5,19 +5,18 @@ import { z } from "zod";
 import { ApprovalError } from "./approval-error.js";
 import { type ExecutorsConfig, qualificationOf } from "./approval-executors.js";
 import { type ApprovalIo, ancestorsExist, defaultApprovalIo } from "./approval-io.js";
-import { type CandidateSnapshot, type OriginErrorCode, type OriginResolver, type SnapshotInput, qualificationHash, revalidateQualification, staticWritable } from "./approval-origin.js";
+import { type OriginErrorCode, type OriginResolver, type SnapshotInput, qualificationHash, revalidateQualification } from "./approval-origin.js";
 import { type SlotRef, requestPaths } from "./approval-paths.js";
+import { snapshotInputs } from "./approval-snapshot.js";
 import { loadFreshConfig, loadFreshEnrollment } from "./approval-runtime.js";
-import type { Origin, PremiseResult, Sha256, WritableSet } from "./approval-types.js";
+import type { Origin, PremiseResult, Sha256 } from "./approval-types.js";
 import { type ResolvedAgent, type ResolvedProject, resolveProjectFrom } from "./config.js";
 import { type ContainmentDisposition, approvalContainmentChecks } from "./doctor-approval-containment.js";
 import { type PremiseOptions, agentPremiseChecks, projectPremiseChecks } from "./doctor-approval-premises.js";
-import { agentForCandidate, candidatesFor } from "./fallback.js";
 import { atomicWrite, readRegularFileCappedNoFollow } from "./fs-util.js";
 import { roleOfName } from "./instances.js";
 import { StrictAttempt, latestSlotAttempt, mailDir } from "./message-store.js";
 import { canonicalPath, homePaths, projectPaths } from "./paths.js";
-import { outboxDir, sharedDir, sharedIndex, writePolicy } from "./policy.js";
 import { GlobalConfig, ProjectConfig } from "./schema.js";
 
 /**
@@ -57,7 +56,10 @@ export const GATE_TEXT: Readonly<Record<GateCode, { mail: string; status: string
   CONFIG_INVALID: { mail: "A configuration file could not be read safely, so this agent is not woken for the rest of this run.", status: "configuration file unreadable or invalid" },
   ORIGIN_UNREADABLE: { mail: "The agent's qualification could not be recomputed, so it is not woken for the rest of this run.", status: "qualification could not be recomputed" },
   NO_BASELINE: { mail: "The run has no recorded qualification for this agent, so it is not woken for the rest of this run.", status: "no qualification recorded for this run" },
-  DIR_ANOMALY: { mail: "The agent's approval request directory is not a plain directory chain, so it is not woken until that is fixed.", status: "request directory is unsafe" },
+  DIR_ANOMALY: {
+    mail: "This agent's approval request directory needs repair (an unsafe directory, an unreadable collected.seq, a held .coord lock, or no hard-link support), so it is not woken until that is fixed. See the approval_collect entries in log.jsonl.",
+    status: 'request directory needs repair, see the "approval_collect" class in log.jsonl (symlink or not_directory: make proposals and collected plain directories; corrupt: fix collected.seq; held: stop all runs, then remove a stale .coord directory; unsupported: use a filesystem with hard links)',
+  },
   RESIDUAL_OUTPUT: { mail: "Earlier approval output of this agent is still waiting to be collected, so it is not woken until then.", status: "earlier approval output is waiting" },
   UNDETERMINABLE: { mail: "Approval safety or output state could not be determined; this slot is not woken. Run doctor for containment diagnostics.", status: "approval state could not be determined" },
 };
@@ -65,51 +67,20 @@ export const GATE_TEXT: Readonly<Record<GateCode, { mail: string; status: string
 // ---- baseline and qualification ----
 
 const abs = (p: string): string => canonicalPath(p);
-const setOf = (dirs: readonly string[], files: readonly string[]): WritableSet => ({ dirs: dirs.map(abs), files: files.map(abs) });
 
 /**
- * What `qualificationHash` is computed from, for each executor `slot`'s role is allowed to use. `bound` is the project bound to the run
- * (same binding as the session). Run-only entries (task memory, outbox, `_shared` and its index) are removed so the hash is run-independent;
- * `enrolled` is dropped before `writePolicy` so no approval deny scan runs (the allow lists do not depend on it).
+ * What `qualificationHash` is computed from, for each executor `slot`'s role is allowed to use (see `approval-snapshot.ts` for the definition).
+ * `bound` is the project bound to the run (same binding as the session).
  */
 export function slotSnapshotInputs(bound: ResolvedProject, slot: string, config: ExecutorsConfig): Map<string, SnapshotInput> {
-  const out = new Map<string, SnapshotInput>();
-  const agent = bound.agents[slot];
-  if (!agent) return out;
-  const role = roleOfName(bound.agents, slot);
-  const { executors } = qualificationOf(config, { project: bound.name, role });
-  if (executors.length === 0) return out;
-  const { enrolled: _e, approval: _a, ...plain } = agent;
-  const pol = writePolicy(bound, plain as ResolvedAgent);
-  const shared = sharedDir(bound);
-  const index = sharedIndex(bound);
-  const staticSet = staticWritable({
-    effective: setOf(pol.allowDirs, pol.allowFiles),
-    run_only: setOf([agent.memory.task, outboxDir(bound, slot), shared].filter((x): x is string => !!x), index ? [index] : []),
-    static_duplicates: { dirs: [], files: [] },
-  });
-  const candidates: CandidateSnapshot[] = candidatesFor(agent).map((c) => {
-    const eff = agentForCandidate(agent, c);
-    return {
-      runtime: c.runtime,
-      sandbox: eff.sandbox ? { write: [...eff.sandbox.write], network: [...eff.sandbox.network], local_binding: eff.sandbox.localBinding, unix_sockets: [...eff.sandbox.unixSockets] } : null,
-      allow_web: eff.allowWeb ?? null,
-    };
-  });
-  for (const name of executors) {
-    const executor = config.executors[name];
-    if (executor) out.set(name, { runtime_candidates: candidates, writable: staticSet, project_dir: abs(bound.dir), executor });
-  }
-  return out;
+  return snapshotInputs(bound, slot, config).inputs;
 }
 
 export function baselineFor(bound: ResolvedProject, slot: string, config: ExecutorsConfig, runId: string): SlotBaseline {
-  const inputs = slotSnapshotInputs(bound, slot, config);
-  const first = inputs.values().next().value as SnapshotInput | undefined;
+  const { full, inputs } = snapshotInputs(bound, slot, config);
   const hashes = new Map<string, Sha256>();
   for (const [name, input] of inputs) hashes.set(name, qualificationHash(input));
-  const origin: Origin = { kind: "run", project: bound.name, run_id: runId, project_dir: abs(bound.dir), role: roleOfName(bound.agents, slot),
-    full_writable: first?.writable ?? { dirs: [], files: [] } };
+  const origin: Origin = { kind: "run", project: bound.name, run_id: runId, project_dir: abs(bound.dir), role: roleOfName(bound.agents, slot), full_writable: full };
   return { slot, origin, hashes };
 }
 

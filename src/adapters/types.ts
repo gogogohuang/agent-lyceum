@@ -24,6 +24,11 @@ export interface WakeInput {
    * either: the runtime starts in an empty scratch dir inside `workDir` and may only read the repo.
    */
   policy?: WritePolicy;
+  /**
+   * Internal. The canonical approval request directory of an enrolled slot, set only for a claim wake (never for tidy, verify, format or call): it is
+   * granted as one more writable directory. Never combined with `policy`.
+   */
+  proposalsDir?: string;
 }
 
 export interface WakeResult {
