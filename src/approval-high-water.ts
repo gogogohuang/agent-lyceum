@@ -15,6 +15,8 @@ import type { Sequence } from './approval-types.js';
  * high-water and scanning collected/ (or choosing the gc target) until the whole operation
  * finishes: rotate = proposals check, directory rename, recreate empty proposals, advance;
  * gc = re-confirm target, advance high-water first, rename/delete collected dir, remove `.done`.
+ * Stage 3 provides that coordination: `withSlotCoord` (src/approval-rotation.ts) takes an exclusive `<slot root>/.coord`
+ * directory (mkdir 0700, never stolen, released in finally); a future gc must take the same one.
  * An existing run/call lease is NOT evidence that this holds. Nothing here locks, allocates or
  * guarantees safety under concurrent callers; two unsynchronized read-max/rename sequences can
  * go backwards. Stage 3/6 must serialize or refuse overlap before wiring these in.
