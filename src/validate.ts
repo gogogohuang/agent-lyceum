@@ -4,7 +4,7 @@ import { enforcementFor, memoryDirs, type AgentEnforcement, type Level } from ".
 import { describeConflict, fallbackCapExcess, sandboxConflictsOf } from "./sandbox-invocation.js";
 import { isInside } from "./paths.js";
 import { shipCommands, shipEnabled } from "./ship-wire.js";
-import { inferRuntime, RUNTIME_EFFORTS, RUNTIMES } from "./schema.js";
+import { inferRuntime, isGrokModel, RUNTIME_EFFORTS, RUNTIMES, type Runtime } from "./schema.js";
 import { ladderIndex } from "./tiers.js";
 import { must } from "./assert.js";
 
@@ -52,13 +52,17 @@ export function validateProject(project: ResolvedProject): ValidationResult {
         err(`Agent "${a.name}": model "${a.model}" is not on model_tiers.${a.runtime} (${ladder.join(", ")}). Add it to the ladder, or set model_tiers.${a.runtime}: [] in project.yaml to turn the ladder off for this project.`);
       }
     }
-    if (!a.runtime) err(`Agent "${a.name}" has no runtime (set runtime, or a recognizable model such as opus/sonnet/haiku/claude-* or gpt-*/codex-*).`);
+    if (!a.runtime) err(`Agent "${a.name}" has no runtime (set runtime, or a recognizable model such as opus/sonnet/haiku/claude-*, gpt-*/codex-* or grok-*).`);
+    if (a.runtime === "cursor") {
+      if (!a.model?.trim()) err(`Agent "${a.name}": runtime cursor requires a grok-* model.`);
+      else if (!isGrokModel(a.model)) err(`Agent "${a.name}": runtime cursor only allows grok-* models (got "${a.model}").`);
+    }
     const modelRuntime = inferRuntime(a.model);
     if (a.runtime && modelRuntime && modelRuntime !== a.runtime) {
       warn(`Agent "${a.name}": model "${a.model}" looks like a ${modelRuntime} model but runtime is ${a.runtime}.`);
     }
     if (a.effort && a.runtime && !RUNTIME_EFFORTS[a.runtime].includes(a.effort)) {
-      err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime} (use ${RUNTIME_EFFORTS[a.runtime].join(", ")}).`);
+      err(`Agent "${a.name}": effort "${a.effort}" is not supported by ${a.runtime}${effortHint(a.runtime)}.`);
     }
     validateFallback(project, a, err);
     for (const c of sandboxConflictsOf(project, a, false)) err(describeConflict(a.name, c, "load"));
@@ -120,6 +124,8 @@ export function validateProject(project: ResolvedProject): ValidationResult {
 
 const PARITY_FIELDS = ["memory", "agentMd", "otherContext", "shared", "repoInstructions"] as const;
 const norm = (m: string | undefined) => (m ?? "").trim().toLowerCase();
+/** " (use a, b)" for runtimes with an effort list; empty for runtimes that accept none (cursor). */
+const effortHint = (rt: Runtime) => (RUNTIME_EFFORTS[rt].length ? ` (use ${RUNTIME_EFFORTS[rt].join(", ")})` : "");
 
 /** Load-time (fail closed) checks of one agent's fallback chain: well-formed, not a no-op, and no weaker at write-scope than the primary. */
 function validateFallback(project: ResolvedProject, a: ResolvedAgent, err: (message: string) => void): void {
@@ -139,7 +145,10 @@ function validateFallback(project: ResolvedProject, a: ResolvedAgent, err: (mess
       continue;
     }
     if (f.effort && !RUNTIME_EFFORTS[f.runtime].includes(f.effort)) {
-      err(`agent ${a.name}: fallback ${label}: effort "${f.effort}" is not supported by ${f.runtime} (use ${RUNTIME_EFFORTS[f.runtime].join(", ")}).`);
+      err(`agent ${a.name}: fallback ${label}: effort "${f.effort}" is not supported by ${f.runtime}${effortHint(f.runtime)}.`);
+    }
+    if (f.runtime === "cursor" && !isGrokModel(f.model)) {
+      err(`agent ${a.name}: fallback ${label} needs a grok-* model (runtime cursor only allows grok-* models).`);
     }
     if (!primary) continue;
     // `prompt-only` is the one level that is no enforcement at all; everything else (os, tool-rules, post-hoc) still holds the line.

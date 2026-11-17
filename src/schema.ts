@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUNTIMES = ["claude-code", "codex"] as const;
+export const RUNTIMES = ["claude-code", "codex", "cursor"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
 
 /** Union of both runtimes' levels; `validate` rejects the ones a given runtime does not accept. */
@@ -11,7 +11,12 @@ export type Effort = (typeof EFFORTS)[number];
 export const RUNTIME_EFFORTS: Record<Runtime, readonly Effort[]> = {
   "claude-code": ["low", "medium", "high", "xhigh", "max"],
   codex: ["minimal", "low", "medium", "high", "xhigh"],
+  cursor: [],
 };
+
+export function isGrokModel(model: string | undefined): boolean {
+  return !!model && model.trim().toLowerCase().startsWith("grok");
+}
 
 /** Guess the runtime from a model name: Claude aliases/IDs -> claude-code, GPT/o-series/codex names -> codex. */
 export function inferRuntime(model: string | undefined): Runtime | undefined {
@@ -19,6 +24,7 @@ export function inferRuntime(model: string | undefined): Runtime | undefined {
   const m = model.trim().toLowerCase();
   if (/^(claude|anthropic|opus|sonnet|haiku|fable|best|default|opusplan)\b/.test(m) || m.includes("claude")) return "claude-code";
   if (/^(gpt|codex|o\d)/.test(m) || m.includes("codex")) return "codex";
+  if (isGrokModel(m)) return "cursor";
   return undefined;
 }
 
@@ -129,6 +135,7 @@ export const ModelTiersPartial = z
   .object({
     "claude-code": z.array(z.string().trim().min(1)).optional(),
     codex: z.array(z.string().trim().min(1)).optional(),
+    cursor: z.array(z.string().trim().min(1)).optional(),
   })
   .strict();
 

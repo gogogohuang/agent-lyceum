@@ -28,9 +28,21 @@ agents:
   pm:        { can_message: [lead], allow_web: fetch }   # pm may search and read pages; the others have no web tools
 ```
 
-Agent fields: `runtime` (`claude-code`|`codex`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; unset = CLI default), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)), `ship` (`true` or `{ verify?, timeout_sec? }`; Claude Code **and** Codex wakes get a ship session plus the `agent-lyceum ship` CLI in the prompt; off by default; see [Ship](#ship-edits-that-stay-only-if-tests-pass)).
+Agent fields: `runtime` (`claude-code`|`codex`|`cursor`; optional when `model` is recognizable: `opus`/`sonnet`/`haiku`/`claude-*` → Claude Code, `gpt-*`/`o3`/`*codex*` → Codex, `grok-*` → Cursor; precedence: project runtime > project model > global runtime > global model), `model`, `effort` (Claude Code: `low`|`medium`|`high`|`xhigh`|`max` via `--effort`; Codex: `minimal`|`low`|`medium`|`high`|`xhigh` via `model_reasoning_effort`; Cursor: **not supported** — do not set `effort`; unset = CLI default for Claude Code and Codex), `agent_md`, `memory.global` / `memory.project`, `resume`, `can_message` (`all` or list; default `[lead]`, lead default `all`), `can_edit_agent_md` (default only the lead; a member may still write its own `agents/<name>/AGENT.md`, which does not grant editing anyone else's persona or the repo instructions), `can_ask_user` (may send `type: ask` mail to you and pause the run for an answer; default only the lead), `allow_web` (`none`|`search`|`fetch`; what the agent may use of the web, off unless set; see "Web access" below), `sandbox` (`write`, `network`, `local_binding`, `unix_sockets`; per-agent sandbox allowances, all off unless set; see [Sandbox allowances](#sandbox-allowances)), `ship` (`true` or `{ verify?, timeout_sec? }`; Claude Code **and** Codex wakes get a ship session plus the `agent-lyceum ship` CLI in the prompt; off by default; see [Ship](#ship-edits-that-stay-only-if-tests-pass)).
 
 Rules checked by `doctor`: ≥ 2 agents (the lead and one member; the template has three), the lead is a listed agent, every agent has a runtime (explicit or inferred from `model`) and an existing `AGENT.md`, `effort` is valid for the agent's runtime (warning if `runtime` contradicts a recognizable `model`), `can_message` targets exist, and memory dirs don't overlap. Settings removed in the zero-config concurrency change (see [Upgrading](upgrading-run-v2.md)) still load and only produce a warning.
+
+### Cursor runtime
+
+Use the Cursor CLI binary `agent` with a **grok-\*** model (a Grok-capable Cursor account). Explicit `runtime: cursor` requires an explicit grok model; `inferRuntime` maps any recognizable `grok-*` `model` to Cursor.
+
+```yaml
+# project.yaml (or team.yaml)
+agents:
+  grok-reviewer: { runtime: cursor, model: grok-4.7 }
+```
+
+`doctor` probes `agent` like the other runtimes. Resume passes the stored `session_id`; Cursor sessions may be scoped to the config dir (the per-run `workDir`), so resuming across runs is unverified. See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
 
 Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 
@@ -94,12 +106,12 @@ All four keys are optional; `[]` and `false` mean the same as leaving them out. 
 
 **What each runtime gets:**
 
-| Key | Claude Code | Codex |
-|---|---|---|
-| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` |
-| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns |
-| `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns |
-| `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns |
+| Key | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| `write` | added to the `Edit` rules, sandbox `allowWrite` and `--add-dir` | added to `sandbox_workspace_write.writable_roots` | added as `Write(...)` rules in the per-wake `cli-config.json` (`CURSOR_CONFIG_DIR`) with `--sandbox enabled`; paths outside `--workspace` also get `--add-dir` |
+| `network` | `sandbox.network.allowedDomains` (per domain) | any domain turns on `network_access=true`: **all hosts**, not only the ones listed; `doctor` warns | **not applied** (no network setting is emitted yet; `doctor` says "not applied by cursor") |
+| `local_binding` | `sandbox.network.allowLocalBinding: true` | not applied; `doctor` warns | not applied; `doctor` warns |
+| `unix_sockets` | `sandbox.network.allowUnixSockets` | not applied; `doctor` warns | not applied; `doctor` warns |
 
 A wake-up that runs with a policy override (such as the memory tidy) gets none of the allowances. With no OS sandbox (Windows, Linux without `bwrap`): Claude's `write` only widens the `Edit` tool rules and Bash can bypass them, the other keys have no effect; Codex is prompt-only, so no allowance is enforced. `doctor` says so per agent. What each key really allows is in [Write scope](write-scope.md#sandbox-allowances).
 
@@ -107,17 +119,17 @@ A wake-up that runs with a policy override (such as the memory tidy) gets none o
 
 ## Ship (edits that stay only if tests pass)
 
-A per-agent wake path through this package's **CLI** (`agent-lyceum ship` — not Turnpack or an external MCP): multi-file search/replace, verify, byte-exact rollback on failure. Shared by Claude Code and Codex. Does not change mail, the dispatcher, or the `done` contract; complements project-level `verify` (after the lead's `done`). Design: [spec](superpowers/specs/2026-11-15-agent-ship-design.md).
+A per-agent wake path through this package's **CLI** (`agent-lyceum ship` — not Turnpack or an external MCP): multi-file search/replace, verify, byte-exact rollback on failure. Shared by Claude Code, Codex and Cursor. Does not change mail, the dispatcher, or the `done` contract; complements project-level `verify` (after the lead's `done`). Design: [spec](superpowers/specs/2026-11-15-agent-ship-design.md).
 
 ```yaml
 # project.yaml
 agents:
   fe-member:
-    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code or Codex
+    ship: { verify: "npm test -w web", timeout_sec: 120 }   # Claude Code, Codex or Cursor
 ```
 
 - **Off by default.** Set `ship: true` or `{ verify: … }`. At least one verify command must resolve: `ship.verify` (one command), otherwise the **whole** `project.verify.commands` chain. If neither exists, no session is written, the agent is not offered ship, and `validate` / `doctor` warn about it.
-- **Both runtimes:** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
+- **All runtimes (Claude Code, Codex, Cursor):** the wake writes `ship-session.json` (root / verify `commands` / deny) and puts the **full CLI command** in the system prompt; the agent runs it via Bash (or equivalent) with `edits` JSON on stdin only.
 - **Fixed verify:** only the session commands run, in order, and stop at the first failure (the result names the failing command); the request body must not supply another verify. They run in the agent's shell environment (same class of risk as built-in Bash).
 - **Timeouts:** with the project chain, each command uses its own `timeout_sec`; `ship.verify` is a single command that uses `ship.timeout_sec` (default 120). If `ship.timeout_sec` is set it overrides every command's timeout. The prompt tells the agent the total maximum verify time so it can set its shell tool timeout above it.
 - **Interruption:** on SIGINT / SIGTERM / SIGHUP the CLI cancels verify and restores every file, then exits 1. SIGKILL cannot be caught, so a hard kill can leave edited files behind.

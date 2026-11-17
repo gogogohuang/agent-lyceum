@@ -1,3 +1,4 @@
+import { buildCursorInvocation } from "../src/adapters/cursor.js";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -118,6 +119,20 @@ describe("project write scope", () => {
     write(foreign, "taken\n");
     expect(g.check([member]).map((x) => x.file)).toEqual([foreign]);
     expect(fs.readFileSync(foreign, "utf8")).toBe("qa persona\n");
+  });
+
+  it("does not give a Cursor lead shared/common via --add-dir when that directory holds another agent's persona", () => {
+    env = makeEnv();
+    const p = env.project();
+    const common = projectCommonDir(p);
+    const foreign = path.join(common, "qa-persona.md");
+    const project = { ...p, agents: { ...p.agents, "qa-member": { ...p.agents["qa-member"]!, agentMd: foreign } } };
+    const dirsOf = (proj: typeof p) => {
+      const inv = buildCursorInvocation({ workDir: path.join(env.root, "cw"), systemPrompt: "s", userPrompt: "u", timeoutSec: 60, project: proj, agent: { ...proj.agents.lead, runtime: "cursor", model: "grok-4.7" } });
+      return inv.args.flatMap((a, i) => (a === "--add-dir" ? [inv.args[i + 1]!] : []));
+    };
+    expect(dirsOf(project)).not.toContain(common);
+    expect(dirsOf(p)).toContain(common);
   });
 
   it("does not give a Codex lead shared/common back through the COMMON.md parent when that directory holds another agent's persona", () => {

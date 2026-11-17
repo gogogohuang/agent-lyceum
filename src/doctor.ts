@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { cursorConfigDir, hasCursorAuth } from "./adapters/cursor.js";
 import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
@@ -55,7 +56,7 @@ export interface ProbeOptions {
   timeoutMs?: number;
 }
 
-const BINARY: Record<Runtime, string> = { "claude-code": "claude", codex: "codex" };
+const BINARY: Record<Runtime, string> = { "claude-code": "claude", codex: "codex", cursor: "agent" };
 
 type Probe = { state: "ok" | "missing" | "timeout" | "failed"; out: string };
 
@@ -102,6 +103,11 @@ export async function probeRuntime(runtime: Runtime, opts: ProbeOptions = {}): P
     caps.resume = has(h.out, /--resume\b/);
     caps.sandbox = has(h.out, /--settings\b/) === "yes" ? "yes" : "unknown";
     caps.effort = has(h.out, /--effort\b/);
+  } else if (runtime === "cursor") {
+    caps.json = has(h.out, /--output-format\b/);
+    caps.resume = has(h.out, /--resume\b/);
+    caps.sandbox = has(h.out, /--sandbox\b/);
+    caps.effort = "no"; // the Cursor CLI has no effort flag
   } else {
     caps.json = has(h.out, /--json\b/);
     caps.sandbox = has(h.out, /--sandbox\b|\s-s,/);
@@ -256,6 +262,18 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));
   checks.push({ level: "info", subject: "login", message: "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on." });
+  if (runtimesUsed(project, true).includes("cursor")) {
+    const env = opts.env ?? process.env;
+    const hasKey = !!(env.CURSOR_API_KEY ?? "").trim();
+    const hasAuth = hasCursorAuth(cursorConfigDir(env));
+    if (!hasKey && !hasAuth) {
+      checks.push({
+        level: "warn",
+        subject: "cursor",
+        message: "Cursor agents need `agent login` or CURSOR_API_KEY; neither CURSOR_API_KEY nor auth.json in the Cursor config dir was found.",
+      });
+    }
+  }
   return { project: project.name, ok: !checks.some((c) => c.level === "error"), checks, runtimes };
 }
 

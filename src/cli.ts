@@ -892,6 +892,7 @@ program
     try {
       let runtime = opts.runtime as Runtime | undefined;
       if (runtime && !RUNTIMES.includes(runtime)) fail(`Unknown runtime "${runtime}". Use one of: ${RUNTIMES.join(", ")}.`);
+      if (runtime === "cursor") fail("The demo does not support cursor yet (it needs a grok-* model). Use claude-code or codex.");
       runtime ??= detectRuntime();
       if (!runtime) {
         if (!opts.setupOnly) fail("Neither `claude` nor `codex` was found on your PATH (and logged in). Install one, or use --setup-only to just look at the sandbox.");

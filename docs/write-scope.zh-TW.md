@@ -15,6 +15,7 @@
 
 - **Claude Code**：每次執行帶入 `--settings`，內含 `Edit(...)` 規則，**加上** OS 沙箱（`allowWrite`/`denyWrite`、`allowUnsandboxedCommands: false`）。沒有沙箱時，`python -c` 之類的做法能繞過 Edit 規則，因此 `os` 等級必須啟用沙箱。
 - **Codex**：`-s workspace-write` 搭配 `-c sandbox_workspace_write.writable_roots=[...]`（由 OS 強制）。Codex 無法禁止 repo 內的單一檔案，所以 repo 的 `CLAUDE.md`/`AGENTS.md` 只能靠**事後偵測**保護。
+- **Cursor**：以 `agent` 搭配 `--sandbox enabled`，並在每次 wake 的 `workDir` 寫入經 `CURSOR_CONFIG_DIR` 讀取的 `cli-config.json`（`permissions.allow`／`deny` **只**來自 write policy——**不會**合併使用者自己的 `permissions.allow`，因此家目錄裡的 `Shell(*)` 無法放寬 agent）。這是 **tool-rules** 層級，不是 Claude／Codex 那種 OS 路徑級 `denyWrite`；repo 的 `CLAUDE.md`／`AGENTS.md` 與 Codex 一樣依賴**事後偵測**。`auth.json` 會從你的 Cursor 設定目錄以 symlink（失敗時改複製）放進以 run 為範圍的 `workDir`，讓登入在 `CURSOR_CONFIG_DIR` 覆寫後仍可用；wake 結束後不需要它繼續留在那裡。`--workspace` 之外的可寫路徑（記憶、outbox）也會以 `--add-dir` 傳入。`resume` 傳入已存的 `session_id`；Cursor 的 session 可能以設定目錄（`CURSOR_CONFIG_DIR` 即每次 run 的 `workDir`）為範圍，所以跨 run 的 resume **尚未驗證**。
 - **所有 runtime**：執行前會對受保護檔案做雜湊；每次喚醒後，未經授權的變更會被還原、記錄，並通報 lead；被寫入的內容會先留存在 `runs/<run-id>/violations/`。
 
 **guard 無法歸屬的變更。** `COMMON.md`、紀錄目錄 `shared/common/records/` 與團隊的 `AGENT.md` 由專案的所有 run 共用。若一批喚醒中沒有任何 agent 可編輯某個這類檔案，而同專案的另一個 run 在該批開始或結束時仍存活（它的 run lock 被存活的行程持有），這個檔案的變更就無法歸屬到本 run。此時 guard 不還原、不在 `violations/` 留副本、也不寄信給 lead；該變更成為新的基準，run 日誌會記一筆 `protected-change-unattributed` 事件（另印一行主控台訊息）。原因：另一個 run 的 lead 本來就會合法編輯這些檔案，還原它們只會白白喚醒本 run 的 lead。這只略過 guard 無法歸屬的部分：本 run 自己的 agent 在該時段內的違規也不會被還原，那時只剩上述 runtime／OS 沙箱擋得住。每個 run 專屬的檔案（run 的交接筆記、repo 的 `CLAUDE.md`/`AGENTS.md`），以及沒有其他 run 存活時的任何變更，仍照原樣還原並通報。見[同時多個 run](how-it-works.zh-TW.md#同時執行多個-task)。
@@ -29,10 +30,11 @@ agent worktree 內的 git:agent 能寫它 worktree 的 `.git` 指標檔與私有
 
 agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；欄位說明見 [設定](configuration.zh-TW.md#sandbox-放寬)，設計見 [spec 25](specs/25-sandbox-allowances.md)）只在有設定時，才只對該 agent 放寬 OS sandbox。這已在 0.28.0 實作；各鍵在真實喚醒中的端到端效果**未驗證**。
 
-- **`write`** 把目錄加進該 agent 的寫入範圍，就是給 Claude `Edit` 規則、`allowWrite`、`--add-dir`，以及給 Codex `writable_roots` 的同一份清單。受保護路徑永遠不能加，例如：設定資料夾或 repo 內的任何位置、所有 `AGENT.md`、記憶資料夾、inbox 與 outbox、`COMMON.md`、紀錄資料夾、該 run 的資料、其他 agent 的 worktree 與 git 目錄、git common dir、worktrees 根目錄、repo 的 `CLAUDE.md`／`AGENTS.md`、`~/.claude`、`~/.codex`，以及它們的祖先。完整清單見[設定](configuration.zh-TW.md#sandbox-放寬)；被拒絕的 invocation 會記為 `sandbox-refused`，不重試。
-- **`unix_sockets`** 允許所列路徑下的 Unix socket **bind 與 connect**，不只是測試裡的 listen。該資料夾內的服務都連得到，所以不要把 Docker、ssh-agent 之類的 socket 放進去。只有 Claude Code 有作用；Codex 什麼都不會得到，`doctor` 會警告。
+- **`write`** 把目錄加進該 agent 的寫入範圍，就是給 Claude `Edit` 規則、`allowWrite`、`--add-dir`、給 Codex `writable_roots`、以及給 Cursor `cli-config.json` 內 `Write(...)` 規則（`--workspace` 之外的路徑另加 `--add-dir`）的同一份清單。受保護路徑永遠不能加，例如：設定資料夾或 repo 內的任何位置、所有 `AGENT.md`、記憶資料夾、inbox 與 outbox、`COMMON.md`、紀錄資料夾、該 run 的資料、其他 agent 的 worktree 與 git 目錄、git common dir、worktrees 根目錄、repo 的 `CLAUDE.md`／`AGENTS.md`、`~/.claude`、`~/.codex`，以及它們的祖先。完整清單見[設定](configuration.zh-TW.md#sandbox-放寬)；被拒絕的 invocation 會記為 `sandbox-refused`，不重試。
+- **`unix_sockets`** 允許所列路徑下的 Unix socket **bind 與 connect**，不只是測試裡的 listen。該資料夾內的服務都連得到，所以不要把 Docker、ssh-agent 之類的 socket 放進去。只有 Claude Code 有作用；Codex 與 Cursor 什麼都不會得到，`doctor` 會警告。
 - **`local_binding`**（只有 Claude Code）允許在**任何本機 IP**（不只 loopback）bind 與接受連入連線，以及連出到 localhost 上的服務。它不是「只在 localhost 提供服務」。依 Claude Code 文件，它在 Linux 上無效果（[sandboxing](https://code.claude.com/docs/en/sandboxing)）。它不涵蓋 Unix socket。
-- **`network`**：Claude Code 逐網域；Codex 全有全無（列任何網域就開放所有主機）。
+- **`network`**：Claude Code 逐網域；Codex 全有全無（列任何網域就開放所有主機）；Cursor **未套用**（目前不會送出任何網路設定，所以什麼都不會開放；`doctor` 顯示「not applied by cursor」）。
+- **Cursor 上的 `allow_web`**：`allow_web: fetch` 會加入 `WebFetch(*)` allow 規則；`none` 或未設則 deny。`allow_web: search` 目前沒有對應的 Cursor permission token，`WebFetch` 仍會被拒絕，除非改設 `fetch`（見[網路存取](web-access.zh-TW.md)）。
 - **不變：** `allowUnsandboxedCommands` 維持 `false`，Codex 維持 `workspace-write`，沒有任何鍵能讓任何 agent（含 lead）在 sandbox 外執行。非 lead 的 agent 永遠不會在 sandbox 外執行。（lead 的 `done` 被接受且要求時，推分支與開 PR 的是 dispatcher，不是 agent。）
 - **是寫入範圍，不是讀取隔離：** 這些鍵放寬的是 agent 可寫入或可連線的範圍，不限制讀取，也不會讓某個 agent 無法讀其他 agent 的記憶。
 - **沒有 OS sandbox：** Claude 的 `write` 只擴大 `Edit` 工具規則（Bash 可繞過），其他鍵無作用；Codex 只靠提示。路徑在每次 invocation 前檢查，但檢查與 spawn 之間被換掉的路徑無法防禦；邊界是 OS sandbox。
