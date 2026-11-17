@@ -3,13 +3,6 @@ import { z } from "zod";
 export const RUNTIMES = ["claude-code", "codex", "cursor"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
 
-/** Display names for doctor / policy notes (one place so a fourth runtime cannot silently mislabel). */
-export const RUNTIME_LABEL: Record<Runtime, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  cursor: "Cursor",
-};
-
 /** Union of both runtimes' levels; `validate` rejects the ones a given runtime does not accept. */
 export const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];

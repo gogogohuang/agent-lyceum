@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { cursorConfigDir, hasCursorAuth } from "./adapters/cursor.js";
 import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
@@ -264,13 +265,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   if (runtimesUsed(project, true).includes("cursor")) {
     const env = opts.env ?? process.env;
     const hasKey = !!(env.CURSOR_API_KEY ?? "").trim();
-    const configDir = env.CURSOR_CONFIG_DIR || path.join(os.homedir(), ".cursor");
-    let hasAuth = false;
-    try {
-      hasAuth = fs.statSync(path.join(configDir, "auth.json")).isFile();
-    } catch {
-      /* missing */
-    }
+    const hasAuth = hasCursorAuth(cursorConfigDir(env));
     if (!hasKey && !hasAuth) {
       checks.push({
         level: "warn",

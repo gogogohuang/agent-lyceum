@@ -88,6 +88,15 @@ describe("cursor adapter", () => {
     expect(() => buildCursorInvocation(wake(env, "fe-member", { userPrompt: "好".repeat(40_000) }))).toThrow(/too long/);
   });
 
+  it("realInvoker turns an oversized prompt into a config failure instead of throwing", async () => {
+    env = makeEnv();
+    const { realInvoker } = await import("../src/adapters/index.js");
+    const r = await realInvoker(wake(env, "fe-member", { userPrompt: "x".repeat(100_001) }));
+    expect(r.ok).toBe(false);
+    expect(r.kind).toBe("config");
+    expect(r.error).toMatch(/too long/);
+  });
+
   it("keeps a flag-looking prompt from being parsed as an option", () => {
     env = makeEnv();
     const inv = buildCursorInvocation(wake(env, "fe-member", { systemPrompt: "--force it" }));
@@ -152,7 +161,11 @@ describe("cursor adapter", () => {
     const file = writeCursorCliConfig(w.workDir, w);
     expect(fs.readFileSync(path.join(w.workDir, "auth.json"), "utf8")).toBe('{"token":"t"}');
     // preferred: a link, so no second copy of the credential is left in the run's dir
-    expect(fs.lstatSync(path.join(w.workDir, "auth.json")).isSymbolicLink()).toBe(true);
+    // a copy (0600), not a link: a token refresh in the run dir must never reach the user's own login file
+    expect(fs.lstatSync(path.join(w.workDir, "auth.json")).isSymbolicLink()).toBe(false);
+    fs.writeFileSync(path.join(w.workDir, "auth.json"), "refreshed");
+    expect(fs.readFileSync(path.join(srcDir, "auth.json"), "utf8")).toBe('{"token":"t"}');
+    fs.writeFileSync(path.join(w.workDir, "auth.json"), '{"token":"t"}');
     // a later wake replaces a stale copy
     fs.rmSync(path.join(w.workDir, "auth.json"));
     fs.writeFileSync(path.join(w.workDir, "auth.json"), "stale");

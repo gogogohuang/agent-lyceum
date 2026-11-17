@@ -289,41 +289,16 @@ export function enforcementFor(project: ResolvedProject, agent: ResolvedAgent): 
 function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
   const s = agent.sandbox;
   if (!s) return [];
-  const claude = agent.runtime === "claude-code";
-  const cursor = agent.runtime === "cursor";
   const notes: string[] = [];
-  if (!os) {
-    notes.push(
-      claude
-        ? "no OS sandbox; sandbox.write changes Edit tool rules only; network/local_binding/unix_sockets have no effect."
-        : cursor
-          ? "Cursor allowances still rely on cli-config permissions and --sandbox; network/local_binding/unix_sockets are not emitted."
-          : "no OS sandbox; enforcement is prompt-only; sandbox allowances provide no OS enforcement.",
-    );
-  }
+  const rt = agent.runtime === "claude-code" ? "claude" : agent.runtime === "cursor" ? "cursor" : "codex";
+  const T = SANDBOX_NOTE_TEXT[rt];
+  if (!os) notes.push(T.noOs);
   if (s.network.length) {
-    if (cursor) {
-      notes.push(`network: ${s.network.join(", ")} (not applied by cursor)`);
-      notes.push(`warn: sandbox.network has no Cursor setting; no setting emitted, so ${s.network.join(", ")} is not opened by agent-lyceum.`);
-    } else {
-      notes.push(`network: ${s.network.join(", ")} (${claude ? "claude-code: per-domain" : "codex: all hosts"})`);
-      if (!claude) notes.push(`warn: sandbox.network is all-or-nothing on Codex: this agent may reach any host, not only ${s.network.join(", ")}.`);
-    }
+    const list = s.network.join(", ");
+    notes.push(...T.network(list));
   }
-  if (s.localBinding) {
-    notes.push(claude ? (process.platform === "darwin" ? "local_binding: on" : "local_binding: requested, no effect on this platform (macOS only)") : `local_binding: requested, not supported by ${cursor ? "cursor" : "codex"}`);
-    if (!claude) {
-      notes.push(
-        cursor
-          ? "warn: sandbox.local_binding has no Cursor setting; no setting emitted."
-          : "warn: sandbox.local_binding has no Codex setting; whether a workspace-write sandbox lets it bind ports is unverified. sandbox.network turns on all network access, not only binding.",
-      );
-    }
-  }
-  if (s.unixSockets.length) {
-    notes.push(`unix_sockets: ${s.unixSockets.map(canonicalPath).join(", ")} (${claude ? "applied" : `not applied by ${cursor ? "cursor" : "codex"}`})`);
-    if (!claude) notes.push(`warn: sandbox.unix_sockets has no per-socket ${cursor ? "Cursor" : "Codex"} control; no setting emitted.`);
-  }
+  if (s.localBinding) notes.push(...T.localBinding());
+  if (s.unixSockets.length) notes.push(...T.unixSockets(s.unixSockets.map(canonicalPath).join(", ")));
   for (const [key, list] of [["write", s.write], ["unix_sockets", s.unixSockets]] as const) {
     list.forEach((p, i) => {
       if (!fs.existsSync(p)) notes.push(`info: sandbox.${key}[${i}] ${p} does not exist yet`);
@@ -331,6 +306,31 @@ function sandboxNotes(agent: ResolvedAgent, os: boolean): string[] {
   }
   return notes;
 }
+
+/** Per-runtime wording of the sandbox doctor notes: a new runtime adds one entry instead of touching every line. */
+const SANDBOX_NOTE_TEXT: Record<"claude" | "codex" | "cursor", { noOs: string; network: (list: string) => string[]; localBinding: () => string[]; unixSockets: (list: string) => string[] }> = {
+  claude: {
+    noOs: "no OS sandbox; sandbox.write changes Edit tool rules only; network/local_binding/unix_sockets have no effect.",
+    network: (list) => [`network: ${list} (claude-code: per-domain)`],
+    localBinding: () => [process.platform === "darwin" ? "local_binding: on" : "local_binding: requested, no effect on this platform (macOS only)"],
+    unixSockets: (list) => [`unix_sockets: ${list} (applied)`],
+  },
+  codex: {
+    noOs: "no OS sandbox; enforcement is prompt-only; sandbox allowances provide no OS enforcement.",
+    network: (list) => [`network: ${list} (codex: all hosts)`, `warn: sandbox.network is all-or-nothing on Codex: this agent may reach any host, not only ${list}.`],
+    localBinding: () => [
+      "local_binding: requested, not supported by codex",
+      "warn: sandbox.local_binding has no Codex setting; whether a workspace-write sandbox lets it bind ports is unverified. sandbox.network turns on all network access, not only binding.",
+    ],
+    unixSockets: (list) => [`unix_sockets: ${list} (not applied by codex)`, "warn: sandbox.unix_sockets has no per-socket Codex control; no setting emitted."],
+  },
+  cursor: {
+    noOs: "Cursor allowances still rely on cli-config permissions and --sandbox; network/local_binding/unix_sockets are not emitted.",
+    network: (list) => [`network: ${list} (not applied by cursor)`, `warn: sandbox.network has no Cursor setting; no setting emitted, so ${list} is not opened by agent-lyceum.`],
+    localBinding: () => ["local_binding: requested, not supported by cursor", "warn: sandbox.local_binding has no Cursor setting; no setting emitted."],
+    unixSockets: (list) => [`unix_sockets: ${list} (not applied by cursor)`, "warn: sandbox.unix_sockets has no per-socket Cursor control; no setting emitted."],
+  },
+};
 
 /** Can `agent` legitimately change this protected file? */
 export function mayEditProtected(project: ResolvedProject, agent: ResolvedAgent, file: string): boolean {

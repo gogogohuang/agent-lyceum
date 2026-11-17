@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ResolvedAgent } from "../src/config.js";
 import { enforcementFor, sandboxCaps, setOsSandboxForTest } from "../src/policy.js";
@@ -47,5 +50,41 @@ describe("enforcementFor cursor", () => {
     expect(text).not.toContain("all-or-nothing");
     expect(text).toContain("local_binding: requested, not supported by cursor");
     expect(text).toContain("not applied by cursor");
+  });
+});
+
+describe("cursor sandbox reporting and protected paths", () => {
+  it("never reports an OS sandbox, network setting or sockets for a cursor agent", async () => {
+    setOsSandboxForTest(true);
+    const { invokeWithSandboxChecks } = await import("../src/sandbox-invocation.js");
+    const env = makeEnv();
+    try {
+      const p = env.project();
+      const a = { ...p.agents["fe-member"]!, runtime: "cursor" as const, sandbox: sb({}) } as unknown as ResolvedAgent;
+      const events: Record<string, unknown>[] = [];
+      await invokeWithSandboxChecks(async () => ({ ok: true, text: "", exitCode: 0, timedOut: false }), { project: p, agent: a, workDir: env.root, systemPrompt: "", userPrompt: "", timeoutSec: 1 }, a, { event: (_n, f) => events.push(f) }, 1);
+      expect(events[0]?.applied).toEqual({ write: "tool-rules", network: "unrestricted", local_binding: "unrestricted", unix_sockets: "unrestricted" });
+    } finally {
+      env.cleanup();
+      setOsSandboxForTest(undefined);
+    }
+  });
+
+  it("protects the Cursor config dir like ~/.claude and ~/.codex", async () => {
+    const { protectedPathsFor } = await import("../src/sandbox-invocation.js");
+    const { canonicalPath } = await import("../src/paths.js");
+    const env = makeEnv();
+    const prev = process.env.CURSOR_CONFIG_DIR;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-cfg-"));
+    process.env.CURSOR_CONFIG_DIR = dir;
+    try {
+      const p = env.project();
+      expect(protectedPathsFor(p, p.agents["fe-member"]!, false).map((x) => x.path)).toContain(canonicalPath(dir));
+    } finally {
+      if (prev === undefined) delete process.env.CURSOR_CONFIG_DIR;
+      else process.env.CURSOR_CONFIG_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+      env.cleanup();
+    }
   });
 });

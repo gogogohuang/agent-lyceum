@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { repoDirFor, scratchCwd, writePolicy } from "../policy.js";
+import { projectCommonDir, projectCommonDirAllowed, repoDirFor, scratchCwd, writePolicy } from "../policy.js";
 import type { ErrorKind } from "../schema.js";
 import { applyShipToWake } from "../ship-wire.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
@@ -23,8 +23,17 @@ function denyRules(p: string): string[] {
 const AUTH_FILES = ["auth.json"];
 
 /** The user's own Cursor config dir: the one the CLI would read without our override. */
-function sourceConfigDir(): string {
-  return process.env.CURSOR_CONFIG_DIR || path.join(os.homedir(), ".cursor");
+export function cursorConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CURSOR_CONFIG_DIR || path.join(os.homedir(), ".cursor");
+}
+
+/** Whether `dir` holds a login the CLI can use (a regular `auth.json`). */
+export function hasCursorAuth(dir: string): boolean {
+  try {
+    return AUTH_FILES.some((n) => fs.statSync(path.join(dir, n)).isFile());
+  } catch {
+    return false;
+  }
 }
 
 function readJsonObject(file: string): Record<string, unknown> | undefined {
@@ -39,9 +48,9 @@ function readJsonObject(file: string): Record<string, unknown> | undefined {
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /**
- * Links (preferred) or copies auth files that exist in `src` into `workDir`; never touches cli-config.json.
- * `workDir` is run-scoped: nothing relies on the credentials staying there beyond the wake. A symlink leaves no second
- * copy of the secret behind; the copy is only the fallback where symlinks are not allowed.
+ * Copies (mode 0600) auth files that exist in `src` into `workDir`; never touches cli-config.json.
+ * A copy, not a symlink: if the CLI refreshes the token by rewriting or renaming the file, a link would either mutate the
+ * user's own login file or leave it with a stale refresh token. The copy is run-scoped and replaced on every wake.
  */
 function carryAuthFiles(src: string, workDir: string): void {
   if (path.resolve(src) === path.resolve(workDir)) return;
@@ -50,12 +59,9 @@ function carryAuthFiles(src: string, workDir: string): void {
     const to = path.join(workDir, name);
     try {
       if (!fs.statSync(from).isFile()) continue;
-      fs.rmSync(to, { force: true }); // a stale link or copy from an earlier wake
-      try {
-        fs.symlinkSync(path.resolve(from), to);
-      } catch {
-        fs.copyFileSync(from, to);
-      }
+      fs.rmSync(to, { force: true }); // a stale link or copy from an earlier wake (never write through an old link)
+      fs.copyFileSync(from, to);
+      fs.chmodSync(to, 0o600);
     } catch {
       /* absent: nothing to carry */
     }
@@ -78,7 +84,7 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
   else deny.push("WebFetch(*)");
 
   fs.mkdirSync(workDir, { recursive: true });
-  const src = sourceConfigDir();
+  const src = cursorConfigDir();
   carryAuthFiles(src, workDir);
   const base = path.resolve(src) === path.resolve(workDir) ? undefined : readJsonObject(path.join(src, CLI_CONFIG_FILE));
   const srcPerms = base?.permissions as { allow?: unknown; deny?: unknown } | undefined;
@@ -101,11 +107,14 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
 /** The prompt travels as one argv entry (spike: no stdin path), so the OS argument limit bounds it. */
 export const MAX_PROMPT_BYTES = 100_000;
 
+/** The prompt cannot be passed on argv: a config problem (retrying the same prompt cannot help), not a transient failure. */
+export class CursorPromptTooLongError extends Error {}
+
 /** Persona + task as the positional argument (as with Codex). Guards the argv size and keeps a leading `-` from reading as a flag. */
 function promptArg(systemPrompt: string, userPrompt: string): string {
   const prompt = `${systemPrompt}\n\n=====\n\n${userPrompt}`;
   const bytes = Buffer.byteLength(prompt, "utf8");
-  if (bytes > MAX_PROMPT_BYTES) throw new Error(`Cursor prompt too long for argv: ${bytes} bytes > ${MAX_PROMPT_BYTES} (cursor passes the prompt as a command-line argument)`);
+  if (bytes > MAX_PROMPT_BYTES) throw new CursorPromptTooLongError(`Cursor prompt too long for argv: ${bytes} bytes > ${MAX_PROMPT_BYTES} (cursor passes the prompt as a command-line argument)`);
   // The agent CLI is not known to accept `--`, so a harmless leading newline stops a flag-looking prompt from being parsed as an option.
   return prompt.startsWith("-") ? `\n${prompt}` : prompt;
 }
@@ -122,7 +131,11 @@ export function buildCursorInvocation(raw: WakeInput): Invocation {
   // Writable paths outside --workspace (memory, outbox, ...) need --add-dir as well as the Write(...) rules, like Claude.
   // workDir is deliberately not added (not a writable path; also holds the ship session).
   const pol = input.policy ?? writePolicy(project, agent);
-  const addDirs = [...new Set([...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep))))];
+  // Like Codex, withhold shared/common when it overlaps another agent's protected paths (the deny rules would be the only layer).
+  const common = projectCommonDir(project);
+  const withholdCommon = !input.policy && !projectCommonDirAllowed(project, agent);
+  const fileDirs = pol.allowFiles.map((f) => path.dirname(f)).filter((d) => !withholdCommon || (d !== common && !d.startsWith(common + path.sep)));
+  const addDirs = [...new Set([...pol.allowDirs, ...fileDirs].filter((d) => !(d === repo || d.startsWith(repo + path.sep))))];
 
   const args = ["-p", "--force", "--trust", "--sandbox", "enabled", "--workspace", repo];
   // Placed before other flags so a variadic --add-dir can never swallow the positional prompt.

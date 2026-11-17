@@ -60,7 +60,7 @@ export function shellQuote(s: string): string {
 }
 
 /**
- * Write a per-wake ship session (root / commands / deny) for Claude Code and Codex.
+ * Write a per-wake ship session (root / commands / deny) for Claude Code, Codex and Cursor.
  * Returns undefined when ship is off or verify cannot be resolved.
  */
 export function writeShipSession(project: ResolvedProject, agent: ResolvedAgent, workDir: string): ShipWakeInfo | undefined {
@@ -113,7 +113,7 @@ function readCommands(o: Record<string, unknown>): ShipCommand[] {
 
 import type { WakeInput } from "./adapters/types.js";
 
-/** Prompt block for both Claude Code and Codex (exact CLI; no MCP). */
+/** Prompt block for Claude Code, Codex and Cursor (exact CLI; no MCP). */
 export function formatShipPrompt(shellCommand: string, sessionPath: string, totalTimeoutSec: number): string {
   return [
     "## Ship (tested edits)",
@@ -136,7 +136,7 @@ export function formatShipPrompt(shellCommand: string, sessionPath: string, tota
 
 /**
  * For Claude Code and Codex wakes: write the session and append the exact CLI to the system prompt.
- * Policy wakes (tidy, etc.) skip ship. Call from both adapters.
+ * Policy wakes (tidy, etc.) skip ship. Call from every adapter.
  */
 export function applyShipToWake(input: WakeInput): { input: WakeInput; ship?: ShipWakeInfo } {
   if (input.policy) return { input };

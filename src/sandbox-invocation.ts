@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { cursorConfigDir } from "./adapters/cursor.js";
 import type { WakeInput, WakeResult, Invoker } from "./adapters/types.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { canonicalPath } from "./paths.js";
@@ -86,6 +87,7 @@ export function protectedPathsFor(project: ResolvedProject, agent: ResolvedAgent
   add(project.dir, "project directory");
   add(path.join(os.homedir(), ".claude"), "Claude Code settings");
   add(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "Codex settings");
+  add(cursorConfigDir(), "Cursor settings and login");
   for (const a of Object.values(project.agents)) {
     add(a.agentMd, `AGENT.md of ${a.name}`);
     for (const m of memoryDirs(a)) add(m, `memory of ${a.name}`);
@@ -153,6 +155,8 @@ export function sandboxRefusal(input: WakeInput, base: ResolvedAgent): { reason:
 }
 
 function applied(agent: ResolvedAgent): Record<string, string> {
+  // Cursor is never OS-sandboxed per path (see enforcementFor): Write rules only, and no network/binding/socket setting is emitted.
+  if (agent.runtime === "cursor") return { write: "tool-rules", network: "unrestricted", local_binding: "unrestricted", unix_sockets: "unrestricted" };
   const caps = sandboxCaps(agent);
   const osOn = osSandboxAvailable();
   if (!osOn) return { write: agent.runtime === "claude-code" ? "tool-rules" : "none", network: "unrestricted", local_binding: "unrestricted", unix_sockets: "unrestricted" };
