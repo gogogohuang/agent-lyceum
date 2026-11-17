@@ -105,7 +105,8 @@ export function buildClaudeInvocation(raw: WakeInput): Invocation {
   ];
   if (agent.model) args.push("--model", agent.model);
   if (agent.effort) args.push("--effort", agent.effort);
-  if (input.sessionId) args.push("--resume", input.sessionId);
+  // Fork so this attempt writes a copy. The stored id stays the transcript from before the attempt; a failure discards the copy.
+  if (input.sessionId) args.push("--resume", input.sessionId, "--fork-session");
   for (const d of [...new Set(addDirs)]) args.push("--add-dir", d);
 
   return {

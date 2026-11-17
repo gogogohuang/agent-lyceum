@@ -302,7 +302,7 @@ describe("dispatcher", () => {
     expect(events(s.runDir).some((e) => e.event === "violation")).toBe(false);
   });
 
-  it("resumes only agents with resume: true and remembers their session", async () => {
+  it("a new mail does not resume the previous one; an agent without resume never gets a session", async () => {
     env = makeEnv();
     const sessions: (string | undefined)[] = [];
     let n = 0;
@@ -318,7 +318,7 @@ describe("dispatcher", () => {
       mail(i, "lead", "back");
       return { ...OK, sessionId: "fe-sess" };
     });
-    expect(sessions).toEqual([undefined, "lead-sess-1"]);
+    expect(sessions).toEqual([undefined, undefined]);
   });
 
   it("runs disjoint-owns agents in parallel but never alongside the lead", async () => {
@@ -453,7 +453,7 @@ describe("task input", () => {
 describe("resume", () => {
   const stateOf = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
 
-  it("continues an interrupted run: keeps the run dir and sessions, redoes the unread mail, does not resend the task", async () => {
+  it("continues an interrupted run: keeps the run dir, redoes the unread mail, and does not resume a session that is not tagged for that mail", async () => {
     env = makeEnv();
     const s1 = await run(async () => {
       throw new Error("killed");
@@ -486,7 +486,7 @@ describe("resume", () => {
     });
     expect(s2.runDir).toBe(runDir);
     expect(s2.endReason).toBe("done");
-    expect(seenSessions).toEqual(["sess-1"]);
+    expect(seenSessions).toEqual([undefined]);
     const after = stateOf(runDir);
     expect(after.rounds).toBe(s1.rounds + 1);
     expect(after.wakes.some((w: { error?: string }) => w.error === "interrupted")).toBe(true);

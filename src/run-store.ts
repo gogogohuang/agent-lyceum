@@ -160,6 +160,11 @@ export interface RunState {
   /** The pull request the dispatcher opened for this run (when the lead asked for one and it worked). */
   pr_url?: string;
   sessions: Record<string, string>;
+  /**
+   * Which mail each `sessions` entry belongs to (`mailTag` of the message ids).
+   * Absent on runs saved before a session was tied to its mail. A redo resumes an entry only when this matches.
+   */
+  session_mail?: Record<string, string>;
   output_tokens: number;
   /** Run totals of the wakes' prompt-cache input tokens (0 for runs before this was recorded, and for codex). */
   cache_read_tokens: number;
@@ -239,6 +244,7 @@ const WireState = z
     notes: z.array(z.string()).optional(),
     ask_rejections: z.record(z.string(), nonNeg).optional(),
     sessions: z.record(z.string(), z.string()).optional(),
+    session_mail: z.record(z.string(), z.string()).optional(),
     output_tokens: nonNeg.optional(),
     cache_read_tokens: nonNeg.optional(),
     cache_write_tokens: nonNeg.optional(),

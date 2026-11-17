@@ -268,7 +268,7 @@ describe("fallback in a run", () => {
     expect(Object.keys(loadRunState(runDir).cooldowns ?? {})).toEqual(["claude-code/main"]);
   });
 
-  it("(f) the backup's session is kept under agent@runtime/model and the primary's key is untouched", async () => {
+  it("(f) a new mail does not resume the previous session, a failed call does not store its id, and the backup stores only its own key", async () => {
     const seen: [string, string | undefined][] = [];
     let lead = 0;
     let feDone = 0;
@@ -298,11 +298,11 @@ describe("fallback in a run", () => {
     expect(s.endReason).toBe("done");
     expect(seen).toEqual([
       ["", undefined],
-      ["", "s-main"],
-      ["backup", undefined], // never the primary's session
-      ["backup", "s-backup"],
+      ["", undefined],
+      ["backup", undefined],
+      ["backup", undefined],
     ]);
-    expect(loadRunState(runDir).sessions).toEqual({ lead: "s-main-2", "lead@claude-code/backup": "s-backup" });
+    expect(loadRunState(runDir).sessions).toEqual({ "lead@claude-code/backup": "s-backup" });
   });
 
   it("(g) after a switch the member's mail is handled by the backup, nothing stale is routed, and each call is one round and one attempt", async () => {
@@ -467,8 +467,8 @@ describe("fallback note says whether the backup resumes a session (T13)", () => 
     return loadRunState(runDir).notes!.find((n) => n.includes("fell back"))!;
   };
 
-  it("names the backup's own earlier session when it has one", async () => {
-    expect(await run({ "lead@claude-code/backup": "SB" })).toContain("the backup resumes its own earlier session and redoes this wake-up");
+  it("does not resume a session that is not tagged for this mail", async () => {
+    expect(await run({ "lead@claude-code/backup": "SB" })).toContain("the backup starts a fresh session and redoes this wake-up");
   });
 
   it("still says a fresh session when the backup has none", async () => {
@@ -478,7 +478,7 @@ describe("fallback note says whether the backup resumes a session (T13)", () => 
   });
 });
 
-describe("a backup gets the failed model's draft whatever the sessions (T17c)", () => {
+describe("a backup retry carries the draft but not another mail's session (T17c)", () => {
   const MARKER = "T17C-DRAFT-BODY";
   const run = async (sessions: Record<string, string>) => {
     const calls: WakeInput[] = [];
@@ -503,10 +503,10 @@ describe("a backup gets the failed model's draft whatever the sessions (T17c)", 
     return calls;
   };
 
-  it("resumes the backup's own session and still carries the draft", async () => {
+  it("drops an untagged backup session and still carries the draft", async () => {
     const calls = await run({ "fe-member@claude-code/backup": "SB" });
     expect(calls.map((c) => c.agent.model ?? "")).toEqual(["", "backup"]);
-    expect(calls[1]!.sessionId).toBe("SB");
+    expect(calls[1]!.sessionId).toBeUndefined();
     expect(calls[1]!.userPrompt).toContain(MARKER);
   });
 
