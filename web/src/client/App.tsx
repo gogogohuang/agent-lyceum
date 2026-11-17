@@ -1,9 +1,10 @@
 import { Button } from "@base-ui/react/button";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { QuotaReport, WatchFrame, WebEvent } from "../types";
 import { Allowance } from "./Allowance";
 import { cn } from "./cn";
 import { JobsPage } from "./JobsPage";
+import { LoadingBar, LoadingBlock, useDeferredBusy } from "./Loading";
 import { ProjectView } from "./ProjectView";
 import { headline, railText } from "./rail";
 import { ToolsPage } from "./ToolsPage";
@@ -18,6 +19,8 @@ export function App() {
   const [hash, setHash] = useState(readHash);
   const [attempt, setAttempt] = useState(0);
   const [quota, setQuota] = useState<QuotaReport[] | undefined>(undefined);
+  const [isPending, startTransition] = useTransition();
+  const showSwitchBusy = useDeferredBusy(isPending);
 
   useEffect(() => {
     const source = new EventSource("/events");
@@ -41,7 +44,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const onHash = () => setHash(readHash());
+    const onHash = () => startTransition(() => setHash(readHash()));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -49,13 +52,21 @@ export function App() {
   const names = [...projects.keys()].sort((a, b) => rank(projects.get(a)) - rank(projects.get(b)) || a.localeCompare(b));
   const selected = hash.project && projects.has(hash.project) ? hash.project : names[0];
   const frame = selected ? projects.get(selected) : undefined;
+  const connecting = live === "down" && names.length === 0 && !hash.view;
 
   return (
     <div className="grid h-dvh grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-wall md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-1 xl:grid-cols-[16rem_minmax(0,1fr)]">
       <nav aria-label="已註冊專案" className="inset-safe z-20 flex items-center gap-2 overflow-x-auto border-b border-line bg-paper p-3 md:sticky md:top-0 md:h-dvh md:flex-col md:items-stretch md:overflow-y-auto md:border-r md:border-b-0">
         <p className="eyebrow hidden px-2 pt-2 pb-1 md:block">專案</p>
         {names.length === 0 ? (
-          <p className="text-pretty px-2 text-sm">{live === "up" ? "還沒有已註冊的專案。" : "正在連上本機狀態…"}</p>
+          live === "up" ? (
+            <p className="text-pretty px-2 text-sm">還沒有已註冊的專案。</p>
+          ) : (
+            <p role="status" aria-live="polite" aria-busy="true" className="flex items-center gap-2 px-2 text-sm text-ink/70">
+              <span aria-hidden className="pulse-dot size-2 shrink-0 rounded-full bg-signal" />
+              正在連上本機狀態…
+            </p>
+          )
         ) : (
           names.map((name) => {
             const item = projects.get(name);
@@ -110,14 +121,19 @@ export function App() {
           )}
         </div>
       </nav>
-      <main className="min-h-0 overflow-y-auto bg-wall">
+      <main className="min-h-0 overflow-y-auto bg-wall" aria-busy={isPending || connecting || undefined}>
+        {showSwitchBusy && <LoadingBar label="正在切換畫面…" />}
         {(live === "up" || (quota && quota.length > 0)) && <Allowance reports={quota ?? []} onReports={setQuota} />}
-        {hash.view === "tools" ? (
+        {connecting ? (
+          <LoadingBlock label="正在讀取專案狀態…" />
+        ) : hash.view === "tools" ? (
           <ToolsPage projects={names} />
         ) : hash.view === "jobs" ? (
           <JobsPage />
         ) : frame && selected ? (
-          <ProjectView name={selected} frame={frame} runId={hash.project === selected ? hash.run : undefined} now={now} onRun={(id) => select(selected, id)} />
+          <div key={`${selected}/${hash.project === selected ? hash.run ?? "" : ""}`} className={cn(showSwitchBusy && "opacity-70 motion-safe:transition-opacity motion-safe:duration-150")}>
+            <ProjectView name={selected} frame={frame} runId={hash.project === selected ? hash.run : undefined} now={now} onRun={(id) => select(selected, id)} />
+          </div>
         ) : (
           <article className="enter animate-in fade-in p-4 duration-200 sm:p-6">
             <h1 className="text-balance text-2xl font-semibold tracking-tight">{headline(live, names.length)}</h1>
