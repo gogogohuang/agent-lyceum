@@ -43,7 +43,8 @@ function inputFor(cfg: ExecutorsConfig, over: Partial<CollectInput> = {}): Colle
     inputs: new Map([['exec-a', snapshot('exec-a')]]), premises: [{ check: 'p1', ok: true, code: 'ok' }], ...over };
 }
 function depsFor(over: Partial<CollectDeps> = {}): CollectDeps {
-  return { io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`, fault: () => undefined,
+  return { actor: () => ({ user: 'test', tty: null, pid: 1, pid_started: null }),
+  probe: { signal0: () => 'exists', start: () => 'start', compare: () => 'match' }, io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`, fault: () => undefined,
     log: (_e, f) => { logs.push(f); }, ...over };
 }
 const proposals = (ref: SlotRef = slot): string => requestPaths(home, ref).proposals;
@@ -61,6 +62,253 @@ const byFile = (recs: ApprovalRecord[], filename: string): ApprovalRecord =>
 const collected = (n: number): string => path.join(requestPaths(home, slot).collected, String(n));
 const doneFile = (n: number): string => `${collected(n)}.done`;
 
+describe('S2 revision regressions', () => {
+  it('quota-denied re-entry must not create a second outcome', () => {
+    const cfg = config({ limits: { max_total_pending: 1 } });
+    put('a.req', 'executor: exec-a\n\na');
+    put('b.req', 'executor: exec-a\n\nb');
+    let hit = false;
+    collectSlot(
+      inputFor(cfg),
+      depsFor({
+        fault: (p) => {
+          if (p === 'collection:before-done' && !hit) {
+            hit = true;
+            throw new Error('cut');
+          }
+        },
+      }),
+    );
+    console.log(
+      'QUOTA first',
+      records().map((r) => [r.source_key, r.disposition]),
+    );
+    const result = collectSlot(inputFor(cfg), depsFor({ now: () => new Date('2026-12-01T00:00:00Z') }));
+    console.log(
+      'QUOTA replay',
+      result,
+      records().map((r) => [r.source_key, r.disposition]),
+    );
+    expect(records()).toHaveLength(2);
+  });
+  it('corrupt state must not silently release quota', () => {
+    const cfg = config({ limits: { max_total_pending: 1 } });
+    put('a.req');
+    collectSlot(inputFor(cfg), depsFor());
+    const rec = records()[0]!;
+    const dir = path.join(home, 'approvals', rec.id, 'state');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '1.json'), '{broken');
+    put('b.req');
+    const result = collectSlot(inputFor(cfg), depsFor());
+    console.log('CORRUPT', result, 'logs', logs, 'records', records().length);
+    expect(result.verdict).toEqual({ kind: 'skipped', code: 'UNDETERMINABLE' });
+    expect(records()).toHaveLength(1);
+    expect(logs).toEqual([expect.objectContaining({ op: 'inventory', class: 'corrupt' })]);
+  });
+  it('denied counter closes fd at every budget cutoff', () => {
+    const leaks = [];
+    for (let limit = 15; limit <= 400; limit++) {
+      fs.rmSync(path.join(home, 'requests'), { recursive: true, force: true });
+      fs.rmSync(path.join(home, 'approvals'), { recursive: true, force: true });
+      put('a.req', 'bad header');
+      const opened = new Map<number, string>();
+      const io = {
+        ...fs,
+        openSync: (...args: Parameters<typeof fs.openSync>) => {
+          const fd = fs.openSync(...args);
+          opened.set(fd, String(args[0]));
+          return fd;
+        },
+        closeSync: (fd: number) => {
+          opened.delete(fd);
+          return fs.closeSync(fd);
+        },
+      };
+      collectSlot(inputFor(config()), depsFor({ budget: limit, io }));
+      expect(collectSlot(inputFor(config()), depsFor()).verdict.kind).toBe('wake');
+      if (opened.size) leaks.push({ limit, files: [...opened.values()].map((x) => path.relative(home, x)) });
+      for (const fd of opened.keys()) fs.closeSync(fd);
+    }
+    console.log('LEAKS', JSON.stringify(leaks));
+    expect(leaks).toEqual([]);
+  }, 30_000);
+  it('short request reads cannot bypass scan-work budget', () => {
+    put('a.req', 'executor: exec-a\n\n' + 'x'.repeat(4096));
+    const origOpen = fs.openSync,
+      origRead = fs.readSync,
+      origClose = fs.closeSync;
+    const requestFds = new Set<number>();
+    let calls = 0;
+    fs.openSync = (...a: Parameters<typeof fs.openSync>) => {
+      const fd = origOpen(...a);
+      if (String(a[0]).endsWith('/a.req')) requestFds.add(fd);
+      return fd;
+    };
+    fs.readSync = ((fd: number, b: Buffer, offset: number, length: number, position: number | null) => {
+      if (requestFds.has(fd)) {
+        calls++;
+        return origRead(fd, b, offset, Math.min(1, length), position);
+      }
+      return origRead(fd, b, offset, length, position);
+    }) as typeof fs.readSync;
+    fs.closeSync = (fd: number) => {
+      requestFds.delete(fd);
+      return origClose(fd);
+    };
+    let result: ReturnType<typeof collectSlot> | undefined;
+    try {
+      result = collectSlot(inputFor(config()), depsFor({ budget: 300 }));
+    } finally {
+      fs.openSync = origOpen;
+      fs.readSync = origRead;
+      fs.closeSync = origClose;
+    }
+    console.log('SHORT_READS', calls, 'budget', 300, result, logs);
+    expect(calls).toBeLessThanOrEqual(300);
+    expect(result?.verdict.kind).toBe('skipped');
+    expect(records()).toHaveLength(0);
+    expect(fs.existsSync(doneFile(1))).toBe(false);
+  });
+  it('lazy expiry must be recorded by collection per spec4.5', () => {
+    put('a.req');
+    collectSlot(inputFor(config()), depsFor());
+    const rec = records()[0]!;
+    put('b.req');
+    collectSlot(inputFor(config()), depsFor({ now: () => new Date('2026-12-01T00:00:00Z') }));
+    const current = readCurrent(home, rec.id);
+    console.log('LAZY', current.n, current.state);
+    expect(current.state?.status).toBe('expired');
+    put('c.req');
+    collectSlot(inputFor(config()), depsFor({ now: () => new Date('2026-12-01T00:00:00Z') }));
+    expect(readCurrent(home, rec.id).n).toBe(1);
+  });
+  it('large configured scan cap keeps sorting work subquadratic', () => {
+    const count = 3000;
+    for (let i = 0; i < count; i++) {
+      const f = put('f' + String(i).padStart(5, '0') + '.req');
+      fs.utimesSync(f, new Date(10000000 - i * 1000), new Date(10000000 - i * 1000));
+    }
+    let comparisons = 0;
+    const io = {
+      ...fs,
+      lstatSync: ((...a: Parameters<typeof fs.lstatSync>) => {
+        const st = fs.lstatSync(...a);
+        if (String(a[0]).endsWith('.req')) {
+          const m = st.mtimeMs;
+          Object.defineProperty(st, 'mtimeMs', {
+            get: () => {
+              comparisons++;
+              return m;
+            },
+          });
+        }
+        return st;
+      }) as typeof fs.lstatSync,
+    };
+    const start = Date.now();
+    collectSlot(
+      inputFor(config({ limits: { max_scan_entries: count } })),
+      depsFor({
+        io,
+        fault: (p) => {
+          if (p === 'collection:enumerated') throw new Error('stop after selection');
+        },
+      }),
+    );
+    console.log('SORT', count, 'mtime accesses', comparisons, 'ms', Date.now() - start);
+    expect(comparisons).toBeLessThan(count * 100);
+  });
+});
+
+describe('inventory unreadable state', () => {
+  it('reports unreadable committed state as fixed corrupt occupancy', () => {
+    put('a.req'); collectSlot(inputFor(config()), depsFor());
+    const rec=records()[0]!; const dir=path.join(home,'approvals',rec.id,'state'); fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir,'1.json'),'{}');
+    const io={...fs,openSync:((...args:Parameters<typeof fs.openSync>)=>{
+      if(String(args[0]).endsWith('/state/1.json'))throw Object.assign(new Error('secret path'),{code:'EACCES'});
+      return fs.openSync(...args);
+    })};
+    put('b.req'); const result=collectSlot(inputFor(config()),depsFor({io}));
+    expect(result.verdict).toEqual({kind:'skipped',code:'UNDETERMINABLE'});
+    expect(logs).toEqual([expect.objectContaining({op:'inventory',class:'corrupt'})]); expect(records()).toHaveLength(1);
+  });
+});
+describe('lazy collection state and replay races', () => {
+  it('records creator-dead unknown once and keeps it occupying quota', () => {
+    put('a.req');
+    collectSlot(inputFor(config()), depsFor());
+    const rec = records()[0]!;
+    const actor = { user: 'u', tty: null, pid: 42, pid_started: 'start' };
+    const dir = path.join(home, 'approvals', rec.id, 'state');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(
+      path.join(dir, '1.json'),
+      JSON.stringify({
+        schema_version: 1,
+        n: 1,
+        previous: 0,
+        updated_at: NOW.toISOString(),
+        actor,
+        status: 'executing',
+        owner: { pid: 42, pid_started: 'start' },
+        timeout_sec: 60,
+        viewed_bytes: rec.payload_bytes,
+        viewed_sha256: rec.payload_sha256,
+        command_sha256: sha('command'),
+      }),
+    );
+    const dead = Object.assign(depsFor(), {
+      actor: () => actor,
+      probe: { signal0: () => 'missing' as const, start: () => undefined, compare: () => 'unverifiable' as const },
+    });
+    put('b.req');
+    collectSlot(inputFor(config({ limits: { max_total_pending: 1 } })), dead);
+    expect(readCurrent(home, rec.id)).toMatchObject({ n: 2, state: { status: 'unknown', reason: 'creator_dead' } });
+    put('c.req');
+    collectSlot(inputFor(config()), dead);
+    expect(readCurrent(home, rec.id).n).toBe(2);
+  });
+  it('rereads a lazy state publication lost to another writer', () => {
+    put('a.req');
+    collectSlot(inputFor(config()), depsFor());
+    const rec = records()[0]!;
+    let raced = false;
+    const io = {
+      ...fs,
+      linkSync: (from: fs.PathLike, to: fs.PathLike) => {
+        if (String(to).endsWith('/state/1.json') && !raced) {
+          raced = true;
+          fs.linkSync(from, to);
+        }
+        fs.linkSync(from, to);
+      },
+    };
+    put('b.req');
+    collectSlot(inputFor(config()), depsFor({ io, now: () => new Date('2026-12-01T00:00:00Z') }));
+    expect(raced).toBe(true);
+    expect(readCurrent(home, rec.id)).toMatchObject({ n: 1, state: { status: 'expired' } });
+  });
+  it.each(['pending', 'denied'])('adopts committed %s before changed executor configuration', (disposition) => {
+    put('a.req');
+    const cfg = config();
+    const first = inputFor(cfg, disposition === 'denied' ? { inputs: new Map() } : {});
+    collectSlot(
+      first,
+      depsFor({
+        fault: (p) => {
+          if (p === 'collection:before-done') throw new Error('cut');
+        },
+      }),
+    );
+    const before = records();
+    expect(before[0]?.disposition).toBe(disposition);
+    collectSlot(inputFor(config({ executors: {} })), depsFor());
+    expect(records()).toEqual(before);
+    expect(fs.existsSync(doneFile(1))).toBe(true);
+  });
+});
 describe('collectSlot', () => {
   it('outcome table all rows', () => {
     const cfg = config({ executors: { 'exec-a': exec(), 'exec-b': exec() } });

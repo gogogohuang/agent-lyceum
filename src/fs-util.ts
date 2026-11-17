@@ -109,7 +109,7 @@ export function readRegularFileCappedNoFollow(file: string, limit: number, spend
     try {
       spend();
     } catch (error) {
-      stop.error = error;
+      if (!stop.hit) stop.error = error;
       stop.hit = true;
       throw error;
     }
@@ -144,7 +144,7 @@ export function readRegularFileCappedNoFollow(file: string, limit: number, spend
       } catch {}
     }
   }
-  if (fd !== undefined && !stop.hit) {
+  if (fd !== undefined) {
     try {
       charge();
     } catch {}

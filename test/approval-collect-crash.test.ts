@@ -37,7 +37,8 @@ const snap: SnapshotInput = { runtime_candidates: [{ runtime: 'claude-code', san
 const input = (over: Partial<CollectInput> = {}): CollectInput => ({ home, slot, agent: 'worker', runDir: path.join(home, 'run'), config, origin,
   inputs: new Map([['exec-a', snap]]), premises: [{ check: 'p1', ok: true, code: 'ok' }], ...over });
 // A fresh deps object (new closures, new token counter) per call: re-entry never shares state with the crashed pass.
-const freshDeps = (over: Partial<CollectDeps> = {}): CollectDeps => ({ io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW,
+const freshDeps = (over: Partial<CollectDeps> = {}): CollectDeps => ({ actor: () => ({ user: 'test', tty: null, pid: 1, pid_started: null }),
+  probe: { signal0: () => 'exists', start: () => 'start', compare: () => 'match' }, io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW,
   token: () => `t${tokens++}`, fault: () => undefined, log: (_e, f) => { logs.push(f); }, ...over });
 const paths = () => requestPaths(home, slot);
 const put = (name: string, body: string): void => {
