@@ -173,7 +173,7 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     const v = callGateVerdict({ home: o.home, agent, actual: project, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
     if (v.kind !== "wake") {
       const failed = v.premises?.length ? ` (failed: ${v.premises.join(", ")})` : "";
-      throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started. Run \`agent-lyceum doctor\` for details.`);
+      throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started.${GATE_TEXT[v.code].status.includes("doctor") ? "" : " Run `agent-lyceum doctor` for details."}`);
     }
   }
 

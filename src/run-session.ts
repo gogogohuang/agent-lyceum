@@ -4,7 +4,7 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { loadFreshEnrollment } from "./approval-runtime.js";
-import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, recoverySkipFile, scanRecoveryInputs, slotDirVerdict, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
+import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, recoveryReadFile, recoverySkipFile, scanRecoveryInputs, slotDirVerdict, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
 import type { PremiseOptions } from "./doctor-approval-premises.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
@@ -1506,7 +1506,7 @@ export class RunSession {
     const { say, runId, runDir, project, wsMode, log } = this;
     if (this.resume?.end_reason === "waiting") this.deliverAnswers();
     const scan = this.gate?.recovery;
-    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(scan ? { skipFile: recoverySkipFile(scan) } : {}) });
+    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(scan ? { skipFile: recoverySkipFile(scan), readFile: recoveryReadFile(scan) } : {}) });
     for (const i of rec.interrupted) {
       this.note(
         `${i.attempt.agent} attempt ${i.attempt.n} was interrupted${i.parked.length ? `; ${i.parked.length} output file(s) set aside in ${path.join("mail", "attempts", i.attempt.id, "outbox")}` : ""}. ` +

@@ -422,9 +422,14 @@ The JSON-driven status-monitor pane lacks them
 
 Entries are **recorded observations**, not proof of an active refusal. They can
 survive a resume with no enrolled agents or a failed reset. `at` records the reason's
-observation time; it does not prove current blocking or freshness. Current formatter
-wording still describes an active refusal/skip; its historical-observation wording
-correction is pending. After rollback, read that text with this limitation.
+observation time; it does not prove current blocking or freshness. The human `status`
+formatter says so: each entry reads "<slot> 記錄於 <time>：當時判定…", a verdict recorded
+at that time, not the present state. After rollback, read that text as history.
+
+Recovery on an enrolled resume parses the text its pre-scan verified (`recoveryReadFile`) and
+never opens an attempt or claim file again, so a name swapped for a FIFO or symlink after the
+scan cannot be followed or block the resume. Other reads in the recovery path
+(for example `finishAttempt` re-reading an attempt record) still open files by name.
 
 ### Containment correction pending final verification (Amendment A)
 
