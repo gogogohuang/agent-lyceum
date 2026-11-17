@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { pidStart } from './project-lock.js';
+import { creatorLiveness, defaultProbe, type CreatorProbe } from './approval-liveness.js';
 import { type CollectOp, type DirIo, SCAN_WORK_BUDGET, ScanBudgetExceeded, budgetedIo, defaultDirIo, scanBudget } from './approval-budget.js';
 import { ApprovalError } from './approval-error.js';
 import type { ExecutorsConfig } from './approval-executors.js';
@@ -13,8 +16,8 @@ import { type SlotRef, requestPaths, storePaths } from './approval-paths.js';
 import { GLOBAL_READ_CAP, parseRequest } from './approval-request.js';
 import { CoordHeldError, type RotationDestination, createRotation } from './approval-rotation.js';
 import { type StoreFaultPoint, publishRecord, readRecord } from './approval-store.js';
-import { readCurrent } from './approval-state.js';
-import type { ApprovalRecord, DeniedReason, Origin, PremiseResult, Sequence, SourceBase, SourceKey } from './approval-types.js';
+import { readCurrent, transition } from './approval-state.js';
+import type { Actor, ApprovalRecord, DeniedReason, Origin, PremiseResult, Sequence, SourceBase, SourceKey } from './approval-types.js';
 import type { GateVerdict } from './approval-wake-gate.js';
 import { readRegularFileCappedNoFollow } from './fs-util.js';
 
@@ -41,6 +44,7 @@ export interface CollectInput {
 }
 export interface CollectDeps {
   readonly io: DirIo; readonly budget: number; readonly now: () => Date; readonly token: () => string;
+  readonly actor: () => Actor; readonly probe: CreatorProbe;
   /** A throw simulates a process crash at that point. */
   readonly fault: (point: string) => void;
   readonly log: (event: 'approval_collect', fields: CollectLog) => void;
@@ -49,11 +53,10 @@ export interface CollectResult { readonly created: number; readonly existing: nu
 
 export function defaultCollectDeps(log: CollectDeps['log']): CollectDeps {
   return { io: defaultDirIo, budget: SCAN_WORK_BUDGET, now: () => new Date(), token: () => `${process.pid}-${Math.random().toString(36).slice(2)}`,
-    fault: () => undefined, log };
+    actor: () => ({ user: os.userInfo().username, tty: null, pid: process.pid, pid_started: pidStart(process.pid) ?? null }),
+    probe: defaultProbe, fault: () => undefined, log };
 }
 
-/** Units charged for reading one file: open, fstat, read(s), close (the reader uses `fs` directly, so it is charged by hand). */
-export const READ_UNITS = 4;
 /** Denied requests of one (project or call, role) keep a full record up to this count; later ones are only counted. */
 export const DENIED_FULL_RECORDS = 100;
 const ID_RE = /^[0-9a-f]{24}$/;
@@ -176,11 +179,26 @@ function runPass(input: CollectInput, deps: CollectDeps, mode: 'collect' | 'prep
     const nowMs = deps.now().getTime();
     for (const name of names) {
       if (!ID_RE.test(name)) continue;
+      // Payload-only directories from interrupted publication have no committed occupancy.
+      if (readRecord(home, name, bio) === null) continue;
       let cur: ReturnType<typeof readCurrent>;
-      try { cur = readCurrent(home, name, bio); } catch (e) {
-        // One damaged record is not evidence about quota; unsafe or unreadable storage is.
-        if (e instanceof ApprovalError && (e.code === 'CORRUPT_RECORD' || e.code === 'CORRUPT_STATE' || e.code === 'UNSUPPORTED_VERSION')) continue;
-        throw e;
+      try { cur = readCurrent(home, name, bio); } catch (error) {
+        if (rootOf(error) instanceof ScanBudgetExceeded) throw error;
+        throw new ApprovalError('CORRUPT_STATE', 'Committed approval state is unreadable', undefined, { cause: error });
+      }
+      const origin = cur.record.origin;
+      const needsLazy = (cur.n === 0 && cur.record.disposition === 'pending' && nowMs > Date.parse(cur.record.expires_at)) || cur.state?.status === 'executing';
+      if (needsLazy && origin.kind === input.origin.kind && origin.role === input.origin.role &&
+          (origin.kind !== 'run' || (input.origin.kind === 'run' && origin.project === input.origin.project))) {
+        const result = transition(home, name, latest => {
+          const at = deps.now().getTime();
+          const state = latest.state;
+          const creator = state?.status === 'executing'
+            ? creatorLiveness(state.owner, state.updated_at, state.timeout_sec, at, deps.probe) : null;
+          return { event: { type: 'lazy', trigger: 'collect', creator }, context: { now_ms: at, actor: deps.actor() } };
+        }, { io: bio, token: deps.token, fault: pt => deps.fault(pt) });
+        if (result.kind === 'contended') throw new Race();
+        cur = result.current;
       }
       const rec = cur.record;
       if (rec.disposition !== 'pending') continue;
@@ -219,8 +237,8 @@ function runPass(input: CollectInput, deps: CollectDeps, mode: 'collect' | 'prep
     const c = fs.constants;
     const fd = bio.openSync(tmp, c.O_CREAT | c.O_EXCL | c.O_WRONLY | c.O_NOFOLLOW, 0o600);
     try {
-      bio.writeSync(fd, Buffer.from(`${n}\n`, 'utf8'));
-      bio.closeSync(fd);
+      try { bio.writeSync(fd, Buffer.from(`${n}\n`, 'utf8')); }
+      finally { bio.closeSync(fd); }
       bio.renameSync(tmp, file);
     } catch (e) {
       try { bio.unlinkSync(tmp); } catch { /* own temp only */ }
@@ -252,15 +270,22 @@ function runPass(input: CollectInput, deps: CollectDeps, mode: 'collect' | 'prep
 
   /** Hash and copy come from the same Buffer. Existing record first (re-entry adopts it, quota never re-applies), then allow, then quota. */
   const publishRequest = (n: Sequence, name: string, bytes: Buffer): void => {
-    const parsed = parseRequest(bytes, config);
     const bytesKey = (reason: Exclude<DeniedReason, 'not_regular' | 'scan_limit'>): SourceKey =>
       ({ ...base(n), variant: 'denied_bytes', filename: name, reason, request_sha256: sha256(bytes) });
+    phase('publish');
+    // Look up every byte-derived committed variant before parsing against mutable config.
+    const sep = bytes.indexOf('\n\n');
+    const payloadKey: SourceKey | undefined = sep < 0 ? undefined
+      : { ...base(n), variant: 'payload', filename: name, payload_sha256: sha256(bytes.subarray(sep + 2)) };
+    const reasons = ['bad_content', 'bad_header', 'bad_executor', 'too_large', 'not_allowed', 'quota'] as const;
+    for (const candidate of [...(payloadKey ? [payloadKey] : []), ...reasons.map(bytesKey)]) {
+      id = approvalId(candidate);
+      if (readRecord(home, id, bio) !== null) { tally.existing += 1; return; }
+    }
+    const parsed = parseRequest(bytes, config);
     if (parsed.kind === 'denied') { publishDenied(bytesKey(parsed.reason), parsed.reason, null); return; }
     const key: SourceKey = { ...base(n), variant: 'payload', filename: name, payload_sha256: sha256(parsed.payload) };
-    phase('publish');
     id = approvalId(key);
-    const prior = readRecord(home, id, bio);
-    if (prior !== null) { publishRecord(home, prior, parsed.payload, storeDeps); tally.existing += 1; return; }
     const snapshot = input.inputs.get(parsed.executor);
     if (!snapshot) { publishDenied(bytesKey('not_allowed'), 'not_allowed', null); return; }
     const executor = config.executors[parsed.executor];
@@ -308,21 +333,41 @@ function runPass(input: CollectInput, deps: CollectDeps, mode: 'collect' | 'prep
         if (!isRequestFilename(ent.name)) continue; // one unit for the dirent, never stat'ed, never a record
         const cand: Cand = { name: ent.name, st: lstatReal(path.join(dir, ent.name)) };
         total += 1;
-        let at = kept.length;
-        while (at > 0 && before(cand, kept[at - 1] as Cand)) at -= 1;
-        if (at < cap) { kept.splice(at, 0, cand); if (kept.length > cap) kept.pop(); }
+        // Max-heap: the newest retained candidate is at the root, O(log cap) per entry.
+        if (kept.length < cap) {
+          kept.push(cand);
+          let at = kept.length - 1;
+          while (at > 0) {
+            const parent = Math.floor((at - 1) / 2);
+            if (!before(kept[parent] as Cand, kept[at] as Cand)) break;
+            [kept[parent], kept[at]] = [kept[at] as Cand, kept[parent] as Cand];
+            at = parent;
+          }
+        } else if (cap > 0 && before(cand, kept[0] as Cand)) {
+          kept[0] = cand;
+          let at = 0;
+          for (;;) {
+            const left = at * 2 + 1;
+            if (left >= kept.length) break;
+            const right = left + 1;
+            const child = right < kept.length && before(kept[left] as Cand, kept[right] as Cand) ? right : left;
+            if (!before(kept[at] as Cand, kept[child] as Cand)) break;
+            [kept[at], kept[child]] = [kept[child] as Cand, kept[at] as Cand];
+            at = child;
+          }
+        }
       }
     } finally {
       d.closeSync();
     }
     deps.fault('collection:enumerated');
+    kept.sort((a, b) => before(a, b) ? -1 : before(b, a) ? 1 : 0);
     for (const cand of kept) {
       const file = path.join(dir, cand.name);
       const entry = (): SourceKey => ({ ...base(n), variant: 'denied_entry', filename: cand.name, reason: 'not_regular' });
       if (!cand.st.isFile()) { publishDenied(entry(), 'not_regular', null); continue; }
       phase('read');
-      budget.spend(READ_UNITS);
-      const r = readRegularFileCappedNoFollow(file, GLOBAL_READ_CAP);
+      const r = readRegularFileCappedNoFollow(file, GLOBAL_READ_CAP, () => budget.spend());
       if (!r.ok) {
         if (r.reason === 'symlink' || r.reason === 'not_regular') { publishDenied(entry(), 'not_regular', null); continue; }
         const code = r.reason.startsWith('open_error:') ? r.reason.slice('open_error:'.length) : 'EIO';

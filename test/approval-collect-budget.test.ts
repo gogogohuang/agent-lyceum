@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { READ_UNITS, type CollectDeps, type CollectInput, type CollectLog, collectSlot } from '../src/approval-collect.js';
+import { type CollectDeps, type CollectInput, type CollectLog, collectSlot } from '../src/approval-collect.js';
 import { type DirIo, SCAN_WORK_BUDGET, budgetedIo, scanBudget } from '../src/approval-budget.js';
 import type { ExecutorConfig, ExecutorsConfig } from '../src/approval-executors.js';
 import { approvalId } from '../src/approval-id.js';
@@ -40,7 +40,8 @@ function inputFor(config: ExecutorsConfig): CollectInput {
     premises: [{ check: 'p1', ok: true, code: 'ok' }] };
 }
 function depsFor(over: Partial<CollectDeps> = {}): CollectDeps {
-  return { io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`, fault: () => undefined,
+  return { actor: () => ({ user: 'test', tty: null, pid: 1, pid_started: null }),
+  probe: { signal0: () => 'exists', start: () => 'start', compare: () => 'match' }, io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`, fault: () => undefined,
     log: (_e, f) => { logs.push(f); }, ...over };
 }
 const paths = () => requestPaths(home, slot);
@@ -94,7 +95,7 @@ describe('scan work budget in collection', () => {
     expect(scan).toMatchObject({ reason: 'scan_limit', ignored_count: 19800, source_key: { variant: 'denied_scan' } });
     expect(recs).toHaveLength(201);
     expect(fs.existsSync(done(1))).toBe(true);
-    const charged = counting.used() + 200 * READ_UNITS; // file reads are charged by hand (READ_UNITS each)
+    const charged = counting.used() + 200 * 5; // these ordinary files each use open, fstat, data read, EOF read and close; short reads are covered separately
     console.log(`[budget] 20000 entries: ${charged} of ${SCAN_WORK_BUDGET} units`);
     expect(charged).toBeGreaterThan(40000); // 20000 dirents + 20000 lstat
     expect(charged).toBeLessThan(SCAN_WORK_BUDGET);
@@ -128,7 +129,7 @@ describe('scan work budget in collection', () => {
     collectSlot(inputFor(cfg()), depsFor({ io: probe.io }));
     home = saved;
     fs.rmSync(scratch, { recursive: true, force: true });
-    const total = probe.used() + 40 * READ_UNITS;
+    const total = probe.used() + 40 * 5;
 
     const r = collectSlot(inputFor(cfg()), depsFor({ budget: Math.floor(total * 0.6) }));
     expect(r.verdict).toEqual({ kind: 'skipped', code: 'RESIDUAL_OUTPUT' });

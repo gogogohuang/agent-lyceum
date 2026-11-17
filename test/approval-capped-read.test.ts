@@ -48,6 +48,12 @@ describe('readRegularFileCappedNoFollow', () => {
     expect(r.ok).toBe(true);
     expect(calls).toBe(5); // open, fstat, read(5), read(EOF), close
   });
+  it('charges cleanup close even when a prior spend throws and preserves that first error', () => {
+    const file=path.join(dir,'charge.req'); fs.writeFileSync(file,'x');
+    const first=new Error('first'); let calls=0;
+    expect(()=>readRegularFileCappedNoFollow(file,8,()=>{calls++;if(calls===2)throw first;if(calls===3)throw new Error('close');})).toThrow(first);
+    expect(calls).toBe(3);
+  });
   it('a throwing spend propagates, stops further work and still closes the fd', () => {
     const f = path.join(dir, 'a.req');
     fs.writeFileSync(f, 'x'.repeat(32));

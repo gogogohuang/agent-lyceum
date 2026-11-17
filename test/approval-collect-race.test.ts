@@ -33,7 +33,8 @@ const snap: SnapshotInput = { runtime_candidates: [{ runtime: 'claude-code', san
   writable: { dirs: ['/proj'], files: [] }, project_dir: '/proj', executor: config.executors['exec-a'] as ExecutorConfig };
 const input = (ref: SlotRef = slot, agent = 'worker'): CollectInput => ({ home, slot: ref, agent, runDir: path.join(home, 'run'), config, origin: originOf(agent),
   inputs: new Map([['exec-a', snap]]), premises: [{ check: 'p1', ok: true, code: 'ok' }] });
-const deps = (over: Partial<CollectDeps> = {}): CollectDeps => ({ io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`,
+const deps = (over: Partial<CollectDeps> = {}): CollectDeps => ({ actor: () => ({ user: 'test', tty: null, pid: 1, pid_started: null }),
+  probe: { signal0: () => 'exists', start: () => 'start', compare: () => 'match' }, io: fs, budget: SCAN_WORK_BUDGET, now: () => NOW, token: () => `t${tokens++}`,
   fault: () => undefined, log: (_e, f) => { logs.push(f); }, ...over });
 const paths = (ref: SlotRef = slot) => requestPaths(home, ref);
 const put = (name: string, body: string, ref: SlotRef = slot): void => {
