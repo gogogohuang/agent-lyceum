@@ -40,13 +40,24 @@ function readJsonObject(file: string): Record<string, unknown> | undefined {
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
-/** Copies auth files that exist in `src` into `workDir` (read-only on `src`; never touches cli-config.json). */
-function copyAuthFiles(src: string, workDir: string): void {
+/**
+ * Links (preferred) or copies auth files that exist in `src` into `workDir`; never touches cli-config.json.
+ * `workDir` is run-scoped: nothing relies on the credentials staying there beyond the wake. A symlink leaves no second
+ * copy of the secret behind; the copy is only the fallback where symlinks are not allowed.
+ */
+function carryAuthFiles(src: string, workDir: string): void {
   if (path.resolve(src) === path.resolve(workDir)) return;
   for (const name of AUTH_FILES) {
     const from = path.join(src, name);
+    const to = path.join(workDir, name);
     try {
-      if (fs.statSync(from).isFile()) fs.copyFileSync(from, path.join(workDir, name));
+      if (!fs.statSync(from).isFile()) continue;
+      fs.rmSync(to, { force: true }); // a stale link or copy from an earlier wake
+      try {
+        fs.symlinkSync(path.resolve(from), to);
+      } catch {
+        fs.copyFileSync(from, to);
+      }
     } catch {
       /* absent: nothing to carry */
     }
@@ -55,9 +66,10 @@ function copyAuthFiles(src: string, workDir: string): void {
 
 /**
  * Writes `cli-config.json` under `workDir` (read via `CURSOR_CONFIG_DIR`, so the repo's own `.cursor/cli.json` is never touched).
- * Auth files and `cli-config.json` settings of the user's own config dir are carried over (permissions are unioned; our deny is always kept, and deny wins in Cursor).
- * Allow: `Write` rules for the policy's `allowDirs`/`allowFiles` (memory/outbox live outside `--workspace`).
+ * Carries auth files and keeps the user's `version`/`editor` when present. Permissions.allow is **only** lyceum's Write/WebFetch
+ * rules (never the user's allow — that could import `Shell(*)` etc.). Deny is unioned with the user's deny (stricter).
  * Web: denied unless `allowWeb` is `fetch`. `search` has no Cursor permission token, so it stays denied (documented gap).
+ * Shell under `--force` follows Cursor's default approval rules; we do not emit a broad `Shell(*)` allow.
  */
 export function writeCursorCliConfig(workDir: string, input: WakeInput): string {
   const { project, agent } = input;
@@ -69,7 +81,7 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
 
   fs.mkdirSync(workDir, { recursive: true });
   const src = sourceConfigDir();
-  copyAuthFiles(src, workDir);
+  carryAuthFiles(src, workDir);
   const base = path.resolve(src) === path.resolve(workDir) ? undefined : readJsonObject(path.join(src, CLI_CONFIG_FILE));
   const srcPerms = base?.permissions as { allow?: unknown; deny?: unknown } | undefined;
   const version = typeof base?.version === "number" ? base.version : 1;
@@ -80,7 +92,7 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
     version,
     editor,
     permissions: {
-      allow: [...new Set([...allow, ...strings(srcPerms?.allow)])],
+      allow: [...new Set(allow)],
       deny: [...new Set([...deny, ...strings(srcPerms?.deny)])],
     },
   };
@@ -88,21 +100,41 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
   return file;
 }
 
+/** The prompt travels as one argv entry (spike: no stdin path), so the OS argument limit bounds it. */
+export const MAX_PROMPT_BYTES = 100_000;
+
+/** Persona + task as the positional argument (as with Codex). Guards the argv size and keeps a leading `-` from reading as a flag. */
+function promptArg(systemPrompt: string, userPrompt: string): string {
+  const prompt = `${systemPrompt}\n\n=====\n\n${userPrompt}`;
+  const bytes = Buffer.byteLength(prompt, "utf8");
+  if (bytes > MAX_PROMPT_BYTES) throw new Error(`Cursor prompt too long for argv: ${bytes} bytes > ${MAX_PROMPT_BYTES} (cursor passes the prompt as a command-line argument)`);
+  // The agent CLI is not known to accept `--`, so a harmless leading newline stops a flag-looking prompt from being parsed as an option.
+  return prompt.startsWith("-") ? `\n${prompt}` : prompt;
+}
+
 export function buildCursorInvocation(raw: WakeInput): Invocation {
   const { input } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
   // Same stance as Codex: no per-path hardening for enrolled agents, so refuse before anything is created.
   if (agent.enrolled) throw new ApprovalError("INVALID_INPUT", `Approval-enrolled agent cannot use Cursor: ${agent.name}`);
+  const prompt = promptArg(input.systemPrompt, input.userPrompt); // before any file is created
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   fs.mkdirSync(workDir, { recursive: true });
   if (input.policy) fs.mkdirSync(repo, { recursive: true });
   writeCursorCliConfig(workDir, input);
 
-  const args = ["-p", "--force", "--trust", "--sandbox", "enabled", "--workspace", repo, "--output-format", "stream-json"];
+  // Writable paths outside --workspace (memory, outbox, ...) need --add-dir as well as the Write(...) rules, like Claude.
+  // workDir is deliberately not added (not a writable path; also holds the ship session).
+  const pol = input.policy ?? writePolicy(project, agent);
+  const addDirs = [...new Set([...pol.allowDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep))))];
+
+  const args = ["-p", "--force", "--trust", "--sandbox", "enabled", "--workspace", repo];
+  // Placed before other flags so a variadic --add-dir can never swallow the positional prompt.
+  for (const d of addDirs) args.push("--add-dir", d);
+  args.push("--output-format", "stream-json");
   if (agent.model) args.push("--model", agent.model);
   if (input.sessionId) args.push("--resume", input.sessionId);
-  // Prompt is the positional argument (spike); the persona travels in it, as with Codex.
-  args.push(`${input.systemPrompt}\n\n=====\n\n${input.userPrompt}`);
+  args.push(prompt);
 
   return {
     cmd: "agent",
@@ -172,11 +204,14 @@ interface Rule {
   re: RegExp;
 }
 
-/** Ordered, first match wins: a spent quota is more specific than a 429. Patterns are documented/expected, not yet observed in real logs. */
+/**
+ * Ordered, first match wins: a spent quota is more specific than a 429.
+ * Patterns follow the Codex adapter style (status/phrase anchors), documented/expected — not yet observed in real Cursor logs.
+ */
 const CURSOR_RULES: Rule[] = [
-  { kind: "quota", re: /usage limit|out of (usage|credits)|quota (exceeded|exhausted)|insufficient_quota|exceeded your (current )?quota/i },
-  { kind: "rate_limit", re: /\b429\b|too many requests|rate[ _]limit/i },
-  { kind: "auth", re: /\b401\b|unauthori[sz]ed|not logged in|agent login|authentication (required|failed)|invalid api key/i },
+  { kind: "quota", re: /insufficient_quota|exceeded your (current )?quota|usage limit|out of (usage|credits)|quota (exceeded|exhausted)/i },
+  { kind: "rate_limit", re: /\bstatus:? 429\b|\b429 too many requests|rate_limit_exceeded|rate[ _]limit (reached|exceeded)/i },
+  { kind: "auth", re: /\bstatus:? 401\b|\b401 unauthori[sz]ed|invalid[_ ]api[_ ]key|incorrect api key|not logged in|agent login|authentication (required|failed)/i },
   { kind: "network", re: /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up|network (error|unreachable)|fetch failed/i },
   { kind: "crash", re: /segmentation fault|panicked at|heap out of memory/i },
 ];

@@ -14,8 +14,8 @@ const sb = (x: Partial<NonNullable<ResolvedAgent["sandbox"]>>) => ({ write: [], 
 const agent = (sandbox: ResolvedAgent["sandbox"]) => ({ name: "a", runtime: "cursor", sandbox }) as unknown as ResolvedAgent;
 
 describe("sandboxCaps for cursor", () => {
-  it("network requested -> all; local_binding and unix_sockets are not applied", () => {
-    expect(sandboxCaps(agent(sb({ network: ["a.com"], localBinding: true, unixSockets: ["/s"] })))).toEqual({ network: "all", localBinding: false, unixSockets: false });
+  it("network, local_binding and unix_sockets are never applied", () => {
+    expect(sandboxCaps(agent(sb({ network: ["a.com"], localBinding: true, unixSockets: ["/s"] })))).toEqual({ network: "none", localBinding: false, unixSockets: false });
   });
   it("no network requested -> none", () => {
     expect(sandboxCaps(agent(sb({})))).toEqual({ network: "none", localBinding: false, unixSockets: false });
@@ -27,19 +27,25 @@ describe("sandboxCaps for cursor", () => {
 });
 
 describe("enforcementFor cursor", () => {
-  it("explains cursor limits in Cursor wording, not Codex", () => {
+  it("uses tool-rules (not os) and explains Cursor limits without Codex wording", () => {
     env = makeEnv();
     const p = env.project();
     const a = { ...p.agents["fe-member"]!, runtime: "cursor" as const, sandbox: sb({ network: ["a.com"], localBinding: true, unixSockets: ["/tmp/s.sock"] }) };
     const e = enforcementFor(p, a);
     const text = e.notes.join("\n");
     expect(e.runtime).toBe("cursor");
+    // Cursor permissions + --sandbox are not Claude/Codex OS per-path enforcement; strict must not treat them as "os".
+    expect(e.memory).toBe("tool-rules");
+    expect(e.agentMd).toBe("tool-rules");
+    expect(e.otherContext).toBe("tool-rules");
+    expect(e.shared).toBe("tool-rules");
+    expect(e.repoInstructions).toBe("post-hoc");
     expect(text).toContain("Cursor");
     expect(text).not.toMatch(/codex/i);
-    expect(text).toContain("cursor: all hosts");
-    expect(text).toContain("all-or-nothing on Cursor");
+    expect(text).toContain("network: a.com (not applied by cursor)");
+    expect(text).not.toContain("all hosts");
+    expect(text).not.toContain("all-or-nothing");
     expect(text).toContain("local_binding: requested, not supported by cursor");
     expect(text).toContain("not applied by cursor");
-    expect(e.repoInstructions).toBe("post-hoc");
   });
 });

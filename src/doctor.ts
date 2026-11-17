@@ -261,6 +261,24 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));
   checks.push({ level: "info", subject: "login", message: "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on." });
+  if (runtimesUsed(project, true).includes("cursor")) {
+    const env = opts.env ?? process.env;
+    const hasKey = !!(env.CURSOR_API_KEY ?? "").trim();
+    const configDir = env.CURSOR_CONFIG_DIR || path.join(os.homedir(), ".cursor");
+    let hasAuth = false;
+    try {
+      hasAuth = fs.statSync(path.join(configDir, "auth.json")).isFile();
+    } catch {
+      /* missing */
+    }
+    if (!hasKey && !hasAuth) {
+      checks.push({
+        level: "warn",
+        subject: "cursor",
+        message: "Cursor agents need `agent login` or CURSOR_API_KEY; neither CURSOR_API_KEY nor auth.json in the Cursor config dir was found.",
+      });
+    }
+  }
   return { project: project.name, ok: !checks.some((c) => c.level === "error"), checks, runtimes };
 }
 

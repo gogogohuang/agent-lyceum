@@ -61,6 +61,41 @@ describe("cursor adapter", () => {
     expect(fs.existsSync(path.join(env.repo, ".cursor", "cli.json"))).toBe(false);
   });
 
+  it("passes --add-dir for writable paths outside the workspace, deduplicated, never workDir", () => {
+    env = makeEnv();
+    const w = wake(env, "fe-member");
+    const inv = buildCursorInvocation(w);
+    const dirs = inv.args.flatMap((a, i) => (a === "--add-dir" ? [inv.args[i + 1]!] : []));
+    const pol = writePolicy(w.project, w.agent);
+    expect(dirs).toContain(outboxDir(w.project, "fe-member"));
+    for (const d of pol.allowDirs.filter((d) => !(d === inv.cwd || d.startsWith(inv.cwd + path.sep)))) expect(dirs).toContain(d);
+    expect(new Set(dirs).size).toBe(dirs.length);
+    expect(dirs).not.toContain(w.workDir);
+    // the prompt stays the last, positional argument
+    expect(inv.args[inv.args.length - 1]).toBe("SYS\n\n=====\n\nUSER");
+
+    const o = wake(env, "fe-member", { policy: { allowDirs: ["/a/dir", "/a/dir"], readDirs: [], allowFiles: ["/a/file.md", "/b/x.md"], deny: [] } });
+    const od = buildCursorInvocation(o).args;
+    const odirs = od.flatMap((a, i) => (a === "--add-dir" ? [od[i + 1]!] : []));
+    expect(odirs).toEqual(["/a/dir", "/a", "/b"]);
+  });
+
+  it("rejects a prompt too long for argv before creating anything", () => {
+    env = makeEnv();
+    const w = wake(env, "fe-member", { userPrompt: "x".repeat(100_001) });
+    expect(() => buildCursorInvocation(w)).toThrow(/prompt too long for argv/i);
+    expect(fs.existsSync(w.workDir)).toBe(false);
+    // multibyte counts by bytes, not characters
+    expect(() => buildCursorInvocation(wake(env, "fe-member", { userPrompt: "好".repeat(40_000) }))).toThrow(/too long/);
+  });
+
+  it("keeps a flag-looking prompt from being parsed as an option", () => {
+    env = makeEnv();
+    const inv = buildCursorInvocation(wake(env, "fe-member", { systemPrompt: "--force it" }));
+    expect(inv.args[inv.args.length - 1]!.startsWith("-")).toBe(false);
+    expect(inv.args[inv.args.length - 1]).toContain("--force it");
+  });
+
   it("passes --resume when sessionId set", () => {
     env = makeEnv();
     const inv = buildCursorInvocation(wake(env, "fe-member", { sessionId: "chat-1" }));
@@ -115,20 +150,29 @@ describe("cursor adapter", () => {
     expect(oc.permissions.deny).toContain("Write(/a/dir/secret)");
   });
 
-  it("carries auth.json and merges cli-config.json from the source config dir", () => {
+  it("carries auth.json and keeps version/editor/deny from source, but never merges source allow", () => {
     env = makeEnv();
     fs.writeFileSync(path.join(srcDir, "auth.json"), '{"token":"t"}');
     fs.writeFileSync(
       path.join(srcDir, "cli-config.json"),
-      JSON.stringify({ version: 7, editor: { vimMode: true }, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env)"] } }),
+      JSON.stringify({ version: 7, editor: { vimMode: true }, permissions: { allow: ["Shell(ls)", "Shell(*)"], deny: ["Read(.env)"] } }),
     );
     const w = wake(env, "fe-member");
     const file = writeCursorCliConfig(w.workDir, w);
     expect(fs.readFileSync(path.join(w.workDir, "auth.json"), "utf8")).toBe('{"token":"t"}');
+    // preferred: a link, so no second copy of the credential is left in the run's dir
+    expect(fs.lstatSync(path.join(w.workDir, "auth.json")).isSymbolicLink()).toBe(true);
+    // a later wake replaces a stale copy
+    fs.rmSync(path.join(w.workDir, "auth.json"));
+    fs.writeFileSync(path.join(w.workDir, "auth.json"), "stale");
+    writeCursorCliConfig(w.workDir, w);
+    expect(fs.readFileSync(path.join(w.workDir, "auth.json"), "utf8")).toBe('{"token":"t"}');
     const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
     expect(cfg.version).toBe(7);
     expect(cfg.editor).toEqual({ vimMode: true });
-    expect(cfg.permissions.allow).toEqual(expect.arrayContaining(["Shell(ls)", `Write(${outboxDir(w.project, "fe-member")}/**)`]));
+    expect(cfg.permissions.allow).toContain(`Write(${outboxDir(w.project, "fe-member")}/**)`);
+    expect(cfg.permissions.allow).not.toContain("Shell(ls)");
+    expect(cfg.permissions.allow).not.toContain("Shell(*)");
     expect(cfg.permissions.deny).toEqual(expect.arrayContaining(["Read(.env)", "WebFetch(*)"]));
     // source untouched
     expect(JSON.parse(fs.readFileSync(path.join(srcDir, "cli-config.json"), "utf8")).version).toBe(7);
@@ -142,13 +186,17 @@ describe("cursor adapter", () => {
     expect(fs.existsSync(path.join(w.workDir, "auth.json"))).toBe(false);
   });
 
-  it("classifies auth and rate limit", () => {
+  it("classifies auth and rate limit with anchored phrases (not bare 401/429)", () => {
     expect(classifyCursorError({ code: 1, stdout: "", stderr: "Unauthorized: not logged in" })).toBe("auth");
+    expect(classifyCursorError({ code: 1, stdout: "", stderr: "401 Unauthorized" })).toBe("auth");
     expect(classifyCursorError({ code: 1, stdout: "", stderr: "429 Too Many Requests" })).toBe("rate_limit");
     expect(classifyCursorError({ code: 1, stdout: "", stderr: "usage limit reached" })).toBe("quota");
     expect(classifyCursorError({ code: 1, stdout: "", stderr: "connect ECONNREFUSED" })).toBe("network");
     expect(classifyCursorError({ code: null, stdout: "", stderr: "" })).toBe("crash");
     expect(classifyCursorError({ code: 1, stdout: "", stderr: "weird" })).toBe("unknown");
+    // bare numbers / line noise must not become rate_limit or auth
+    expect(classifyCursorError({ code: 1, stdout: "", stderr: "see port 4290" })).toBe("unknown");
+    expect(classifyCursorError({ code: 1, stdout: "", stderr: "error code 4010" })).toBe("unknown");
   });
 
   it("parses stream-json: last result text and session_id", () => {
