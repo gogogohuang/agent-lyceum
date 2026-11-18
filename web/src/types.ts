@@ -94,7 +94,7 @@ export type WatchFrame = {
 };
 
 export type QuotaWindow = { label: string; used_percent: number; remaining_percent: number; resets: string };
-export type QuotaReport = { runtime: "claude" | "codex"; windows: QuotaWindow[]; error?: string };
+export type QuotaReport = { runtime: "claude" | "codex" | "cursor"; windows: QuotaWindow[]; error?: string };
 
 export type WebEvent =
   | { type: "snapshot"; projects: { name: string; frame: WatchFrame }[]; quota?: QuotaReport[] }

@@ -7,7 +7,7 @@ import { cn } from "./cn";
 const TONE_BAR = { ok: "bg-signal", mid: "bg-warn", low: "bg-failed" } as const;
 const TONE_TEXT = { ok: "text-ink", mid: "text-warn", low: "text-failed" } as const;
 
-/** Remaining Claude / Codex allowance, laid out like slack-dispatcher's LimitsBar: one column per runtime, a meter per window. */
+/** Remaining Claude / Codex / Cursor allowance, laid out like slack-dispatcher's LimitsBar: one column per runtime, a meter per window. */
 export function Allowance({ reports, onReports }: { reports: QuotaReport[]; onReports: (reports: QuotaReport[]) => void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -42,7 +42,13 @@ export function Allowance({ reports, onReports }: { reports: QuotaReport[]; onRe
           <div aria-hidden className="h-8 w-1/2 rounded-md bg-ink/10 motion-safe:animate-pulse" />
         </div>
       ) : (
-        <div className={cn("grid", ordered.length > 1 && "md:grid-cols-2 md:divide-x md:divide-line")}>
+        <div
+          className={cn(
+            "grid",
+            ordered.length === 2 && "md:grid-cols-2 md:divide-x md:divide-line",
+            ordered.length >= 3 && "md:grid-cols-3 md:divide-x md:divide-line",
+          )}
+        >
           {ordered.map((report, i) => (
             <div key={report.runtime} className={cn(i > 0 && "border-t border-line md:border-t-0")}>
               <RuntimeBlock report={report} />

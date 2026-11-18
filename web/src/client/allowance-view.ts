@@ -14,12 +14,18 @@ export function wholePercent(n: number): number {
   return Math.min(100, Math.max(0, Math.round(n)));
 }
 
+/** Display name and column order per runtime; a Record so a new runtime fails type-checking until it is listed. */
+const RUNTIME_VIEW: Record<QuotaReport["runtime"], { name: string; rank: number }> = {
+  claude: { name: "Claude", rank: 0 },
+  codex: { name: "Codex", rank: 1 },
+  cursor: { name: "Cursor", rank: 2 },
+};
+
 export function runtimeName(runtime: QuotaReport["runtime"]): string {
-  return runtime === "claude" ? "Claude" : "Codex";
+  return RUNTIME_VIEW[runtime].name;
 }
 
-/** Claude first, Codex second, so the two columns never swap places between reads. */
+/** Claude, Codex, then Cursor — fixed column order between reads. */
 export function orderReports(reports: QuotaReport[]): QuotaReport[] {
-  const rank = (runtime: QuotaReport["runtime"]) => (runtime === "claude" ? 0 : 1);
-  return [...reports].sort((a, b) => rank(a.runtime) - rank(b.runtime));
+  return [...reports].sort((a, b) => RUNTIME_VIEW[a.runtime].rank - RUNTIME_VIEW[b.runtime].rank);
 }

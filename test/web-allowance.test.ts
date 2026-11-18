@@ -17,11 +17,12 @@ describe("allowance view helpers", () => {
     expect(wholePercent(120)).toBe(100);
   });
 
-  it("puts Claude before Codex", () => {
+  it("puts Claude before Codex before Cursor", () => {
     const ordered = orderReports([
+      { runtime: "cursor", windows: [] },
       { runtime: "codex", windows: [] },
       { runtime: "claude", windows: [] },
     ]);
-    expect(ordered.map((r) => runtimeName(r.runtime))).toEqual(["Claude", "Codex"]);
+    expect(ordered.map((r) => runtimeName(r.runtime))).toEqual(["Claude", "Codex", "Cursor"]);
   });
 });
