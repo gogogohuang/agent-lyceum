@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import { collectSlot, type CollectDeps, type CollectResult } from './approval-collect.js';
+import { collectSlot, defaultCollectDeps, type CollectDeps, type CollectLog, type CollectResult } from './approval-collect.js';
 import { ApprovalError } from './approval-error.js';
-import { type ExecutorsConfig, loadFreshConfig } from './approval-runtime.js';
+import type { ExecutorsConfig } from './approval-executors.js';
+import { loadFreshConfig } from './approval-runtime.js';
 import { qualificationHash, type SnapshotInput } from './approval-origin.js';
 import { publishExclusive, readApprovalFile } from './approval-io.js';
 import { approvalName, approvalSourceId, requestPaths } from './approval-paths.js';
@@ -12,10 +13,14 @@ import { withSlotCoord } from './approval-rotation.js';
 import { snapshotInputs } from './approval-snapshot.js';
 import type { Origin, PremiseResult, WritableSet } from './approval-types.js';
 import { callGateVerdict, type GateCode } from './approval-wake-gate.js';
-import { callProject, resolveCallAgent } from './call.js';
+import { callProject, lockAgent, resolveCallAgent } from './call.js';
 import { ConfigError, type ResolvedAgent, type ResolvedProject } from './config.js';
 import type { PremiseOptions } from './doctor-approval-premises.js';
 import { canonicalPath, NAME_RE } from './paths.js';
+import { osSandboxAvailable } from './policy.js';
+import { createRunLog } from './run-log.js';
+import { newRunId } from './run-store.js';
+import { DISPATCHER_DEFAULTS } from './schema.js';
 
 /** One mebibyte, including the trailing LF. A larger marker is refused before any wake. */
 const MARKER_LIMIT = 1024 * 1024;
@@ -55,7 +60,9 @@ interface CallApprovalView {
 }
 
 const bad = (code: GateCode): { ok: false; code: GateCode } => ({ ok: false, code });
-const markerError = (why: string): never => { throw new ApprovalError('CORRUPT_RECORD', why); };
+function markerError(why: string): never {
+  throw new ApprovalError('CORRUPT_RECORD', why);
+}
 
 function ordered(ok: CallApprovalOk): CallApprovalOk {
   return {
@@ -200,4 +207,82 @@ export function collectCallApproval(home: string, ok: CallApprovalOk, deps: {
     home, slot: { kind: 'call', call_id: ok.call_id }, agent: ok.role,
     runDir: path.join(home, 'calls', ok.call_id), config: view.config, origin, inputs: view.inputs, premises: view.premises,
   }, deps.collect);
+}
+
+export type CollectApprovedCallResult =
+  | { kind: 'absent' }
+  | { kind: 'complete' }
+  | { kind: 'blocked'; code: string };
+
+/**
+ * Append one diagnostic line to an existing regular file, or create it when it is absent.
+ * A symlink, FIFO, directory or other non-regular file is refused before any write.
+ */
+export function appendApprovalDiagnostic(file: string, maxBytes: number, fields: CollectLog): void {
+  let fd: number | undefined;
+  let repair = false;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+  if (fd !== undefined) {
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile()) throw new Error(`Approval diagnostic log is not a regular file: ${file}`);
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        fs.readSync(fd, last, 0, 1, st.size - 1);
+        repair = last[0] !== 0x0a;
+      }
+    } finally { fs.closeSync(fd); }
+  }
+  // Same-UID only, accepted: the path append below is not the fd checked above.
+  if (repair) fs.appendFileSync(file, '\n');
+  createRunLog(file, maxBytes)('approval_collect', { ...fields });
+}
+
+/** Append one failure line. The file is created only here, and a torn tail is repaired before the first append. */
+function appendCollectDiagnostic(home: string, callId: string, fields: CollectLog, say: (line: string) => void): void {
+  try {
+    const dir = path.join(home, 'calls', callId);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    appendApprovalDiagnostic(path.join(dir, 'log.jsonl'), DISPATCHER_DEFAULTS.log_max_bytes, fields);
+  } catch {
+    say('Approval call diagnostics could not be persisted.');
+  }
+}
+
+/**
+ * Finish collection for a call that already committed `ok.json`. Missing marker: read-only no-op.
+ * Does not start a runtime, read `result.md` or `parked/`, or call `process.exit`. The caller prints D5/D6 text.
+ */
+export function collectApprovedCall(o: {
+  home: string; callId: string; premise?: PremiseOptions; collect?: CollectDeps; say?: (line: string) => void;
+}): CollectApprovedCallResult {
+  const say = o.say ?? ((line: string) => console.error(line));
+  approvalSourceId(o.callId);
+  const first = readCallApprovalOk(o.home, o.callId);
+  if (first === null) return { kind: 'absent' };
+  if (first.call_id !== o.callId) markerError('Invalid approval call marker');
+  const premise = o.premise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable };
+  const lease = lockAgent(o.home, first.role, newRunId());
+  try {
+    const again = readCallApprovalOk(o.home, o.callId);
+    if (!again || !sameMarker(again, first)) markerError('Invalid approval call marker');
+    const diagnose = (fields: CollectLog): void => { appendCollectDiagnostic(o.home, o.callId, fields, say); };
+    const base = o.collect ?? defaultCollectDeps(() => undefined);
+    const collect: CollectDeps = { ...base, log: (event, fields) => { diagnose(fields); base.log(event, fields); } };
+    let result: CollectResult;
+    try {
+      result = collectCallApproval(o.home, again, { premise, collect, log: (_event, fields) => diagnose(fields) });
+    } catch {
+      diagnose({ slot: again.role, op: 'pass', class: 'io' });
+      return { kind: 'blocked', code: 'UNDETERMINABLE' };
+    }
+    if (result.verdict.kind === 'wake') return { kind: 'complete' };
+    return { kind: 'blocked', code: result.verdict.code };
+  } finally {
+    lease.release();
+  }
 }

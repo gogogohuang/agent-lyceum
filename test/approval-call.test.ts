@@ -266,6 +266,22 @@ describe('enrolled call lifecycle', () => {
     expect(fs.readFileSync(path.join(r.callDir, 'result.md'), 'utf8')).toBe('kept\n');
   });
 
+  it('call does not block when the diagnostic log is a fifo', async () => {
+    enroll();
+    const started = Date.now();
+    const r = await run(async (input) => {
+      const id = callIdOf(input.proposalsDir!);
+      execFileSync('mkfifo', [path.join(env.home, 'calls', id, 'log.jsonl')]);
+      fs.writeFileSync(path.join(env.home, 'executors.yaml'), 'not: [yaml\n');
+      put(input.proposalsDir!, 'keep.req', req('fifo-body'));
+      return OK('still-ok');
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(r).toMatchObject({ ok: true, text: 'still-ok' });
+    expect(said).toContain('Approval call diagnostics could not be persisted.');
+    expect(fs.readFileSync(path.join(r.callDir, 'result.md'), 'utf8')).toBe('still-ok\n');
+  }, 15_000);
+
   it('call keeps success when approval collection is retained', async () => {
     const cases = ['config-invalid', 'allow-removed', 'premise', 'eacces', 'enospc', 'budget'] as const;
     for (const kind of cases) {
