@@ -125,11 +125,11 @@ describe('settle collects finished output', () => {
     expect(writePolicy(lead.project, lead.agent).allowDirs.some((d) => d.includes('requests'))).toBe(false);
   });
 
-  it('tidy, verify, format and call never name a request directory (only the claim wake in run-session does)', () => {
+  it('tidy, verify and format never name a request directory; enrolled call may', () => {
     const src = path.join(__dirname, '..', 'src');
     const users = fs.readdirSync(src).filter((f) => f.endsWith('.ts') && fs.readFileSync(path.join(src, f), 'utf8').includes('proposalsDir')).sort();
-    expect(users).toEqual(['approval-snapshot.ts', 'policy.ts', 'prompt.ts', 'run-session.ts']);
-    for (const f of ['memory-tidy.ts', 'verify.ts', 'format.ts', 'call.ts']) expect(users).not.toContain(f);
+    expect(users).toEqual(['approval-snapshot.ts', 'call.ts', 'policy.ts', 'prompt.ts', 'run-session.ts']);
+    for (const f of ['memory-tidy.ts', 'verify.ts', 'format.ts']) expect(users).not.toContain(f);
     expect(fs.readdirSync(path.join(src, 'adapters')).filter((f) => fs.readFileSync(path.join(src, 'adapters', f), 'utf8').includes('proposalsDir')).sort()).toEqual(['claude.ts', 'types.ts']);
   });
 

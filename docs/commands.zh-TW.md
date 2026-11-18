@@ -70,19 +70,19 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 
 agent 已列入 `call` 時，每個候選只多一個可寫目錄：`requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在這份授權裡，`ok.json`、`collected/`、`parked/` 與其他 agent 的 `proposals/` 也不在。prompt 只說明如何寫請求檔。call 不把核准結果餵回 agent：prompt 不含其他請求的狀態、拒絕原因或 executor 輸出，call 不寫 `.feedback/`，下一個候選也不會收到 pending 或 denied 的結果。下面句子裡的 `<call-id>` 是這次 call 的 id（stderr 印出的那個 id）。標記與鎖的細節見 [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable)（英文）。`approvals list`、`show`、`approve` 尚未實作。
 
-runtime 啟動前，`proposals/` 必須是真實且為空的目錄。無法確認時，runtime 不啟動，也不試下一個候選，stderr 為：
+runtime 啟動前，`proposals/` 必須是真實且為空的目錄。新鮮的設定或前提不再通過時也同樣停住：新鮮的 call view 不是 ok；這次 call 已有 baseline 時，也包括資格雜湊與 baseline 不同。兩種情況 runtime 都不啟動，也不試下一個候選，stderr 為：
 
 `Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.`
 
 目錄裡已有的檔案留在原地，不收走、不刪除。執行 `agent-lyceum doctor`、修好目錄後，重新開始一次 call；這次 call 沒有 resume。失敗行寫得進去時，會附加到 `<home>/calls/<call-id>/log.jsonl`。
 
-失敗或取消的候選會移到 `requests/calls/<call-id>/parked/<n>`（`<n>` 從 1 起，沿 fallback 鏈遞增）。這些檔案永不收走。park 失敗就停止 fallback，stderr 為：
+失敗或取消的候選，在 park 成功時會移到 `requests/calls/<call-id>/parked/<n>`（`<n>` 從 1 起，沿 fallback 鏈遞增）。這些檔案永不收走。失敗候選的 park 失敗時，停止 fallback，stderr 為：
 
 `Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.`
 
-失敗候選的檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。
+失敗候選的檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。取消的候選 park 失敗時，不印這一行。附加成功時，診斷寫進同一份 log；附加失敗時，stderr 為 `Approval call diagnostics could not be persisted.` 然後 call 回傳取消結果，檔案留在原地。
 
-已列入且成功的 call 順序是：`guard.check`、接著 `requests/calls/<call-id>/ok.json`、接著 `<home>/calls/<call-id>/result.md`、接著收走、最後釋放 call lease。收走失敗時，成功結果、exit code 與 `result.md` 都保持不變；請求留在磁碟上，之後用 [approvals collect](#approvals-collect) 再試。標記發布失敗時，不寫成功的 `result.md`、不收走、指令以 `1` 結束，stderr 為：
+已列入且成功的 call 順序是：`guard.check`、接著 `requests/calls/<call-id>/ok.json`、接著 `<home>/calls/<call-id>/result.md`、接著收走、最後釋放 call lease。收走失敗時，成功結果、exit code 與 `result.md` 都保持不變；請求留在磁碟上，之後用 [approvals collect](#approvals-collect) 再試。收走被保留的 call 仍以 exit 0 結束，答案在 stdout；保留通知在 stderr 與 `<home>/calls/<call-id>/log.jsonl`，所以腳本必須檢查 stderr，或執行 `approvals collect --call <call-id>`。標記發布失敗時，不寫成功的 `result.md`、不收走、指令以 `1` 結束，stderr 為：
 
 `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.`
 
@@ -109,8 +109,8 @@ exit `0`。第二次成功的 pass 保證每個持久檔案的檔名、bytes、m
 **exit `1`。** 已經寫下的檔案都留著，包含 `result.md` 與已經發布的核准記錄。已經收走的內容不刪除。附加成功時，失敗行寫進 `<home>/calls/<id>/log.jsonl`。原因修好後，再執行同一條指令。可以重試；某一次指令結束，不代表下一次 pass 一定收得走。
 
 - 標記無效或此版不支援：stderr 為 `Call <id>: invalid or unsupported requests/calls/<id>/ok.json; no collection attempted.` 不建立新記錄。標記與請求檔留在原地。有效標記要由一次新的成功 call 發布；這個指令不改寫 `ok.json`。
-- 設定、前提、資格雜湊、角色或 executor 已移除、`--dir` 不存在或改指向別處、或 collector 預算：stderr 為 `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` 請求留在 `proposals/`，或留在還沒有 `.done` 的 `collected/<seq>/`。修好設定或執行 `agent-lyceum doctor` 後再重試。診斷行在 `<home>/calls/<id>/log.jsonl`。
-- `.coord` 被持有或殘留：stderr 為 `Call <id>: approval collection blocked (DIR_ANOMALY). See approval_collect diagnostics; stop all calls before removing a stale .coord.` 先停掉所有 call，確認沒有存活的 call，再手動移除該 `.coord` 目錄，然後重試。指令不會替你移除它。`approval_collect` 那一行在同一份 log。
+- 設定、前提、資格雜湊、角色或 executor 已移除、`--dir` 不存在或改指向別處、或 collector 預算：stderr 為 `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` 請求留在 `proposals/`，或留在還沒有 `.done` 的 `collected/<seq>/`。修好設定或執行 `agent-lyceum doctor` 後再重試。若 `executors.yaml` 被移除或改過，或該 agent 已不再登錄，恢復方式是還原這次 call 當時的設定，再執行 `approvals collect --call <call-id>`；在那之前請求留在原地（未登錄為 `NOT_ALLOWED`，資格雜湊不同為 `SNAPSHOT_MISMATCH`）。診斷行在 `<home>/calls/<id>/log.jsonl`。
+- 所有目錄異常（`DIR_ANOMALY`）：被持有或殘留的 `.coord`、symlink 或非目錄路徑、不支援的檔案系統，以及失敗的 `coord`、`high_water`、`link_probe`、`rotate`、`park`、`list` 操作。stderr 為 `Call <call-id>: approval collection blocked (DIR_ANOMALY). See the approval_collect class in calls/<call-id>/log.jsonl; if it is held, stop all calls before removing a stale .coord.` 讀 `<home>/calls/<call-id>/log.jsonl` 裡 `approval_collect` 那一行的 `class`。各 class 的處置見 [操作者處置](write-scope.zh-TW.md#操作者處置)。只有 `class` 為 `held` 時：先停掉所有 call，確認沒有存活的 call，再手動移除殘留的 `.coord` 目錄。指令不會替你移除它。該表的 `held` 列是 run slot 的處置（停掉 run）；這條指令要停的是 call。
 - log 檔本身寫不進去時，stderr 為 `Approval call diagnostics could not be persisted.` 請求留在 pass 停下的位置。讓 `<home>/calls/<id>/` 可寫後再重試。call 本身已經成功時，這一行不改變那次成功。
 
 ## resume

@@ -120,13 +120,13 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 
 授權路徑只有 `requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在授權內，`ok.json`、`collected/`、`parked/`、核准儲存區與其他 agent 的 `proposals/` 也不在。`<call-id>` 是這次 call 的 id。同 UID 競態、逃逸的子行程，以及沒有讀取隔離，仍如[殘留風險](#殘留風險未實作未驗證)所述：授權只管寫入，其他 agent 仍可讀這些檔案。
 
-runtime 啟動前，該 `proposals/` 必須是真實且為空的目錄。無法確認為空時，runtime 不啟動，也不試下一個候選。stderr 為 `Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.` 已在目錄裡的檔案留在原地，不收走、不刪除。執行 `agent-lyceum doctor`、修好目錄後，重新開始一次 call。這一行寫得進去時，會附加到 `<home>/calls/<call-id>/log.jsonl`。
+runtime 啟動前，該 `proposals/` 必須是真實且為空的目錄；新鮮的設定或前提不再通過時，也同樣停住。兩種情況 runtime 都不啟動，也不試下一個候選。stderr 為 `Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.` 已在目錄裡的檔案留在原地，不收走、不刪除。執行 `agent-lyceum doctor`、修好目錄後，重新開始一次 call。這一行寫得進去時，會附加到 `<home>/calls/<call-id>/log.jsonl`。
 
 ### park，以及收走失敗仍保留 call 成功
 
-失敗或取消的候選會 park 到 `parked/<n>`，永不收走。`ok.json` 寫出之前崩潰留下的部分 `proposals/` 也永不收走。park 失敗就停止 fallback。stderr 為 `Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.` 檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。
+失敗或取消的候選，在 park 成功時會 park 到 `parked/<n>`，永不收走。`ok.json` 寫出之前崩潰留下的部分 `proposals/` 也永不收走。失敗候選的 park 失敗時，停止 fallback。stderr 為 `Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.` 檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。取消的候選 park 失敗時，不印這一行。附加成功時寫入診斷；附加失敗時，stderr 為 `Approval call diagnostics could not be persisted.` 然後 call 回傳取消結果，檔案留在原地。
 
-成功的 call 在收走失敗時仍算成功：exit code 與 `result.md` 保持不變，請求留在磁碟上。修好設定或執行 `agent-lyceum doctor` 後，再執行 `approvals collect --call <call-id>`。診斷行在 `<home>/calls/<call-id>/log.jsonl`。修好之後可以重試。重試不保證一定收得走。call 不把核准結果餵回 agent。
+成功的 call 在收走失敗時仍算成功：仍以 exit 0 結束，答案在 stdout，`result.md` 保持不變。保留通知在 stderr 與 `<home>/calls/<call-id>/log.jsonl`，所以腳本必須檢查 stderr，或執行 `approvals collect --call <call-id>`。請求留在磁碟上。修好設定或執行 `agent-lyceum doctor` 後，再執行該指令。若 `executors.yaml` 被移除或改過，或該 agent 已不再登錄，恢復方式是還原這次 call 當時的設定，再執行 `approvals collect --call <call-id>`；在那之前請求留在原地。修好之後可以重試。重試不保證一定收得走。call 不把核准結果餵回 agent。
 
 ### 仍然成立的限制
 

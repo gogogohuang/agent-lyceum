@@ -4,7 +4,7 @@ import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
 import os from "node:os";
-import { callApprovalView, collectCallApproval, publishCallApprovalOk, type CallApprovalOk } from "./approval-call.js";
+import { appendApprovalDiagnostic, callApprovalView, collectCallApproval, publishCallApprovalOk, type CallApprovalOk } from "./approval-call.js";
 import { defaultCollectDeps, type CollectDeps, type CollectLog } from "./approval-collect.js";
 import { ApprovalError } from "./approval-error.js";
 import { requestPaths, type SlotRef } from "./approval-paths.js";
@@ -22,7 +22,6 @@ import { assertName, canonicalPath, homePaths, isInside, type ProjectPaths } fro
 import { memoryDirs, osSandboxAvailable } from "./policy.js";
 import { lockHolderAlive, type LockInfo } from "./project-lock.js";
 import { buildCallUserPrompt, buildSoloSystemPrompt, buildSystemPrompt } from "./prompt.js";
-import { createRunLog } from "./run-log.js";
 import { newRunId } from "./run-store.js";
 import { DISPATCHER_DEFAULTS } from "./schema.js";
 
@@ -243,19 +242,7 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     const diagnose = (fields: CollectLog): void => {
       logged = true;
       try {
-        const file = path.join(callDir, "log.jsonl");
-        if (fs.existsSync(file)) {
-          const fd = fs.openSync(file, "r");
-          try {
-            const size = fs.fstatSync(fd).size;
-            if (size > 0) {
-              const last = Buffer.alloc(1);
-              fs.readSync(fd, last, 0, 1, size - 1);
-              if (last[0] !== 0x0a) fs.appendFileSync(file, "\n");
-            }
-          } finally { fs.closeSync(fd); }
-        }
-        createRunLog(file, project.dispatcher.log_max_bytes)("approval_collect", { ...fields });
+        appendApprovalDiagnostic(path.join(callDir, "log.jsonl"), project.dispatcher.log_max_bytes, fields);
       } catch {
         say("Approval call diagnostics could not be persisted.");
       }

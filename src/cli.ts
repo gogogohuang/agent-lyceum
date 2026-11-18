@@ -20,6 +20,8 @@ import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths
 import { addProject, initHome, removeProject } from "./scaffold.js";
 import { buildStatusReport, buildTaskListReport, formatMonitor, formatRunDetail, formatStatusWithLog, formatTaskList, latestUnfinishedRun, listRuns, reopenCandidates, runIsAlive } from "./status.js";
 import { lintTaskContent, prepareTask, readTaskFile, taskMessageBody } from "./task.js";
+import { collectApprovedCall } from "./approval-call.js";
+import { ApprovalError } from "./approval-error.js";
 import { assertApprovalConfig } from "./approval-runtime.js";
 import { callAgent, callProject, callsDir, resolveCallAgent } from "./call.js";
 import { formatEnforcement, validateProject } from "./validate.js";
@@ -933,6 +935,36 @@ program
   });
 
 program
+  .command("approvals")
+  .description("Recover approval requests for one call that already committed ok.json.")
+  .command("collect")
+  .description("Finish collection for one call. A call without ok.json is left untouched.")
+  .requiredOption("--call <call-id>", "the call whose requests/calls/<id>/ok.json selects the collection")
+  .action((opts: { call: string }) => {
+    const id = opts.call;
+    try {
+      const result = collectApprovedCall({ home: home(), callId: id });
+      if (result.kind === "absent") {
+        console.log(`Call ${id}: no ok.json; nothing collected.`);
+        return;
+      }
+      if (result.kind === "complete") {
+        console.log(`Call ${id}: approval collection complete.`);
+        return;
+      }
+      if (result.code === "DIR_ANOMALY") {
+        fail(`Call ${id}: approval collection blocked (DIR_ANOMALY). See the approval_collect class in calls/${id}/log.jsonl; if it is held, stop all calls before removing a stale .coord.`);
+      }
+      fail(`Call ${id}: approval collection retained (${result.code}); fix configuration or run agent-lyceum doctor, then retry approvals collect --call ${id}.`);
+    } catch (e) {
+      if (e instanceof Error && /^\S+ is already being called \(call \S+, pid \d+\)\. Wait for it to finish\.$/.test(e.message)) fail(e.message);
+      if (e instanceof Error && /^Could not take .+; try again\.$/.test(e.message)) fail(e.message);
+      if (e instanceof ApprovalError) fail(`Call ${id}: invalid or unsupported requests/calls/${id}/ok.json; no collection attempted.`);
+      fail(`Call ${id}: approval collection retained (UNDETERMINABLE); fix configuration or run agent-lyceum doctor, then retry approvals collect --call ${id}.`);
+    }
+  });
+
+program
   .command("ship")
   .description("Apply search/replace edits with verify+rollback (Claude Code and Codex; session from the wake)")
   .requiredOption("--session <file>", "ship-session.json written for this wake")
@@ -952,6 +984,7 @@ const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["doctor", "status"],
   "Run:": ["run", "resume", "clear", "call", "tidy"],
+  "Approvals:": ["approvals"],
   "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);

@@ -299,3 +299,17 @@ describe("status --json --watch", { timeout: 30_000 }, () => {
     }
   }, 30000); // tsx starts slowly on a loaded CI runner
 });
+
+describe("approvals collect --call", () => {
+  it("exits 0 and names the missing marker when the call has no ok.json", () => {
+    env = makeEnv();
+    const r = run(["approvals", "collect", "--call", "absent-call"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("Call absent-call: no ok.json; nothing collected.\n");
+    expect(r.err).toBe("");
+    expect(fs.existsSync(path.join(env.home, "requests"))).toBe(false);
+    expect(fs.existsSync(path.join(env.home, "approvals"))).toBe(false);
+    expect(fs.existsSync(path.join(env.home, "calls", "absent-call", "log.jsonl"))).toBe(false);
+    expect(fs.existsSync(path.join(env.home, "calls", ".lock-fe-member"))).toBe(false);
+  });
+});
