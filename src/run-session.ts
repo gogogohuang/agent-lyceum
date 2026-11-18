@@ -3,8 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
+import { ApprovalError } from "./approval-error.js";
+import { type CollectDeps, type CollectInput, type CollectResult, collectSlot, defaultCollectDeps, prepareSlot } from "./approval-collect.js";
+import { type SlotRef, requestPaths } from "./approval-paths.js";
+import { CoordHeldError, createRotation } from "./approval-rotation.js";
 import { loadFreshEnrollment } from "./approval-runtime.js";
-import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, recoveryReadFile, recoverySkipFile, scanRecoveryInputs, slotDirVerdict, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type SlotBaseline } from "./approval-wake-gate.js";
+import { snapshotInputs } from "./approval-snapshot.js";
+import { GATE_TEXT, baselineFor, loadFreshView, qualificationVerdict, recoveryReadFile, recoverySkipFile, scanRecoveryInputs, writeGateFile, type GateDeps, type GateEntry, type GateVerdict, type FreshView, type SlotBaseline } from "./approval-wake-gate.js";
 import type { PremiseOptions } from "./doctor-approval-premises.js";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { agentForCandidate, candidatesFor, Cooldowns, defaultSleep, deferredAttempts, planAttempts, runWithFallback, type Candidate, type Tried } from "./fallback.js";
@@ -18,13 +23,14 @@ import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck,
 import { deliver, deliverOnce, ensureAgentDirs, ensureProjectDirs, finishDone, listUnread, PENDING_DIR, readMessageNoFollow, rejectDone, routeOutboxes, unreadFiles, type InstanceRouting, type RouteResult } from "./mailbox.js";
 import { type InstanceContainment, instanceContainment } from "./instance-containment.js";
 import { DEFAULT_MAX_INSTANCES, assertInstancesResumable, heldStallKey, instanceCap, ownersOf, parseSlotName, planAssignments, roleOfName, type HeldMsg } from "./instances.js";
-import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
+import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, latestSlotAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
 import { inboxDir, osSandboxAvailable, outboxDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
+import { canonicalPath } from "./paths.js";
 import type { RunOutcome } from "./schema.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
 import { workingTreeHash } from "./worktree.js";
@@ -103,6 +109,8 @@ function lastPerModel(tried: Tried[]): TriedModel[] {
 }
 
 /** How one agent's wake-up ended. */
+const RETAINED_DETAIL = "Approval requests of this agent were kept where they are but were not collected.";
+
 type WakeOutcome = { ok: boolean; cancelled?: boolean; error?: string; attempts?: number; tried?: TriedModel[] };
 
 export interface RunSummary {
@@ -165,6 +173,8 @@ export interface RunOptions {
   approvalGate?: Partial<GateDeps>;
   /** Approval gate: platform and sandbox facts for the premise checks; tests inject them. Default: this process. */
   approvalPremise?: PremiseOptions;
+  /** Approval request collection (stage 3) test seam: io, budget, clock, fault points and log of the collector and of rotations. */
+  approvalCollect?: Partial<CollectDeps>;
 }
 
 /** Per-session state of the approval wake gate; exists only when some agent is enrolled. */
@@ -183,7 +193,14 @@ interface GateState {
   logged: Set<string>;
   /** One pass per loop round: the fresh view is read at most once and each slot is judged once. */
   pass: { view?: ReturnType<GateDeps["loadFresh"]>; verdicts: Map<string, GateVerdict> };
+  /** Request collection (stage 3): its deps, the rotation used to park, and the scan limit of the attempts folder. */
+  collect: CollectDeps;
+  rotation: ReturnType<typeof createRotation>;
+  maxScan: number;
 }
+
+/** What a slot's latest attempt says about output found in its request directory. */
+type Residual = NonNullable<CollectInput["current"]>;
 
 /**
  * Whether same-role instances are possible in this run, decided once from configuration and paths (spec 23.11 preflight, reads only): when
@@ -703,11 +720,13 @@ export class RunSession {
     } else baselineBroken = true;
     const deps: GateDeps = {
       loadFresh: () => loadFreshView({ home: project.home, project: project.name, userHome, bind, actual: this.project, premise }),
-      slotDir: (slot) => slotDirVerdict(project.home, { kind: "run", project: project.name, run_id: this.runId, slot }, runDir, slot, maxScan),
+      slotDir: (slot) => this.prepareForWake(slot),
       now: () => new Date(),
       ...opts.approvalGate,
     };
-    this.gate = { deps, baselines, baselineBroken, quarantined: new Set(), entries: {}, attempted: "", logged: new Set(), pass: { verdicts: new Map() } };
+    const collect: CollectDeps = { ...defaultCollectDeps((event, fields) => log(event, { ...fields })), ...opts.approvalCollect };
+    const rotation = createRotation({ io: collect.io, fault: collect.fault });
+    this.gate = { deps, baselines, baselineBroken, quarantined: new Set(), entries: {}, attempted: "", logged: new Set(), pass: { verdicts: new Map() }, collect, rotation, maxScan };
     this.persistGate("reset");
     if (this.resume) {
       const scan = scanRecoveryInputs(runDir, slots);
@@ -753,8 +772,182 @@ export class RunSession {
     }
   }
 
+  // ---- approval request collection (stage 3) ----
+
+  /** The project as a wake actually runs it (the member worktrees of this batch and the lead's): shared by `wake` and request collection. */
+  private invocationProject(): ResolvedProject {
+    const spaces = this.leadSpace ? { ...this.batchSpaces, [this.project.lead]: this.leadSpace } : this.batchSpaces;
+    return Object.keys(spaces).length ? { ...this.project, workspaces: spaces } : this.project;
+  }
+
+  /** The enrolled slot's request directory as this run lays it out; the canonical path a claim wake is granted. Undefined for any other agent. */
+  private proposalsPath(slot: string): string | undefined {
+    const g = this.gate;
+    if (!g?.baselines.has(slot) || !this.project.agents[slot]?.enrolled) return undefined;
+    return canonicalPath(requestPaths(this.project.home, this.slotRef(slot)).proposals);
+  }
+
+  private slotRef(slot: string): SlotRef {
+    return { kind: "run", project: this.project.name, run_id: this.runId, slot };
+  }
+
+  /** The fresh qualification view of this pass, or one read now; undefined when it cannot be read. */
+  private freshView(): FreshView | undefined {
+    const g = this.gate as GateState;
+    if (!g.pass.view) {
+      try {
+        g.pass.view = g.deps.loadFresh();
+      } catch {
+        g.pass.view = { ok: false, code: "CONFIG_INVALID" };
+      }
+    }
+    return g.pass.view.ok ? g.pass.view.view : undefined;
+  }
+
+  private collectInput(slot: string, view: FreshView, current?: Residual): CollectInput | undefined {
+    const base = (this.gate as GateState).baselines.get(slot);
+    if (!base) return undefined;
+    const ref = this.slotRef(slot);
+    const { full, inputs } = snapshotInputs(this.invocationProject(), slot, view.config, canonicalPath(requestPaths(this.project.home, ref).proposals));
+    return { home: this.project.home, slot: ref, agent: slot, runDir: this.runDir, config: view.config, origin: { ...base.origin, full_writable: full }, inputs, premises: view.premises, ...(current ? { current } : {}) };
+  }
+
+  /** What the slot's latest attempt says about leftover output: set aside, collect, or (undefined) cannot be told. Reads the attempts folder, so only asked when output is there. */
+  private residualOf(slot: string): Residual | undefined {
+    const l = latestSlotAttempt(this.runDir, slot, (this.gate as GateState).maxScan);
+    if (l.kind !== "found") return undefined;
+    if (l.attempt.status === "failed" || l.claim === "abandoned") return { attemptId: l.attempt.id, outcome: "park" };
+    if (l.claim === "output_ready" || l.claim === "committed") return { attemptId: l.attempt.id, outcome: "collect" };
+    return undefined;
+  }
+
+  /**
+   * One collection pass over one enrolled slot. With `hint` (a wake of this batch just finished) its output is collected; without it the pass
+   * first finishes older work and refuses undetermined leftovers, and only then asks the latest attempt what the leftovers are (so the common,
+   * empty case never reads the attempts folder). The first pass's log lines are dropped when the second one replaces it.
+   */
+  private slotPass(slot: string, view: FreshView, hint?: Residual): CollectResult {
+    const g = this.gate as GateState;
+    const run = (current: Residual | undefined, buffer: [string, Parameters<CollectDeps["log"]>[1]][]): CollectResult | undefined => {
+      const input = this.collectInput(slot, view, current);
+      if (!input) return undefined;
+      const deps: CollectDeps = { ...g.collect, log: (event, fields) => buffer.push([event, fields]) };
+      return hint ? collectSlot(input, deps) : prepareSlot(input, deps);
+    };
+    const flush = (buffer: [string, Parameters<CollectDeps["log"]>[1]][]) => {
+      for (const [event, fields] of buffer) g.collect.log(event as "approval_collect", fields);
+    };
+    let logs: [string, Parameters<CollectDeps["log"]>[1]][] = [];
+    let res = run(hint, logs);
+    if (!res) return { created: 0, existing: 0, denied: 0, verdict: { kind: "skipped", code: "UNDETERMINABLE" } };
+    if (!hint && res.verdict.kind === "skipped" && res.verdict.code === "UNDETERMINABLE") {
+      const residual = this.residualOf(slot);
+      if (residual) {
+        const again: [string, Parameters<CollectDeps["log"]>[1]][] = [];
+        const second = run(residual, again);
+        if (second) {
+          res = second;
+          logs = again;
+        }
+      }
+    }
+    flush(logs);
+    return res;
+  }
+
+  /** The gate's last check before a claim wake: the slot's request directory is made ready (older output collected or set aside), or the slot is not woken. */
+  private prepareForWake(slot: string): GateVerdict {
+    const view = this.freshView();
+    if (!view) return { kind: "skipped", code: "UNDETERMINABLE" };
+    if (this.opts.signal?.aborted) {
+      this.log("approval_collect", { slot, op: "pass", class: "cancelled" });
+      return { kind: "skipped", code: "UNDETERMINABLE" };
+    }
+    return this.slotPass(slot, view).verdict;
+  }
+
+  /** Before each call of a claim wake (the first, every retry and every fallback): the request directory exists, is empty and is safe. */
+  private ensureProposals(slot: string): boolean {
+    if (this.proposalsPath(slot) === undefined) return true;
+    const view = this.freshView();
+    if (!view) return false;
+    return this.slotPass(slot, view).verdict.kind === "wake";
+  }
+
+  /** Output of the attempt that just failed or was cancelled is set aside under it. False when that did not work: the slot must not be called again. */
+  private parkProposals(slot: string, attemptId: string): boolean {
+    const g = this.gate;
+    if (!g || this.proposalsPath(slot) === undefined) return true;
+    try {
+      g.rotation.park(this.project.home, this.slotRef(slot), attemptId);
+    } catch (e) {
+      this.logParkFailure(slot, e);
+      return false;
+    }
+    fault("failure:proposals-parked");
+    return true;
+  }
+
+  private logParkFailure(slot: string, e: unknown): void {
+    const code = e instanceof ApprovalError ? e.code : undefined;
+    const cls = e instanceof CoordHeldError ? "held" : code === "UNSAFE_PATH" ? "not_directory" : code === "CORRUPT_HIGH_WATER" ? "corrupt" : "io";
+    this.log("approval_collect", { slot, op: "park", class: cls });
+  }
+
+  /** After a batch is routed: every enrolled slot's finished output is collected (not only this batch's), and every slot's problem is recorded and goes on without it. */
+  private collectApprovals(batch: ResolvedAgent[]): void {
+    const g = this.gate;
+    if (!g) return;
+    const slots = Object.values(this.project.agents).filter((a) => a.enrolled && g.baselines.has(a.name) && !g.quarantined.has(a.name)).map((a) => a.name);
+    if (slots.length === 0) return;
+    g.pass.view = undefined; // the wake may have taken a while: judge against the configuration as it is now
+    let view: FreshView | undefined;
+    let viewRead = false;
+    const hints = new Map<string, Residual>();
+    for (const a of batch) {
+      const att = this.attempts.get(a.name);
+      if (att && att.status === "output_ready") hints.set(a.name, { attemptId: att.id, outcome: "collect" });
+    }
+    for (const [i, slot] of slots.entries()) {
+      if (this.opts.signal?.aborted) {
+        for (const rest of slots.slice(i)) this.log("approval_collect", { slot: rest, op: "pass", class: "cancelled" });
+        return;
+      }
+      try {
+        const hint = hints.get(slot);
+        if (!hint && !fs.existsSync(requestPaths(this.project.home, this.slotRef(slot)).root)) continue; // nothing was ever written for this slot
+        if (!viewRead) {
+          viewRead = true;
+          view = this.freshView();
+        }
+        if (!view) {
+          this.retainedOutput(slot);
+          continue;
+        }
+        const q = qualificationVerdict(g.baselines.get(slot) as SlotBaseline, view);
+        if (q.kind !== "wake") {
+          this.applyVerdict(slot, q);
+          continue;
+        }
+        this.applyVerdict(slot, this.slotPass(slot, view, hint).verdict);
+      } catch {
+        this.retainedOutput(slot);
+      }
+    }
+  }
+
+  /** A slot's output could not be collected this pass: it stays where it is, the slot is gated (fixed reason, no error text) and the lead is told. Never throws. */
+  private retainedOutput(slot: string): void {
+    this.log("approval_collect", { slot, op: "pass", class: "io" });
+    try {
+      this.applyVerdict(slot, { kind: "skipped", code: "UNDETERMINABLE" }, RETAINED_DETAIL);
+    } catch {
+      this.log("approval_gate_file_error", { phase: "retained" });
+    }
+  }
+
   /** Record a verdict: side file, log, terminal line, and one notice to the lead (never to itself). True when a new notice was delivered. */
-  private applyVerdict(slot: string, v: GateVerdict): boolean {
+  private applyVerdict(slot: string, v: GateVerdict, detail?: string): boolean {
     const g = this.gate as GateState;
     const { project, runId } = this;
     if (v.kind === "wake") {
@@ -791,7 +984,9 @@ export class RunSession {
         to: project.lead,
         type: "failure",
         subject: `${slot} cannot be woken: approval check`,
-        body: `${slot} has unread mail, but it is not woken: ${GATE_TEXT[v.code].mail}${failed}\n\nIts unread mail stays unread. ${tail} Do its work yourself or give it to another agent; do not wait for ${slot}.`,
+        body: detail
+          ? `${detail} ${GATE_TEXT[v.code].mail}${failed}\n\n${tail} Do its work yourself or give it to another agent; do not wait for ${slot}.`
+          : `${slot} has unread mail, but it is not woken: ${GATE_TEXT[v.code].mail}${failed}\n\nIts unread mail stays unread. ${tail} Do its work yourself or give it to another agent; do not wait for ${slot}.`,
       },
       this.state.instances?.roles[roleOfName(project.agents, slot)] ? { about: slot } : {},
     );
@@ -864,16 +1059,18 @@ export class RunSession {
     const claim = claimMessages(runDir, agent.name, unread);
     claims.set(agent.name, claim);
     const workDir = path.join(runDir, "agents", agent.name);
-    const spaces = this.leadSpace ? { ...this.batchSpaces, [project.lead]: this.leadSpace } : this.batchSpaces;
-    const aproject = Object.keys(spaces).length ? { ...project, workspaces: spaces } : project;
+    const aproject = this.invocationProject();
+    // An enrolled claim wake (and only that: tidy, verify, format and call never come through here) is told, and granted, its request directory.
+    const proposalsDir = this.proposalsPath(agent.name);
     const base = {
       project: aproject,
       agent,
       workDir,
-      workspace: spaces[agent.name],
-      systemPrompt: buildSystemPrompt(aproject, agent),
-      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask()),
+      workspace: aproject.workspaces?.[agent.name],
+      systemPrompt: buildSystemPrompt(aproject, agent, proposalsDir),
+      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask(), proposalsDir),
       timeoutSec: cfg.wake_timeout_sec,
+      ...(proposalsDir === undefined ? {} : { proposalsDir }),
     };
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
     // A lead's `tier` (spec 24.5.3): only for an agent with a ladder, and only a valid value counts.
@@ -902,6 +1099,7 @@ export class RunSession {
       log("tier_step_up", { agent: agent.name, tier, from: modelLabel(tieredFirst), to: modelLabel(candidates[0] as Candidate), reason: "cooldown" });
     }
     let calls = 0;
+    let blocked: string | undefined; // set when this slot's request directory cannot be made safe: only this slot stops
     let stoppedByCancel = false;
     const outcome = await runWithFallback<WakeResult>({
       candidates,
@@ -955,6 +1153,11 @@ export class RunSession {
         // A backup runs as the same agent on another runtime/model, in a session of its own.
         const runAs = agentForCandidate(agent, c);
         const sessionKey = sessionKeyOf(agent, c);
+        // Every call (the first, each retry, each fallback) starts from an empty, safe request directory, or is not made at all.
+        if (!this.ensureProposals(agent.name)) {
+          blocked = `${agent.name} was not called: its approval request directory could not be made ready.`;
+          return { ok: false, text: "", exitCode: null, timedOut: false, error: "approval request directory is not usable", kind: "config" } satisfies WakeResult;
+        }
         const round = ++state.rounds;
         const started = Date.now();
         const att = beginAttempt(runDir, claim.id);
@@ -1032,6 +1235,7 @@ export class RunSession {
         this.saveState();
         if (result.ok) {
           attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
+          if (this.proposalsPath(agent.name) !== undefined) fault("attempt:output-ready"); // enrolled slots only: a run without approval keeps the pre-stage-3 fault steps
           if (agent.resume && !result.sessionId && !state.sessions[sessionKey] && !noSessionNoted.has(agent.name)) {
             noSessionNoted.add(agent.name);
             this.note(`${agent.name} has resume: true but its ${c.runtime} CLI reported no session id, so every wake-up starts a fresh session.`);
@@ -1041,15 +1245,22 @@ export class RunSession {
         if (result.cancelled) {
           // Stopped on purpose: not a failure to report. Its output is set aside (its input stays unread for the resume, below).
           const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+          this.parkProposals(agent.name, att.id);
           fault("park:before-finish");
           finishAttempt(runDir, att.id, "failed", { error: "cancelled", parked });
           return result;
         }
         // A failed attempt's output is never trusted: park it under the attempt, away from the next attempt's result.
         const parked = parkOutbox(runDir, outboxDir(project, agent.name), att.id);
+        const proposalsParked = this.parkProposals(agent.name, att.id);
         fault("park:before-finish");
         finishAttempt(runDir, att.id, "failed", { error: result.error, parked });
         say(`  ${agent.name} failed: ${result.error ?? "unknown error"}`);
+        if (!proposalsParked) {
+          // Its approval requests could not be set aside: calling the slot again could mix them with the next attempt's. `config` is never retried and never falls back.
+          blocked = `${agent.name} attempt ${att.n} failed and its approval request directory could not be set aside; its requests and its unread mail were kept. Anything it already did outside its mailbox may have happened.`;
+          return { ...result, kind: "config", error: "approval request output could not be set aside" };
+        }
         if (result.kind === "config" && result.error?.startsWith("sandbox refused")) {
           this.note(`${agent.name} attempt ${att.n} was refused before it started (${result.error}); nothing was run, so there are no side effects to undo.`);
           return result;
@@ -1066,6 +1277,13 @@ export class RunSession {
     if (result?.ok) {
       markOutputReady(runDir, claim.id);
       return { ok: true };
+    }
+    if (blocked) {
+      // Only this slot stops: its input stays unread, its requests stay where they are (nothing is consumed), the lead is told, the others go on.
+      abandonClaim(runDir, claim.id);
+      claims.delete(agent.name);
+      this.applyVerdict(agent.name, { kind: "skipped", code: "UNDETERMINABLE" }, blocked);
+      return { ok: false, cancelled: true };
     }
     // The input stays unread for the resume: the round limit, or a cancel (during a call or a backoff).
     abandonClaim(runDir, claim.id);
@@ -1220,6 +1438,8 @@ export class RunSession {
       if (ws && results[i]?.ok) this.integrateMember(a, ws, claims.get(a.name)?.id ?? `${a.name}-${state.rounds}`);
     });
     const route = routeOutboxes(project, this.routing());
+    // Approval requests that finished wake-ups left (and any older ones) are collected before their input is consumed; a slot's problem never stops the others.
+    this.collectApprovals(batch);
     // A done that breaks the completion contract goes back to the lead (a limited number of times).
     let contract: DoneContract | undefined;
     if (route.done) {
@@ -1546,7 +1766,29 @@ export class RunSession {
     const { say, runId, runDir, project, wsMode, log } = this;
     if (this.resume?.end_reason === "waiting") this.deliverAnswers();
     const scan = this.gate?.recovery;
-    const rec = recoverRunMail(runDir, { outboxOf: (agent) => outboxDir(project, agent), ...(scan ? { skipFile: recoverySkipFile(scan), readFile: recoveryReadFile(scan) } : {}) });
+    const g = this.gate;
+    const rec = recoverRunMail(runDir, {
+      outboxOf: (agent) => outboxDir(project, agent),
+      ...(scan && g
+        ? {
+            skipFile: recoverySkipFile(scan),
+            readFile: recoveryReadFile(scan),
+            proposalsOf: (agent: string) => this.proposalsPath(agent),
+            parkProposals: (agent: string, attemptId: string) => {
+              try {
+                g.rotation.park(project.home, this.slotRef(agent), attemptId);
+              } catch (e) {
+                this.logParkFailure(agent, e);
+                throw e;
+              }
+            },
+            // The slot's attempt and claim stay as they were; it is not woken (nor collected) in this process.
+            onProposalsError: (agent: string) => {
+              g.quarantined.add(agent);
+            },
+          }
+        : {}),
+    });
     for (const i of rec.interrupted) {
       this.note(
         `${i.attempt.agent} attempt ${i.attempt.n} was interrupted${i.parked.length ? `; ${i.parked.length} output file(s) set aside in ${path.join("mail", "attempts", i.attempt.id, "outbox")}` : ""}. ` +

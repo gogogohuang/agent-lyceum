@@ -31,10 +31,10 @@ function denyRules(p: string): string[] {
 }
 
 /** `override`: a policy that replaces the agent's own; `cwd` is then the (scratch) directory the runtime starts in, in place of the repo. */
-export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent, override?: { policy: WritePolicy; cwd: string }): Record<string, unknown> {
+export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent, override?: { policy: WritePolicy; cwd: string }, proposalsDir?: string): Record<string, unknown> {
   // Enrolled: the approval denies are unioned in, never replaced by an override; an unavailable inventory throws (no partial list).
   const approvalDeny = agent.enrolled ? approvalDenyPathsStrict(project, agent) : [];
-  const base = override?.policy ?? writePolicy(project, agent);
+  const base = override?.policy ?? writePolicy(project, agent, proposalsDir);
   const pol = agent.enrolled ? { ...base, deny: [...new Set([...base.deny, ...approvalDeny])] } : base;
   const ws = override ? undefined : project.workspaces?.[agent.name];
   const repo = override?.cwd ?? repoDirFor(project, agent.name);
@@ -83,10 +83,10 @@ export function buildClaudeInvocation(raw: WakeInput): Invocation {
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   const scope = input.policy ? { policy: input.policy, cwd: repo } : undefined;
   if (scope) fs.mkdirSync(repo, { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent, scope), null, 2));
+  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent, scope, input.proposalsDir), null, 2));
   fs.writeFileSync(systemFile, input.systemPrompt);
 
-  const pol = input.policy ?? writePolicy(project, agent);
+  const pol = input.policy ?? writePolicy(project, agent, input.proposalsDir);
   const addDirs = [...pol.allowDirs, ...pol.readDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
   // So Bash can read the ship session file under the run's agent workDir.
   if (ship) addDirs.push(workDir);

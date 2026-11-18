@@ -24,7 +24,7 @@ import { readRegularFileCappedNoFollow } from './fs-util.js';
 /**
  * Collection core (spec 4.4, plan S2/D2-D5/D9). One pass per slot, synchronous, under the slot's `.coord` lock and a bounded fs-call
  * budget (D3). It finishes every un-`.done` `collected/<seq>`, then (when it may) rotates `proposals/` and processes the new directory.
- * Nothing here wires into a run (S3). Re-entry after a crash at any point is safe: ids are deterministic, `record.json` is the
+ * The run session calls it before a slot's wake and after each batch (`run-session.ts`); `call` does not collect. Re-entry after a crash at any point is safe: ids are deterministic, `record.json` is the
  * commit point and is never overwritten, `.done` is written last and only after every kept entry has a record.
  *
  * Failures never escape: they become a `skipped` verdict (the slot is not woken) and one `approval_collect` log line that carries
@@ -463,4 +463,33 @@ export function collectSlot(input: CollectInput, deps: CollectDeps): CollectResu
 /** Pre-wake: as `collectSlot`, but undetermined leftover output is refused. On `wake`, `proposals` is the canonical, existing, empty directory. Never throws. */
 export function prepareSlot(input: CollectInput, deps: CollectDeps): CollectResult & { proposals?: string } {
   return runPass(input, deps, 'prepare');
+}
+
+/**
+ * Read-only count of COMMITTED records (a readable `record.json`; pending, denied and later states all count) whose origin is this run
+ * of this project (plan S4). Payload-only directories have no record and are not counted. Any failure, an unreadable record or an
+ * over-budget listing yields `"unreadable"`, never a partial number. Never throws; writes nothing.
+ */
+export function collectedRecordCount(home: string, runId: string, project: string, budget: number = SCAN_WORK_BUDGET): number | 'unreadable' {
+  try {
+    const bio = budgetedIo(defaultDirIo, scanBudget(budget));
+    const dir = storePaths(home).approvals;
+    let names: string[];
+    try {
+      assertRealDir(bio, dir);
+      names = bio.readdirSync(dir) as string[];
+    } catch (e) {
+      if (codeOf(e) === 'ENOENT') return 0;
+      return 'unreadable';
+    }
+    let n = 0;
+    for (const name of names) {
+      if (!ID_RE.test(name)) continue;
+      const rec = readRecord(home, name, bio);
+      if (rec !== null && rec.origin.kind === 'run' && rec.origin.run_id === runId && rec.origin.project === project) n += 1;
+    }
+    return n;
+  } catch {
+    return 'unreadable';
+  }
 }

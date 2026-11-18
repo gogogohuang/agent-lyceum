@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import type { ProposalsOf } from "./approval-rotation.js";
 import { atomicWrite, readRegularFileCappedNoFollow } from "./fs-util.js";
 
 /** Test seam: called after every durable step of routing and claim commits, so a test can "kill the process" there. */
@@ -418,10 +419,15 @@ export function beginAttempt(runDir: string, claimId: string): AttemptRecord {
   return rec;
 }
 
-export function finishAttempt(runDir: string, attemptId: string, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
-  const rec = { ...loadAttempt(runDir, attemptId), status, finished_at: new Date().toISOString(), ...extra };
+/** Finish an attempt from a record already in hand (recovery's verified one): the file is not read again. */
+export function finishLoadedAttempt(runDir: string, loaded: AttemptRecord, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
+  const rec = { ...loaded, status, finished_at: new Date().toISOString(), ...extra };
   saveAttempt(runDir, rec);
   return rec;
+}
+
+export function finishAttempt(runDir: string, attemptId: string, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
+  return finishLoadedAttempt(runDir, loadAttempt(runDir, attemptId), status, extra);
 }
 
 /** Move whatever is in an agent's outbox into the attempt's own folder, so it can never be mistaken for a later attempt's result. */
@@ -450,17 +456,54 @@ export interface RecoveryReport {
   interrupted: { attempt: AttemptRecord; parked: string[] }[];
 }
 
+export interface RecoveryOptions {
+  outboxOf?: (agent: string) => string;
+  skipFile?: SkipFile;
+  readFile?: ReadFile;
+  /** The canonical approval request directory of an enrolled slot, or undefined (not enrolled). Only with `parkProposals`. */
+  proposalsOf?: ProposalsOf;
+  /** Set a slot's request directory aside under this attempt (idempotent). Runs before the attempt is finished or the claim abandoned; a throw leaves both as they were. */
+  parkProposals?: (agent: string, attemptId: string, canonicalProposals: string) => void;
+  /** A slot's `parkProposals` threw: the slot's remaining attempts and claims are left alone and the caller must keep the slot from waking. */
+  onProposalsError?: (agent: string) => void;
+}
+
 /** Bring a run's claims back to a consistent state. Call before waking anyone on resume. */
-export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string; skipFile?: SkipFile; readFile?: ReadFile } = {}): RecoveryReport {
+export function recoverRunMail(runDir: string, opts: RecoveryOptions = {}): RecoveryReport {
   const report: RecoveryReport = { finalized: [], abandoned: [], ready: [], interrupted: [] };
-  for (const a of listAttempts(runDir, opts.skipFile, opts.readFile)) {
-    if (a.status !== "started") continue;
+  const attempts = listAttempts(runDir, opts.skipFile, opts.readFile);
+  // A slot whose request directory could not be set aside: nothing of it is finished or abandoned, so it is judged again next time.
+  const blocked = new Set<string>();
+  const parkFor = (agent: string, attemptId: string): boolean => {
+    if (blocked.has(agent)) return false;
+    const proposals = opts.proposalsOf?.(agent);
+    if (proposals === undefined || !opts.parkProposals) return true;
+    try {
+      opts.parkProposals(agent, attemptId, proposals);
+      return true;
+    } catch {
+      blocked.add(agent);
+      try {
+        opts.onProposalsError?.(agent);
+      } catch {
+        /* the slot stays blocked either way */
+      }
+      return false;
+    }
+  };
+  for (const a of attempts) {
+    if (a.status !== "started" || blocked.has(a.agent)) continue;
     const parked = opts.outboxOf ? parkOutbox(runDir, opts.outboxOf(a.agent), a.id) : [];
-    const done = finishAttempt(runDir, a.id, "failed", { error: "interrupted", parked });
+    if (!parkFor(a.agent, a.id)) continue;
+    // With scan-verified input the record in hand is the one judged; reading the file again could see another file.
+    const extra = { error: "interrupted", parked };
+    const done = opts.readFile ? finishLoadedAttempt(runDir, a, "failed", extra) : finishAttempt(runDir, a.id, "failed", extra);
     report.interrupted.push({ attempt: done, parked });
   }
   const dir = path.join(mailDir(runDir), "claims");
   if (!fs.existsSync(dir)) return report;
+  const newest = new Map<string, AttemptRecord>();
+  if (opts.parkProposals) for (const a of attempts) if (!newest.has(a.claim_id) || (newest.get(a.claim_id) as AttemptRecord).n < a.n) newest.set(a.claim_id, a);
   for (const name of fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
     if (opts.skipFile?.(name, "claims")) continue;
     let c: ClaimRecord;
@@ -476,6 +519,10 @@ export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string
       for (const f of c.files) moved = moveToRead(f) || moved;
       if (moved) report.finalized.push(c.id);
     } else if (c.status === "claimed") {
+      // The claim's newest attempt owns whatever is in the request directory: set it aside before the claim stops being `claimed`.
+      const latest = newest.get(c.id);
+      if (latest && !parkFor(c.agent, latest.id)) continue;
+      if (latest && opts.proposalsOf?.(c.agent) !== undefined) fault("recovery:proposals-parked");
       saveClaim(runDir, { ...c, status: "abandoned" });
       report.abandoned.push({ ...c, status: "abandoned" });
     } else if (c.status === "output_ready") report.ready.push(c);
