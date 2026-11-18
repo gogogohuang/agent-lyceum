@@ -183,8 +183,9 @@ and fixed hint `Invalid approval list item`; raw invalid fields/exception messag
 are not copied. Invalid envelopes or problem metadata throw `INVALID_INPUT`;
 unsupported versions throw `UNSUPPORTED_VERSION`. Caller-supplied problem strings
 must already be safe metadata. The serializer neither scans the store nor selects
-CLI filters. These helpers support a future `approvals list --json`; no approvals
-CLI is delivered and existing `status --json` is unchanged.
+CLI filters. These helpers support a future `approvals list --json`. `approvals list`
+is not implemented. `status --json` is unchanged. `approvals collect --call` is the
+stage-4 contract in [Call collection](#call-collection-stage-4-not-releasable).
 
 `approval-rotation.ts` provides only these type contracts:
 
@@ -479,7 +480,7 @@ protection proof, read isolation, or new Linux/real OS sandbox safety evidence.
 `--setting-sources user` remains unchanged; user-settings merging/allowlisting and
 Claude Edit alias behavior remain unverified safety blockers. Do not infer stage-3
 readiness from a clean doctor report, fixture, example or fake runtime.
-Stage 2b-2 did not deliver proposals grants, collect/settle integration or request parking; stage 3 now delivers those (see [Request collection](#request-collection-stage-3-not-releasable)). Call `ok.json`, approvals CLI, executor, feedback and gc remain future work.
+Stage 2b-2 did not deliver proposals grants, collect/settle integration or request parking; stage 3 now delivers those for runs (see [Request collection](#request-collection-stage-3-not-releasable)). Enrolled `call` markers and `approvals collect --call` are the stage-4 contract ([Call collection](#call-collection-stage-4-not-releasable)). The executor, feedback, gc, and `approvals list` / `show` / `approve` remain future work.
 
 Keep enrollment off until the security corrections and independent review are complete.
 Only then stage a trial in a dedicated temporary home/repository, initially with one
@@ -492,7 +493,7 @@ this documentation change neither modifies them nor supplies fresh fixture/runti
 
 ## Request collection (stage 3, not releasable)
 
-**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). F3 (the user settings layer), Linux and enforcement by the real OS sandbox are **UNVERIFIED**; no run of the real Claude CLI with the `proposals/` grant was made. This section describes the current lifecycle wiring on this branch. It is not a release and it is not QA-verified. Operator-facing steps (the `approval_collect` class table, `.coord`, budget starvation) are in [Write scope](write-scope.md#approval-request-collection-stage-3-not-releasable). Nothing here is approve, execute, feedback, gc or `call` collection: those are **not implemented**.
+**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). F3 (the user settings layer), Linux and enforcement by the real OS sandbox are **UNVERIFIED**; no run of the real Claude CLI with the `proposals/` grant was made. This section describes run-slot collection. It is not a release and it is not QA-verified. Operator-facing steps (the `approval_collect` class table, `.coord`, budget starvation) are in [Write scope](write-scope.md#approval-request-collection-stage-3-not-releasable). Approve, execute, feedback and gc are **not implemented**. Enrolled `call` collection is [Call collection](#call-collection-stage-4-not-releasable).
 
 ### Request location, format and limits
 
@@ -530,9 +531,9 @@ This is the current S3 wiring on this branch (not a release, not QA-verified).
 
 - **Collection points.** `settle()` calls `collectApprovals(batch)` after `routeOutboxes` and before the claim commit, so it also covers `resume`'s `settle([], [])`. It visits every enrolled, non-quarantined slot (not only the batch), checks the abort signal before each one, and a failure in one slot gates it with a fixed reason and does not stop the others. Unexpected exceptions or a failed fresh view retain output and invoke `retainedOutput`: fixed log, gate reason, terminal diagnostic and lead notice, never mail to the lead itself (`src/run-session.ts:898-993`). A slot whose qualification no longer matches is judged by the existing gate verdict instead.
 - **Before a claim wake** the gate's directory check runs `prepareSlot`: older collected-but-unfinished directories are finished, a non-empty `proposals/` is collected if the slot's latest attempt says its claim is `output_ready` or `committed`, parked if that attempt failed or its claim is `abandoned`, and otherwise the slot is not woken (`UNDETERMINABLE`). Only an existing, empty, canonical `proposals/` lets the wake go on.
-- **Grant and prompt.** `proposalsDir` is set on a claim wake of an enrolled slot only, and is added last to the allowed directories (`writePolicy(project, agent, proposalsDir)`); `policy` wakes (tidy), verify, format and `call` never carry it. The system and user prompts get the fixed text from `approvalRequestsBlock`. `proposals/` is re-checked before the first call, each retry and each fallback.
+- **Grant and prompt.** `proposalsDir` is set on a claim wake of an enrolled slot only, and is added last to the allowed directories (`writePolicy(project, agent, proposalsDir)`). Policy wakes (tidy, verify, format) never carry `proposals/`. An enrolled `call` is specified separately in [Call collection](#call-collection-stage-4-not-releasable): its grant is that call's own `proposals/` directory. The system and user prompts of a claim wake get the fixed text from `approvalRequestsBlock`. `proposals/` is re-checked before the first invoke, each retry and each fallback.
 - **`origin.full_writable`** is `slotGrants(invocationProject, …).full` at collection time (`invocationProject()` is the same project object a wake uses). On the normal path that equals the grant of the wake just finished; after a crash it is the grant when the resume collected, not the original wake's. It is displayed and not compared.
-- **Failure and cancel.** After `parkOutbox` and before `finishAttempt`, `proposals/` is parked under the attempt id. For a failed attempt, a parking failure produces a `config` failure, which is never retried and never falls back (`src/fallback.ts:117`), and only that slot is gated; requests and unread input are kept, the claim is abandoned, and the lead is notified except by self-mail. Other slots continue. Dispatch passes or resume can recheck the cause; no automatic repair or background retry is promised (`src/run-session.ts:1253-1286,949-993`). A cancelled wake also attempts that park. If parking throws, the failure is logged and then ignored: the attempt is still finished `failed` with error `cancelled`, the claim is abandoned, unread input stays for resume, and this path does not use the `config` stop (`src/run-session.ts:1245-1251`; `src/fallback.ts:236`; `src/run-session.ts:1288-1294`). `call` slots and instance slots (`<role>--N`) are not collected yet.
+- **Failure and cancel.** After `parkOutbox` and before `finishAttempt`, `proposals/` is parked under the attempt id. For a failed attempt, a parking failure produces a `config` failure, which is never retried and never falls back (`src/fallback.ts:117`), and only that slot is gated; requests and unread input are kept, the claim is abandoned, and the lead is notified except by self-mail. Other slots continue. Dispatch passes or resume can recheck the cause; no automatic repair or background retry is promised (`src/run-session.ts:1253-1286,949-993`). A cancelled wake also attempts that park. If parking throws, the failure is logged and then ignored: the attempt is still finished `failed` with error `cancelled`, the claim is abandoned, unread input stays for resume, and this path does not use the `config` stop (`src/run-session.ts:1245-1251`; `src/fallback.ts:236`; `src/run-session.ts:1288-1294`). Instance slots (`<role>--N`) are not collected yet. Enrolled `call` slots are [Call collection](#call-collection-stage-4-not-releasable).
 - **Recovery (`recoverRunMail`), b-window ordering.** For a `started` latest attempt: park outbox, park proposals, then finish the attempt `failed`. For a `claimed` claim whose newest attempt may own the directory: park proposals first, then save `abandoned`; only claims turned from `claimed` to `abandoned` in this pass are handled, so historical abandoned claims are not parked again on every resume. Each slot is wrapped separately; if parking throws, neither the attempt nor the claim of that slot is finished and the slot is quarantined for this process. The recovery hook logs the park failure and quarantines the slot; later gate evaluation returns `UNDETERMINABLE` and uses the usual reason-file, terminal and lead-notice path (no self-mail), not `retainedOutput` directly (`src/run-session.ts:754-757,949-993,1770-1788`; `src/message-store.ts:494-527`). With scan-verified input recovery finishes the already verified attempt record (`finishLoadedAttempt`) and does not reopen the file.
 
 ### Residual risks and trade-offs
@@ -540,4 +541,72 @@ This is the current S3 wiring on this branch (not a release, not QA-verified).
 - **Residual process or descriptor (spec 4.4):** an escaped background process can write into the new `proposals/` after rotation (seen at the next pass; it can only add requests, bounded by quota). A descriptor held on a rotated file can still change that file under `collected/<seq>/`; the collector compares device and inode before and after the read only. The copy stored under `approvals/` is not touched by it. The assumption that the agent cannot replace `proposals/` itself was measured as false on macOS (spec section 8), so the first line of defense is the lstat check at rotation.
 - **Write scope is not read isolation.** The `proposals/` grant concerns writing only. No code in this stage restricts reading; do not describe requests or their payloads as confidential.
 - **Trade-offs recorded:** work budget instead of a time bound; a permanently over-budget `collected/<seq>` or store inventory blocks its slot (or all slots) until the operator acts, because dropping or half-marking requests would lose them; the quota and the denied count are soft/approximate; a failed attempt whose requests cannot be parked gates only that slot rather than risking a mix of two attempts' output.
-- **Not implemented:** approve, execute, feedback, `requests gc`/`approvals gc`, collection for `call`, collection for instances.
+- **Not implemented:** approve, execute, feedback, `requests gc`/`approvals gc`, collection for instances. Enrolled `call` collection is [Call collection](#call-collection-stage-4-not-releasable).
+
+## Call collection (stage 4, not releasable)
+
+**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). Linux, Codex and enforcement by the real sandbox are **UNVERIFIED**. This section is the stage-4 contract for an enrolled `call` (`docs/superpowers/plans/2026-11-18-approval-stage4.md`, D2–D6). `approvals list`, `show` and `approve` are not implemented. With no `executors.yaml`, an empty `allow`, or an allow list that names other tuples only, a `call` keeps its previous invocation, prompts, policy, stderr, `result.md` and directory bytes, and it creates no `requests/` tree.
+
+Placeholders in the fixed sentences: `<call-id>` and `<id>` are the same validated call id (the id on the command line and in `requests/calls/<call-id>/`). `<role>` is the global agent name (`approvalName`). `<CODE>` is an existing gate code or a collection verdict code. It is a fixed token, and the sentence does not insert an errno string, a payload or a request file name.
+
+The call root is `<home>/requests/calls/<call-id>/`, with `ok.json` beside `proposals/`, `collected/` and `parked/` (`src/approval-paths.ts:51-64`). Layout helpers still do not create that tree. `<home>/calls/<call-id>/` remains the call's own directory (`task.md`, `result.md`, and, on a failure only, `log.jsonl`).
+
+### Marker `ok.json`
+
+`requests/calls/<call-id>/ok.json` is local schema version 1. Parsing is strict: an unknown field is rejected. Role and executor keys use `approvalName`. Paths are absolute and contain no NUL. Arrays contain only strings.
+
+| Field | Content |
+|---|---|
+| `schema_version` | `1` |
+| `call_id` | The call id. It equals the CLI id |
+| `role` | Global agent name |
+| `project_dir` | Canonical `--dir`. It is neither the approval home nor `<home>/calls/<call-id>` |
+| `successful_attempt` | Safe integer `>= 1`. It is the successful candidate's attempt across the fallback chain (`ctx.attempt + 1`) |
+| `full_writable` | `{ dirs, files }`: the canonical full grant of the successful wake |
+| `qualifications` | Non-empty map of executor name to a 64-character lowercase hex qualification hash |
+
+The file stores none of: the task text, a request payload, runtime output, the environment, or the whole config.
+
+The on-disk form is JSON plus a trailing LF, at most 1 MiB (1048576 bytes). A marker that would exceed that limit is refused before the wake: the check serializes the baseline with `successful_attempt` set to `Number.MAX_SAFE_INTEGER`. Publication runs inside the short `.coord` pass and uses `publishExclusive`: a mode `0400` temp file, fsync, then `link`, with no overwrite and no rename fallback (`src/approval-io.ts:157-180`). If the name already exists, the existing file is read back and accepted only when every field matches; any difference fails closed. Reads use `readApprovalFile(ok, 1048576, home)`, which checks ancestors, uses `O_NOFOLLOW` and `O_NONBLOCK`, and returns null only when the file is missing (`src/approval-io.ts:72-80`). Invalid JSON, shape or version is a refusal. A future `schema_version` other than 1 is a refusal; it is neither success nor a missing file. Publication makes no power-loss durability promise.
+
+The baseline is `snapshotInputs` taken before the first invoke, and it covers the whole fallback candidate list. The marker carries that baseline's hashes and the successful wake's full grant. Before each candidate, and again before collection, the call project is rebuilt from the current global team, a fresh `executors.yaml`, and the recorded `project_dir`. The executor key set and every hash must equal the baseline. A drifted configuration does not mint a new qualification for the old output; collection stays retained and the requests stay on disk. Premises are checked again at collection time. The collector does not read a stored boolean out of the marker. When the gate would not wake, the collector is not called. The canonical `--dir` must still exist and still be the same path. A missing directory, or a symlink that now points elsewhere, retains the output and does not switch to another working directory.
+
+An older binary ignores this new file and does not collect it. It also does not recognize `approvals` and returns the existing unknown-command error. Existing team, project, run and state readers are unchanged.
+
+### Order on a successful call
+
+For an enrolled agent whose result is success and is not cancelled, the order is:
+
+1. The existing `guard.check` for that agent, including a reverted-file warning.
+2. Publish `ok.json` once, for the successful attempt only.
+3. The existing atomic write of `result.md`. The success and failure text stay as they are today.
+4. Collection, only after `ok.json` is committed. `collectSlot` finishes every `collected/<seq>` that has no `.done`, then rotates a nonempty `proposals/` (`src/approval-collect.ts:416-436`).
+5. Return the original call result. `finally` releases the call lease.
+
+A failed or cancelled candidate is parked at `parked/<n>` (`<n>` is that attempt number) and is never collected. A crash after `ok.json` is committed and before `result.md` exists leaves the requests collectable and leaves no answer file. `approvals collect --call <call-id>` can collect those requests. It does not rebuild `result.md` and it does not rerun the call. Whether to rerun is the operator's decision. The list screen is a later stage. A crash before `ok.json` collects nothing, including when the runtime had already finished. There is no call resume.
+
+If publishing the marker throws, stderr is `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.` The success text of `result.md` is not written, collection is not attempted, and the CLI exits `1`. The runtime's files stay in `proposals/`. They are not deleted. A later collect applies only after a valid `ok.json` exists. Repair the directory, then retry the call as a new call. When the failure line can be appended, it is in `<home>/calls/<call-id>/log.jsonl`.
+
+If `result.md` fails after `ok.json` is committed, the marker stays, the CLI exits `1`, and a later `approvals collect --call <call-id>` can collect. That retry still does not write the missing answer. If collection returns a skipped verdict, or the fresh config or premises fail, the call's success, exit code and `result.md` stay as they are. The requests stay on disk. Stderr uses the retained sentence in [Diagnostics that keep the output](#diagnostics-that-keep-the-output). Fix the configuration or run `agent-lyceum doctor`, then retry `approvals collect --call <call-id>`. A retry is available; it is not a promise that the retry collects.
+
+### Locks
+
+`.coord` exists only for the short synchronous pass that creates it and removes it in `finally` (`src/approval-rotation.ts:150-169`). A live call does not hold `.coord` across the runtime. The first exclusion of a live call is the call lease `.lock-<role>`. When that lease is held, stderr is the existing line `<role> is already being called (call <call-id>, pid <pid>). Wait for it to finish.` (`src/call.ts:129`; `<pid>` is the recorded process id). The requests stay where they are. Wait for that call to finish, then retry. Do not delete the request files to pass the lease.
+
+When `ok.json` exists and `.coord` is held or stale, the collector returns `DIR_ANOMALY` with class `held` (`CoordHeldError`). The CLI exits `1` and stderr is `Call <id>: approval collection blocked (DIR_ANOMALY). See approval_collect diagnostics; stop all calls before removing a stale .coord.` The pass does not take over `.coord`. Stop every call, confirm none is live, then remove the stale `.coord` directory by hand, and retry `approvals collect --call <id>`. The requests stay on disk either way. A live call that has no `ok.json` takes the missing-marker path: exit `0`, and the failed output is left uncollected.
+
+`approvals collect --call <call-id>` has no positional argument, no run target and no `--json`. It does not require a terminal, does not start a runtime, and does not read `parked/` or treat `result.md` as the collection condition. Missing `ok.json` exits `0` immediately. Stdout is `Call <id>: no ok.json; nothing collected.` The command creates no `requests/` directory, no `approvals/` directory, no log and no lock. With a valid marker, stdout on a finished pass is `Call <id>: approval collection complete.` Exit `0`. The same line is printed on the second successful pass. That second pass leaves each persistent file's name, bytes, mode and mtime unchanged. A directory's mtime is outside that guarantee. The pass writes no log line, and it does not rewrite `.done`, the high-water file or the marker when there is nothing left to do. `.lock-<role>` and `.coord` may exist during the pass. When the pass ends, both are absent. A second success is this file guarantee. It is not a guarantee that every retry collects, and it is not a guarantee that directory metadata is unchanged.
+
+An agent that is no longer enrolled, a missing role, or a removed executor retains the requests, exits `1`, and does not mark the call failed or delete the requests. Use the retained sentence below. Fix the configuration or run `agent-lyceum doctor`, then retry.
+
+### Diagnostics that keep the output
+
+Failure diagnostics use the fixed `approval_collect` record (`slot` is the role, plus `op` and `class`). They go to stderr and, when the append works, to `<home>/calls/<call-id>/log.jsonl`. The log is created on the first failure only (`createRunLog`). A successful pass does not create it and does not append. The log is not a journal and it is not replay authority. The call writes no `state.json`, no mail and no violations file. A record contains no raw errno text, payload, executor environment or request file name.
+
+Invalid or unsupported `ok.json` (including a bad id, an unsafe path, a non-regular file, a file over 1 MiB, or `schema_version` other than 1): exit `1`, stderr `Call <id>: invalid or unsupported requests/calls/<id>/ok.json; no collection attempted.` No new approval record is created. The marker and any request files stay. Repair or replace the marker only by publishing a valid one from a new successful call; this command does not rewrite it. The failure line, when it can be written, is in `<home>/calls/<id>/log.jsonl`.
+
+Fresh view, configuration, role, path, qualification hash, premises, or the collector's work budget (65536 units, the existing per-slot budget): the output stays, exit `1`, stderr `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` `<CODE>` is the gate code, or the skipped verdict's code. Already published records stay. Uncollected requests stay in `proposals/` or in a `collected/<seq>` that has no `.done`. Fix the named configuration or the directory, then run the same command again. The diagnostic line is in the same `log.jsonl`. A held `.coord` uses the `DIR_ANOMALY` sentence in [Locks](#locks), not this retained template.
+
+If the log append itself fails, stderr is `Approval call diagnostics could not be persisted.` That line does not change a successful call's exit code or `result.md`. The requests remain where the collection pass left them. Retry `approvals collect --call <id>` after the log directory can be written. The retry still depends on a valid marker and a fresh configuration; the diagnostic line alone does not finish collection.
+
+The call prompt tells the agent how to write a request. It does not attach request status, a denial or executor output, and the call does not write `.feedback/` or place a pending or denied result into the agent's reply or the next candidate. `status` gains no call-gate section. `doctor` still reports configuration and premises. A call-specific collection failure is the CLI line plus this call's `log.jsonl`.

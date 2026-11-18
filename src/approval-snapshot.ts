@@ -56,7 +56,7 @@ export function snapshotInputs(project: ResolvedProject, slot: string, config: E
   const agent = project.agents[slot];
   if (!agent) return { full: { dirs: [], files: [] }, inputs };
   const role = roleOfName(project.agents, slot);
-  const { executors } = qualificationOf(config, { project: project.name, role });
+  const { executors } = qualificationOf(config, { project: project.solo === "call" ? null : project.name, role });
   const { enrolled: _e, approval: _a, ...plain } = agent;
   if (executors.length === 0) return { full: { dirs: [], files: [] }, inputs };
   const { full, grant } = slotGrants(project, plain as ResolvedAgent, proposalsDir);

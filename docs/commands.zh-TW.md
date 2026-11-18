@@ -66,6 +66,53 @@ agent 的最終回答印在 stdout，其餘訊息（進度、call id）走 stder
 
 agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備援模型)）時，call 也會切換，失敗種類與 run 相同，但只呼叫一次：不在同一個模型上重試、不等待，冷卻也隨這次 call 結束。call 失敗時，`result.md` 會列出試過的模型。
 
+沒有 `executors.yaml`、`allow` 為空，或 allow 沒有把這個 agent 列入 `call` 時，呼叫維持上面的行為：invocation、prompt、policy、stderr、`result.md` 與目錄內容不變，也不建立 `requests/` 樹。
+
+agent 已列入 `call` 時，每個候選只多一個可寫目錄：`requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在這份授權裡，`ok.json`、`collected/`、`parked/` 與其他 agent 的 `proposals/` 也不在。prompt 只說明如何寫請求檔。call 不把核准結果餵回 agent：prompt 不含其他請求的狀態、拒絕原因或 executor 輸出，call 不寫 `.feedback/`，下一個候選也不會收到 pending 或 denied 的結果。下面句子裡的 `<call-id>` 是這次 call 的 id（stderr 印出的那個 id）。標記與鎖的細節見 [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable)（英文）。`approvals list`、`show`、`approve` 尚未實作。
+
+runtime 啟動前，`proposals/` 必須是真實且為空的目錄。無法確認時，runtime 不啟動，也不試下一個候選，stderr 為：
+
+`Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.`
+
+目錄裡已有的檔案留在原地，不收走、不刪除。執行 `agent-lyceum doctor`、修好目錄後，重新開始一次 call；這次 call 沒有 resume。失敗行寫得進去時，會附加到 `<home>/calls/<call-id>/log.jsonl`。
+
+失敗或取消的候選會移到 `requests/calls/<call-id>/parked/<n>`（`<n>` 從 1 起，沿 fallback 鏈遞增）。這些檔案永不收走。park 失敗就停止 fallback，stderr 為：
+
+`Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.`
+
+失敗候選的檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。
+
+已列入且成功的 call 順序是：`guard.check`、接著 `requests/calls/<call-id>/ok.json`、接著 `<home>/calls/<call-id>/result.md`、接著收走、最後釋放 call lease。收走失敗時，成功結果、exit code 與 `result.md` 都保持不變；請求留在磁碟上，之後用 [approvals collect](#approvals-collect) 再試。標記發布失敗時，不寫成功的 `result.md`、不收走、指令以 `1` 結束，stderr 為：
+
+`Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.`
+
+runtime 留下的請求檔留在 `proposals/`，不刪除。要等存在有效的 `ok.json`，`approvals collect` 才會收。`ok.json` 已提交而 `result.md` 寫入失敗時，標記保留、指令以 `1` 結束，`approvals collect --call <call-id>` 可以收走請求。該指令不重建答案，也不自動重跑 call。`ok.json` 已提交、`result.md` 尚未寫入時崩潰，也是這個窗口：請求可以補收，沒有答案檔。`ok.json` 之前崩潰則什麼都不收。list 畫面是後續階段，答案要不要重跑由你另開一次 call 決定。
+
+## approvals collect
+
+**用法:** `approvals collect --call <call-id>`
+
+對一份已經有 `requests/calls/<call-id>/ok.json` 的 call 把收走做完。訊息裡的 `<id>` 就是同一個 call id。`<CODE>` 是固定的關卡代碼或收走 verdict 代碼（設定、前提、資格雜湊、collector 預算，或 skipped verdict 的 code）。`<role>` 是標記上記錄的全域 agent 名稱。沒有位置參數、沒有 run id、沒有 `--json`。不要求終端機。不啟動 runtime、不讀 `parked/`、也不拿 `result.md` 當作是否收走的條件。`approvals list`、`show`、`approve` 尚未實作。這個指令不開啟清單，重試也不依賴一份 list 指令。web console 不會多出這個指令。
+
+**沒有 `ok.json`。** exit `0`。stdout 為：
+
+`Call <id>: no ok.json; nothing collected.`
+
+不建立 `requests/` 目錄、不建立 `approvals/` 目錄、不建立 `log.jsonl`、不建立鎖。失敗的 call、`proposals/` 仍非空的 call，以及從未寫過 `ok.json` 的 live call，都走這條路。檔案留在原地。
+
+**有 `ok.json`。** 指令讀取標記（最多 1 MiB），取得 `<role>` 的 call lease，再讀一次標記，用目前的全域 team 與新的 `executors.yaml` 重建資格，並重新檢查前提。接著補完每一個沒有 `.done` 的 `collected/<seq>`，再輪替非空的 `proposals/`。stdout（包含第二次已經沒有東西可收的成功 pass）為：
+
+`Call <id>: approval collection complete.`
+
+exit `0`。第二次成功的 pass 保證每個持久檔案的檔名、bytes、mode、mtime 不變。目錄的 mtime 不在這項保證裡。這次 pass 不附加 log，在沒有剩餘工作時也不改寫 `.done`、高水位檔或 `ok.json`。pass 進行中，`.lock-<role>` 與 `requests/calls/<id>/.coord` 可以存在。pass 結束時兩者都不在。`.coord` 只存在於這段短 pass。live call 的第一道排除是 call lease，不是在整個 call 期間持有 `.coord`。`<role>` 已經在一次 call 裡時，指令以 `1` 結束，stderr 為 `<role> is already being called (call <call-id>, pid <pid>). Wait for it to finish.`（`<pid>` 是鎖上記錄的行程 id）。請求留在原地。等那次 call 結束再重試。
+
+**exit `1`。** 已經寫下的檔案都留著，包含 `result.md` 與已經發布的核准記錄。已經收走的內容不刪除。附加成功時，失敗行寫進 `<home>/calls/<id>/log.jsonl`。原因修好後，再執行同一條指令。可以重試；某一次指令結束，不代表下一次 pass 一定收得走。
+
+- 標記無效或此版不支援：stderr 為 `Call <id>: invalid or unsupported requests/calls/<id>/ok.json; no collection attempted.` 不建立新記錄。標記與請求檔留在原地。有效標記要由一次新的成功 call 發布；這個指令不改寫 `ok.json`。
+- 設定、前提、資格雜湊、角色或 executor 已移除、`--dir` 不存在或改指向別處、或 collector 預算：stderr 為 `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` 請求留在 `proposals/`，或留在還沒有 `.done` 的 `collected/<seq>/`。修好設定或執行 `agent-lyceum doctor` 後再重試。診斷行在 `<home>/calls/<id>/log.jsonl`。
+- `.coord` 被持有或殘留：stderr 為 `Call <id>: approval collection blocked (DIR_ANOMALY). See approval_collect diagnostics; stop all calls before removing a stale .coord.` 先停掉所有 call，確認沒有存活的 call，再手動移除該 `.coord` 目錄，然後重試。指令不會替你移除它。`approval_collect` 那一行在同一份 log。
+- log 檔本身寫不進去時，stderr 為 `Approval call diagnostics could not be persisted.` 請求留在 pass 停下的位置。讓 `<home>/calls/<id>/` 可寫後再重試。call 本身已經成功時，這一行不改變那次成功。
+
 ## resume
 
 **用法:** `resume [run] ["追加要求"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
@@ -254,7 +301,7 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 或其他 agent 一直失敗而使 run 停止也算：修正原因後用 `resume` 繼續）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 或其他 agent 一直失敗而使 run 停止也算：修正原因後用 `resume` 繼續）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。`approvals collect` 以 `0` 或 `1` 結束，見 [approvals collect](#approvals-collect)。
 
 ## 選擇專案
 
