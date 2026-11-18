@@ -1240,7 +1240,7 @@ export class RunSession {
         this.saveState();
         if (result.ok) {
           attempts.set(agent.name, finishAttempt(runDir, att.id, "output_ready"));
-          fault("attempt:output-ready");
+          if (this.proposalsPath(agent.name) !== undefined) fault("attempt:output-ready"); // enrolled slots only: a run without approval keeps the pre-stage-3 fault steps
           if (agent.resume && !result.sessionId && !state.sessions[sessionKey] && !noSessionNoted.has(agent.name)) {
             noSessionNoted.add(agent.name);
             this.note(`${agent.name} has resume: true but its ${c.runtime} CLI reported no session id, so every wake-up starts a fresh session.`);
