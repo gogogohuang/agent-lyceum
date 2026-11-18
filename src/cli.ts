@@ -10,7 +10,7 @@ import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
-import { diagnoseProject, formatDoctor, preflightRuntimes } from "./doctor.js";
+import { diagnoseProject, formatDoctor, preflightRuntimes, runtimesUsed } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { planWorkspace } from "./worktree.js";
 import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
@@ -41,6 +41,17 @@ program
   .option("--home <dir>", "agent-lyceum home (default: $AGENT_LYCEUM_HOME or ~/agent-lyceum-config)");
 
 const home = () => resolveHome(program.opts().home);
+
+/** The web page asks Cursor for its allowance only when some project's agents or fallbacks run on Cursor. */
+function anyProjectUsesCursor(dir: string): boolean {
+  return listProjects(dir).some((item) => {
+    try {
+      return runtimesUsed(resolveProject(dir, item.name), true).includes("cursor");
+    } catch {
+      return false;
+    }
+  });
+}
 
 function fail(msg: string, code = 1): never {
   console.error(msg);
@@ -752,7 +763,8 @@ program
                 debounceMs: 100,
                 allTasks: true,
               }),
-            quota: (signal?: AbortSignal) => Promise.all([claudeQuota(signal), codexQuota(signal), cursorQuota(signal)]),
+            quota: (signal?: AbortSignal) =>
+              Promise.all([claudeQuota(signal), codexQuota(signal), ...(anyProjectUsesCursor(home()) ? [cursorQuota(signal)] : [])]),
             summarize: ({ runtime, prompt }: { runtime: "claude" | "codex"; prompt: string }) => summarizeProgress(runtime, prompt),
           },
         };

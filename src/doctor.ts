@@ -162,7 +162,7 @@ function judgeRuntimes(project: ResolvedProject, caps: RuntimeCapabilities[]): D
 }
 
 /** Runtimes of the agents themselves; with `withFallback`, also those that only a fallback chain uses. */
-const runtimesUsed = (project: ResolvedProject, withFallback: boolean): Runtime[] => [
+export const runtimesUsed = (project: ResolvedProject, withFallback: boolean): Runtime[] => [
   ...new Set(Object.values(project.agents).flatMap((a) => [a.runtime, ...(withFallback ? a.fallback.map((f) => f.runtime) : [])]).filter((r): r is Runtime => !!r)),
 ];
 

@@ -1,20 +1,28 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { cursorConfigDir } from "./adapters/cursor.js";
+
+/** Run a short local lookup without blocking the web server's event loop (5 s cap). */
+function execText(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: "utf8", timeout: 5_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+  });
+}
 
 export type QuotaWindow = { label: string; used_percent: number; remaining_percent: number; resets: string };
 export type QuotaReport = { runtime: "claude" | "codex" | "cursor"; windows: QuotaWindow[]; error?: string };
 
 export type CursorTokenReaders = {
-  readCliToken?: () => string | undefined;
+  readCliToken?: () => Promise<string | undefined>;
   readEnvApiKey?: () => string | undefined;
-  readIdeToken?: () => string | undefined;
+  readIdeToken?: () => Promise<string | undefined>;
 };
 
 export type CursorQuotaDeps = {
-  resolveToken?: () => string | undefined;
+  tokens?: () => AsyncIterable<string>;
   fetchUsage?: (token: string, signal?: AbortSignal) => Promise<unknown>;
 };
 
@@ -34,7 +42,7 @@ export function codexWindows(limits: RateLimits): QuotaWindow[] {
   return [limits.primary, limits.secondary].flatMap((window) => {
     if (!window || window.usedPercent === undefined) return [];
     const mins = window.windowDurationMins ?? 0;
-    const resets = window.resetsAt ? new Date(window.resetsAt * 1000).toLocaleString("zh-Hant", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "時間不明";
+    const resets = window.resetsAt ? formatResets(window.resetsAt * 1000) : "時間不明";
     return [windowOf(durationLabel(mins), window.usedPercent, resets)];
   });
 }
@@ -45,6 +53,10 @@ function durationLabel(mins: number): string {
   if (mins > 0 && mins % 1440 === 0) return `${mins / 1440} 天`;
   if (mins > 0 && mins % 60 === 0) return `${mins / 60} 小時`;
   return mins > 0 ? `${mins} 分鐘` : "用量";
+}
+
+function formatResets(ms: number): string {
+  return new Date(ms).toLocaleString("zh-Hant", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function windowOf(label: string, used: number, resets: string): QuotaWindow {
@@ -96,33 +108,58 @@ export function parseCursorUsage(data: CursorPeriodUsage): QuotaWindow[] {
   if (used === undefined) return [];
   const endMs = millis(data.billingCycleEnd);
   const startMs = millis(data.billingCycleStart);
-  const resets = endMs === undefined
-    ? "時間不明"
-    : new Date(endMs).toLocaleString("zh-Hant", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const resets = endMs === undefined ? "時間不明" : formatResets(endMs);
   return [windowOf(cycleLabel(startMs, endMs), used, resets)];
 }
 
-export function resolveCursorAccessToken(readers: CursorTokenReaders = {}): string | undefined {
-  const readCli = readers.readCliToken ?? defaultReadCliToken;
-  const readEnv = readers.readEnvApiKey ?? (() => process.env.CURSOR_API_KEY);
-  const readIde = readers.readIdeToken ?? defaultReadIdeToken;
-  return firstToken(readCli(), readEnv(), readIde());
+/**
+ * Candidate tokens, most specific login first: the CLI login (auth.json, then the macOS keychain),
+ * CURSOR_API_KEY, then the Cursor IDE session. Read lazily, so a working CLI token never touches the IDE database.
+ */
+export async function* cursorAccessTokens(readers: CursorTokenReaders = {}): AsyncGenerator<string> {
+  const sources = [
+    readers.readCliToken ?? defaultReadCliToken,
+    async () => (readers.readEnvApiKey ?? (() => process.env.CURSOR_API_KEY))(),
+    readers.readIdeToken ?? defaultReadIdeToken,
+  ];
+  const seen = new Set<string>();
+  for (const read of sources) {
+    const token = (await read())?.trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    yield token;
+  }
 }
+
+/** A token the dashboard API refused (401/403): try the next login source instead of giving up. */
+class CursorAuthRejected extends Error {}
 
 export async function cursorQuota(signal?: AbortSignal, deps: CursorQuotaDeps = {}): Promise<QuotaReport> {
   try {
-    const token = (deps.resolveToken ?? (() => resolveCursorAccessToken()))();
-    if (!token) {
-      return {
-        runtime: "cursor",
-        windows: [],
-        error: "Cursor 未登入。請先執行 agent login，或設定 CURSOR_API_KEY。",
-      };
-    }
     const fetchUsage = deps.fetchUsage ?? fetchCursorPeriodUsage;
-    const windows = parseCursorUsage((await fetchUsage(token, signal)) as CursorPeriodUsage);
-    if (windows.length === 0) return { runtime: "cursor", windows: [], error: "cursor 沒有回傳額度。" };
-    return { runtime: "cursor", windows };
+    let rejected: string | undefined;
+    for await (const token of (deps.tokens ?? (() => cursorAccessTokens()))()) {
+      let data: unknown;
+      try {
+        data = await fetchUsage(token, signal);
+      } catch (error) {
+        if (error instanceof CursorAuthRejected) {
+          rejected = error.message;
+          continue;
+        }
+        throw error;
+      }
+      const windows = parseCursorUsage(data as CursorPeriodUsage);
+      if (windows.length === 0) return { runtime: "cursor", windows: [], error: "cursor 沒有回傳額度。" };
+      return { runtime: "cursor", windows };
+    }
+    return {
+      runtime: "cursor",
+      windows: [],
+      error: rejected
+        ? `${rejected}：Cursor 登入已失效。請重新執行 agent login。`
+        : "Cursor 未登入。請先執行 agent login，或設定 CURSOR_API_KEY。",
+    };
   } catch (error) {
     if (isAbort(error)) throw error;
     return { runtime: "cursor", windows: [], error: (error as Error).message || "cursor 沒有回傳額度。" };
@@ -131,13 +168,18 @@ export async function cursorQuota(signal?: AbortSignal, deps: CursorQuotaDeps = 
 
 function usedPercentOf(plan?: CursorPlanUsage | null): number | undefined {
   if (!plan) return undefined;
-  if (typeof plan.totalPercentUsed === "number" && Number.isFinite(plan.totalPercentUsed)) return plan.totalPercentUsed;
+  if (typeof plan.totalPercentUsed === "number" && Number.isFinite(plan.totalPercentUsed)) return clampPercent(plan.totalPercentUsed);
   const limit = plan.limit;
   const remaining = plan.remaining;
   if (typeof limit === "number" && limit > 0 && typeof remaining === "number" && Number.isFinite(remaining)) {
-    return ((limit - remaining) / limit) * 100;
+    return clampPercent(((limit - remaining) / limit) * 100);
   }
   return undefined;
+}
+
+/** Bonus credit can push `remaining` above `limit`; overage can push it below 0. */
+function clampPercent(n: number): number {
+  return Math.min(100, Math.max(0, n));
 }
 
 function cycleLabel(startMs?: number, endMs?: number): string {
@@ -154,15 +196,7 @@ function millis(value: string | number | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function firstToken(...values: (string | undefined)[]): string | undefined {
-  for (const value of values) {
-    const trimmed = value?.trim();
-    if (trimmed) return trimmed;
-  }
-  return undefined;
-}
-
-function defaultReadCliToken(): string | undefined {
+async function defaultReadCliToken(): Promise<string | undefined> {
   for (const file of cursorAuthJsonPaths()) {
     const token = readAccessTokenFromJsonFile(file);
     if (token) return token;
@@ -172,7 +206,7 @@ function defaultReadCliToken(): string | undefined {
 
 function cursorAuthJsonPaths(): string[] {
   const home = os.homedir();
-  const paths = [path.join(home, ".cursor", "auth.json")];
+  const paths = [path.join(cursorConfigDir(process.env), "auth.json")];
   if (process.platform === "linux" || process.env.XDG_CONFIG_HOME) {
     paths.push(path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "cursor", "auth.json"));
   }
@@ -180,7 +214,7 @@ function cursorAuthJsonPaths(): string[] {
     const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
     paths.push(path.join(appData, "Cursor", "auth.json"));
   }
-  return paths;
+  return [...new Set(paths)];
 }
 
 function readAccessTokenFromJsonFile(file: string): string | undefined {
@@ -193,21 +227,17 @@ function readAccessTokenFromJsonFile(file: string): string | undefined {
 }
 
 /** Cursor Agent CLI stores the session JWT in the macOS keychain as cursor-access-token. */
-function readCursorKeychainToken(): string | undefined {
+async function readCursorKeychainToken(): Promise<string | undefined> {
   if (process.platform !== "darwin") return undefined;
   try {
-    const out = execFileSync("security", ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return out.trim() || undefined;
+    const stdout = await execText("security", ["find-generic-password", "-s", "cursor-access-token", "-a", "cursor-user", "-w"]);
+    return stdout.trim() || undefined;
   } catch {
     return undefined;
   }
 }
 
-function defaultReadIdeToken(): string | undefined {
+async function defaultReadIdeToken(): Promise<string | undefined> {
   const dbPath = cursorIdeStateDbPath();
   if (!dbPath || !fs.existsSync(dbPath)) return undefined;
   const fromNode = readIdeTokenViaNodeSqlite(dbPath);
@@ -244,14 +274,10 @@ function readIdeTokenViaNodeSqlite(dbPath: string): string | undefined {
   }
 }
 
-function readIdeTokenViaSqliteCli(dbPath: string): string | undefined {
+async function readIdeTokenViaSqliteCli(dbPath: string): Promise<string | undefined> {
   try {
-    const out = execFileSync("sqlite3", [dbPath, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken';"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return normalizeSqliteText(out.trim());
+    const stdout = await execText("sqlite3", ["-readonly", dbPath, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken';"]);
+    return normalizeSqliteText(stdout.trim());
   } catch {
     return undefined;
   }
@@ -272,13 +298,31 @@ function normalizeSqliteText(value: unknown): string | undefined {
   return trimmed;
 }
 
-async function fetchCursorPeriodUsage(token: string, signal?: AbortSignal): Promise<unknown> {
-  const base = (process.env.CURSOR_API_ENDPOINT || "https://api2.cursor.sh").replace(/\/$/, "");
-  const timeout = AbortSignal.timeout(20_000);
-  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  let response: Response;
+const CURSOR_API_DEFAULT = "https://api2.cursor.sh";
+
+/** CURSOR_API_ENDPOINT may only point at another https Cursor host: the request carries the user's session token. */
+export function cursorApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.CURSOR_API_ENDPOINT?.trim();
+  if (!raw) return CURSOR_API_DEFAULT;
   try {
-    response = await fetch(`${base}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, {
+    const url = new URL(raw);
+    const host = url.hostname;
+    if (url.protocol === "https:" && (host === "cursor.sh" || host.endsWith(".cursor.sh"))) return url.origin;
+  } catch {
+    // Not a URL: fall through to the default.
+  }
+  return CURSOR_API_DEFAULT;
+}
+
+export async function fetchCursorPeriodUsage(token: string, signal?: AbortSignal, timeoutMs = 20_000): Promise<unknown> {
+  // Combined by hand: AbortSignal.any needs Node 20.3, engines allows 20.0.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  const timer = setTimeout(onAbort, timeoutMs);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) controller.abort();
+  try {
+    const response = await fetch(`${cursorApiBase()}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -286,20 +330,20 @@ async function fetchCursorPeriodUsage(token: string, signal?: AbortSignal): Prom
         "Connect-Protocol-Version": "1",
       },
       body: "{}",
-      signal: combined,
+      signal: controller.signal,
     });
+    if (response.status === 401 || response.status === 403) throw new CursorAuthRejected(`cursor 額度 API HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`cursor 額度 API HTTP ${response.status}`);
+    return await response.json();
   } catch (error) {
-    // Hub aborts → AbortError (discard). Own 20s timeout → plain Error (report, keep Claude/Codex).
+    // Hub aborts → AbortError (discard). Own timeout → plain Error (report, keep Claude/Codex).
     if (signal?.aborted) throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
-    if (isAbort(error) || (error as { name?: string }).name === "TimeoutError") {
-      throw new Error("cursor 超過 20 秒沒有回應。");
-    }
+    if (controller.signal.aborted) throw new Error(`cursor 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應。`);
     throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
-  if (!response.ok) {
-    throw new Error(`cursor 額度 API HTTP ${response.status}`);
-  }
-  return response.json();
 }
 
 /** An aborted quota read is a cancelled request, not a report: callers (the hub) discard it. */
