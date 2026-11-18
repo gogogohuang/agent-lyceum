@@ -139,7 +139,8 @@ export function formatShipPrompt(shellCommand: string, sessionPath: string, tota
  * Policy wakes (tidy, etc.) skip ship. Call from every adapter.
  */
 export function applyShipToWake(input: WakeInput): { input: WakeInput; ship?: ShipWakeInfo } {
-  if (input.policy) return { input };
+  // An approval-enrolled agent never gets a ship command: it would hand the agent a way to run configured commands outside the isolation built for it.
+  if (input.policy || input.agent.enrolled) return { input };
   const ship = writeShipSession(input.project, input.agent, input.workDir);
   if (!ship) return { input };
   return {

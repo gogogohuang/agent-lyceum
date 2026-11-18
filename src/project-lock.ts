@@ -102,7 +102,7 @@ const fileReader = (p: string): string | undefined => {
 const realIo: PidStartIo = { platform: process.platform, readFile: fileReader, ps: readerPs };
 const writerIo: PidStartIo = { ...realIo, ps: writerPs };
 
-function pidStart(pid: number): string | undefined {
+export function pidStart(pid: number): string | undefined {
   return pidStartFrom(pid, writerIo);
 }
 

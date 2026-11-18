@@ -205,8 +205,24 @@ export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string 
   return parts.join("\n");
 }
 
-/** Everything that goes to the runtime's system prompt: the persona plus the team protocol. */
-export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
+/** What an enrolled claim wake is told about its approval request directory. Fixed text plus the one canonical path; never built for any other wake. */
+export function approvalRequestsBlock(dir: string): string {
+  return [
+    "# Approval requests",
+    `You may ask for an approved action by writing one plain-text file per request into this directory: ${dir}`,
+    "- File name: 1 to 64 letters, digits, `.`, `_` or `-`, not starting with `.`, ending in `.req`.",
+    "- Content: a header of `executor: <registered executor name>` (required) and, optionally, `summary: <one line, at most 300 characters>`; then one empty line; then the payload. Plain visible text only: no control or invisible characters.",
+    "- A request is only recorded for a person to review; nothing runs because you wrote it. It is collected after this wake-up, and a file left there after a failed attempt is set aside, not collected.",
+  ].join("\n");
+}
+
+/** Everything that goes to the runtime's system prompt: the persona plus the team protocol. `proposalsDir`: only for an enrolled claim wake. */
+export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): string {
+  const text = baseSystemPrompt(project, agent);
+  return proposalsDir === undefined ? text : `${text}\n\n${approvalRequestsBlock(proposalsDir)}`;
+}
+
+function baseSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
   if (project.solo) return buildSoloSystemPrompt(project, agent);
   const outbox = outboxDir(project, agent.name);
   // Instances 2 and up are not listed (the lead is told their names separately), and an instance does not list its own role's other instances.
@@ -381,7 +397,12 @@ export function userTaskBlock(project: ResolvedProject, agent: ResolvedAgent, un
   return ["", '<user_task note="the user\'s original request, verbatim; judge the work against it, not only against the lead\'s acceptance criteria">', text, "</user_task>"];
 }
 
-export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false, userTask?: { text: string; file?: string }): string {
+export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false, userTask?: { text: string; file?: string }, proposalsDir?: string): string {
+  const text = baseUserPrompt(project, agent, unread, handleCount, handoff, userTask);
+  return proposalsDir === undefined ? text : `${text}\n\nApproval request directory (see the system prompt): ${proposalsDir}`;
+}
+
+function baseUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount: number, handoff: boolean, userTask?: { text: string; file?: string }): string {
   const parts: string[] = [];
 
   const common = readCapped(commonFile(project), COMMON_LIMIT);

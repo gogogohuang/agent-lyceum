@@ -5,6 +5,7 @@ import type { AgentWorkspace } from "../worktree.js";
 
 export interface WakeInput {
   project: ResolvedProject;
+  /** Approval enrollment travels only as `agent.enrolled` / `agent.approval`; there is deliberately no separate top-level flag that could disagree. */
   agent: ResolvedAgent;
   /** Scratch dir for generated per-agent files (inside the run dir, never in the repo). */
   workDir: string;
@@ -23,6 +24,11 @@ export interface WakeInput {
    * either: the runtime starts in an empty scratch dir inside `workDir` and may only read the repo.
    */
   policy?: WritePolicy;
+  /**
+   * Internal. The canonical approval request directory of an enrolled slot, set only for a claim wake (never for tidy, verify, format or call): it is
+   * granted as one more writable directory. Never combined with `policy`.
+   */
+  proposalsDir?: string;
 }
 
 export interface WakeResult {

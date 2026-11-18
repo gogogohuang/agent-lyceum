@@ -94,29 +94,49 @@ export function trimPartialUtf8(buf: Buffer): Buffer {
   return buf;
 }
 
-export type CappedRead = { ok: true; buf: Buffer; size: number; truncated: boolean } | { ok: false; reason: string };
+export type CappedRead = { ok: true; buf: Buffer; size: number; truncated: boolean; ino: number; dev: number; mtimeMs: number } | { ok: false; reason: string };
 
 /**
  * Up to `limit` bytes of a regular file, opened without following a symlink and without blocking; reads at most `limit + 1` bytes.
- * `size` is the file's size from fstat. Never throws: a refusal says why, from the one open (`symlink`, `not_regular`, `open_error:<code>`).
+ * `size`, `ino`, `dev` and `mtimeMs` come from the same fstat as the open (callers compare them with a later lstat to detect a swap). Never throws: a refusal says why, from the one open (`symlink`, `not_regular`, `open_error:<code>`).
+ * Optional `spend` is called once before open, fstat and every read (the EOF read and short reads included) and once after close; whatever it throws
+ * is rethrown to the caller (the fd is closed first). Without `spend` the function behaves exactly as before.
  */
-export function readRegularFileCappedNoFollow(file: string, limit: number): CappedRead {
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
-    const st = fs.fstatSync(fd);
-    if (!st.isFile()) return { ok: false, reason: "not_regular" };
-    const buf = Buffer.alloc(limit + 1);
-    let n = 0;
-    while (n < buf.length) {
-      const r = fs.readSync(fd, buf, n, buf.length - n, n);
-      if (r === 0) break;
-      n += r;
+export function readRegularFileCappedNoFollow(file: string, limit: number, spend?: () => void): CappedRead {
+  const stop: { error?: unknown; hit: boolean } = { hit: false };
+  const charge = (): void => {
+    if (!spend) return;
+    try {
+      spend();
+    } catch (error) {
+      if (!stop.hit) stop.error = error;
+      stop.hit = true;
+      throw error;
     }
-    return { ok: true, buf: buf.subarray(0, Math.min(n, limit)), size: st.size, truncated: n > limit };
+  };
+  let fd: number | undefined;
+  let result: CappedRead;
+  try {
+    charge();
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+    charge();
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) {
+      result = { ok: false, reason: "not_regular" };
+    } else {
+      const buf = Buffer.alloc(limit + 1);
+      let n = 0;
+      while (n < buf.length) {
+        charge();
+        const r = fs.readSync(fd, buf, n, buf.length - n, n);
+        if (r === 0) break;
+        n += r;
+      }
+      result = { ok: true, buf: buf.subarray(0, Math.min(n, limit)), size: st.size, truncated: n > limit, ino: st.ino, dev: st.dev, mtimeMs: st.mtimeMs };
+    }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code ?? "unknown";
-    return { ok: false, reason: code === "ELOOP" ? "symlink" : `open_error:${code}` };
+    result = { ok: false, reason: code === "ELOOP" ? "symlink" : `open_error:${code}` };
   } finally {
     if (fd !== undefined) {
       try {
@@ -124,4 +144,11 @@ export function readRegularFileCappedNoFollow(file: string, limit: number): Capp
       } catch {}
     }
   }
+  if (fd !== undefined) {
+    try {
+      charge();
+    } catch {}
+  }
+  if (stop.hit) throw stop.error;
+  return result;
 }

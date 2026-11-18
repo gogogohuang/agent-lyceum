@@ -13,6 +13,7 @@ import {
 } from "./paths.js";
 import type { AgentWorkspace } from "./worktree.js";
 import { availableTiers } from "./tiers.js";
+import { enrollProject } from "./approval-runtime.js";
 import {
   DISPATCHER_DEFAULTS,
   GlobalConfig,
@@ -60,6 +61,10 @@ export interface ResolvedAgent {
   allowWeb?: WebLevel;
   /** Spec 25 allowances; unset when none is requested (the only switch that keeps output identical). Paths are absolute, `~` expanded, not yet canonical. */
   sandbox?: SandboxAllowances;
+  /** Approval gate: set (true) only when `<home>/executors.yaml` exists and lists this agent's role; omitted otherwise. Never persisted. */
+  enrolled?: boolean;
+  /** Set with `enrolled`: a secret-free projection of executors.yaml (never executor `env`). In memory only; never persisted. */
+  approval?: ApprovalContext;
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
   fallback: FallbackEntry[];
   /** True when the chain came from `dispatcher.fallback` rather than the agent's own setting. */
@@ -77,6 +82,17 @@ export interface ResolvedAgent {
   /** Opt-in ship CLI on Claude Code and Codex wakes; absent = off. */
   ship?: { verify?: string; timeoutSec?: number };
 }
+
+/** What an enrolled agent needs from executors.yaml at run time. No executor `env` values: they may hold secrets. */
+export interface ApprovalContext {
+  identity: { project: string | null };
+  /** `command[0]` of every configured executor, sorted and unique. */
+  commands: string[];
+  maxScanEntries: number;
+}
+
+/** executors.yaml exists but could not be read or parsed. `reason` carries no YAML values. In memory only. */
+export interface ApprovalLoadError { file: string; code: string; reason: string }
 
 export interface ResolvedProject {
   home: string;
@@ -101,6 +117,8 @@ export interface ResolvedProject {
   workspaces?: Record<string, AgentWorkspace>;
   /** Set for a single agent working alone: "run" = inside a run of this project (`run --agent`), "call" = outside any project (`call`). */
   solo?: "run" | "call";
+  /** Set by `resolveProject`/`resolveCallAgent` when executors.yaml exists but is unreadable; agent-starting commands refuse (see approval-runtime). */
+  approvalError?: ApprovalLoadError;
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {
@@ -147,7 +165,7 @@ function resolveLayer(p: AgentPartialT | undefined, base: string): AgentPartialT
 }
 
 export function resolveProject(home: string, name: string): ResolvedProject {
-  return resolveProjectFrom(home, name, loadGlobal(home), loadProjectRaw(home, name));
+  return enrollProject(resolveProjectFrom(home, name, loadGlobal(home), loadProjectRaw(home, name)), { project: name });
 }
 
 /** The merge `resolveProject` does, from configs already read: `call` uses it with a made-up project that lists one global agent. */

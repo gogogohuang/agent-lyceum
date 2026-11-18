@@ -1,3 +1,5 @@
+import { collectedRecordCount } from "./approval-collect.js";
+import { GATE_TEXT, readGateFile } from "./approval-wake-gate.js";
 import fs from "node:fs";
 import path from "node:path";
 import { askReplyPath, readAskReply } from "./ask-reply.js";
@@ -573,7 +575,7 @@ export function formatMonitor(project: ResolvedProject, now = Date.now(), color 
 export function formatStatusWithLog(project: ResolvedProject, now = Date.now(), color = false): string {
   const c = paint(color);
   const report = buildStatusReport(project);
-  const out = [formatStatusReport(report, now, color)];
+  const out = [formatStatusReport(report, now, color, project.home)];
   if (report.run) out.push("", c.bold("執行紀錄："), ...describeRun(report.run, now, c, Infinity));
   return out.join("\n");
 }
@@ -629,7 +631,7 @@ export function formatTaskListReport(report: TaskListReport, color = false): str
 }
 
 export function formatStatus(base: ResolvedProject, now = Date.now(), color = false): string {
-  return formatStatusReport(buildStatusReport(base), now, color);
+  return formatStatusReport(buildStatusReport(base), now, color, base.home);
 }
 
 const shortSec = (sec: number) => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`);
@@ -660,7 +662,37 @@ function tierLines(report: StatusReport, c: Paint): string[] {
   return out;
 }
 
-export function formatStatusReport(report: StatusReport, now = Date.now(), color = false): string {
+/** Plain text safe to print: anything but letters, digits and a few separators is shown as `?` (the side file is data on disk, not trusted). */
+const plain = (t: string): string => t.replace(/[^A-Za-z0-9._:+-]/g, "?").slice(0, 80);
+
+/**
+ * Why the approval gate did not wake some slots of the shown run (stage 2b-2). Read here, at format time, so the `--json` path never
+ * touches the file; shown whenever the run has the file, whatever the current configuration says. Only fixed text and slot names.
+ */
+function gateLines(report: StatusReport, c: Paint, home?: string): string[] {
+  const dir = report.run?.dir;
+  if (!dir) return [];
+  const g = readGateFile(dir);
+  if (g === undefined) return [];
+  if (g === "unreadable") return [c.yellow("核可關卡：核可關卡狀態檔無法讀取（approval-gate.json）")];
+  const slots = Object.keys(g.slots).sort();
+  // Committed records only; "unreadable" (damaged or over budget) is an explicit unknown, never 0. Needs the home, so only human `status` passes it.
+  const n = home && report.run ? collectedRecordCount(home, report.run.run_id, report.project.name) : undefined;
+  const countLine = n === undefined ? [] : [`  已收走的核可請求（已提交紀錄）：${n === "unreadable" ? "無法讀取（未知，非 0）" : n}`];
+  if (slots.length === 0) return n === undefined ? [] : [c.bold("核可關卡："), ...countLine];
+  const out = [c.bold("核可關卡："), ...countLine];
+  for (const slot of slots) {
+    const e = g.slots[slot];
+    if (!e) continue;
+    const at = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(e.at) ? e.at : "時間不明";
+    // A recorded verdict, not the current state: a later resume without enrollment never rewrites this file (initGate returns early).
+    const what = e.class === "refused" ? "當時判定本 run 不再喚醒，修正後 resume 重驗" : "當時判定暫停喚醒（每輪重驗）";
+    out.push(`  ${c.cyan(plain(slot))} 記錄於 ${at}：${c.yellow(what)}：${GATE_TEXT[e.code].status}`);
+  }
+  return out;
+}
+
+export function formatStatusReport(report: StatusReport, now = Date.now(), color = false, home?: string): string {
   const c = paint(color);
   const run = report.run;
   const header = ["成員", "執行環境", "未讀", "上次喚醒"];
@@ -688,6 +720,8 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   if (fb.length) lines.push("", ...fb);
   const tl = tierLines(report, c);
   if (tl.length) lines.push(...(fb.length ? [] : [""]), ...tl);
+  const gl = gateLines(report, c, home);
+  if (gl.length) lines.push("", ...gl);
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}${cacheText(run.cache_read_tokens, run.cache_write_tokens) ? `　${cacheText(run.cache_read_tokens, run.cache_write_tokens)}` : ""}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
   return lines.join("\n");
