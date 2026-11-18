@@ -101,6 +101,20 @@ describe('settle collects finished output', () => {
     expect(pending.proposer).toEqual({ role: 'fe-member', slot: 'fe-member' });
   });
 
+  it('a successful wake whose outbox mail is rejected still has its requests collected (the rejection does not undo the collection)', async () => {
+    setup();
+    const s = await go(team(['fe-member'], (i) => {
+      req(i.proposalsDir as string, 'a.req');
+      write(path.join(outboxDir(i.project, i.agent.name), '000900-malformed.md'), 'no frontmatter at all\n');
+      return OK;
+    }));
+    expect(s.endReason).toBe('done');
+    expect(fs.existsSync(path.join(runDir(), 'mail', 'outbox', 'fe-member', 'rejected', '000900-malformed.md'))).toBe(true);
+    expect(events().some((e) => e.event === 'rejected')).toBe(true);
+    expect(fs.readdirSync(path.join(slotRoot('fe-member'), 'collected', '1'))).toEqual(['a.req']);
+    expect(fs.existsSync(path.join(slotRoot('fe-member'), 'collected', '1.done'))).toBe(true);
+    expect(records().map((r) => r.disposition)).toEqual(['pending']);
+  });
   it('claim wakes only: the lead (not enrolled) is told nothing and granted nothing', async () => {
     setup();
     const seen: WakeInput[] = [];
