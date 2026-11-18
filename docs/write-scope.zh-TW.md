@@ -60,7 +60,7 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 
 **已知限制：** 即使用 `--setting-sources user`，使用者層級的 `~/.claude/settings.json` 仍會套用到已登錄的 agent；對此的檢查（spec 第 3 節前提 4 (ii)）尚未實作。`doctor` 可能印出無效 `executors.yaml` 的欄位名稱（`src/approval-executors.ts:60`、`src/doctor-approval.ts:40`）。
 
-**階段 2b-1 尚未實作：** 每次喚醒重新檢查登錄並拒絕喚醒某個 slot、`status` 的原因顯示、`proposals/` 寫入權限、收集請求、核准 CLI、executor 執行器。上述為歷史切片範圍；後續已加入每次喚醒的關卡、status 診斷與階段 3 請求收走：見[核准請求收走](#核准請求收走階段-3非可發布)。真實 Claude CLI 是否接受新旗標、真實 sandbox 的效果、Linux 皆**未驗證**；macOS 第 0 步的量測見 spec 第 8 節。
+**階段 2b-1 尚未實作：** 每次喚醒重新檢查登錄並拒絕喚醒某個 slot、`status` 的原因顯示、`proposals/` 寫入權限、收集請求、核准 CLI、executor 執行器。上述為歷史切片範圍；後續已加入每次喚醒的關卡、status 診斷與階段 3 請求收走：見[核准請求收走](#核准請求收走階段-3非可發布)。已登錄 `call` 的收走見 [call 的核准請求](#call-的核准請求階段-4非可發布)。真實 Claude CLI 是否接受新旗標、真實 sandbox 的效果、Linux 皆**未驗證**；macOS 第 0 步的量測見 spec 第 8 節。
 
 ## 核准請求收走（階段 3，非可發布）
 
@@ -69,7 +69,7 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 ### 請求檔
 
 - **位置。** 已登錄的 agent 把純文字請求寫進自己 slot 的 `proposals/`：`<home>/requests/projects/<project>/<run-id>/<slot>/proposals/`（`src/approval-paths.ts:57,62`）。該目錄多給一個可寫目錄，路徑寫在 system 與 user prompt（`src/prompt.ts:209-222,400-402`）。
-- **誰拿得到。** 只有已登錄 agent 的 claim wake：第一次呼叫、每次重試與每個 fallback，含 solo。包含已登錄的 lead；判斷依據是登錄，不是 lead 身分。tidy、verify、format、`call` 的 wake 一律沒有該目錄、授權與 prompt 文字（`src/run-session.ts:784-787,1064-1072,1153-1159`）。
+- **誰拿得到。** 只有已登錄 agent 的 claim wake：第一次呼叫、每次重試與每個 fallback，含 solo。包含已登錄的 lead；判斷依據是登錄，不是 lead 身分。tidy、verify、format 沒有該目錄、授權與 prompt 文字（`src/run-session.ts:784-787,1064-1072,1153-1159`）。已登錄的 `call` 另見 [call 的核准請求](#call-的核准請求階段-4非可發布)。
 - **檔名。**（`REQUEST_FILENAME_RE`，`src/approval-id.ts:19`）：不以 `.` 開頭，接著 1 到 64 個 `A-Za-z0-9._-`，再以 `.req` 結尾。其他檔名被忽略。
 - **內容。** 標頭、一個空行、payload。標頭最多兩行：`executor: <名稱>`（必填，須為已註冊的 executor）與 `summary: <文字>`（選填，最多 300 個碼點），含空行最多 2048 bytes。payload 受該 executor 的 `max_payload_bytes` 限制（預設 4096、上限 65536）；超過 67584 bytes 的檔案在解析前就被拒。整個檔案必須是 UTF-8 文字，除 LF 與 TAB 外不得有控制字元，不得有格式、分隔或不可見字元（允許 U+3000）；絕不清理內容，壞檔只會被記為 denied（`src/approval-request.ts:9-70`、`src/approval-executors.ts:32-34`）。
 - **不是指令。** 收走的請求只是存起來等人審核；agent 寫了檔並不會執行任何東西。
@@ -111,8 +111,28 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 
 - **殘留程序或檔案描述符（spec 4.4）。** agent 設法留下的背景程序可在搬移之後寫入新的 `proposals/`；下個 pass 才看得到，且只能新增請求（受配額限制）。它持有的已搬移檔案的描述符仍可改動 `collected/` 內的該檔；收走程式只檢查檔案在讀取期間 device 與 inode 沒變，不保證內容沒變。已存進 `approvals/` 的複本不受影響。硬連結數大於 1 的請求檔會被接受：有上限的讀取以 `O_NOFOLLOW` 開啟，只拒絕 symlink，收走時比對 device 與 inode，不比對連結數（`src/fs-util.ts:121-135`、`src/approval-collect.ts:365-383`）；收走的 payload 是從該 buffer 另寫的不可變複本（`src/approval-request.ts:67`、`src/approval-io.ts:157-198`），之後改動原檔不會改變它。
 - **寫入範圍不是讀取隔離。** 授權 `proposals/` 只管寫入。本頁沒有任何機制阻止 agent 讀其他 agent 的檔案或請求；不要把請求當機密（見本頁開頭）。
-- **未實作：** 核可、執行、回饋、`requests gc`／`approvals gc`，以及 `call` 的收走。實例（`<role>--N`）目前也不收走。
+- **未實作：** 核可、執行、回饋、`requests gc`／`approvals gc`。實例（`<role>--N`）目前也不收走。已登錄 `call` 的收走見 [call 的核准請求](#call-的核准請求階段-4非可發布)。
 - **未驗證：** F3、Linux、真實 sandbox 的強制效果，以及真實 Claude CLI 對 `proposals/` 授權的處理。除了用完即丟的 home，不要啟用 `executors.yaml`。
+
+## call 的核准請求（階段 4，非可發布）
+
+**非可發布：第 0 步未驗證**（English: not releasable, step 0 unverified）。Linux、Codex 與真實 sandbox **未驗證**。本節是已登錄 `call` 的階段 4 契約。上面的 run slot 規則仍適用於 claim wake。帶 policy 的 wake（tidy、verify、format）仍然沒有 `proposals/`。`approvals list`、`show`、`approve` 尚未實作。指令文字見 [call](commands.zh-TW.md#call) 與 [approvals collect](commands.zh-TW.md#approvals-collect)。
+
+### 授權與空目錄
+
+授權路徑只有 `requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在授權內，`ok.json`、`collected/`、`parked/`、核准儲存區與其他 agent 的 `proposals/` 也不在。`<call-id>` 是這次 call 的 id。同 UID 競態、逃逸的子行程，以及沒有讀取隔離，仍如[殘留風險](#殘留風險未實作未驗證)所述：授權只管寫入，其他 agent 仍可讀這些檔案。
+
+runtime 啟動前，該 `proposals/` 必須是真實且為空的目錄。無法確認為空時，runtime 不啟動，也不試下一個候選。stderr 為 `Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.` 已在目錄裡的檔案留在原地，不收走、不刪除。執行 `agent-lyceum doctor`、修好目錄後，重新開始一次 call。這一行寫得進去時，會附加到 `<home>/calls/<call-id>/log.jsonl`。
+
+### park，以及收走失敗仍保留 call 成功
+
+失敗或取消的候選會 park 到 `parked/<n>`，永不收走。`ok.json` 寫出之前崩潰留下的部分 `proposals/` 也永不收走。park 失敗就停止 fallback。stderr 為 `Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.` 檔案留在原地，不混進下一個候選，也不刪除。修好目錄後，若仍要這份工作，就重新開始一次 call。附加成功時，同一份 log 會留下這一行。
+
+成功的 call 在收走失敗時仍算成功：exit code 與 `result.md` 保持不變，請求留在磁碟上。修好設定或執行 `agent-lyceum doctor` 後，再執行 `approvals collect --call <call-id>`。診斷行在 `<home>/calls/<call-id>/log.jsonl`。修好之後可以重試。重試不保證一定收得走。call 不把核准結果餵回 agent。
+
+### 仍然成立的限制
+
+同 UID 的行程仍可能改動收走程式已經搬走的檔，範圍同階段 3 的殘留清單。agent 留下的子行程仍可能在輪替之後寫入新的 `proposals/`。本頁沒有機制阻止 agent 讀取其他 agent 的請求。把請求檔當成可寫的工作檔，而不是機密通道。
 
 ## 平行實例的共用記憶
 
