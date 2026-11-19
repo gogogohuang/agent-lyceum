@@ -75,6 +75,19 @@ export function loadFreshConfig(home: string, opts: { io?: ApprovalIo; userHome?
 }
 
 /**
+ * Read-only commands (`approvals show` and friends): the executors configuration as it is on disk now, keeping the specific `ApprovalError` code on a
+ * failure so the screen can say why `executors.yaml` cannot be read. A missing file gives `config: null`. Anything that is not an `ApprovalError` is rethrown.
+ */
+export function loadConfigForDisplay(home: string, opts: { io?: ApprovalIo; userHome?: string } = {}): { ok: true; config: ExecutorsConfig | null } | { ok: false; code: ApprovalError["code"] } {
+  try {
+    return { ok: true, config: loadExecutors(home, opts.userHome ?? os.homedir(), opts.io ?? defaultApprovalIo).config };
+  } catch (e) {
+    if (e instanceof ApprovalError) return { ok: false, code: e.code };
+    throw e;
+  }
+}
+
+/**
  * For the per-wake gate: read `executors.yaml` again and enroll `project` from it. A missing file, or one with no `allow` entry, gives an empty config and
  * nothing enrolled (the gate then reports the slot as no longer allowed). Any read or parse failure is a fixed code, never a message.
  */
