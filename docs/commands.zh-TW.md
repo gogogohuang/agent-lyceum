@@ -69,7 +69,7 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 
 沒有 `executors.yaml`、`allow` 為空，或 allow 沒有把這個 agent 列入 `call` 時，呼叫維持上面的行為：invocation、prompt、policy、stderr、`result.md` 與目錄內容不變，也不建立 `requests/` 樹。
 
-agent 已列入 `call` 時，每個候選只多一個可寫目錄：`requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在這份授權裡，`ok.json`、`collected/`、`parked/` 與其他 agent 的 `proposals/` 也不在。prompt 只說明如何寫請求檔。call 不把核准結果餵回 agent：prompt 不含其他請求的狀態、拒絕原因或 executor 輸出，call 不寫 `.feedback/`，下一個候選也不會收到 pending 或 denied 的結果。下面句子裡的 `<call-id>` 是這次 call 的 id（stderr 印出的那個 id）。標記與鎖的細節見 [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable)（英文）。`approvals list`、`show`、`approve` 尚未實作。
+agent 已列入 `call` 時，每個候選只多一個可寫目錄：`requests/calls/<call-id>/proposals/`。`requests/` 根目錄不在這份授權裡，`ok.json`、`collected/`、`parked/` 與其他 agent 的 `proposals/` 也不在。prompt 只說明如何寫請求檔。call 不把核准結果餵回 agent：prompt 不含其他請求的狀態、拒絕原因或 executor 輸出，call 不寫 `.feedback/`，下一個候選也不會收到 pending 或 denied 的結果。下面句子裡的 `<call-id>` 是這次 call 的 id（stderr 印出的那個 id）。標記與鎖的細節見 [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable)（英文）。`approve` 尚未實作；`list`、`show`、`audit` 與 `reject` 見下方。
 
 runtime 啟動前，`proposals/` 必須是真實且為空的目錄。新鮮的設定或前提不再通過時也同樣停住：新鮮的 call view 不是 ok；這次 call 已有 baseline 時，也包括資格雜湊與 baseline 不同。兩種情況 runtime 都不啟動，也不試下一個候選，stderr 為：
 
@@ -87,13 +87,13 @@ runtime 啟動前，`proposals/` 必須是真實且為空的目錄。新鮮的�
 
 `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.`
 
-runtime 留下的請求檔留在 `proposals/`，不刪除。要等存在有效的 `ok.json`，`approvals collect` 才會收。`ok.json` 已提交而 `result.md` 寫入失敗時，標記保留、指令以 `1` 結束，`approvals collect --call <call-id>` 可以收走請求。該指令不重建答案，也不自動重跑 call。`ok.json` 已提交、`result.md` 尚未寫入時崩潰，也是這個窗口：請求可以補收，沒有答案檔。`ok.json` 之前崩潰則什麼都不收。list 畫面是後續階段，答案要不要重跑由你另開一次 call 決定。
+runtime 留下的請求檔留在 `proposals/`，不刪除。要等存在有效的 `ok.json`，`approvals collect` 才會收。`ok.json` 已提交而 `result.md` 寫入失敗時，標記保留、指令以 `1` 結束，`approvals collect --call <call-id>` 可以收走請求。該指令不重建答案，也不自動重跑 call。`ok.json` 已提交、`result.md` 尚未寫入時崩潰，也是這個窗口：請求可以補收，沒有答案檔。`ok.json` 之前崩潰則什麼都不收。待處理的請求見 [approvals list](#approvals-list)。答案要不要重跑由你另開一次 call 決定。
 
 ## approvals collect
 
 **用法:** `approvals collect --call <call-id>`
 
-對一份已經有 `requests/calls/<call-id>/ok.json` 的 call 把收走做完。訊息裡的 `<id>` 就是同一個 call id。`<CODE>` 是固定的關卡代碼或收走 verdict 代碼（設定、前提、資格雜湊、collector 預算，或 skipped verdict 的 code）。`<role>` 是標記上記錄的全域 agent 名稱。沒有位置參數、沒有 run id、沒有 `--json`。不要求終端機。不啟動 runtime、不讀 `parked/`、也不拿 `result.md` 當作是否收走的條件。`approvals list`、`show`、`approve` 尚未實作。這個指令不開啟清單，重試也不依賴一份 list 指令。web console 不會多出這個指令。
+對一份已經有 `requests/calls/<call-id>/ok.json` 的 call 把收走做完。訊息裡的 `<id>` 就是同一個 call id。`<CODE>` 是固定的關卡代碼或收走 verdict 代碼（設定、前提、資格雜湊、collector 預算，或 skipped verdict 的 code）。`<role>` 是標記上記錄的全域 agent 名稱。沒有位置參數、沒有 run id、沒有 `--json`。不要求終端機。不啟動 runtime、不讀 `parked/`、也不拿 `result.md` 當作是否收走的條件。`approve` 尚未實作；`list`、`show`、`audit` 與 `reject` 見下方。這個指令不開啟清單，重試也不依賴一份 list 指令。web console 不會多出這個指令。
 
 **沒有 `ok.json`。** exit `0`。stdout 為：
 
@@ -113,6 +113,90 @@ exit `0`。第二次成功的 pass 保證每個持久檔案的檔名、bytes、m
 - 設定、前提、資格雜湊、角色或 executor 已移除、`--dir` 不存在或改指向別處、或 collector 預算：stderr 為 `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` 請求留在 `proposals/`，或留在還沒有 `.done` 的 `collected/<seq>/`。修好設定或執行 `agent-lyceum doctor` 後再重試。若 `executors.yaml` 被移除或改過，或該 agent 已不再登錄，恢復方式是還原這次 call 當時的設定，再執行 `approvals collect --call <call-id>`；在那之前請求留在原地（未登錄為 `NOT_ALLOWED`，資格雜湊不同為 `SNAPSHOT_MISMATCH`）。診斷行在 `<home>/calls/<id>/log.jsonl`。
 - 所有目錄異常（`DIR_ANOMALY`）：被持有或殘留的 `.coord`、symlink 或非目錄路徑、不支援的檔案系統，以及失敗的 `coord`、`high_water`、`link_probe`、`rotate`、`park`、`list` 操作。stderr 為 `Call <call-id>: approval collection blocked (DIR_ANOMALY). See the approval_collect class in calls/<call-id>/log.jsonl; if it is held, stop all calls before removing a stale .coord.` 讀 `<home>/calls/<call-id>/log.jsonl` 裡 `approval_collect` 那一行的 `class`。各 class 的處置見 [操作者處置](write-scope.zh-TW.md#操作者處置)。只有 `class` 為 `held` 時：先停掉所有 call，確認沒有存活的 call，再手動移除殘留的 `.coord` 目錄。指令不會替你移除它。該表的 `held` 列是 run slot 的處置（停掉 run）；這條指令要停的是 call。
 - log 檔本身寫不進去時，stderr 為 `Approval call diagnostics could not be persisted.` 請求留在 pass 停下的位置。讓 `<home>/calls/<id>/` 可寫後再重試。call 本身已經成功時，這一行不改變那次成功。
+
+## approvals list
+
+**用法:** `approvals list [--all] [--json]`
+
+非可發布：第 0 步未驗證（Not releasable: step 0 unverified）。Linux、真實終端機與真實 sandbox 未驗證。`approve`、執行器、`resolve`、gc 與回饋尚未實作。這四個指令都不啟動執行器。存放規則見 [Read-only commands and lazy writes (stage 5a, not releasable)](approval-store-api.md#read-only-commands-and-lazy-writes-stage-5a-not-releasable)（英文）。
+
+`approvals list` 只列出仍為 pending、且尚未超過到期時間的請求。它不寫任何檔案，也不啟動行程。
+
+`--all` 列出每一種狀態。對已過期但尚未記錄的 pending，或建立者行程已不在的 executing，它寫入 `expired` 或 `unknown`，並在該列標上 `[recorded now]`；兩條指令同時寫時，恰好一條記錄成功。懶寫入失敗時該列多 `  [not recorded: <CODE>]`，這是一筆 problem（結束碼 `1`），其他列仍會印出。競態發現狀態已被寫入，或連輸 32 次衝突（`contended`），不是 problem：該列顯示當下讀到的狀態。
+
+`--json` 印出 `{"schema_version":1,"requests":[...],"problems":[...]}`，與 `status --json` 無關。只有 `list --json` 會印 `schema_version`。清單開始前就失敗時（結束碼 `1`），`--json` 的 stdout 什麼都不印；解析前先看結束碼。清單本身有 problem 時，stdout 仍是完整 JSON，結束碼為 `1`。
+
+`corrupted (<CODE>)` 或 `unreadable (<CODE>)` 的列一律列出，沒有 `--all` 也列，此時指令以 `1` 結束。最高的 `state/<n>.json` 損毀（含前一個序號缺失，或 `01.json` 這類別名）時，所有轉換都拒絕。`show` 與 `list` 把該請求標成 `corrupted (<CODE>)`。
+
+沒有 `executors.yaml` 或沒有 `approvals/` 時，印出 `No pending approval requests.`，並且不建立任何檔案。`--all` 在沒有請求也沒有 problem 時印出 `No approval requests.`
+
+請求列的格式是 `<p>  <label>  <executor 或 ->  <proposer>  created <created_at>  expires <expires_at>`。`<p>` 是至少 8 個小寫十六進位字元的最短唯一前綴。還有其他已提交、可讀、但不是 pending 的請求時，最後一行（只在數量大於 0 時）是 `<k> more request(s) not pending; approvals list --all shows every state.`
+
+id 可以是 `approvals list` 印出的、至少 8 個字元的任一唯一前綴。這些指令不需要 `executors.yaml`；移除它（回滾）之後，仍用 `approvals list` 與 `approvals reject` 處理還在 pending 的請求。web console 不提供這些指令。
+
+`approvals/` 讀不到時，stderr 為 `Approvals store cannot be read (<CODE>): <path>.` 結束碼 `1`。不寫任何檔案。其餘共用的 id 錯誤見 [approvals show](#approvals-show)。清單沒有 problem 時結束碼為 `0`。
+
+## approvals show
+
+**用法:** `approvals show <id>`
+
+`approvals show <id>` 是唯讀的：它從不記錄過期，也不記錄建立者已死；它顯示計算後的狀態，例如 `expired (not yet recorded)`。建立者行程已不在的 executing 顯示為 `executing, creator dead (not yet recorded)`。
+
+畫面有三區：agent 陳述（標成未驗證）、executor 名稱以及 `command[0]` 的真實路徑與 sha256、完整 payload。每個 payload 列都以 `│ ` 開頭；換列或跨頁接續的列以 `┆ ` 開頭。每一頁最多 4096 位元組的 payload，並在字元邊界切開；所有頁依序印出。payload 依收集時的內容原樣顯示。payload 或 summary 沒通過請求白名單時整段不顯示，指令以 `1` 結束；不要核可這樣的請求。保留標記是 `(withheld: fails the request allow-list)`。`MISMATCH` 表示 payload 在收集之後被改過，指令以 `1` 結束。executor 區需要 `executors.yaml`；沒有它時 executor 顯示 `(not registered)`，結束碼不變。讀不到 `executors.yaml` 或無法檢查 `command[0]` 也不改變結束碼。
+
+stderr，結束碼 `1`（stdout 仍印出所有讀得到的部分；`record.json` 讀不到時 stdout 為空）：
+
+- `Approval <id>: payload sha256 does not match record.json; the payload changed after collection.`
+- `Approval <id>: payload cannot be read (<CODE>): <path>.`
+- `Approval <id>: payload or summary fails the request allow-list and was not displayed; the record may have been altered.`
+- `Approval <id>: state is corrupted (<CODE>): <path>. Every transition is refused.`
+- `Approval <id>: record.json cannot be read (<CODE>): <path>. Every transition is refused.`
+
+`approvals show`、`approvals audit`、`approvals reject` 共用的 id 錯誤。結束碼 `1`。不寫任何檔案：
+
+- `Approval id "<arg>" is not valid: use 8 to 24 lowercase hex characters as printed by approvals list.`
+- `No approval request matches "<arg>".`
+- `Approval id prefix "<arg>" matches <k> requests; type more characters.`
+- `Approvals store cannot be read (<CODE>): <path>.`
+
+`<arg>` 是你輸入的 id，控制字元已移除，並截到 64 個字元。正常的 show 以 `0` 結束。只有該請求、或另一筆相同 payload 的請求處於 `executing` 時，`show` 才探測建立者。該探測可能執行 `ps`。它不寫檔。
+
+## approvals audit
+
+**用法:** `approvals audit <id>`
+
+`approvals audit <id>` 是唯讀的，依序印出 `record.json` 的事實與每一個 `state/<n>.json` 事件，並帶動作者（使用者、終端機、pid、啟動時間）。executor 輸出、reason 與 conclusion 會去掉控制字元，`\r` 顯示為 `⏎`。請求裡的 payload、summary 與檔名不改寫。`state/` 裡非數字的檔名（暫存檔）不列出。
+
+找得到終端機名稱時記名稱，否則記 `rdev:<n>`，那只是裝置號。終端機檢查（stdin 與 stdout 都是終端機）是輔助，不是安全邊界；終端機名稱查找尚未在真實的 Linux 或 macOS 終端機上驗證。
+
+某個 `state/<n>.json` 缺失或損毀時印出 `  #<n>  corrupted (<CODE>)  <path>`，後面的序號仍繼續讀。此時 `current:` 為 `corrupted (<CODE>)`。stderr 為 `Approval <id>: state is corrupted (<CODE>): <path>. Every transition is refused.` 結束碼 `1`。`record.json` 讀不到時 stdout 為空，stderr 為 `Approval <id>: record.json cannot be read (<CODE>): <path>. Every transition is refused.` 結束碼 `1`。[approvals show](#approvals-show) 的共用 id 錯誤同樣適用。正常的 audit 以 `0` 結束。只有 `current:` 需要 `executing` 的證據時，`audit` 才探測建立者。
+
+## approvals reject
+
+**用法:** `approvals reject <id> [--reason <text>]`
+
+`approvals reject <id> [--reason <text>]` 的 stdin 與 stdout 都必須是終端機，而且 id 前綴必須是 8 到 24 個小寫十六進位字元、恰好對到一筆請求。只有 pending 可以拒絕；已過期但尚未記錄的請求仍可拒絕。`rejected` 是終態。`--reason` 是一行、最多 300 個可見字元。省略 `--reason` 表示不記錄理由。時鐘早於 `created_at` 不會擋住 `reject`。
+
+找得到終端機名稱時記名稱，否則記 `rdev:<n>`，那只是裝置號。終端機檢查（stdin 與 stdout 都是終端機）是輔助，不是安全邊界；終端機名稱查找尚未在真實的 Linux 或 macOS 終端機上驗證。
+
+兩條指令同時改同一筆請求時，恰好一條成功；另一條回報它讀到的狀態。
+
+檢查依序進行，第一個失敗就停，而且在進入轉換之前不寫任何檔案：id 語法、接著 `--reason`、接著終端機、接著 id 前綴、接著動作者、最後才是轉換。成功時唯一寫入的是 `approvals/<id>/state/<n+1>.json`，`status: rejected`。成功時 stdout 為 `Approval <id>: rejected.` 結束碼 `0`。
+
+stderr，結束碼 `1`：
+
+- `approvals reject needs an interactive terminal (stdin and stdout must be a TTY); nothing was changed.`
+- `Approval <id>: not rejected; it is already <status>.`
+- `Approval <id>: not rejected; only a pending request can be rejected (current: <status>).`
+- `Approval <id>: not rejected; the state sequence cannot grow (SEQUENCE_OVERFLOW).`
+- `Approval <id>: not rejected; the state kept changing. Run approvals show <id>, then retry.`
+- `Approval <id>: not rejected; state is corrupted (<CODE>): <path>. Every transition is refused.` 失敗的是 record 時，這句用 `record.json cannot be read (<CODE>): <path>.` 取代 `state is corrupted (<CODE>): <path>.`
+- `Approval <id>: not rejected; state cannot be written (<CODE>): <path>.`
+- `--reason must not be empty; nothing was changed.`
+- `--reason must be at most 300 characters; nothing was changed.`
+- `--reason must be one line of visible text (no control, format or invisible characters); nothing was changed.`
+
+[approvals show](#approvals-show) 的共用 id 錯誤同樣以 `1` 結束且不寫檔。`<status>` 是已持久化的狀態字（`pending`、`executing`、`unknown`、`executed`、`failed`、`rejected`、`expired`、`tampered` 或 `denied`）。
 
 ## resume
 
@@ -317,7 +401,7 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 ## 退出碼
 
-**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 或其他 agent 一直失敗而使 run 停止也算：修正原因後用 `resume` 繼續）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。`approvals collect` 以 `0` 或 `1` 結束，見 [approvals collect](#approvals-collect)。
+**`run`／`resume` 的 exit code：** `0` 只代表 lead 回報 `outcome: completed`；`2` 代表 `partial` 或 `blocked`（run 閒置或達到 `max_rounds` 而沒有 done 也算）；`1` 代表 `failed`（lead 或其他 agent 一直失敗而使 run 停止也算：修正原因後用 `resume` 繼續）；`3` 代表 run 正在等你回答（見 [回答問題](#回答問題)）；`130` 代表 `cancelled`。*升級注意：* 舊版 `idle` 結束會回傳 `0`、lead 失敗回傳 `2`；原本把 `0` 當成「run 結束了」的腳本，現在 `0` 的意思是「工作確實完成」。在記錄結果狀態之前就結束的舊 run 會顯示為「未驗證」（`partial`），不會被當成成功。`call` 的 exit code（`0`、`1`、`130`）見 [call](#call)。`approvals collect` 以 `0` 或 `1` 結束，見 [approvals collect](#approvals-collect)。`approvals list`、`show`、`audit` 與 `reject` 以 `0` 或 `1` 結束。
 
 ## 選擇專案
 

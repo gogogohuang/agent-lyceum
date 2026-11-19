@@ -1,4 +1,4 @@
-# Approval store API (stages 1–3)
+# Approval store API (stages 1–5a)
 
 **Unreleased API reference.** The store, doctor helpers, runtime enrollment and
 per-wake gate follow the [stage-1 plan](superpowers/plans/2026-11-14-approval-store-stage1.md),
@@ -18,7 +18,7 @@ status does not enforce qualification.
 
 Stage 2b-2 gates enrolled run/resume/solo slots before claims, and checks enrolled
 calls before creating their directory or lease. It does not deliver the full approval
-workflow. That historical slice had no proposals grant, collection or rotation; stage 3 now delivers those (see [Request collection](#request-collection-stage-3-not-releasable)). Approval CLI and executor launch remain future work.
+workflow. That historical slice had no proposals grant, collection or rotation; stage 3 now delivers those (see [Request collection](#request-collection-stage-3-not-releasable)). Read-only `approvals list`, `show` and `audit`, and `approvals reject`, are [Read-only commands and lazy writes (stage 5a, not releasable)](#read-only-commands-and-lazy-writes-stage-5a-not-releasable). `approve` and executor launch remain future work.
 The corrective containment/retained-configuration contract below is **pending final
 implementation verification**; it must not be read as a security-release claim.
 
@@ -35,6 +35,8 @@ Names below identify source modules in `src/`.
 | `io`, `store` | Read-only `assertRealDir`, `readApprovalFile`, `readRecord`, `listCommittedIds`; mutations `publishExclusive`, `publishRecord`. |
 | `transition`, `liveness`, `state` | Pure `decideTransition`; probing `creatorLiveness`; read-only `readCurrent`; mutating `transition`. |
 | `display`, `json` | Pure `computeDisplay`, `serializeApprovalList`; `Display`, `ApprovalListItemV1`, `ApprovalListV1`, `ApprovalListProblem` and aliases `ApprovalListItem`, `ApprovalListJson`. |
+| `text`, `screen`, `query`, `actor` | Stage 5a plan contract. `src/approval-text.ts`, `src/approval-screen.ts`, `src/approval-query.ts` and `src/approval-actor.ts` are not in this worktree. `text`: `sanitizeExternal`, `blockLines`, `passesAllowList`, `checkReason`, `clipArg`. `screen`: `paginatePayload`, `renderPayloadPage`, `renderList`, `renderShow`, `renderAudit`, `uniquePrefixLength`, `statusLabel`, `cellWidth`. `query`: `resolveIdPrefix`, `readEntries`, `listRequests`, `recordLazyStates`, `readRequestView`, `readAudit`, `executorFacts`. `actor`: `actorIdentity`, `ttyName`, `terminalIsInteractive`. |
+| `approvals-cli` | Stage 5a plan contract. File is `src/approvals-cli.ts` (not `approval-*.ts`) and is not in this worktree. `approvalsList`, `approvalsShow`, `approvalsAudit`, `approvalsReject`. `list --json` calls `serializeApprovalList`. |
 | `high-water` | `readHighWater`, `maxCollectedSequence`, `nextCollectedSequence`; mutating `advanceHighWater`. |
 | `enrollment`, `runtime` | Role-based enrollment; initial configuration refusal; fresh configuration/enrollment loading. |
 | `policy` | Itemized raw/canonical deny inventory; strict invocation-boundary refusal on incomplete inventory. |
@@ -183,9 +185,7 @@ and fixed hint `Invalid approval list item`; raw invalid fields/exception messag
 are not copied. Invalid envelopes or problem metadata throw `INVALID_INPUT`;
 unsupported versions throw `UNSUPPORTED_VERSION`. Caller-supplied problem strings
 must already be safe metadata. The serializer neither scans the store nor selects
-CLI filters. These helpers support a future `approvals list --json`. `approvals list`
-is not implemented. `status --json` is unchanged. `approvals collect --call` is the
-stage-4 contract in [Call collection](#call-collection-stage-4-not-releasable).
+`approvals list --json` is the stage-5a command in [Read-only commands and lazy writes (stage 5a, not releasable)](#read-only-commands-and-lazy-writes-stage-5a-not-releasable). `approvals-cli` calls `serializeApprovalList` and prints its string unchanged (JSON plus LF, `schema_version: 1`). Problem `hint` values are four fixed strings (plan D8; only the first is in this worktree): record read failure `Committed approval could not be read` (`src/approval-store.ts:68`); corrupt current state `State is corrupted; every transition is refused`; other `readCurrent` errors `State could not be read`; lazy-write failure `Lazy state could not be recorded`. Codes stay the existing `ApprovalErrorCode`. `status --json` is unchanged. `approvals collect --call` is the stage-4 contract in [Call collection](#call-collection-stage-4-not-releasable).
 
 `approval-rotation.ts` provides only these type contracts:
 
@@ -481,7 +481,7 @@ protection proof, read isolation, or new Linux/real OS sandbox safety evidence.
 `--setting-sources user` remains unchanged; user-settings merging/allowlisting and
 Claude Edit alias behavior remain unverified safety blockers. Do not infer stage-3
 readiness from a clean doctor report, fixture, example or fake runtime.
-Stage 2b-2 did not deliver proposals grants, collect/settle integration or request parking; stage 3 now delivers those for runs (see [Request collection](#request-collection-stage-3-not-releasable)). Enrolled `call` markers and `approvals collect --call` are the stage-4 contract ([Call collection](#call-collection-stage-4-not-releasable)). The executor, feedback, gc, and `approvals list` / `show` / `approve` remain future work.
+Stage 2b-2 did not deliver proposals grants, collect/settle integration or request parking; stage 3 now delivers those for runs (see [Request collection](#request-collection-stage-3-not-releasable)). Enrolled `call` markers and `approvals collect --call` are the stage-4 contract ([Call collection](#call-collection-stage-4-not-releasable)). `approvals list`, `show`, `audit` and `reject` are [Read-only commands and lazy writes (stage 5a, not releasable)](#read-only-commands-and-lazy-writes-stage-5a-not-releasable). The executor, feedback, gc and `approve` remain future work.
 
 Keep enrollment off until the security corrections and independent review are complete.
 Only then stage a trial in a dedicated temporary home/repository, initially with one
@@ -546,7 +546,7 @@ This is the current S3 wiring on this branch (not a release, not QA-verified).
 
 ## Call collection (stage 4, not releasable)
 
-**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). Linux, Codex and enforcement by the real sandbox are **UNVERIFIED**. This section is the stage-4 contract for an enrolled `call` (`docs/superpowers/plans/2026-11-18-approval-stage4.md`, D2–D6). `approvals list`, `show` and `approve` are not implemented. With no `executors.yaml`, an empty `allow`, or an allow list that names other tuples only, a `call` keeps its previous invocation, prompts, policy, stderr, `result.md` and directory bytes, and it creates no `requests/` tree.
+**Not releasable: step 0 unverified** (「非可發布：第 0 步未驗證」). Linux, Codex and enforcement by the real sandbox are **UNVERIFIED**. This section is the stage-4 contract for an enrolled `call` (`docs/superpowers/plans/2026-11-18-approval-stage4.md`, D2–D6). `approve` is not implemented. `list`, `show`, `audit` and `reject` are [Read-only commands and lazy writes (stage 5a, not releasable)](#read-only-commands-and-lazy-writes-stage-5a-not-releasable). With no `executors.yaml`, an empty `allow`, or an allow list that names other tuples only, a `call` keeps its previous invocation, prompts, policy, stderr, `result.md` and directory bytes, and it creates no `requests/` tree.
 
 Placeholders in the fixed sentences: `<call-id>` and `<id>` are the same validated call id (the id on the command line and in `requests/calls/<call-id>/`). `<role>` is the global agent name (`approvalName`). `<CODE>` is an existing gate code or a collection verdict code. It is a fixed token, and the sentence does not insert an errno string, a payload or a request file name.
 
@@ -584,7 +584,7 @@ For an enrolled agent whose result is success and is not cancelled, the order is
 4. Collection, only after `ok.json` is committed. `collectSlot` finishes every `collected/<seq>` that has no `.done`, then rotates a nonempty `proposals/` (`src/approval-collect.ts:416-436`).
 5. Return the original call result. `finally` releases the call lease.
 
-A failed or cancelled candidate is parked at `parked/<n>` (`<n>` is that attempt number) and is never collected. A crash after `ok.json` is committed and before `result.md` exists leaves the requests collectable and leaves no answer file. `approvals collect --call <call-id>` can collect those requests. It does not rebuild `result.md` and it does not rerun the call. Whether to rerun is the operator's decision. The list screen is a later stage. A crash before `ok.json` collects nothing, including when the runtime had already finished. There is no call resume.
+A failed or cancelled candidate is parked at `parked/<n>` (`<n>` is that attempt number) and is never collected. A crash after `ok.json` is committed and before `result.md` exists leaves the requests collectable and leaves no answer file. `approvals collect --call <call-id>` can collect those requests. It does not rebuild `result.md` and it does not rerun the call. Whether to rerun is the operator's decision. Pending requests are listed by [approvals list](commands.md#approvals-list). A crash before `ok.json` collects nothing, including when the runtime had already finished. There is no call resume.
 
 If publishing the marker throws, stderr is `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.` The success text of `result.md` is not written, collection is not attempted, and the CLI exits `1`. The runtime's files stay in `proposals/`. They are not deleted. A later collect applies only after a valid `ok.json` exists. Repair the directory, then retry the call as a new call. This failure is reported on stderr only; no line is appended to `<home>/calls/<call-id>/log.jsonl`.
 
@@ -611,3 +611,55 @@ Fresh view, configuration, role, path, qualification hash, premises, or the coll
 If the log append itself fails, stderr is `Approval call diagnostics could not be persisted.` That line does not change a successful call's exit code or `result.md`. The requests remain where the collection pass left them. Retry `approvals collect --call <id>` after the log directory can be written. The retry still depends on a valid marker and a fresh configuration; the diagnostic line alone does not finish collection.
 
 The call prompt tells the agent how to write a request. It does not attach request status, a denial or executor output, and the call does not write `.feedback/` or place a pending or denied result into the agent's reply or the next candidate. `status` gains no call-gate section. `doctor` still reports configuration and premises. A call-specific collection failure is the CLI line plus this call's `log.jsonl`.
+
+## Read-only commands and lazy writes (stage 5a, not releasable)
+
+**Not releasable: step 0 unverified.** Linux, a real terminal and the real sandbox are unverified. `approve`, the executor, `resolve`, gc and feedback are not implemented. Operator text is in [approvals list](commands.md#approvals-list), [approvals show](commands.md#approvals-show), [approvals audit](commands.md#approvals-audit) and [approvals reject](commands.md#approvals-reject). This section is the stage-5a plan contract (`docs/superpowers/plans/2026-11-19-approval-stage5a.md`, D1–D8). `src/approval-text.ts`, `src/approval-screen.ts`, `src/approval-query.ts`, `src/approval-actor.ts` and `src/approvals-cli.ts` are not in this worktree. None of these commands spawns an executor. `schema_version` is emitted only by `list --json`.
+
+### D1 — default list is computed pending
+
+Default `list` (human text and `--json`) includes a request only when `computeDisplay` (`src/approval-display.ts:17`) reports computed `pending`. A pending request past `expires_at`, and an executing request whose creator is dead, are left out. Their labels, `expired (not yet recorded)` and `executing, creator dead (not yet recorded)`, appear on `show`, `audit` and `list --all`. Default `list` does not probe an executing creator and does not write. Other readable committed states are only the footer count `<k> more request(s) not pending; approvals list --all shows every state.`
+
+### D2 — id prefix
+
+The prefix is `^[0-9a-f]{8,24}$`. Upper case, a non-hex character, fewer than 8 characters or more than 24 characters is `invalid`. The argument is not lowercased. Candidates are directory names `^[0-9a-f]{24}$` under `approvals/` for which `record.json` exists (any file type; the bytes are not read), so a corrupt record can still be opened by `show` and `audit`. One candidate is `ok`, zero is `not_found`, more than one is `ambiguous` and the count is reported. `reject` treats a prefix that passes that syntax and matches exactly one committed id as the confirmation. There is no separate retype and no y/N prompt. The terminal check is `process.stdin.isTTY && process.stdout.isTTY`.
+
+### D3 — external text
+
+`sanitizeExternal` (plan, `approval-text.ts`) is applied in this order and is idempotent on the same input:
+
+1. An unpaired surrogate (`/[\uD800-\uDFFF]/`) becomes U+FFFD.
+2. A complete ESC sequence is deleted: CSI (`ESC [` and 8-bit `0x9b`), a string sequence (OSC/DCS/SOS/PM/APC) through the first BEL, `0x9c` or `ESC \`, and other `ESC` intermediates such as `ESC ( B`. An introducer with no terminator deletes only the introducer. The scan is linear in the input length.
+3. Each `\r` becomes `⏎` (U+23CE), so `\r\n` becomes `⏎\n`.
+4. Each TAB becomes one U+0020.
+5. Every other `\p{Cc}` character is deleted. LF is kept.
+6. Every `\p{Cf}` character is deleted.
+7. U+2028 and U+2029 become `⏎`.
+
+That function is applied to executor stdout, stderr, `error_code` and `signal`; `unknown.detail`; `rejected.reason`; a manual `conclusion`; actor `user`, `tty` and `pid_started`; error and problem text and paths that are printed; `origin.project_dir` and `origin.full_writable`; the executor `command[0]` and its real path; the id argument when it is echoed (also clipped to 64 code points plus `…`); `record.executor` and `source_key.filename`.
+
+Payload, `summary`, id, hash, ISO times and the status, reason and code enumerations are printed unchanged. Before display, payload and `summary` are checked with `visible()` and not rewritten. `visible` is still private at `src/approval-request.ts:29`; the plan exports it and withholds the whole field when the check fails, because a dispatcher-written record that fails the allow-list has been altered. Multiline external text is prefixed with `│ ` after sanitising, so a forged box-drawing character does not start the line. `list --json` is not passed through the sanitiser. `JSON.stringify` escapes C0, the v1 item carries no external text, and each problem `hint` is one of the four fixed strings above.
+
+### D4 — missing store
+
+When `approvals/` does not exist, `list` prints the empty sentence and exits `0`. `show`, `audit` and `reject` are `not_found` and exit `1`. None of them creates a file or a directory. `listCommittedIds` returns an empty list on ENOENT (`src/approval-store.ts:57`). The home used by the command is the canonical home; a missing home stays that absolute path and is not created.
+
+### D5 — pages (reused by stage 5b approve)
+
+`paginatePayload` counts payload bytes only. The default page is 4096 bytes. Page `i` covers `[start, end)`. `end` is `min(len, start + pageBytes)`, then moves back to the lead byte when `payload[end]` is a UTF-8 continuation (`(b & 0xC0) === 0x80`). The next page starts at that `end`. Pages are not aligned to LF. Their ranges partition `[0, len)` and do not overlap. An empty payload is one page `{index:0,start:0,end:0}`. `readApprovalFile` already requires valid UTF-8 (`src/approval-io.ts:72-81`), so the walk-back is at most 3 bytes.
+
+A logical line's first display row uses `│ ` when that row is a real line start (the start of the payload, or the previous byte is LF). A wrap, or a row that continues a line from the previous page, uses `┆ `. Display width is `W = max(20, columns - 2)`. TAB counts as 8. The wide ranges in the plan (Hangul Jamo through the supplementary planes listed in D5) count as 2. Every other code point counts as 1, including a combining character. The split is on a character boundary and does not change the bytes. When stdout is not a TTY, `columns` is 80. Dropping the two-character prefix, concatenating a `┆ ` row onto the previous row, inserting LF before a later `│ ` row, and adding a final LF when the payload ends with LF, reconstructs the payload bytes. Stage 5b `approve` reuses this pager. It is not implemented in this stage.
+
+### D6 — actor and `rdev:<n>`
+
+The actor is computed only when a transition is about to run: `reject`, and `list --all` when at least one display is `unrecorded`. `show`, `audit`, the default list, and `list --all` with nothing to record do not spawn `ps` for the actor. `user` is `os.userInfo().username`, then `uid:<process.getuid()>`, then `unknown`. A non-TTY stdin stores `tty: null`. A TTY on Linux uses `readlink` of `/proc/self/fd/0` when the result starts with `/dev/`. Otherwise the code scans at most 2048 entries of `/dev` whose names start with `tty`, and `/dev/pts/*`, for a character device with the same `rdev`. The fallback is `rdev:<n>`, which is a device number only. The terminal check (stdin and stdout are terminals) is an aid, not a security boundary; terminal name lookup has not been verified on a real Linux or macOS terminal. The name lookup does not spawn `tty` or `ps`. `pid_started` may be null for `reject` and for a lazy write. A lazy write does not require a TTY.
+
+### D7 — lazy writes
+
+Only `list --all` writes `expired` or `unknown`, and only through `transition` (`src/approval-state.ts`, exclusive `link`). `show`, `audit` and the default list do not write. Those three probe a creator only when the request they are showing is `executing` (`show` also when another request with the same payload is `executing`). For each unrecorded id, `list --all` calls `transition` with a `lazy` event and trigger `list_all`, recomputing time and liveness from the latest state on every retry. `committed` marks the row `[recorded now]`. `unchanged` (`noop`, `ALREADY_HANDLED`, `NOT_APPLICABLE`) is not a problem. `contended` (after `DEFAULT_MAX_CONFLICTS` lost races, `src/approval-state.ts:16`) is not a problem; the row keeps the computed label and a later `--all` tries again. A thrown `ApprovalError` is a problem with hint `Lazy state could not be recorded`, the row gains `[not recorded: <CODE>]`, and the other ids are still processed. Two `list --all` writers of the same next file: `linkSync` admits exactly one `committed`; the other re-reads and becomes `unchanged`. The same one-winner rule applies to `reject` racing a lazy write or an approve-style event.
+
+### D8 — corruption and exit codes
+
+Corruption is `readCurrent` or `readRecord` throwing `CORRUPT_STATE`, `CORRUPT_RECORD` or `UNSUPPORTED_VERSION`. That includes a corrupt highest `state/<n>.json`, a missing or corrupt predecessor, and an alias name (`src/approval-state.ts:39-48,74-77`). Any other `ApprovalError` (`IO_ERROR`, `UNSAFE_PATH`, and the rest) is unreadable. `transition` throws at `readCurrent`, so `reject` and a lazy write both refuse the corrupt request. `list`, with or without `--all`, always prints the problem row. `show` prints the readable record fields and `corrupted (<CODE>)`.
+
+Exit `1` when the output contains any problem, corruption, payload mismatch or withheld text. Stdout still contains every readable part. Exit `0` only for a complete success. `reject` exits `0` only when this invocation committed. On an error before listing, `list --json` prints nothing on stdout.

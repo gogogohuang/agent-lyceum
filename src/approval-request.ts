@@ -26,7 +26,7 @@ const denied = (reason: ParseDenial): ParsedRequest => ({ kind: 'denied', reason
  */
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}ᅟᅠㅤﾠ⠀]/u;
 
-function visible(text: string): boolean {
+export function visible(text: string): boolean {
   for (const ch of text) {
     const cp = ch.codePointAt(0) as number;
     if (cp === 0x0a || cp === 0x09 || cp === 0x20 || cp === 0x3000) continue;
