@@ -106,9 +106,23 @@ button:disabled {
   animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
+@keyframes loading-bar {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(420%); }
+}
+.loading-bar {
+  animation: loading-bar 1.1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .enter,
-  .pulse-dot {
+  .pulse-dot,
+  .loading-bar {
     animation: none;
+  }
+  .loading-bar {
+    left: 0;
+    width: 100%;
+    opacity: 0.55;
   }
 }
