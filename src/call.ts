@@ -4,17 +4,24 @@ import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
 import os from "node:os";
+import { appendApprovalDiagnostic, callApprovalView, collectCallApproval, publishCallApprovalOk, type CallApprovalOk } from "./approval-call.js";
+import { defaultCollectDeps, type CollectDeps, type CollectLog } from "./approval-collect.js";
+import { ApprovalError } from "./approval-error.js";
+import { requestPaths, type SlotRef } from "./approval-paths.js";
 import { assertApprovalConfig, enrollProject } from "./approval-runtime.js";
+import { createRotation } from "./approval-rotation.js";
+import { snapshotInputs } from "./approval-snapshot.js";
 import { GATE_TEXT, callGateVerdict } from "./approval-wake-gate.js";
 import type { PremiseOptions } from "./doctor-approval-premises.js";
 import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
 import { agentForCandidate, type Candidate, candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
 import { ProtectedGuard } from "./guard.js";
-import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
+import { fault } from "./message-store.js";
+import { assertName, canonicalPath, homePaths, isInside, type ProjectPaths } from "./paths.js";
 import { memoryDirs, osSandboxAvailable } from "./policy.js";
 import { lockHolderAlive, type LockInfo } from "./project-lock.js";
-import { buildCallUserPrompt, buildSoloSystemPrompt } from "./prompt.js";
+import { buildCallUserPrompt, buildSoloSystemPrompt, buildSystemPrompt } from "./prompt.js";
 import { newRunId } from "./run-store.js";
 import { DISPATCHER_DEFAULTS } from "./schema.js";
 
@@ -35,6 +42,8 @@ export interface CallOptions {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Approval gate: platform and sandbox facts for the premise checks of an enrolled agent; tests inject them. Default: this process. */
   approvalPremise?: PremiseOptions;
+  /** Collector dependencies for an enrolled call. Tests inject the clock, tokens and filesystem. Production omits it. */
+  approvalCollect?: CollectDeps;
 }
 
 export interface CallResult {
@@ -142,6 +151,43 @@ export function lockAgent(home: string, agent: string, callId: string): { releas
   return { release };
 }
 
+const preflightError = (callId: string): string =>
+  `Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/${callId}.`;
+const parkError = (callId: string): string =>
+  `Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/${callId}.`;
+const markerError = (callId: string): string =>
+  `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/${callId}/ok.json.`;
+const retainedError = (callId: string, code: string): string =>
+  `Call ${callId}: approval collection retained (${code}); fix configuration or run agent-lyceum doctor, then retry approvals collect --call ${callId}.`;
+
+/** A simulated crash has no errno. Approval and filesystem failures stay inside the call. */
+function faultEscape(e: unknown): boolean {
+  if (e instanceof ApprovalError) return false;
+  return typeof (e as { code?: unknown } | null)?.code !== "string";
+}
+
+/** Real empty directory, or a missing one rebuilt by rotation. A nonempty or unsafe directory is refused, not collected. */
+function confirmEmptyProposals(home: string, slot: SlotRef, attemptId: string, rotation: ReturnType<typeof createRotation>): string {
+  return rotation.withSlotCoord(home, slot, () => {
+    const proposals = requestPaths(home, slot).proposals;
+    let exists = false;
+    try {
+      if (!fs.lstatSync(proposals).isDirectory()) throw new ApprovalError("UNSAFE_PATH", "proposals is not a real directory");
+      exists = true;
+    } catch (e) {
+      if (e instanceof ApprovalError) throw e;
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    if (exists) {
+      const dir = fs.opendirSync(proposals);
+      try {
+        if (dir.readSync() !== null) throw new ApprovalError("UNSAFE_PATH", "proposals is not empty");
+      } finally { dir.closeSync(); }
+    }
+    return rotation.rotate(home, slot, { kind: "parked", attempt_id: attemptId }).proposals;
+  });
+}
+
 /** Wake one global agent once, alone, in `dir`. Leaves task.md, log/ and result.md in `<home>/calls/<call-id>/`. */
 export async function callAgent(o: CallOptions): Promise<CallResult> {
   const say = o.say ?? ((s: string) => console.error(s));
@@ -168,9 +214,10 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
   const callDir = path.join(callsDir(o.home), callId);
   const project = callProject(o.home, agent, dir, callDir);
 
+  const premise = o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable };
   // An enrolled agent is checked again now (premises and containment, as doctor does) before any call directory or lease exists.
   if (agent.enrolled) {
-    const v = callGateVerdict({ home: o.home, agent, actual: project, userHome: os.homedir(), premise: o.approvalPremise ?? { platform: process.platform, sandboxAvailable: osSandboxAvailable } });
+    const v = callGateVerdict({ home: o.home, agent, actual: project, userHome: os.homedir(), premise });
     if (v.kind !== "wake") {
       const failed = v.premises?.length ? ` (failed: ${v.premises.join(", ")})` : "";
       throw new ConfigError(`${agent.name} was not called: ${GATE_TEXT[v.code].status}${failed}. No agent was started.${GATE_TEXT[v.code].status.includes("doctor") ? "" : " Run `agent-lyceum doctor` for details."}`);
@@ -190,6 +237,90 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     const chain = all.length > 1;
     // The primary logs to log/ as always; each backup to a directory of its own, so its run does not overwrite the primary's logs.
     const logDirFor = (c: Candidate) => (c.primary ? path.join(callDir, "log") : path.join(callDir, "log", `fallback-${all.indexOf(c)}`));
+    const sink = { event: (name: string, fields: Record<string, unknown>) => say(JSON.stringify({ event: name, ...fields })) };
+    let logged = false;
+    const diagnose = (fields: CollectLog): void => {
+      logged = true;
+      try {
+        appendApprovalDiagnostic(path.join(callDir, "log.jsonl"), project.dispatcher.log_max_bytes, fields);
+      } catch {
+        say("Approval call diagnostics could not be persisted.");
+      }
+    };
+    const legacyInvoke = (c: Candidate, ctx: { attempt: number }) =>
+      invokeWithSandboxChecks(
+        invoke,
+        {
+          project,
+          agent: agentForCandidate(agent, c),
+          workDir: callDir,
+          systemPrompt: buildSoloSystemPrompt(project, agent),
+          userPrompt: buildCallUserPrompt(agent, o.task),
+          timeoutSec: project.dispatcher.wake_timeout_sec,
+          signal: o.signal,
+          logDir: logDirFor(c),
+        },
+        agent,
+        sink,
+        ctx.attempt,
+      ).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+    let baseline: Record<string, string> | undefined;
+    let successAttempt = 0;
+    let successFull: CallApprovalOk["full_writable"] | undefined;
+    const rotation = agent.enrolled ? createRotation({ fault: (point) => fault(point) }) : undefined;
+    const slot: SlotRef = { kind: "call", call_id: callId };
+    const enrolledInvoke = async (c: Candidate, ctx: { attempt: number }): Promise<WakeResult> => {
+      if (o.signal?.aborted) return { ok: false, text: "", exitCode: null, timedOut: false, cancelled: true };
+      const n = String(ctx.attempt + 1);
+      const stop = (error: string, op: CollectLog["op"]): WakeResult => {
+        say(error);
+        diagnose({ slot: agent.name, op, class: "io" });
+        return { ok: false, text: "", exitCode: null, timedOut: false, kind: "config", error };
+      };
+      const view = callApprovalView({ home: o.home, callId, role: agent.name, projectDir: dir, premise, expected: baseline });
+      if (!view.ok) return stop(preflightError(callId), "pass");
+      if (!baseline) baseline = { ...view.qualifications };
+      let proposals: string;
+      try {
+        proposals = canonicalPath(confirmEmptyProposals(o.home, slot, n, rotation!));
+      } catch (e) {
+        if (faultEscape(e)) throw e;
+        return stop(preflightError(callId), "pass");
+      }
+      const snap = snapshotInputs(view.project, view.agent.name, view.config, proposals);
+      let result: WakeResult;
+      try {
+        result = await invokeWithSandboxChecks(invoke, {
+          project: view.project,
+          agent: agentForCandidate(view.agent, c),
+          workDir: callDir,
+          systemPrompt: buildSystemPrompt(view.project, view.agent, proposals),
+          userPrompt: `${buildCallUserPrompt(view.agent, o.task)}\n\nApproval request directory (see the system prompt): ${proposals}`,
+          timeoutSec: view.project.dispatcher.wake_timeout_sec,
+          signal: o.signal,
+          logDir: logDirFor(c),
+          proposalsDir: proposals,
+        }, view.agent, sink, ctx.attempt);
+      } catch (e) {
+        result = { ok: false, text: "", exitCode: null, timedOut: false, error: (e as Error).message };
+      }
+      if (!result.ok || result.cancelled) {
+        try { rotation!.park(o.home, slot, n); }
+        catch (e) {
+          if (faultEscape(e)) throw e;
+          diagnose({ slot: agent.name, op: "park", class: "io" });
+          if (result.cancelled) return result;
+          const error = parkError(callId);
+          say(error);
+          return { ok: false, text: "", exitCode: null, timedOut: false, kind: "config", error };
+        }
+        fault("call:failed-proposals-parked");
+        return result;
+      }
+      successAttempt = ctx.attempt + 1;
+      successFull = { dirs: [...snap.full.dirs], files: [...snap.full.files] };
+      return result;
+    };
     // A call is a single shot: no retries on one model, and cooldowns that live only as long as it does.
     const outcome = await runWithFallback<WakeResult>({
       candidates: all,
@@ -203,33 +334,54 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
         if (o.signal?.aborted) return;
         say(`  ${agent.name} falling back to ${to.model ? `${to.runtime}/${to.model}` : to.runtime} (${kind ?? "unknown error"})`);
       },
-      invoke: (c, ctx) =>
-        invokeWithSandboxChecks(
-          invoke,
-          {
-            project,
-            agent: agentForCandidate(agent, c),
-            workDir: callDir,
-            systemPrompt: buildSoloSystemPrompt(project, agent),
-            userPrompt: buildCallUserPrompt(agent, o.task),
-            timeoutSec: project.dispatcher.wake_timeout_sec,
-            signal: o.signal,
-            logDir: logDirFor(c),
-          },
-          agent,
-          { event: (name, fields) => say(JSON.stringify({ event: name, ...fields })) },
-          ctx.attempt,
-        ).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message })),
+      invoke: agent.enrolled ? enrolledInvoke : legacyInvoke,
     });
     const result = must(outcome.result, "the call's result");
     const tried = chain ? outcome.tried : undefined;
 
     const reverted = guard.check([agent]).map((v) => v.file);
     for (const f of reverted) say(`warn   ${agent.name} changed ${f}; it was put back.`);
+    let published = false;
+    if (agent.enrolled && result.ok && !result.cancelled && baseline && successFull) {
+      const marker: CallApprovalOk = {
+        schema_version: 1, call_id: callId, role: agent.name, project_dir: canonicalPath(dir),
+        successful_attempt: successAttempt, full_writable: successFull, qualifications: baseline,
+      };
+      try { publishCallApprovalOk(o.home, marker); }
+      catch (e) {
+        if (faultEscape(e)) throw e;
+        throw new Error(markerError(callId));
+      }
+      published = true;
+      fault("call:ok-published");
+    }
     const cancelled = !!result.cancelled;
     const error = result.ok ? undefined : cancelled ? "cancelled" : (result.error ?? (result.timedOut ? "timed out" : "failed"));
     const triedList = !result.ok && !cancelled && tried?.length ? `\nTried:\n${tried.map((t) => `- ${t.model ? `${t.runtime}/${t.model}` : t.runtime} (${t.kind ?? "unknown"}): ${t.error ?? "failed"}`).join("\n")}\n` : "";
     atomicWrite(path.join(callDir, "result.md"), result.ok ? `${result.text.trimEnd()}\n` : `# Call ${cancelled ? "cancelled" : "failed"}\n\n${error}\n${triedList}`);
+    if (published) fault("call:result-written");
+    if (published && baseline && successFull) {
+      const injected = o.approvalCollect;
+      const collect = {
+        ...(injected ?? defaultCollectDeps(() => undefined)),
+        fault: (point: string) => { fault(point); injected?.fault(point); },
+        log: (event: "approval_collect", fields: CollectLog) => { diagnose(fields); injected?.log(event, fields); },
+      };
+      try {
+        const collected = collectCallApproval(o.home, {
+          schema_version: 1, call_id: callId, role: agent.name, project_dir: canonicalPath(dir),
+          successful_attempt: successAttempt, full_writable: successFull, qualifications: baseline,
+        }, { premise, collect, log: (_event, fields) => diagnose(fields) });
+        if (collected.verdict.kind !== "wake") {
+          say(retainedError(callId, collected.verdict.code));
+          if (!logged) diagnose({ slot: agent.name, op: "pass", class: "io" });
+        }
+      } catch {
+        say(retainedError(callId, "UNDETERMINABLE"));
+        if (!logged) diagnose({ slot: agent.name, op: "pass", class: "io" });
+      }
+      fault("call:collection-finished");
+    }
     return { callId, callDir, ok: result.ok, cancelled, text: result.ok ? result.text : "", error, ...(tried ? { tried } : {}), reverted };
   } finally {
     lease.release();

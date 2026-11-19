@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildClaudeInvocation } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import type { WakeInput } from "../src/adapters/index.js";
-import { callProject, callsDir, resolveCallAgent } from "../src/call.js";
+import { callAgent, callProject, callsDir, resolveCallAgent } from "../src/call.js";
 import type { ResolvedAgent, ResolvedProject } from "../src/config.js";
 import { diagnoseProject, formatDoctor } from "../src/doctor.js";
 import { enforcementFor, setOsSandboxForTest, writePolicy, type WritePolicy } from "../src/policy.js";
@@ -205,4 +205,62 @@ describe("approval default-off byte compatibility at run time (invocations, sett
       }
     });
   }
+
+  it("unenrolled calls preserve legacy invocation output and artifacts", async () => {
+    const prompts = JSON.parse(fs.readFileSync(path.join(FIXTURES, "rt.prompts.json"), "utf8")) as Record<string, string>;
+    const policies = JSON.parse(fs.readFileSync(path.join(FIXTURES, "rt.policies.json"), "utf8")) as Record<string, unknown>;
+    const claude = JSON.parse(fs.readFileSync(path.join(FIXTURES, "rt.claude.json"), "utf8")) as Record<string, { cmd: string; args: string[] }>;
+    const codex = JSON.parse(fs.readFileSync(path.join(FIXTURES, "rt.codex.json"), "utf8")) as Record<string, { cmd: string; args: string[] }>;
+    for (const [scenario, executors] of Object.entries(RT_SCENARIOS)) {
+      env = makeEnv();
+      const userHome = path.join(env.root, "user");
+      fs.mkdirSync(userHome);
+      vi.spyOn(os, "homedir").mockReturnValue(userHome);
+      vi.stubEnv("CODEX_HOME", path.join(userHome, ".codex"));
+      setOsSandboxForTest(true);
+      initGitRepo(env.repo);
+      if (executors !== undefined) fs.writeFileSync(path.join(env.home, "executors.yaml"), executors);
+      const said: string[] = [];
+      let seen: WakeInput | undefined;
+      const result = await callAgent({
+        home: env.home, agent: "fe-member", task: "what is here?", dir: env.repo, say: (line) => said.push(line),
+        invoker: async (input) => { seen = input; return { ok: true, text: "legacy answer", exitCode: 0, timedOut: false }; },
+      });
+      const root = env.root;
+      const id = path.basename(result.callDir);
+      const normalize = (value: string) => [root, fs.realpathSync(root)].sort((a, b) => b.length - a.length)
+        .reduce((text, prefix) => text.split(prefix).join("<ROOT>"), value)
+        .split(id).join("fixture-call");
+      expect(normalize(seen!.systemPrompt), scenario).toBe(prompts["system.call"]);
+      expect(normalize(seen!.userPrompt), scenario).toBe(prompts["user.call"]);
+      expect(seen!.proposalsDir, scenario).toBeUndefined();
+      const livePolicy = normalize(JSON.stringify({
+        writePolicy: writePolicy(seen!.project, seen!.agent),
+        enforcementFor: enforcementFor(seen!.project, seen!.agent),
+        protectedPathsFor: { static: protectedPathsFor(seen!.project, seen!.agent, false), deep: protectedPathsFor(seen!.project, seen!.agent, true) },
+      }));
+      expect(livePolicy, scenario).toBe(JSON.stringify(policies["call.fe-member"]));
+      const callAgentResolved = resolveCallAgent(env.home, "fe-member");
+      const callProj = callProject(env.home, callAgentResolved, env.repo, path.join(callsDir(env.home), "fixture-call"));
+      const wake = { project: callProj, agent: callAgentResolved, workDir: path.join(root, "work", "call.fe-member.normal"), systemPrompt: "SYS", userPrompt: "USER", timeoutSec: 60 };
+      const saved = { ...process.env };
+      for (const k of Object.keys(process.env)) delete process.env[k];
+      Object.assign(process.env, PINNED_ENV(root));
+      try {
+        const c = buildClaudeInvocation(wake);
+        const x = buildCodexInvocation(wake);
+        expect(normalize(JSON.stringify({ cmd: c.cmd, args: c.args })), scenario).toBe(JSON.stringify({ cmd: claude["call.fe-member.normal"]!.cmd, args: claude["call.fe-member.normal"]!.args }));
+        expect(normalize(JSON.stringify({ cmd: x.cmd, args: x.args })), scenario).toBe(JSON.stringify({ cmd: codex["call.fe-member.normal"]!.cmd, args: codex["call.fe-member.normal"]!.args }));
+      } finally {
+        for (const k of Object.keys(process.env)) delete process.env[k];
+        Object.assign(process.env, saved);
+      }
+      expect(fs.readFileSync(path.join(result.callDir, "result.md"), "utf8"), scenario).toBe("legacy answer\n");
+      expect(said.filter((line) => /approval/i.test(line)), scenario).toEqual([]);
+      expect(fs.existsSync(path.join(env.home, "requests")), scenario).toBe(false);
+      expect(fs.existsSync(path.join(env.home, "approvals")), scenario).toBe(false);
+      env.cleanup();
+      env = undefined;
+    }
+  });
 });

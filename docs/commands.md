@@ -66,6 +66,53 @@ The agent's final reply is printed on stdout; everything else (progress, the cal
 
 If the agent has a `fallback` chain ([Fallback models](configuration.md#fallback-models)), a call falls back too, with the same kinds of failure as a run, but as a single shot: no retry on the same model, no wait, and its cooldowns end with the call. A failed call lists the models it tried in `result.md`.
 
+With no `executors.yaml`, an empty `allow`, or an allow list that does not enroll this agent for `call`, the call keeps the behavior above: same invocation, prompts, policy, stderr, `result.md` and directory bytes, and no `requests/` tree.
+
+When the agent is enrolled for `call`, each candidate is granted one writable directory, `requests/calls/<call-id>/proposals/`. The `requests/` root stays outside that grant, as do `ok.json`, `collected/`, `parked/` and any other agent's `proposals/`. The prompt says how to write a request file. The call does not feed an approval result back to the agent: the prompt carries no other request's status, denial or executor output, the call writes no `.feedback/`, and a later candidate does not receive a pending or denied result. `<call-id>` in the sentences below is this call's id (the id printed on stderr). Details of the marker and the locks are in [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable). `approvals list`, `show` and `approve` are not implemented.
+
+Before the runtime starts, `proposals/` must be a real empty directory. The same stop also happens when the fresh configuration or premises no longer pass: the fresh call view is not ok, including, once this call has a baseline, a qualification hash that differs from it. In either case the runtime stays stopped, the next candidate is not tried, and stderr is:
+
+`Approval call not started: proposals could not be confirmed empty. Run agent-lyceum doctor; inspect requests/calls/<call-id>.`
+
+Files already in that directory stay there. Nothing is collected and nothing is deleted. Run `agent-lyceum doctor`, repair the directory, and start a new call; this call has no resume. When the failure line can be written, it is appended to `<home>/calls/<call-id>/log.jsonl`.
+
+A failed or cancelled candidate is moved to `requests/calls/<call-id>/parked/<n>` (`<n>` starts at 1 and increases across the fallback chain) when the park succeeds. Those files are never collected. When the park of a failed candidate fails, fallback stops and stderr is:
+
+`Approval call stopped: failed-attempt proposals could not be parked. Inspect requests/calls/<call-id>.`
+
+The failed candidate's files stay in place. They are not merged into the next candidate and they are not deleted. Repair the directory, then start a new call if the work is still wanted. The same log file receives the line when the append succeeds. When the park of a cancelled candidate fails, that line is not printed. The diagnostic is appended to the same log when the append works. If the append fails, stderr is `Approval call diagnostics could not be persisted.` The call then returns the cancelled result, and the files stay in place.
+
+On a successful enrolled call the order is `guard.check`, then `requests/calls/<call-id>/ok.json`, then `<home>/calls/<call-id>/result.md`, then collection, then release of the call lease. A collection error leaves the success, the exit code and `result.md` as they are; the requests stay on disk for [approvals collect](#approvals-collect). A call whose collection was retained still exits 0, and the answer is on stdout; the retained notice is on stderr and in `<home>/calls/<call-id>/log.jsonl`, so a script must check stderr or run `approvals collect --call <call-id>`. When the marker cannot be published, the success text is not written, collection is not attempted, the command exits `1`, and stderr is:
+
+`Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.`
+
+The runtime's request files stay in `proposals/`. They are not deleted. `approvals collect` applies after a valid `ok.json` exists. When `result.md` fails after `ok.json` is committed, the marker stays, the command exits `1`, and `approvals collect --call <call-id>` can collect the requests. That command does not rebuild the answer and does not rerun the call. A crash after `ok.json` is committed and before `result.md` is written is the same window: the requests can be collected, and there is no answer file. A crash before `ok.json` collects nothing. The list screen is a later stage, so recovery of the answer is a new call that you choose to run.
+
+## approvals collect
+
+**Usage:** `approvals collect --call <call-id>`
+
+Finish collection for one call that already has `requests/calls/<call-id>/ok.json`. `<id>` in the messages is that same call id. `<CODE>` is a fixed gate code or a collection verdict code (configuration, premises, qualification hash, the collector budget, or the skipped verdict's code). `<role>` is the global agent name recorded on the marker. The command takes no positional argument, no run id and no `--json`. It does not require a terminal. It does not start a runtime, does not read `parked/`, and does not use `result.md` as the reason to collect. `approvals list`, `show` and `approve` are not implemented. This command does not open a list, and a list command is not required to retry it. The web console does not gain this command.
+
+**No `ok.json`.** Exit `0`. Stdout is:
+
+`Call <id>: no ok.json; nothing collected.`
+
+The command creates no `requests/` directory, no `approvals/` directory, no `log.jsonl` and no lock. A failed call, a call whose `proposals/` is still nonempty, and a live call that never wrote `ok.json` all take this path. Their files stay where they are.
+
+**With `ok.json`.** The command reads the marker (at most 1 MiB), takes the call lease for `<role>`, checks the marker again, rebuilds qualifications from the current global team and a fresh `executors.yaml`, and rechecks premises. It then finishes every `collected/<seq>` that has no `.done`, and rotates a nonempty `proposals/`. Stdout, including a second pass that finds nothing left to collect, is:
+
+`Call <id>: approval collection complete.`
+
+Exit `0`. A second successful pass leaves each persistent file's name, bytes, mode and mtime unchanged. A directory's mtime is outside that guarantee. The pass appends no log line and does not rewrite `.done`, the high-water file or `ok.json` when there is nothing left to do. `.lock-<role>` and `requests/calls/<id>/.coord` may exist during the pass. When the pass ends, both are absent. `.coord` exists only for that short pass. A live call is excluded first by the call lease, not by holding `.coord` for the whole call. When `<role>` is already in a call, the command exits `1` and stderr is `<role> is already being called (call <call-id>, pid <pid>). Wait for it to finish.` (`<pid>` is the recorded process id). The requests stay. Wait for that call to finish, then retry.
+
+**Exit `1`.** Already written files stay, including `result.md` and any approval record already published. Nothing already collected is deleted. A failure line is appended to `<home>/calls/<id>/log.jsonl` when that append works. After the cause is fixed, run the same command again. A retry is available; finishing the command once does not mean a later pass will collect.
+
+- Invalid or unsupported marker: stderr `Call <id>: invalid or unsupported requests/calls/<id>/ok.json; no collection attempted.` No new record is created. The marker and the request files stay. Publish a valid marker by a new successful call; this command does not rewrite `ok.json`.
+- Configuration, premises, qualification hash, a removed role or executor, a `--dir` that is missing or now points elsewhere, or the collector budget: stderr `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` The requests stay in `proposals/` or in a `collected/<seq>` that has no `.done`. Fix the configuration or run `agent-lyceum doctor`, then retry. If `executors.yaml` was removed or changed, or the agent is no longer enrolled, recovery is to restore the configuration the call ran with, then run `approvals collect --call <call-id>`; the requests stay in place until then (`NOT_ALLOWED` when the agent is not enrolled, `SNAPSHOT_MISMATCH` when the qualification hashes differ). The diagnostic line is in `<home>/calls/<id>/log.jsonl`.
+- Every directory anomaly (`DIR_ANOMALY`): a held or stale `.coord`, a symlinked or non-directory path, an unsupported filesystem, and a failed `coord`, `high_water`, `link_probe`, `rotate`, `park` or `list` operation. Stderr is `Call <call-id>: approval collection blocked (DIR_ANOMALY). See the approval_collect class in calls/<call-id>/log.jsonl; if it is held, stop all calls before removing a stale .coord.` Read the `class` of the `approval_collect` line in `<home>/calls/<call-id>/log.jsonl`. Per-class remedies are in [Operator actions](write-scope.md#operator-actions). Only when that `class` is `held`: stop all calls, confirm none is live, then remove the stale `.coord` directory by hand. The command does not remove it. The `held` row of that table is the run-slot remedy (stop runs); this command stops calls.
+- When the log file itself cannot be written, stderr is `Approval call diagnostics could not be persisted.` The requests stay where the pass left them. Make `<home>/calls/<id>/` writable, then retry. On a call that already succeeded, this line does not change that success.
+
 ## resume
 
 **Usage:** `resume [run] ["follow-up"] [--task-file f] [--answer [--no-edit]] [--assume-defaults] [-p name]`
@@ -254,7 +301,7 @@ agent-lyceum checks the result: every file that existed before must still be in 
 
 ## Exit codes
 
-**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds`, if you set one, without a done); `1` for `failed` (also when the lead or another agent kept failing and the run stopped: continue with `resume` after fixing the cause); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call).
+**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds`, if you set one, without a done); `1` for `failed` (also when the lead or another agent kept failing and the run stopped: continue with `resume` after fixing the cause); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call). `approvals collect` exits `0` or `1`; see [approvals collect](#approvals-collect).
 
 ## Choosing the project
 
