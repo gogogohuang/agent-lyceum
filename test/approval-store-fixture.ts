@@ -98,7 +98,7 @@ export function seedState(home: string, id: ApprovalId, kind: 'rejected' | 'exec
   const record = readRecord(home, id);
   if (record === null) throw new Error(`seedState: no record ${id}`);
   const actor = ACTOR;
-  let result;
+  let result: ReturnType<typeof transition>;
   if (kind === 'rejected') {
     if (record.disposition !== 'pending') throw new Error('seedState rejected needs a pending record');
     result = transition(home, id, () => ({ event: { type: 'reject', reason: 'no', interactive_tty: true, prefix_confirmed: true },

@@ -58,8 +58,8 @@ describe('sanitizeExternal', () => {
     const t2 = performance.now();
     expect(t1 - t0).toBeLessThan(200);
     expect(t2 - t1).toBeLessThan(200);
-    expect(strippedOsc).not.toMatch(/\u001b/);
-    expect(strippedC1).not.toMatch(/[\u001b\u0080-\u009f]/);
+    expect(strippedOsc.includes('\u001b')).toBe(false);
+    expect([...strippedC1].some((c) => { const n = c.charCodeAt(0); return n === 0x1b || (n >= 0x80 && n <= 0x9f); })).toBe(false);
     expect(strippedOsc).toBe('');
     expect(strippedC1).toBe('');
   });
