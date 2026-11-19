@@ -68,7 +68,7 @@ If the agent has a `fallback` chain ([Fallback models](configuration.md#fallback
 
 With no `executors.yaml`, an empty `allow`, or an allow list that does not enroll this agent for `call`, the call keeps the behavior above: same invocation, prompts, policy, stderr, `result.md` and directory bytes, and no `requests/` tree.
 
-When the agent is enrolled for `call`, each candidate is granted one writable directory, `requests/calls/<call-id>/proposals/`. The `requests/` root stays outside that grant, as do `ok.json`, `collected/`, `parked/` and any other agent's `proposals/`. The prompt says how to write a request file. The call does not feed an approval result back to the agent: the prompt carries no other request's status, denial or executor output, the call writes no `.feedback/`, and a later candidate does not receive a pending or denied result. `<call-id>` in the sentences below is this call's id (the id printed on stderr). Details of the marker and the locks are in [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable). `approvals list`, `show` and `approve` are not implemented.
+When the agent is enrolled for `call`, each candidate is granted one writable directory, `requests/calls/<call-id>/proposals/`. The `requests/` root stays outside that grant, as do `ok.json`, `collected/`, `parked/` and any other agent's `proposals/`. The prompt says how to write a request file. The call does not feed an approval result back to the agent: the prompt carries no other request's status, denial or executor output, the call writes no `.feedback/`, and a later candidate does not receive a pending or denied result. `<call-id>` in the sentences below is this call's id (the id printed on stderr). Details of the marker and the locks are in [Call collection](approval-store-api.md#call-collection-stage-4-not-releasable). `approve` is not implemented; `list`, `show`, `audit` and `reject` are described below.
 
 Before the runtime starts, `proposals/` must be a real empty directory. The same stop also happens when the fresh configuration or premises no longer pass: the fresh call view is not ok, including, once this call has a baseline, a qualification hash that differs from it. In either case the runtime stays stopped, the next candidate is not tried, and stderr is:
 
@@ -86,13 +86,13 @@ On a successful enrolled call the order is `guard.check`, then `requests/calls/<
 
 `Approval call success marker could not be committed; no collection was attempted. Inspect requests/calls/<call-id>/ok.json.`
 
-The runtime's request files stay in `proposals/`. They are not deleted. `approvals collect` applies after a valid `ok.json` exists. When `result.md` fails after `ok.json` is committed, the marker stays, the command exits `1`, and `approvals collect --call <call-id>` can collect the requests. That command does not rebuild the answer and does not rerun the call. A crash after `ok.json` is committed and before `result.md` is written is the same window: the requests can be collected, and there is no answer file. A crash before `ok.json` collects nothing. The list screen is a later stage, so recovery of the answer is a new call that you choose to run.
+The runtime's request files stay in `proposals/`. They are not deleted. `approvals collect` applies after a valid `ok.json` exists. When `result.md` fails after `ok.json` is committed, the marker stays, the command exits `1`, and `approvals collect --call <call-id>` can collect the requests. That command does not rebuild the answer and does not rerun the call. A crash after `ok.json` is committed and before `result.md` is written is the same window: the requests can be collected, and there is no answer file. A crash before `ok.json` collects nothing. Pending requests are listed by [approvals list](#approvals-list). Recovery of the answer is a new call that you choose to run.
 
 ## approvals collect
 
 **Usage:** `approvals collect --call <call-id>`
 
-Finish collection for one call that already has `requests/calls/<call-id>/ok.json`. `<id>` in the messages is that same call id. `<CODE>` is a fixed gate code or a collection verdict code (configuration, premises, qualification hash, the collector budget, or the skipped verdict's code). `<role>` is the global agent name recorded on the marker. The command takes no positional argument, no run id and no `--json`. It does not require a terminal. It does not start a runtime, does not read `parked/`, and does not use `result.md` as the reason to collect. `approvals list`, `show` and `approve` are not implemented. This command does not open a list, and a list command is not required to retry it. The web console does not gain this command.
+Finish collection for one call that already has `requests/calls/<call-id>/ok.json`. `<id>` in the messages is that same call id. `<CODE>` is a fixed gate code or a collection verdict code (configuration, premises, qualification hash, the collector budget, or the skipped verdict's code). `<role>` is the global agent name recorded on the marker. The command takes no positional argument, no run id and no `--json`. It does not require a terminal. It does not start a runtime, does not read `parked/`, and does not use `result.md` as the reason to collect. `approve` is not implemented; `list`, `show`, `audit` and `reject` are described below. This command does not open a list, and a list command is not required to retry it. The web console does not gain this command.
 
 **No `ok.json`.** Exit `0`. Stdout is:
 
@@ -112,6 +112,90 @@ Exit `0`. A second successful pass leaves each persistent file's name, bytes, mo
 - Configuration, premises, qualification hash, a removed role or executor, a `--dir` that is missing or now points elsewhere, or the collector budget: stderr `Call <id>: approval collection retained (<CODE>); fix configuration or run agent-lyceum doctor, then retry approvals collect --call <id>.` The requests stay in `proposals/` or in a `collected/<seq>` that has no `.done`. Fix the configuration or run `agent-lyceum doctor`, then retry. If `executors.yaml` was removed or changed, or the agent is no longer enrolled, recovery is to restore the configuration the call ran with, then run `approvals collect --call <call-id>`; the requests stay in place until then (`NOT_ALLOWED` when the agent is not enrolled, `SNAPSHOT_MISMATCH` when the qualification hashes differ). The diagnostic line is in `<home>/calls/<id>/log.jsonl`.
 - Every directory anomaly (`DIR_ANOMALY`): a held or stale `.coord`, a symlinked or non-directory path, an unsupported filesystem, and a failed `coord`, `high_water`, `link_probe`, `rotate`, `park` or `list` operation. Stderr is `Call <call-id>: approval collection blocked (DIR_ANOMALY). See the approval_collect class in calls/<call-id>/log.jsonl; if it is held, stop all calls before removing a stale .coord.` Read the `class` of the `approval_collect` line in `<home>/calls/<call-id>/log.jsonl`. Per-class remedies are in [Operator actions](write-scope.md#operator-actions). Only when that `class` is `held`: stop all calls, confirm none is live, then remove the stale `.coord` directory by hand. The command does not remove it. The `held` row of that table is the run-slot remedy (stop runs); this command stops calls.
 - When the log file itself cannot be written, stderr is `Approval call diagnostics could not be persisted.` The requests stay where the pass left them. Make `<home>/calls/<id>/` writable, then retry. On a call that already succeeded, this line does not change that success.
+
+## approvals list
+
+**Usage:** `approvals list [--all] [--json]`
+
+Not releasable: step 0 unverified. Linux, a real terminal and the real sandbox are unverified. `approve`, the executor, `resolve`, gc and feedback are not implemented. None of these four commands starts an executor. Store rules are in [Read-only commands and lazy writes (stage 5a, not releasable)](approval-store-api.md#read-only-commands-and-lazy-writes-stage-5a-not-releasable).
+
+`approvals list` shows only requests that are pending and not past their expiry. It writes nothing and starts no process.
+
+`--all` lists every state. For a pending request past its expiry, or an executing request whose creator process is gone, it records `expired` or `unknown` and marks the row `[recorded now]`; when two commands race, exactly one records it. A failed lazy write adds `  [not recorded: <CODE>]` and is a problem (exit `1`); the other rows are still printed. A race that finds the state already written, or that loses 32 conflicts (`contended`), is not a problem: the row shows the state it found.
+
+`--json` prints `{"schema_version":1,"requests":[...],"problems":[...]}`; it is independent of `status --json`. `schema_version` is printed only by `list --json`. On an error before listing (exit `1`), `--json` prints nothing on stdout; check the exit code before parsing. When the listing itself has a problem, stdout is still the full JSON and the exit code is `1`.
+
+A row `corrupted (<CODE>)` or `unreadable (<CODE>)` is always listed, also without `--all`, and the command then exits `1`. A corrupt highest `state/<n>.json` (including a missing predecessor or an alias name such as `01.json`) refuses every transition. `show` and `list` mark that request `corrupted (<CODE>)`.
+
+Without `executors.yaml` or `approvals/`, it prints `No pending approval requests.` and creates nothing. `--all` with no request and no problem prints `No approval requests.`
+
+A request row is `<p>  <label>  <executor or ->  <proposer>  created <created_at>  expires <expires_at>`. `<p>` is the shortest unique prefix of at least 8 lowercase hex characters. When other readable committed requests are not pending, the last line (only when that count is greater than 0) is `<k> more request(s) not pending; approvals list --all shows every state.`
+
+The id may be any unique prefix of at least 8 characters as printed by `approvals list`. These commands do not need `executors.yaml`; after removing it (rollback), use `approvals list` and `approvals reject` for requests still pending. The web console does not offer these commands.
+
+When `approvals/` cannot be read, stderr is `Approvals store cannot be read (<CODE>): <path>.` Exit `1`. Nothing is written. The other shared id errors are under [approvals show](#approvals-show). Exit `0` when the listing has no problem.
+
+## approvals show
+
+**Usage:** `approvals show <id>`
+
+`approvals show <id>` is read-only: it never records expiry or a dead creator; it shows the computed state, for example `expired (not yet recorded)`. An executing request whose creator process is gone is shown as `executing, creator dead (not yet recorded)`.
+
+The screen has three zones: the agent statement, marked unverified; the executor name with `command[0]` real path and sha256; the complete payload. Every payload row starts with `│ `; a row that continues a wrapped or page-split line starts with `┆ `. Pages hold at most 4096 bytes of payload and are cut on character boundaries; all pages are printed in order. The payload is shown exactly as collected. If it or the summary fails the request allow-list it is withheld and the command exits `1`; do not approve such a request. The withheld marker is `(withheld: fails the request allow-list)`. `MISMATCH` means the payload changed after collection; the command exits `1`. The executor section needs `executors.yaml`; without it the executor shows `(not registered)` and the exit code is unchanged. A problem reading `executors.yaml` or inspecting `command[0]` does not change the exit code.
+
+stderr, exit `1` (stdout still shows every readable part, except when `record.json` cannot be read, in which case stdout is empty):
+
+- `Approval <id>: payload sha256 does not match record.json; the payload changed after collection.`
+- `Approval <id>: payload cannot be read (<CODE>): <path>.`
+- `Approval <id>: payload or summary fails the request allow-list and was not displayed; the record may have been altered.`
+- `Approval <id>: state is corrupted (<CODE>): <path>. Every transition is refused.`
+- `Approval <id>: record.json cannot be read (<CODE>): <path>. Every transition is refused.`
+
+Shared id errors for `approvals show`, `approvals audit` and `approvals reject`. Exit `1`. Nothing is written:
+
+- `Approval id "<arg>" is not valid: use 8 to 24 lowercase hex characters as printed by approvals list.`
+- `No approval request matches "<arg>".`
+- `Approval id prefix "<arg>" matches <k> requests; type more characters.`
+- `Approvals store cannot be read (<CODE>): <path>.`
+
+`<arg>` is the id you typed, with control characters removed and clipped to 64 characters. A normal show exits `0`. `show` probes a creator only when that request, or another request with the same payload, is `executing`. That probe may run `ps`. It does not write a file.
+
+## approvals audit
+
+**Usage:** `approvals audit <id>`
+
+`approvals audit <id>` is read-only and prints the facts in `record.json` and every `state/<n>.json` event in sequence order, with the actor (user, terminal, pid, start time). Executor output, reasons and conclusions are shown with control characters removed and `\r` shown as `⏎`. Payload, summary and file names inside the request are not rewritten. A non-numeric name in `state/` (a temp file) is not listed.
+
+The terminal is recorded by name when one can be found, otherwise as `rdev:<n>`, which is a device number only. The terminal check (stdin and stdout are terminals) is an aid, not a security boundary; terminal name lookup has not been verified on a real Linux or macOS terminal.
+
+A missing or corrupt `state/<n>.json` is printed as `  #<n>  corrupted (<CODE>)  <path>`, and later numbers are still printed. `current:` is then `corrupted (<CODE>)`. stderr is `Approval <id>: state is corrupted (<CODE>): <path>. Every transition is refused.` Exit `1`. When `record.json` cannot be read, stdout is empty and stderr is `Approval <id>: record.json cannot be read (<CODE>): <path>. Every transition is refused.` Exit `1`. The shared id errors under [approvals show](#approvals-show) also apply. A normal audit exits `0`. `audit` probes a creator only for the `current:` line of an `executing` request.
+
+## approvals reject
+
+**Usage:** `approvals reject <id> [--reason <text>]`
+
+`approvals reject <id> [--reason <text>]` needs a terminal on stdin and stdout, and an id prefix of 8 to 24 lowercase hex characters that matches exactly one request. Only a pending request can be rejected; a request past its expiry that is not yet recorded can still be rejected. `rejected` is final. `--reason` is one line of at most 300 visible characters. Omit `--reason` to record no reason. A clock earlier than `created_at` does not block `reject`.
+
+The terminal is recorded by name when one can be found, otherwise as `rdev:<n>`, which is a device number only. The terminal check (stdin and stdout are terminals) is an aid, not a security boundary; terminal name lookup has not been verified on a real Linux or macOS terminal.
+
+If two commands change the same request at once, exactly one succeeds; the other reports the state it found.
+
+Checks stop at the first failure and, until the transition itself, write nothing: id syntax, then `--reason`, then the terminal, then the id prefix, then the actor, then the transition. The only successful write is `approvals/<id>/state/<n+1>.json` with `status: rejected`. On success, stdout is `Approval <id>: rejected.` Exit `0`.
+
+stderr, exit `1`:
+
+- `approvals reject needs an interactive terminal (stdin and stdout must be a TTY); nothing was changed.`
+- `Approval <id>: not rejected; it is already <status>.`
+- `Approval <id>: not rejected; only a pending request can be rejected (current: <status>).`
+- `Approval <id>: not rejected; the state sequence cannot grow (SEQUENCE_OVERFLOW).`
+- `Approval <id>: not rejected; the state kept changing. Run approvals show <id>, then retry.`
+- `Approval <id>: not rejected; state is corrupted (<CODE>): <path>. Every transition is refused.` When the record is what failed, that sentence uses `record.json cannot be read (<CODE>): <path>.` in place of `state is corrupted (<CODE>): <path>.`
+- `Approval <id>: not rejected; state cannot be written (<CODE>): <path>.`
+- `--reason must not be empty; nothing was changed.`
+- `--reason must be at most 300 characters; nothing was changed.`
+- `--reason must be one line of visible text (no control, format or invisible characters); nothing was changed.`
+
+The shared id errors under [approvals show](#approvals-show) also exit `1` and write nothing. `<status>` is the persisted state word (`pending`, `executing`, `unknown`, `executed`, `failed`, `rejected`, `expired`, `tampered`, or `denied`).
 
 ## resume
 
@@ -301,7 +385,7 @@ agent-lyceum checks the result: every file that existed before must still be in 
 
 ## Exit codes
 
-**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds`, if you set one, without a done); `1` for `failed` (also when the lead or another agent kept failing and the run stopped: continue with `resume` after fixing the cause); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call). `approvals collect` exits `0` or `1`; see [approvals collect](#approvals-collect).
+**Exit codes of `run` / `resume`:** `0` only when the lead reported `outcome: completed`; `2` for `partial` or `blocked` (also when the run went idle or hit `max_rounds`, if you set one, without a done); `1` for `failed` (also when the lead or another agent kept failing and the run stopped: continue with `resume` after fixing the cause); `3` when the run is waiting for your answers (see [Answering questions](#answering-questions)); `130` for `cancelled`. *Upgrading:* before this version an `idle` run exited `0` and a failed lead exited `2`; scripts that treated `0` as "the run ended" must now check for `0` as "the work was completed". Runs that ended before outcomes were recorded show as unverified (`partial`) and are not reported as a success. For the exit codes of `call` (`0`, `1`, `130`), see [call](#call). `approvals collect` exits `0` or `1`; see [approvals collect](#approvals-collect). `approvals list`, `show`, `audit` and `reject` exit `0` or `1`.
 
 ## Choosing the project
 
