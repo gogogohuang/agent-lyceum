@@ -129,6 +129,11 @@
   ],
   "snapshots": 1,
   "blocked_integrations": [],
+  "implementers": [
+    {
+      "agent": "fe--x"
+    }
+  ],
   "end_reason": "done",
   "outcome": "completed",
   "verification": "npm test: passed",

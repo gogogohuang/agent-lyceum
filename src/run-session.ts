@@ -22,6 +22,7 @@ import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
+import { trailers, withTrailers, type WorkerRef } from "./attribution.js";
 import { assertWorktreeRunnable, collectAgentChanges, dirtyPaths, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
 import { workingTreeHash } from "./worktree.js";
 import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
@@ -945,12 +946,19 @@ export class RunSession {
    * A finished member's files go from its worktree into the repo before anyone reads its mail, so the lead
    * sees them. When that cannot be done, nothing is applied, the member's work stays on its branch, and the lead is told.
    */
+  /** The agent and the model it last ran on (a tier or fallback shows in `last_wake`), else its configured model. */
+  private workerRef(agent: ResolvedAgent): WorkerRef {
+    const model = this.state.last_wake[agent.name]?.model ?? agent.model;
+    return { agent: agent.name, ...(model ? { model } : {}) };
+  }
+
   private integrateMember(agent: ResolvedAgent, ws: AgentWorkspace, key: string): void {
     const { say, project, log, state } = this;
     let changes: ChangeSet | undefined;
     let r: IntegrationResult;
     try {
-      changes = collectAgentChanges(ws);
+      const who = this.workerRef(agent);
+      changes = collectAgentChanges(ws, withTrailers(`agent-lyceum: changes by ${agent.name}`, undefined, trailers({ implementers: [who], runId: this.runId })));
       r = integrateAgentChanges(project, changes, this.leadSpace);
     } catch (e) {
       // e.g. a worktree whose git files were tampered with: nothing is applied, and the lead is told like for any blocked integration
@@ -960,6 +968,10 @@ export class RunSession {
     const blocked = (state.blocked_integrations ?? []).filter((b) => b.agent !== agent.name);
     if (r.status === "integrated") {
       state.blocked_integrations = blocked;
+      if (r.files.length) {
+        const who = this.workerRef(agent);
+        state.implementers = [...(state.implementers ?? []).filter((w) => w.agent !== who.agent), who];
+      }
       if (r.files.length) say(`  ${agent.name}: ${r.files.length} changed file(s) brought into the repo`);
       return;
     }
@@ -1042,6 +1054,11 @@ export class RunSession {
       if (ws && results[i]?.ok) this.integrateMember(a, ws, claims.get(a.name)?.id ?? `${a.name}-${state.rounds}`);
     });
     const route = routeOutboxes(project, this.routing());
+    for (const m of route.delivered) {
+      const a = m.verdict ? (project.agents[m.from] ?? project.agents[roleOfName(project.agents, m.from)]) : undefined;
+      if (!m.verdict || !a) continue;
+      state.reviews = [...(state.reviews ?? []), { reviewer: a.name, ...(this.workerRef(a).model ? { model: this.workerRef(a).model } : {}), verdict: m.verdict, subject: m.subject, at: new Date().toISOString() }];
+    }
     // A done that breaks the completion contract goes back to the lead (a limited number of times).
     let contract: DoneContract | undefined;
     if (route.done) {
@@ -1312,7 +1329,13 @@ export class RunSession {
     const { say, log, state, runDir, runId, project } = this;
     if (!this.leadSpace || endReason === "waiting") return undefined;
     try {
-      const rb = finishLeadBranch(this.leadSpace, `agent-lyceum: ${project.lead}'s work for run ${runId}\n\n${state.task_summary}`, path.join(runDir, "lead.patch"));
+      const lead = project.agents[project.lead];
+      const message = withTrailers(
+        `agent-lyceum: ${project.lead}'s work for run ${runId}`,
+        state.task_summary,
+        trailers({ implementers: state.implementers, lead: lead ? this.workerRef(lead) : undefined, reviews: state.reviews, runId }),
+      );
+      const rb = finishLeadBranch(this.leadSpace, message, path.join(runDir, "lead.patch"));
       state.result_branch = rb;
       log("lead-branch", { ...rb });
       say(rb.files ? `  work is on branch ${rb.branch} (${rb.files} file(s)); bring it into your repo with: git merge ${rb.branch}` : `  ${rb.branch}: no file changes`);

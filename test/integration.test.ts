@@ -48,6 +48,14 @@ describe("collectAgentChanges", () => {
     expect(git(fe.root, "log", "--format=%s", "-1")).toMatch(/fe-member/);
   });
 
+  it("uses the commit message it is given, trailers included", () => {
+    const { ws } = setup();
+    const fe = ws("fe-member");
+    write(path.join(fe.dir, "src/web/a.txt"), "a changed\n");
+    collectAgentChanges(fe, "agent-lyceum: changes by fe-member\n\nImplemented-by: fe-member (m1)\nGenerated-by: agent-lyceum");
+    expect(git(fe.root, "log", "--format=%(trailers:key=Implemented-by,valueonly)", "-1").trim()).toBe("fe-member (m1)");
+  });
+
   it("reports no changes for an untouched worktree", () => {
     const { ws } = setup();
     expect(collect(ws("fe-member"), FE_OWNS)).toMatchObject({ files: [], violations: [] });

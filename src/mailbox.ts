@@ -10,6 +10,7 @@ import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_
 import { type InstanceCap, parallelFlag, roleOfName } from "./instances.js";
 import type { Tier } from "./schema.js";
 import { effectiveTier, tierFlag } from "./tiers.js";
+import { isVerdict, type Verdict } from "./attribution.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
 import { activeRecordsBytes, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
@@ -247,7 +248,7 @@ export function markRead(files: string[]): void {
 
 export interface RouteResult {
   /** Mail delivered by this pass (mail a previous pass already delivered is not repeated). */
-  delivered: { from: string; to: string; id: string; file: string; type: MessageType; subject: string }[];
+  delivered: { from: string; to: string; id: string; file: string; type: MessageType; subject: string; /** A reply's `verdict:` (a review result). */ verdict?: Verdict }[];
   rejected: { from: string; file: string; reason: string }[];
   /** Mail that was delivered but lacks required sections (see format.ts). */
   warnings: { from: string; id: string; subject: string; missing: string[] }[];
@@ -369,6 +370,15 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         continue;
       }
       const subject = String(d.subject ?? "(no subject)");
+      // `verdict` is how a reviewer's result is recorded (it ends up as a `Reviewed-by` trailer); it is only meaningful on a reply.
+      let verdict: Verdict | undefined;
+      if (d.verdict !== undefined && d.verdict !== null && d.verdict !== "") {
+        if (!isVerdict(d.verdict) || type !== "reply") {
+          reject(`verdict must be pass, changes_requested or fail, and only a \`reply\` carries one (got ${JSON.stringify(d.verdict)} on a ${type}). Leave the line out if you did not review anything.`);
+          continue;
+        }
+        verdict = d.verdict;
+      }
 
       if (type === "ask") {
         if (!sender.canAskUser) {
@@ -523,7 +533,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           },
         );
         if (!fresh) continue;
-        res.delivered.push({ from: sender.name, to, id: msg.meta.id, file: msg.file, type, subject });
+        res.delivered.push({ from: sender.name, to, id: msg.meta.id, file: msg.file, type, subject, ...(verdict ? { verdict } : {}) });
         if (missing.length) res.warnings.push({ from: sender.name, id: msg.meta.id, subject, missing });
       }
       fault("route:source-done");

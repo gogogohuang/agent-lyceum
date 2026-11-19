@@ -245,6 +245,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     `type: reply        # task | reply${agent.canAskUser ? " | ask" : ""}${isLead ? " | done" : ""}`,
     "subject: <short subject>",
     "reply_to: <message id>   # optional",
+    "verdict: pass | changes_requested | fail   # optional; only in a reply that reviews someone's work, it is recorded as `Reviewed-by` in the commit",
     "---",
     "",
     "<body>",
