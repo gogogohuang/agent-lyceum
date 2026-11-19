@@ -5,7 +5,7 @@ import { computeDisplay } from './approval-display.js';
 import type { Display } from './approval-display.js';
 import { ApprovalError } from './approval-error.js';
 import type { ApprovalErrorCode } from './approval-error.js';
-import { loadExecutors } from './approval-executors.js';
+import { loadConfigForDisplay } from './approval-runtime.js';
 import { assertRealDir, defaultApprovalIo, readApprovalFile } from './approval-io.js';
 import type { ApprovalIo } from './approval-io.js';
 import type { ApprovalListProblem } from './approval-json.js';
@@ -333,13 +333,9 @@ function inspectExecutor(name: string, configured: string, fileFs: FileFs): Exec
 export function executorFacts(home: string, name: string | null, o: { readonly userHome: string; readonly io?: ApprovalIo;
   readonly fs?: FileFs }): ExecutorFacts {
   if (name === null) return { kind: 'none' };
-  try {
-    const loaded = loadExecutors(home, o.userHome, o.io ?? defaultApprovalIo);
-    const configured = loaded.config?.executors[name]?.command[0];
-    if (configured === undefined) return { kind: 'unregistered', name };
-    return inspectExecutor(name, configured, o.fs ?? fs);
-  } catch (e) {
-    if (e instanceof ApprovalError) return { kind: 'config_error', name, code: e.code };
-    throw e;
-  }
+  const loaded = loadConfigForDisplay(home, { userHome: o.userHome, io: o.io ?? defaultApprovalIo });
+  if (!loaded.ok) return { kind: 'config_error', name, code: loaded.code };
+  const configured = loaded.config?.executors[name]?.command[0];
+  if (configured === undefined) return { kind: 'unregistered', name };
+  return inspectExecutor(name, configured, o.fs ?? fs);
 }
