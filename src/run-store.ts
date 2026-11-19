@@ -8,6 +8,7 @@ import type { DigestSection, Step } from "./format.js";
 import { atomicWrite } from "./fs-util.js";
 import { ERROR_KINDS, RUNTIMES, type ErrorKind, type Runtime, type RunOutcome, type Tier } from "./schema.js";
 import type { ResultBranch } from "./worktree.js";
+import type { ReviewRecord, WorkerRef } from "./attribution.js";
 
 export const STATE_FILE = "state.json";
 /** The newest state format this version reads. */
@@ -157,6 +158,10 @@ export interface RunState {
   result_branch?: ResultBranch;
   /** Set when the run started with the lead in its own worktree (isolation mode); its resumes keep that, whatever the config says later. */
   lead_workspace?: true;
+  /** Reviews given in this run (a reply's `verdict:`), oldest first; written into the lead's commit as `Reviewed-by`. */
+  reviews?: ReviewRecord[];
+  /** Members whose files were brought into the repo, with the model they last ran on; written into the lead's commit as `Implemented-by`. */
+  implementers?: WorkerRef[];
   /** The pull request the dispatcher opened for this run (when the lead asked for one and it worked). */
   pr_url?: string;
   sessions: Record<string, string>;
@@ -254,6 +259,8 @@ const WireState = z
     active: z.record(z.string(), z.any()).optional(),
     wakes: z.array(z.any()).optional(),
     solo_agent: z.string().optional(),
+    reviews: z.array(z.any()).optional(),
+    implementers: z.array(z.any()).optional(),
     steps: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     failure: z
       .object({

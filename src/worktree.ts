@@ -591,8 +591,8 @@ export function commitWorkspace(ws: AgentWorkspace, message: string): { head: st
  * changed path (modified, added, deleted, or either end of a rename) against the project
  * folder, the protected instruction files, and symlink/submodule rules. Nothing is applied here.
  */
-export function collectAgentChanges(workspace: AgentWorkspace): ChangeSet {
-  const { head } = commitWorkspace(workspace, `agent-lyceum: changes by ${workspace.agent}`);
+export function collectAgentChanges(workspace: AgentWorkspace, message?: string): ChangeSet {
+  const { head } = commitWorkspace(workspace, (typeof message === "string" && message ? message : `agent-lyceum: changes by ${workspace.agent}`));
   const base = workspace.base;
   const raw = base === head ? "" : agentGit(workspace, ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", base, head]);
   const parts = raw.split("\0").filter(Boolean);
