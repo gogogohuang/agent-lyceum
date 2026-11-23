@@ -38,6 +38,23 @@ describe("the lead's done and the decisions on proposals (spec 30, D-09 layer 1)
     expect(routeOutboxes(p).done).toMatchObject({ subject: "ship" });
   });
 
+  it("is rejected for an accepted proposal that has no evidence, even when the decision fields are complete", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    write(path.join(recordsKindDir(p, "lessons"), "real.md"), "---\nstatus: active\ndate: 2026-11-21\ntitle: R\n---\nx\n");
+    const noEvidence = prop("status: accepted\naccepted_as: lessons/real\ndecided: 2026-11-21").replace("evidence:\n  - mail: m1\n", "");
+    put(p, "ab12cd34-ne", noEvidence);
+    done(p, "lead");
+    const r = routeOutboxes(p);
+    expect(r.done).toBeUndefined();
+    expect(r.rejected[0]!.reason).toMatch(/accepted but evidence is required/);
+    // A rejected proposal without evidence is fine: rejecting a malformed proposal must not block done.
+    put(p, "ab12cd34-ne", noEvidence.replace("status: accepted\naccepted_as: lessons/real", "status: rejected\nreject_reason: no evidence"));
+    done(p, "lead", "d2.md");
+    expect(routeOutboxes(p).done).toMatchObject({ subject: "ship" });
+  });
+
   it("accepts a done when the accepted proposal is complete and its record exists", () => {
     env = makeEnv();
     const p = env.project();
