@@ -43,6 +43,18 @@ export function recordsKindDir(project: ResolvedProject, kind: "decisions" | "le
   return path.join(recordsDir(project), kind);
 }
 
+/**
+ * Proposals of lessons and decisions written by agents that run alone (spec 30). A sibling of `shared/`, not under `records/`:
+ * the records directory is denied to everyone but the lead, and a parent's deny beats a child's allow.
+ */
+export function proposalsDir(project: ResolvedProject): string {
+  return path.join(project.paths.root, "proposals");
+}
+
+export function proposalsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
+  return path.join(proposalsDir(project), kind);
+}
+
 /** The lead-maintained files shared by every run of the project. */
 export function sharedContextFiles(project: ResolvedProject): string[] {
   return [commonFile(project)];

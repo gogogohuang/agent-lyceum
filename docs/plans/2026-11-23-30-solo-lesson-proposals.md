@@ -72,9 +72,9 @@
 
 **Files:** `src/policy.ts`、新 `src/proposals.ts`、新 `test/proposals.test.ts`
 
-- [ ] 1.1 先寫測試：frontmatter 解析（必填欄位含 `decided`〔accepted／rejected 時〕、`run`／`proposed_by` 與檔名前綴一致、`status` 三值、`evidence` 至少一項且格式合法、`repo` 規則、單檔 8 KB 上限）；`checkDecisions`（**`accepted` 才做完整檢查，`rejected` 只檢查 `reject_reason`／`decided`**，格式不符或超過 8 KB 的 `rejected` 不阻擋；`decided`／`date` 未加引號被 YAML 轉成 Date 時沿用 `records.ts:50-52` 的處理；`accepted` 缺 `accepted_as`、`accepted_as` 指向不存在的 record〔records `.archive/` 內的算存在〕、`rejected` 缺 `reject_reason`、缺 `decided`）；`checkEvidence`（`path:` 與 `commit:` 存在性與行號、帶 commit 與不帶的強弱證據、`repo` 不存在則弱證據、`mail:`／`output:` 只檢查格式）；不跟隨 symlink；id 字元集與短 id 前綴。
-- [ ] 1.2 實作 `proposalsDir`／`proposalsKindDir`（`src/policy.ts`）與 `proposals.ts` 的函式。
-- [ ] 1.3 驗收對應：9、11（列舉部分）、19。
+- [x] 1.1 先寫測試：frontmatter 解析（必填欄位含 `decided`〔accepted／rejected 時〕、`run`／`proposed_by` 與檔名前綴一致、`status` 三值、`evidence` 至少一項且格式合法、`repo` 規則、單檔 8 KB 上限）；`checkDecisions`（**`accepted` 才做完整檢查，`rejected` 只檢查 `reject_reason`／`decided`**，格式不符或超過 8 KB 的 `rejected` 不阻擋；`decided`／`date` 未加引號被 YAML 轉成 Date 時沿用 `records.ts:50-52` 的處理；`accepted` 缺 `accepted_as`、`accepted_as` 指向不存在的 record〔records `.archive/` 內的算存在〕、`rejected` 缺 `reject_reason`、缺 `decided`）；`checkEvidence`（`path:` 與 `commit:` 存在性與行號、帶 commit 與不帶的強弱證據、`repo` 不存在則弱證據、`mail:`／`output:` 只檢查格式）；不跟隨 symlink；id 字元集與短 id 前綴。
+- [x] 1.2 實作 `proposalsDir`／`proposalsKindDir`（`src/policy.ts`）與 `proposals.ts` 的函式。
+- [x] 1.3 驗收對應：9、11（列舉部分）、19。
 
 ### Task 2：修 guard 授權條件並監看提案區
 
