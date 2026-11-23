@@ -88,11 +88,11 @@
 
 ### Task 3：write policy 放行提案區
 
-**Files:** `src/policy.ts`、`src/config.ts`（`ResolvedProject.proposalsRef` 型別，只加型別不加行為）、`src/run-session.ts`（solo run 啟動時 `mkdir`）、`test/project-write-scope.test.ts`
+**Files:** `src/policy.ts`、`src/config.ts`（`ResolvedProject.proposalsRef` 型別，只加型別不加行為）、`src/run-session.ts`（solo run 啟動時 `mkdir`）、新 `test/proposals-policy.test.ts`（外加 `test/solo-run.test.ts` 的整合案例）
 
-- [ ] 3.1 先寫測試：solo agent 的 `allowDirs` 含提案區且不含 `recordsDir`；其他成員對提案區唯讀；lead 一般 run 可讀可寫；三種 runtime 的 `allowDirs` 都含提案區（目錄存在時）；`AgentEnforcement` 是否加 `proposals` 欄位的決定。
-- [ ] 3.2 實作；solo run 啟動時 `mkdir -p proposals/`（在 `run-session.ts`，D-18），不改 `ensureProjectDirs`；`call -p`、`review` 的 `mkdir` 分別在 Task 6、7。`proposalsDir` 有 `proposalsRef` 時取它的路徑。
-- [ ] 3.3 驗收對應：1、18（solo run 部分）。
+- [x] 3.1 先寫測試：solo agent 的 `allowDirs` 含提案區且不含 `recordsDir`；其他成員對提案區唯讀；lead 一般 run 可讀可寫；三種 runtime 的 `allowDirs` 都含提案區（目錄存在時）；`AgentEnforcement` 是否加 `proposals` 欄位的決定。
+- [x] 3.2 實作；solo run 啟動時 `mkdir -p proposals/`（在 `run-session.ts`，D-18），不改 `ensureProjectDirs`；`call -p`、`review` 的 `mkdir` 分別在 Task 6、7。`proposalsDir` 有 `proposalsRef` 時取它的路徑。
+- [x] 3.3 驗收對應：1、18（solo run 部分）。
 
 ### Task 4：prompt（solo、lead、call -p）
 

@@ -17,7 +17,7 @@ import { DEFAULT_MAX_INSTANCES, assertInstancesResumable, heldStallKey, instance
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { inboxDir, outboxDir, sharedIndex } from "./policy.js";
+import { inboxDir, outboxDir, proposalsDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
@@ -291,6 +291,8 @@ export class RunSession {
       }
     }
     ensureProjectDirs(project);
+    // The agent of `run --agent` writes its proposals here; runtimes only get a directory that exists (spec 30, D-18).
+    if (project.solo === "run") fs.mkdirSync(proposalsDir(project), { recursive: true });
     fs.mkdirSync(runDir, { recursive: true });
     const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
     if (concurrent && !resume) {

@@ -48,8 +48,11 @@ export function recordsKindDir(project: ResolvedProject, kind: "decisions" | "le
  * the records directory is denied to everyone but the lead, and a parent's deny beats a child's allow.
  */
 export function proposalsDir(project: ResolvedProject): string {
-  return path.join(project.paths.root, "proposals");
+  return project.proposalsRef?.proposalsRoot ?? path.join(project.paths.root, "proposals");
 }
+
+/** Whether the agent of this solo project may write proposals: `run --agent`, and `call -p` (a plain `call` has no project). */
+export const mayPropose = (project: ResolvedProject): boolean => project.solo === "run" || (project.solo === "call" && !!project.proposalsRef);
 
 export function proposalsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
   return path.join(proposalsDir(project), kind);
@@ -201,6 +204,8 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
     ...(isLead ? [recordsDir(project)] : []),
+    // Proposals: the lead (it decides them) and a solo agent (it writes them); the guard holds the solo agent to its own `proposed` files.
+    ...(isLead || mayPropose(project) ? [proposalsDir(project)] : []),
     ...(grantOwnDir ? [ownDir] : []),
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),
@@ -239,7 +244,8 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...Object.values(agent.sharedMemory ?? {})],
+    // An ordinary member reads the proposals but cannot write them (spec 30, D-02).
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...(!isLead && !project.solo ? [proposalsDir(project)] : []), ...Object.values(agent.sharedMemory ?? {})],
     allowFiles,
     deny: [...new Set(deny)],
   };
