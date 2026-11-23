@@ -4,11 +4,12 @@ import { ApprovalError } from './approval-error.js';
 import type { ApprovalQualification, ExecutorConfig } from './approval-executors.js';
 import { lp } from './approval-id.js';
 import type { ApprovalRecord, Origin, PremiseResult, Sha256, WritableSet } from './approval-types.js';
+import type { Runtime } from './schema.js';
 
 /** Static grants: caller supplies the FULL effective set plus run-only entries and explicit static duplicates (canonical paths). */
 export interface GrantInput { readonly effective: WritableSet; readonly run_only: WritableSet; readonly static_duplicates: WritableSet }
 export interface CandidateSnapshot {
-  readonly runtime: 'claude-code' | 'codex';
+  readonly runtime: Runtime;
   readonly sandbox: { readonly write: readonly string[]; readonly network: readonly string[];
     readonly local_binding: boolean; readonly unix_sockets: readonly string[] } | null;
   readonly allow_web: 'none' | 'search' | 'fetch' | null;
