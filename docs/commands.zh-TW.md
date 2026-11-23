@@ -239,7 +239,7 @@ task 記憶不整理（`clear` 會直接刪除）。注意：專案範本只替 
 
 agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在原處或在這次的封存資料夾裡；`tidy-report.md` 必須存在；agent 的其他記憶資料夾不得有變動。喚醒失敗或逾時，或任何一項驗證不過，記憶資料夾會完整還原成整理前的樣子，不更新基準，結束碼為 `1`。這個指令需要獨占專案：有任何 run 在執行時，`tidy`（與 `tidy --undo`）會拒絕，執行期間也不能啟動任何 run。
 
-**專案紀錄：**使用 `--layer project`（預設）時，lead 的那次喚醒也會整理專案紀錄（`shared/common/records/`），即使 lead 沒有記憶資料夾；`--agent <lead>` 包含它們，`--agent <其他>` 與 `--layer global` 不包含。合併或過時的條目會搬到 `records/.archive/<時間戳>/` 並附上 `tidy-report.md`；不會刪除任何東西。任何違規都會讓記憶資料夾與紀錄一起還原，結束碼為 `1`。`--dry-run` 也會印出一行紀錄資訊（檔案數、大小、各類別的有效 active 條目數）。某類別超過 6 KB 預算時，`doctor` 與 `status` 會提示；`doctor` 另外會警告 frontmatter 無效與未知的 `supersedes` id。
+**專案紀錄：**使用 `--layer project`（預設）時，lead 的那次喚醒也會整理專案紀錄（`shared/common/records/`），即使 lead 沒有記憶資料夾；`--agent <lead>` 包含它們，`--agent <其他>` 與 `--layer global` 不包含。合併或過時的條目會搬到 `records/.archive/<時間戳>/` 並附上 `tidy-report.md`；不會刪除任何東西。任何違規都會讓記憶資料夾與紀錄一起還原，結束碼為 `1`。`--dry-run` 也會印出一行紀錄資訊（檔案數、大小、各類別的有效 active 條目數）。某類別超過 12 KB 預算時，`doctor` 與 `status` 會提示；`doctor` 另外會警告 frontmatter 無效與未知的 `supersedes` id。
 
 **`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引；搭配 `--agent <lead>` 時也會還原該時間戳的紀錄封存。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 

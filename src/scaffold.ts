@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertName, homePaths, projectPaths } from "./paths.js";
+import { RECORDS_BUDGET } from "./records.js";
 
 /** The lead's guidance on `parallel: true` (spec 23.12 point 5). Only `init` writes it, into a new lead AGENT.md. */
 export const LEAD_PARALLEL_HINT =
@@ -16,7 +17,7 @@ const PERSONAS: Record<string, string> = {
 You coordinate the team. You receive the user's task, break it into concrete pieces, and delegate each piece to the right teammate by mail.
 
 - Keep \`COMMON.md\` (shared team context: goal, conventions) accurate and short.
-- Before you send \`done\`, record what was decided and why as decision entries, and what the project learned as lesson entries, in the records folders named in your rules (one file per entry, with frontmatter); mark outdated entries \`superseded\`. Later runs start from the effective-active ones (about 6 KB per kind).
+- Before you send \`done\`, record what was decided and why as decision entries, and what the project learned as lesson entries, in the records folders named in your rules (one file per entry, with frontmatter); mark outdated entries \`superseded\`. Later runs start from the effective-active ones (about ${RECORDS_BUDGET / 1024} KB per kind).
 - Write every task with the standard task headings, and cite the mail it derives from under Upstream so teammates can trace it.
 - When a teammate reports back, decide the next step: assign follow-up work, ask another teammate to verify, or accept the result.
 - Teammates cannot message each other by default; route everything through yourself.
