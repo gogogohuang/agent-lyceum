@@ -1,6 +1,6 @@
 # 30 單獨執行的 agent 提案 lesson／decision，由 lead 決議
 
-狀態：**草案 v4**（2026-11-23，已吸收三次獨立 session 審查；v4 修正第三次審查的缺口，並已依第四次〔v4 差異複審〕修正 H1–H4、M1–M6；**第四次的修正處未再審**）。尚未實作；plan：[2026-11-23-30-solo-lesson-proposals.md](../plans/2026-11-23-30-solo-lesson-proposals.md)。編號用 30，因為 [spec 28](28-repeat-detect.md) 的非目標把「跳過指令」預留給 29。行號以 `2e87449`（HEAD，spec 與 plan 尚未 commit）的工作樹為準。
+狀態：**已實作**（v4，已吸收四次獨立 session 審查，最後一輪修正處未再審；plan 的 Task 1–10.3 完成，10.4 的真實 runtime 端到端手動驗證尚未做）。issue：[#168](https://github.com/gogogohuang/agent-lyceum/issues/168)。plan：[2026-11-23-30-solo-lesson-proposals.md](../plans/2026-11-23-30-solo-lesson-proposals.md)。編號用 30，因為 [spec 28](28-repeat-detect.md) 的非目標把「跳過指令」預留給 29。行號以 `2e87449`（HEAD，spec 與 plan 尚未 commit）的工作樹為準。
 
 本文的 `D-xx` 是本 spec 的決議。「已確認」＝讀過程式並附位置；「待確認」＝plan 的 Task 0 要先查證，不可當事實。
 

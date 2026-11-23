@@ -55,10 +55,10 @@
 
 1. `run --agent a`：只喚醒 a；a 的 system prompt 沒有隊友與 ask；a 寄 `done` 後 run 結束，exit code 與 `run` 一致。
 2. `run --agent` 找不到成員、成員只在 `team.yaml`：訊息正確、exit `1`。
-3. solo 的 agent 即使是專案 lead，也不能寄信給別人、不能 `ask`、不能改 `AGENT.md`。
+3. solo 的 agent 即使是專案 lead，也不能寄信給別人、不能 `ask`、不能改 `AGENT.md`。（[spec 30](30-solo-lesson-proposals.md) 補充：也**不能寫 records**，guard 不再把它當授權的 lead；它只能寫提案。）
 4. `resume` 一個 solo run 仍套用同一組限制；沒有 `solo_agent` 的舊 run 行為不變。
 5. `call`：寫入範圍只含工作目錄與 global memory；寫 outbox、`AGENT.md`、其他 agent 的記憶都被擋。
 6. `call` 的紀錄目錄內容正確；終端印出最終回答；exit `0`／`1`／`130`。
-7. `call` 不取專案鎖，不出現在 `status`；同一 agent 同時第二次呼叫被拒絕，過期的鎖可被接手。
+7. `call` 不取專案鎖，不出現在 `status`；（[spec 30](30-solo-lesson-proposals.md) 修訂：`call -p <project>` 取一把非 exclusive 的專案鎖，標記 `call: true`；沒有 `-p` 時仍不取。）同一 agent 同時第二次呼叫被拒絕，過期的鎖可被接手。
 8. 不在 git repo 的目錄、`--dir` 不存在、agent 不在 `team.yaml`：訊息正確。
 9. 整合測試：用 `test/fixtures/runtime/fake-claude.mjs` 跑 `run --agent` 與 `call`。

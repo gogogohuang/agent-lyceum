@@ -21,7 +21,10 @@ describe("call -p (spec 30)", () => {
   it("fails with a clear error when the project does not exist, before waking anyone", async () => {
     env = makeEnv();
     let woken = false;
-    await expect(callAgent(opts(async () => ((woken = true), ok), { project: "nope" }))).rejects.toThrow(/Project "nope" config not found/);
+    await expect(callAgent(opts(async () => {
+      woken = true;
+      return ok;
+    }, { project: "nope" }))).rejects.toThrow(/Project "nope" config not found/);
     expect(woken).toBe(false);
   });
 
@@ -30,7 +33,12 @@ describe("call -p (spec 30)", () => {
     const p = env.project();
     record(p, "use-sqlite", "Use sqlite for the cache");
     let seen: WakeInput | undefined;
-    const r = await callAgent(opts(async (i) => ((seen = i), ok), { project: "demo" }));
+    const r = await callAgent(
+      opts(async (i) => {
+        seen = i;
+        return ok;
+      }, { project: "demo" }),
+    );
     expect(r.ok).toBe(true);
     expect(prefixIn(seen!.systemPrompt)).toBe(shortIdOf(r.callId));
     expect(seen!.systemPrompt).toContain(`${proposalsDir(p)}/lessons/`);
@@ -129,7 +137,13 @@ describe("call -p (spec 30)", () => {
     const p = env.project();
     let seen: WakeInput | undefined;
     let locks = -1;
-    await callAgent(opts(async (i) => ((seen = i), (locks = listRunLocks(p.paths.root).length), ok)));
+    await callAgent(
+      opts(async (i) => {
+        seen = i;
+        locks = listRunLocks(p.paths.root).length;
+        return ok;
+      }),
+    );
     expect(seen!.systemPrompt).not.toContain("## Proposals");
     expect(seen!.userPrompt).not.toContain("existing_records");
     expect(locks).toBe(0);

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript ESM、Node `fs`、Vitest、Biome。不新增依賴。
 
-**Spec:** `docs/specs/30-solo-lesson-proposals.md`（v4，D-01 ~ D-18，驗收 1–19）。**狀態：三次獨立審查後的草案，v4 修正處尚未再審，尚未實作。** 測試檔名以實際存在者為準：guard 用 `test/guard-concurrent-runs.test.ts`（既有）與新增 `test/guard-proposals.test.ts`；policy 用 `test/project-write-scope.test.ts`；prompt 用既有 `test/prompt-*.test.ts` 或新增 `test/prompt-proposals.test.ts`；records 相關用 `test/project-records.test.ts`。計畫中寫「新建」的測試檔才需要建立。
+**Spec:** `docs/specs/30-solo-lesson-proposals.md`（v4，D-01 ~ D-18，驗收 1–19）。**狀態：Task 0–10.3 已實作；四次獨立審查，最後一輪修正處未再審；10.4 端到端（真實 runtime）尚未做。** 測試檔名以實際存在者為準：guard 用 `test/guard-concurrent-runs.test.ts`（既有）與新增 `test/guard-proposals.test.ts`；policy 用 `test/project-write-scope.test.ts`；prompt 用既有 `test/prompt-*.test.ts` 或新增 `test/prompt-proposals.test.ts`；records 相關用 `test/project-records.test.ts`。計畫中寫「新建」的測試檔才需要建立。
 
 ## Global Constraints
 
@@ -148,9 +148,9 @@
 
 **Files:** `README*.md`、`docs/commands*.md`、`docs/how-it-works*.md`、`docs/write-scope*.md`、`docs/configuration*.md`、spec 11 與 spec 25 的註記、spec 30 狀態改為已實作
 
-- [ ] 10.1 中英文件同步；說明 Task 2 的行為變更、多 run 並存時的已知限制（spec 30.8 #6）。
-- [ ] 10.2 spec 11 決議 3、7 與 spec 25 受保護路徑加註「由 spec 30 修訂」。
-- [ ] 10.3 **完整驗證一次**：`npm run typecheck`、`npm test`、`npm run lint`、`npm run check:docs` 通過；驗收 1–19 各有對應測試。
+- [x] 10.1 中英文件同步；說明 Task 2 的行為變更、多 run 並存時的已知限制（spec 30.8 #6）。
+- [x] 10.2 spec 11 決議 3、7 與 spec 25 受保護路徑加註「由 spec 30 修訂」。
+- [x] 10.3 **完整驗證一次**：`npm run typecheck`、`npm test`、`npm run lint`、`npm run check:docs` 通過；驗收 1–19 各有對應測試。
 - [ ] 10.4 端到端（真實 `claude`／`codex` 會花 token，刻意手動）：`run --agent` 寫一條提案 → `proposals list` → `proposals review` 收下 → 下一次 run 的 lead prompt 看得到正式 record。
 
 ## Self-Review（決議與驗收對應 Task）

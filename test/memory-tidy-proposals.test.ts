@@ -56,7 +56,10 @@ describe("tidy of the proposals (spec 30, D-12)", () => {
   it("does nothing, and wakes nobody, when there are no proposals, records or memory", async () => {
     env = makeMemoryEnv();
     let woken = false;
-    await tidy(env.project(), async () => ((woken = true), OK)).catch(() => undefined);
+    await tidy(env.project(), async () => {
+      woken = true;
+      return OK;
+    }).catch(() => undefined);
     expect(woken).toBe(false);
   });
 
@@ -122,7 +125,10 @@ describe("tidy of the proposals (spec 30, D-12)", () => {
     write(path.join(p.paths.root, "agents", "lead", "memory", "MEMORY.md"), "- [a](a.md)\n");
     write(path.join(p.paths.root, "agents", "lead", "memory", "a.md"), "x");
     let prompt = "";
-    await tidy(p, async (i) => ((prompt = i.systemPrompt + i.userPrompt), OK));
+    await tidy(p, async (i) => {
+      prompt = i.systemPrompt + i.userPrompt;
+      return OK;
+    });
     expect(prompt).not.toMatch(/Proposals|proposals/);
   });
 });

@@ -244,8 +244,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
 
   return {
     allowDirs,
-    // An ordinary member reads the proposals but cannot write them (spec 30, D-02).
-    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...(!isLead && !project.solo ? [proposalsDir(project)] : []), ...Object.values(agent.sharedMemory ?? {})],
+    readDirs: [...(shared && !mayWriteShared ? [shared] : []), ...(isLead ? [] : [recordsDir(project)]), ...Object.values(agent.sharedMemory ?? {})],
     allowFiles,
     deny: [...new Set(deny)],
   };

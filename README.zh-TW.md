@@ -56,6 +56,7 @@ npx agent-lyceum status
 | `call <agent>` | 在任何專案之外單獨呼叫一個全域 agent。 [詳細](docs/commands.zh-TW.md#call) |
 | `demo` | 在拋棄式範例 repo 上試跑 3 個 agent 的團隊。 [詳細](docs/commands.zh-TW.md#demo) |
 | `tidy` | 讓 agent 整理自己的記憶（只封存，不刪除）。 [詳細](docs/commands.zh-TW.md#tidy) |
+| `proposals` | 列出單獨執行的 agent 提出的教訓提案，或讓 lead 決議。 [詳細](docs/commands.zh-TW.md#proposals) |
 
 `agent-lyceum <指令> --help` 會印出完整選項。Ctrl-C 可乾淨取消；腳本可依[結束碼](docs/commands.zh-TW.md#退出碼)判斷 run 的結果。
 

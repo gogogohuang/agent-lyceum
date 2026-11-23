@@ -18,13 +18,13 @@ describe("write policy for the proposals tree (spec 30)", () => {
     expect(w.deny).not.toContain(proposalsDir(p));
   });
 
-  it("lets an ordinary run's lead write proposals (it decides them), and other members only read them", () => {
+  it("lets an ordinary run's lead write proposals (it decides them), and gives other members no write access to them", () => {
     env = makeEnv();
     const p = env.project();
     expect(writePolicy(p, p.agents[p.lead]!).allowDirs).toContain(proposalsDir(p));
     const member = writePolicy(p, p.agents["fe-member"]!);
     expect(member.allowDirs).not.toContain(proposalsDir(p));
-    expect(member.readDirs).toContain(proposalsDir(p));
+    expect(member.readDirs).toEqual([recordsDir(p)]); // unchanged: an ordinary member's policy does not mention the proposals
     expect(member.deny).not.toContain(proposalsDir(p));
   });
 
