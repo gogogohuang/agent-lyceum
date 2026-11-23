@@ -2,6 +2,7 @@ import { useEffect, useId, useReducer, useRef, useState } from "react";
 import { COMMANDS, type Body, type CommandDef, type CommandId, type Field } from "../commands";
 import { postCommand } from "./api";
 import { cn } from "./cn";
+import type { ShortResultHandler } from "./summary-cleanup";
 import { confirmReady, createRequestGuard, initialState, reduce } from "./dialog-state";
 import { exitInfo } from "./exit-info";
 import { Modal } from "./Modal";
@@ -23,6 +24,7 @@ export function CommandDialog({
   fixed,
   initial,
   fieldOptions,
+  onShortResult,
   onClose,
 }: {
   id: CommandId;
@@ -31,6 +33,8 @@ export function CommandDialog({
   fixed?: Body;
   initial?: Body;
   fieldOptions?: Record<string, readonly string[]>;
+  /** Runs for every finished command, even one whose dialog has moved on: what it did on disk already happened. */
+  onShortResult?: ShortResultHandler;
   onClose: () => void;
 }) {
   const def = COMMANDS[id];
@@ -57,6 +61,7 @@ export function CommandDialog({
     setSentBody(body);
     dispatch({ type: "submit" });
     const result = await postCommand(id, body);
+    if (result.kind === "short") onShortResult?.(id, body, result.result);
     if (!guard.current.isCurrent(mine)) return;
     if (result.kind === "need" && canPreview(def, body)) {
       void postCommand(id, { ...body, dryRun: true, confirm: undefined, confirmText: undefined }).then((p) => {

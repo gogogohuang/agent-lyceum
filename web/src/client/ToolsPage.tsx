@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { COMMANDS, type CommandId } from "../commands";
 import { CommandDialog } from "./CommandDialog";
+import { forgetDeletedSummaries } from "./summary-cleanup";
 
 const TOOLS: { id: CommandId; blurb: string }[] = [
   { id: "project.add", blurb: "把一個 repo 註冊成專案。" },
@@ -37,6 +38,7 @@ export function ToolsPage({ projects }: { projects: string[] }) {
           id={open}
           open
           fieldOptions={open === "project.remove" ? { name: projects } : open === "clear.lock" ? { project: projects } : undefined}
+          onShortResult={forgetDeletedSummaries}
           onClose={() => setOpen(undefined)}
         />
       )}

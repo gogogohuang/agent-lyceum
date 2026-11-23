@@ -4,6 +4,7 @@ import type { Run } from "../types";
 import { AnswerDialog } from "./AnswerDialog";
 import { CommandDialog } from "./CommandDialog";
 import { isIdleRun } from "./run-state";
+import { forgetDeletedSummaries } from "./summary-cleanup";
 
 type Open = { id: CommandId; initial?: Record<string, unknown>; title?: string } | "answer" | undefined;
 
@@ -42,7 +43,7 @@ export function RunActions({ project, run }: { project: string; run?: Run }) {
           檢查設定
         </button>
       </div>
-      {open && open !== "answer" && <CommandDialog id={open.id} open fixed={{ project }} initial={open.initial} onClose={close} />}
+      {open && open !== "answer" && <CommandDialog id={open.id} open fixed={{ project }} initial={open.initial} onShortResult={forgetDeletedSummaries} onClose={close} />}
       {run && <AnswerDialog project={project} runId={run.run_id} open={open === "answer"} onClose={close} />}
     </>
   );
