@@ -8,6 +8,8 @@ import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
+import { describeProposals, pendingProposals } from "./proposals.js";
+import { reviewProposals } from "./proposals-review.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes, runtimesUsed } from "./doctor.js";
@@ -584,7 +586,8 @@ program
   .description("Call one agent of the global library on its own, outside any project.\n\n  - it works in --dir (default: the current directory)\n  - its final answer is printed\n  - it cannot mail anyone or ask you")
   .option("--task-file <path>", "read the task from a file")
   .option("--dir <path>", "the directory the agent works in (default: the current directory)")
-  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string }) => {
+  .option("-p, --project <name>", "a registered project the agent may write lesson/decision proposals to (it also sees the titles of the project's records; the lead decides the proposals)")
+  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string; project?: string }) => {
     try {
       if (task !== undefined && opts.taskFile) fail("Give the task either as text or with --task-file, not both.");
       const text = opts.taskFile ? readTaskFile(absPath(opts.taskFile, process.cwd())) : task;
@@ -597,7 +600,7 @@ program
       const cancel = cancelOnSignals();
       let r: Awaited<ReturnType<typeof callAgent>>;
       try {
-        r = await callAgent({ home: h, agent: agentName, task: text, dir, signal: cancel.signal });
+        r = await callAgent({ home: h, agent: agentName, task: text, dir, ...(opts.project ? { project: opts.project } : {}), signal: cancel.signal });
       } finally {
         cancel.dispose();
       }
@@ -646,7 +649,9 @@ program
           for (const s of r.skipped) console.log(`  skipped   ${s.rel}: ${s.reason}`);
           for (const f of r.records?.restored ?? []) console.log(`  restored  records/${f}`);
           for (const k of r.records?.skipped ?? []) console.log(`  skipped   records/${k.rel}: ${k.reason}`);
-          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
+          for (const f of r.proposals?.restored ?? []) console.log(`  restored  proposals/${f}`);
+          for (const k of r.proposals?.skipped ?? []) console.log(`  skipped   proposals/${k.rel}: ${k.reason}`);
+          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length && !r.proposals?.restored.length && !r.proposals?.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
         } finally {
           undoLease.release();
         }
@@ -673,14 +678,70 @@ program
       }
       if (results.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or tidy global memory with --layer global)." : "Set `memory.global` for an agent."}`);
       for (const r of results) {
-        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")}${r.recordsDir && r.recordsDir !== r.dir ? `, records: ${path.join(r.recordsDir, ".archive", r.archive ?? "")}` : ""} — undo with: agent-lyceum tidy --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
+        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")}${r.recordsDir && r.recordsDir !== r.dir ? `, records: ${path.join(r.recordsDir, ".archive", r.archive ?? "")}` : ""}${r.proposalsDir ? `, proposals: ${path.join(r.proposalsDir, ".archive", r.archive ?? "")}` : ""} — undo with: agent-lyceum tidy --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
         else if (r.status === "skipped") console.log(`  ${r.agent} (${r.layer}): skipped — ${r.problems.join("; ")}`);
         else if (r.status === "failed") {
-          console.error(`  ${r.agent} (${r.layer}): FAILED, ${r.recordsDir === r.dir ? "project records" : r.recordsDir ? "memory and project records" : "memory"} restored to how it was`);
+          console.error(`  ${r.agent} (${r.layer}): FAILED, ${r.recordsDir === r.dir ? "project records" : r.recordsDir ? "memory and project records" : r.proposalsDir ? "memory and proposals" : "memory"} restored to how it was`);
           for (const p of r.problems) console.error(`    - ${p}`);
         }
       }
       process.exit(results.some((r) => r.status === "failed") ? 1 : 0);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+const proposals = program
+  .command("proposals")
+  .summary("List, or have the lead decide, lesson and decision proposals of agents that ran alone")
+  .description(
+    "Agents that run alone (`run --agent`, `call -p`) write lesson and decision proposals; only the lead decides them.\n\n" +
+      "Subcommands:\n  - list: show the proposals (reads only)\n  - review: wake the lead once to accept or reject the pending ones and write the records\n\n" +
+      "Neither writes a proposal or a record itself, and a review that leaves a decision incomplete is rolled back.",
+  );
+
+proposals
+  .command("list")
+  .description("Show the proposals of a project: how many wait, their evidence, and decisions that are incomplete. Reads only.")
+  .option("-p, --project <name>")
+  .action((opts: { project?: string }) => {
+    try {
+      for (const line of describeProposals(loadProject(opts.project))) console.log(line);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+proposals
+  .command("review")
+  .description("Wake the project's lead once to decide the pending proposals.\n\n  - needs the project to itself: refused while a run or a `call -p` is active\n  - the lead may write only the records and the proposals\n  - an incomplete decision, a deleted record or proposal, or a records kind over budget undoes the whole review")
+  .option("-p, --project <name>")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const pr = loadProject(opts.project);
+      if (pendingProposals(pr).length === 0) {
+        console.log("No pending proposals.");
+        return;
+      }
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+      await preflight(pr);
+      const lease = takeLock(pr, `review-${tidyStamp()}`, { exclusive: true });
+      const cancel = cancelOnSignals();
+      let r: Awaited<ReturnType<typeof reviewProposals>>;
+      try {
+        r = await reviewProposals({ project: pr, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      if (r.status === "failed") {
+        console.error("Review FAILED; the records and proposals are back as they were:");
+        for (const p of r.problems) console.error(`  - ${p}`);
+        process.exit(1);
+      }
+      console.log(`Reviewed: ${r.accepted} accepted, ${r.rejected} rejected. Report: ${r.report}`);
     } catch (e) {
       fail(e instanceof ConfigError ? e.message : (e as Error).message);
     }
@@ -960,7 +1021,7 @@ program
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["doctor", "status"],
-  "Run:": ["run", "resume", "clear", "call", "tidy"],
+  "Run:": ["run", "resume", "clear", "call", "tidy", "proposals"],
   "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);

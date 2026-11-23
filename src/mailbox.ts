@@ -13,7 +13,8 @@ import { effectiveTier, tierFlag } from "./tiers.js";
 import { isVerdict, type Verdict } from "./attribution.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
-import { activeRecordsBytes, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
+import { checkDecisions, listProposals } from "./proposals.js";
+import { RECORDS_BUDGET, recordsOverBudget } from "./records.js";
 import { must } from "./assert.js";
 
 export { atomicWrite };
@@ -394,10 +395,21 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           reject(`only the lead ("${project.lead}") may send a "done" message.`);
           continue;
         }
-        const over = RECORD_KINDS.map((k) => ({ k, n: activeRecordsBytes(project, k) })).filter((x) => x.n > RECORDS_BUDGET);
+        const over = recordsOverBudget(project);
         if (over.length) {
           reject(
-            `${over.map((x) => `records/${x.k} hold ${x.n} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (${RECORDS_BUDGET / 1024} KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
+            `${over.map((x) => `records/${x.kind} hold ${x.bytes} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (${RECORDS_BUDGET / 1024} KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
+          );
+          continue;
+        }
+        // Spec 30, D-09 layer 1: a decision on a proposal must be complete. Not for a solo run: its lead is the agent that wrote them and cannot fix them.
+        const undecided = project.solo ? [] : checkDecisions(listProposals(project), project);
+        if (undecided.length) {
+          reject(
+            `proposals have incomplete decisions: ${undecided
+              .slice(0, 5)
+              .map((x) => `${x.file} (${x.problem})`)
+              .join("; ")}${undecided.length > 5 ? `; and ${undecided.length - 5} more` : ""}. Fix them (an accepted one needs accepted_as and decided, a rejected one reject_reason and decided), then send "done" again.`,
           );
           continue;
         }

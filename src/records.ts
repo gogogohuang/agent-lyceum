@@ -106,6 +106,11 @@ function renderEntry(r: ProjectRecord): string {
   return `## ${r.title} [${r.id}]${r.body ? `\n${r.body}` : ""}`;
 }
 
+/** The kinds whose effective-active entries take more than the budget: what `done` and `proposals review` refuse to leave behind. */
+export function recordsOverBudget(project: ResolvedProject): { kind: RecordKind; bytes: number }[] {
+  return RECORD_KINDS.map((kind) => ({ kind, bytes: activeRecordsBytes(project, kind) })).filter((x) => x.bytes > RECORDS_BUDGET);
+}
+
 /** Bytes the effective-active entries of a kind take in a prompt (each rendered whole, as `buildRecordsView` does). */
 export function activeRecordsBytes(project: ResolvedProject, kind: RecordKind): number {
   return Buffer.byteLength(effectiveActive(listRecords(project, kind)).map(renderEntry).join("\n\n"));

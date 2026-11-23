@@ -8,7 +8,7 @@ import type { DispatcherSettings, VerifySettings } from "./schema.js";
 import { compareWithLastRejection, repeatAction, repeatStopNote, stoppedInSegment, withRepeatLabel } from "./repeat-detect.js";
 import { commandPassed, describeFailure, rejectionMessage, runVerify, verificationSection } from "./verify.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
-import { ProtectedGuard } from "./guard.js";
+import { otherCallPrefixes, ProtectedGuard, runsStartedAfter, type GuardOptions } from "./guard.js";
 import { listRunLocks, lockHolderAlive } from "./project-lock.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureAgentDirs, ensureProjectDirs, finishDone, listUnread, PENDING_DIR, readMessageNoFollow, rejectDone, routeOutboxes, unreadFiles, type InstanceRouting, type RouteResult } from "./mailbox.js";
@@ -17,7 +17,7 @@ import { DEFAULT_MAX_INSTANCES, assertInstancesResumable, heldStallKey, instance
 import { abandonClaim, attemptLogDir, sourceIdOf, beginAttempt, claimMessages, commitClaim, fault, finishAttempt, loadClaim, markOutputReady, parkOutbox, recoverRunMail, RouteJournal, type AttemptRecord, type ClaimRecord } from "./message-store.js";
 import { createRunLog } from "./run-log.js";
 import { endOutcome, resolveDoneOutcome } from "./run-outcome.js";
-import { inboxDir, outboxDir, sharedIndex } from "./policy.js";
+import { inboxDir, outboxDir, proposalsDir, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
@@ -291,6 +291,8 @@ export class RunSession {
       }
     }
     ensureProjectDirs(project);
+    // The agent of `run --agent` writes its proposals here; runtimes only get a directory that exists (spec 30, D-18).
+    if (project.solo === "run") fs.mkdirSync(proposalsDir(project), { recursive: true });
     fs.mkdirSync(runDir, { recursive: true });
     const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
     if (concurrent && !resume) {
@@ -360,8 +362,10 @@ export class RunSession {
     const saveState = () => saveRunState(runDir, state);
 
     // Concurrent runs: the repo's instruction files the run can touch are the lead worktree's copies; your own tree is never watched (or restored).
-    const otherLiveRuns = () => listRunLocks(project.paths.root).filter((l) => l.run_id !== runId && lockHolderAlive(l)).map((l) => l.run_id);
-    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project, otherLiveRuns);
+    const otherLiveRuns = () => listRunLocks(project.paths.root).filter((l) => !l.call && l.run_id !== runId && lockHolderAlive(l)).map((l) => l.run_id);
+    // A solo agent is judged against every other run that began while it worked, live or not (spec 30, D-03): such a run's lead may write the shared files.
+    const guardOpts: GuardOptions = project.solo ? { startedAfter: (stamp) => runsStartedAfter(project.paths.runs, stamp, runId), otherPrefixes: otherCallPrefixes(project.home, project.paths.root, runId) } : {};
+    const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project, otherLiveRuns, guardOpts);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });
       if (opts.followup) {

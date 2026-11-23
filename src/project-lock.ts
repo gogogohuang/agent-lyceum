@@ -18,6 +18,8 @@ export interface LockOptions {
   checkout?: boolean;
   /** The holder needs the whole project (e.g. a memory tidy): refused while any other lock is alive, and it keeps every other lock out while held. */
   exclusive?: boolean;
+  /** The holder is a `call -p` (spec 30), not a run: it counts as active for an exclusive holder, but is not "another run" to a run's guard. */
+  call?: boolean;
   /** For a checkout run's refusal message: the checkout directory, and why this run has no worktree. */
   dir?: string;
   reason?: string;
@@ -36,6 +38,8 @@ export interface LockInfo {
   exclusive?: boolean;
   /** `true`: works in the project checkout; `false`: in its own worktree (or holds no files, like `clear`). Absent: an older version's run, treated as a checkout run. */
   checkout?: boolean;
+  /** Held by a `call -p` (see `LockOptions.call`). */
+  call?: boolean;
 }
 
 export type LockKind = "checkout" | "whole" | "worktree";
@@ -350,6 +354,7 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     heartbeat_at: now,
     ...(opts.exclusive || opts.checkout ? { exclusive: true } : {}),
     checkout: opts.checkout === true,
+    ...(opts.call ? { call: true } : {}),
   };
   const kind = lockKind(info);
 

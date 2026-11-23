@@ -101,6 +101,11 @@ export interface ResolvedProject {
   workspaces?: Record<string, AgentWorkspace>;
   /** Set for a single agent working alone: "run" = inside a run of this project (`run --agent`), "call" = outside any project (`call`). */
   solo?: "run" | "call";
+  /**
+   * Set only for `call -p <project>` (spec 30): the real project a `call` may propose to. A `call` project is a temporary
+   * one whose `paths.root` is the call's own directory, so the proposals and records of the real project are named here.
+   */
+  proposalsRef?: { projectRoot: string; recordsRoot: string; proposalsRoot: string; /** the project's repository (`project.yaml` `dir`) */ dir: string; /** the file-name prefix of this call's proposals */ shortId: string };
 }
 
 function readYaml<T extends z.ZodTypeAny>(file: string, schema: T, label: string): z.infer<T> {

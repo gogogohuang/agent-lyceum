@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Invoker, WakeResult } from "../src/adapters/index.js";
 import { runTeam } from "../src/dispatcher.js";
-import { outboxDir } from "../src/policy.js";
+import { outboxDir, proposalsDir, recordsDir } from "../src/policy.js";
 import { loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { FULL_DONE, makeEnv, write, type TestEnv } from "./helpers.js";
@@ -27,6 +27,19 @@ function setup() {
 }
 
 describe("runTeam with soloAgent", () => {
+  it("creates the proposals directory for the agent and reverts its write to the records (spec 30)", async () => {
+    const { project, runDir, task } = setup();
+    const rec = path.join(recordsDir(project), "lessons", "sneaky.md");
+    const invoker: Invoker = async (i) => {
+      expect(fs.statSync(proposalsDir(i.project)).isDirectory()).toBe(true);
+      write(rec, "---\nstatus: active\ndate: 2026-11-23\ntitle: T\n---\nx\n");
+      mail(i.project, "fe-member", "fe-member", "done", "all done");
+      return OK;
+    };
+    await runTeam({ project, task, runDir, soloAgent: "fe-member", invoker, log: () => {} });
+    expect(fs.existsSync(rec)).toBe(false);
+  });
+
   it("wakes only that agent, gives it a solo prompt, and ends on its done", async () => {
     const { project, runDir, task } = setup();
     const woken: string[] = [];

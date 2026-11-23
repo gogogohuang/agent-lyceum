@@ -6,8 +6,9 @@ import { senderLabel, slotName } from "./instances.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
-import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
-import { commonFile, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { checkEvidence, oldestPending, pendingProposals, PENDING_SHOWN, shortIdOf, type Proposal } from "./proposals.js";
+import { activeRecordsBytes, buildRecordsView, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
+import { commonFile, mayPropose, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, proposalsDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -129,11 +130,15 @@ function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string
   const ownDir = projectAgentDir(project, agent.name);
   const mayWriteOwn = project.solo !== "call" && ownAgentDirAllowed(project, agent);
   const ownPersona = mayWriteOwn && (agent.agentMd === path.join(ownDir, "AGENT.md") || agent.agentMd.startsWith(ownDir + path.sep));
-  const records = `decisions in \`${recordsKindDir(project, "decisions")}/\` and lessons in \`${recordsKindDir(project, "lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`;
+  // A `call -p` has a temporary project: the records and COMMON.md it reads are the real project's (spec 30, D-04).
+  const recRoot = project.proposalsRef?.recordsRoot;
+  const kindDir = (k: "decisions" | "lessons") => (recRoot ? path.join(recRoot, k) : recordsKindDir(project, k));
+  const commonPath = recRoot ? path.join(path.dirname(recRoot), "COMMON.md") : commonFile(project);
+  const records = `decisions in \`${kindDir("decisions")}/\` and lessons in \`${kindDir("lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`;
   return [
     isLead
-      ? `- You keep the shared team context \`${commonFile(project)}\` (you maintain it; keep it short) and two kinds of durable records for every future run of this project, one Markdown file per entry: ${records} Add or update entries before you send \`done\`.`
-      : `- The shared team context is in \`${commonFile(project)}\` (read-only). Project records are ${records} Both are read-only.`,
+      ? `- You keep the shared team context \`${commonPath}\` (you maintain it; keep it short) and two kinds of durable records for every future run of this project, one Markdown file per entry: ${records} Add or update entries before you send \`done\`.`
+      : `- The shared team context is in \`${commonPath}\` (read-only). Project records are ${records} Both are read-only.`,
     ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
     ...(agent.canEditAgentMd
@@ -187,6 +192,7 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
       "Use memory only for durable lessons that stay true across tasks; never record task-specific details there.",
     );
   }
+  lines.push(...proposalRules(project, isCall));
   lines.push(
     "",
     "## Rules",
@@ -197,10 +203,93 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
   return lines.join("\n");
 }
 
+/**
+ * What an agent working alone is told about proposals (spec 30, D-17, 30.12). The file-name prefix is given as a literal:
+ * the guard removes a proposal whose name does not start with it, so the agent must not derive it from a run id itself.
+ * Nothing is said when the agent may not propose (a plain `call`).
+ */
+function proposalRules(project: ResolvedProject, isCall: boolean): string[] {
+  if (!mayPropose(project)) return [];
+  const prefix = project.proposalsRef?.shortId ?? (project.run ? shortIdOf(project.run.id) : undefined);
+  if (!prefix) return [];
+  const dir = proposalsDir(project);
+  return [
+    "",
+    "## Proposals",
+    `You cannot write the project's decisions or lessons. When you learn something that stays true across tasks and would change how the next run should work, write it as a proposal: one Markdown file \`${prefix}-<slug>.md\` in \`${dir}/lessons/\` or \`${dir}/decisions/\`. The prefix \`${prefix}\` is fixed for this run (never derive another one); the slug uses only lowercase letters, digits and \`-\`.`,
+    "Start the file with `status: proposed`, `date`, `title`, `proposed_by`, `run` and at least one `evidence` entry. Each entry is a mapping with exactly one key, never a bare string: `- path: src/a.ts:42 @ <commit sha>`, `- commit: <sha>`, `- mail: <id or subject>` or `- output: <command and its key output>`. Put `repo` when the evidence is in a different repository than the project. Quote any YAML value that contains `: `. Write the facts you observed first, then your guess about the cause, and mark it as a guess.",
+    "Never edit an existing proposal of another run, and never set `status` to anything but `proposed`. The lead decides.",
+    `Where things go: a proposal is for lessons and decisions that outlive this task; ${isCall ? "" : "the handoff notes are for the state, next steps and pitfalls of this task only; "}your memory is for habits that matter to you alone.`,
+  ];
+}
+
+/** The lead's note about proposals waiting for a decision (spec 30, D-06, D-11, D-15); empty when there are none. */
+export function pendingProposalLines(project: ResolvedProject): string[] {
+  const pending = pendingProposals(project).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  if (pending.length === 0) return [];
+  const strength = (p: Proposal): string => {
+    if (p.problems.length) return `format problem: ${p.problems[0]}`;
+    const c = checkEvidence(p, project.dir);
+    return c.strength === "verified" ? "evidence verified" : c.strength === "weak" ? "weak evidence (no commit)" : "no machine-verifiable evidence";
+  };
+  const shown = pending.slice(0, PENDING_SHOWN);
+  const used = RECORD_KINDS.map((k) => `${k} ${activeRecordsBytes(project, k)} of ${RECORDS_BUDGET} bytes`).join(", ");
+  return [
+    "",
+    "## Proposals waiting for you",
+    `${pending.length} proposals await a decision (oldest: ${oldestPending(pending) ?? "unknown"}). Showing ${shown.length}:`,
+    ...shown.map((p) => `- \`${p.file}\` — ${p.title} — ${strength(p)}`),
+    `For each one, check the evidence yourself, then either create the record (a new file, not a copy) and set the proposal to \`status: accepted\` with \`accepted_as: <kind>/<id>\`, or set \`status: rejected\` with \`reject_reason\`. In both cases also write \`decided: <today's date>\`. Put a short summary of the evidence in the record's body. Active entries use ${used}; merge or supersede before you exceed it.`,
+  ];
+}
+
+/** The prompts of a `proposals review` wake-up (spec 30, D-14): the lead decides the pending proposals and writes the records, nothing else. */
+export function buildReviewPrompts(project: ResolvedProject, agent: ResolvedAgent, reportFile: string): { systemPrompt: string; userPrompt: string } {
+  const dirs = `\`${recordsKindDir(project, "decisions")}/\` and \`${recordsKindDir(project, "lessons")}/\``;
+  const systemPrompt = [
+    readPersona(agent),
+    "",
+    "---",
+    "",
+    "# Proposals review (injected by agent-lyceum)",
+    "",
+    `You are **${agent.name}**, the lead of this project. Agents that ran alone wrote proposals of lessons and decisions; you decide them now. This is a short maintenance wake-up: there is no task, no mail and nobody to ask.`,
+    "",
+    "## What you may write",
+    `- The project records, in ${dirs}, and the proposals in \`${proposalsDir(project)}\`. Nothing else: not the repository, not COMMON.md, not any memory or mail.`,
+    "- Never delete a proposal or a record. An outdated record is marked `status: superseded` or named in a new entry's `supersedes`.",
+    "- A record is one Markdown file per entry; the file name without `.md` is its id (lowercase letters, digits, `-`). It starts with YAML frontmatter: `status: active`, `date: YYYY-MM-DD`, `title: <one line>`, optionally `run` and `supersedes: [<ids>]`; the body is the decision or lesson and its reason, with a short summary of the evidence.",
+    "",
+    "## How to decide",
+    "- Check the evidence yourself in the repository before you accept: read the file at the line, look at the commit. A proposal whose evidence you cannot confirm, or that only repeats an existing record, is rejected with a reason.",
+    "- Facts and guesses are written apart in a proposal: accept the facts, and state the guess as a guess in the record, or leave it out.",
+    "- Accepting means creating a new record (a new file, not a copy of the proposal) and setting the proposal to `status: accepted` with `accepted_as: <kind>/<id>` and `decided: <today's date>`. Rejecting means `status: rejected` with `reject_reason: <one line>` and `decided`.",
+    `- Active entries of one kind may not exceed ${RECORDS_BUDGET} bytes together; merge or supersede first.`,
+  ].join("\n");
+  const userPrompt = [
+    ...pendingProposalLines(project),
+    "",
+    `When you are done, write a short report to \`${reportFile}\`: one line per proposal you decided (accepted or rejected, and why), and anything you left for a person.`,
+  ].join("\n");
+  return { systemPrompt, userPrompt };
+}
+
+/** One line per effective-active record of the real project a `call -p` proposes to. */
+function realRecordTitles(project: ResolvedProject): string[] {
+  const ref = project.proposalsRef;
+  if (!ref) return [];
+  // The call's own project roots at its call directory: look at the real project's `shared/` instead.
+  const real: ResolvedProject = { ...project, paths: { ...project.paths, shared: path.dirname(path.dirname(ref.recordsRoot)) } };
+  return RECORD_KINDS.flatMap((k) => effectiveActive(listRecords(real, k)).map((r) => `- [${k}/${r.id}] ${r.title}`));
+}
+
 /** The prompt of a `call`: the memory indexes the agent is used to, then the task. */
-export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string {
+export function buildCallUserPrompt(agent: ResolvedAgent, task: string, project?: ResolvedProject): string {
   const parts: string[] = [];
   for (const dir of memoryDirs(agent)) parts.push(...memoryBlock(agent, dir), "");
+  // `call -p` (spec 30, D-16): the titles of what the project already records, so a proposal does not repeat it. Bodies are read on demand.
+  const titles = project?.proposalsRef ? realRecordTitles(project) : [];
+  if (titles.length) parts.push('<existing_records note="titles only; the files are in the project records folders">', ...titles, "</existing_records>", "");
   parts.push("<task>", task.trim(), "</task>");
   return parts.join("\n");
 }
@@ -404,6 +493,9 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     if (view) parts.push("", `<${tag}>`, view, `</${tag}>`); // nothing recorded yet: no tag, no tokens
   }
 
+  // Only the real lead decides proposals: a solo agent is the lead of a team of one and must not be told to (spec 30, D-02).
+  if (agent.name === project.lead && !project.solo) parts.push(...pendingProposalLines(project));
+
   parts.push(...userTaskBlock(project, agent, unread, userTask?.text, userTask?.file));
 
   const handoffFile = handoff ? sharedIndex(project) : undefined;
@@ -462,6 +554,20 @@ export interface TidyRecordsContext {
   otherFiles: MemoryFile[];
 }
 
+/** The proposals of lessons and decisions (spec 30, D-12): the lead's tidy also archives the ones decided long enough ago. */
+export interface TidyProposalsContext {
+  /** The proposals folder (`<project>/proposals`). */
+  dir: string;
+  /** Absolute path of this tidy's archive folder for the proposals (the agent creates it). */
+  archiveDir: string;
+  /** Today, `YYYY-MM-DD`; the rule below counts from it. */
+  today: string;
+  /** Days a proposal stays after it was decided. */
+  keepDays: number;
+  /** One line per proposal: rel path, status, date, decided date, size and title. */
+  entries: { rel: string; status: string; date: string; decided: string; bytes: number; title: string; eligible: boolean }[];
+}
+
 export interface TidyContext {
   layer: Layer;
   /** The memory directory being tidied; absent when only the project records are tidied (the lead has no memory directory). */
@@ -477,12 +583,14 @@ export interface TidyContext {
   missing: MissingPath[];
   /** Set only for the lead's project-layer tidy: the project records are tidied in the same wake-up. */
   records?: TidyRecordsContext;
+  /** Set for the lead's project-layer tidy when the project has proposals. */
+  proposals?: TidyProposalsContext;
 }
 
 /** The prompts of a memory-tidy wake-up: a maintenance job, not a task, so it has none of the mail protocol. */
 export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { systemPrompt: string; userPrompt: string } {
-  const { dir, archiveDir, records } = ctx;
-  const touch = [dir ? `your ${ctx.layer} memory (\`${dir}\`)` : "", records ? `the project records (\`${records.dir}\`)` : ""].filter(Boolean).join(" and ");
+  const { dir, archiveDir, records, proposals } = ctx;
+  const touch = [dir ? `your ${ctx.layer} memory (\`${dir}\`)` : "", records ? `the project records (\`${records.dir}\`)` : "", proposals ? `the proposals (\`${proposals.dir}\`)` : ""].filter(Boolean).join(" and ");
   const systemPrompt = [
     readPersona(agent),
     "",
@@ -490,10 +598,10 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
     "",
     "# Memory tidy (injected by agent-lyceum)",
     "",
-    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy ${records ? touch : `your own ${ctx.layer} memory`} so it stays small, accurate and useful.`,
+    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy ${records || proposals ? touch : `your own ${ctx.layer} memory`} so it stays small, accurate and useful.`,
     "",
     "## What you may touch",
-    `Only files inside ${[dir ? `\`${dir}\`` : "", records ? `\`${records.dir}\`` : ""].filter(Boolean).join(" and ")}. Everything else is read-only. Do not touch your other memory directories, \`${dir ? `${dir}/` : ""}.tidy-state.json\` or the archive folders of earlier tidies.`,
+    `Only files inside ${[dir ? `\`${dir}\`` : "", records ? `\`${records.dir}\`` : "", proposals ? `\`${proposals.dir}\`` : ""].filter(Boolean).join(" and ")}. Everything else is read-only. Do not touch your other memory directories, \`${dir ? `${dir}/` : ""}.tidy-state.json\` or the archive folders of earlier tidies.`,
     ...(dir && archiveDir
       ? [
           "",
@@ -522,6 +630,17 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
           "- **When unsure, keep it.** Never delete a file.",
           `To archive a record, move it into \`${records.archiveDir}\`, keeping its relative path (\`${records.dir}/lessons/x.md\` goes to \`${records.archiveDir}/lessons/x.md\`).`,
           `Write \`${records.archiveDir}/tidy-report.md\` — even when you changed nothing — with the headings \`## Merged\`, \`## Archived\`, \`## Unsure\` (\`None\` when empty). The tidy of both folders is rolled back if the report is missing or any file went missing.`,
+        ]
+      : []),
+    ...(proposals
+      ? [
+          "",
+          "## What to do with the proposals",
+          `Agents that ran alone wrote proposals of lessons and decisions (\`${proposals.dir}/lessons/<id>.md\`, \`${proposals.dir}/decisions/<id>.md\`); the lead decided them with \`status: accepted\` or \`status: rejected\` and a \`decided\` date. Today is ${proposals.today}.`,
+          `- Archive only a proposal that is decided (\`accepted\` or \`rejected\`) and whose \`decided\` date is more than ${proposals.keepDays} days before today (the list below marks them). Never archive a proposal that is still \`proposed\`.`,
+          "- Do not edit any proposal, and do not merge or rewrite them: moving a file is the only change.",
+          `To archive one, move it into \`${proposals.archiveDir}\`, keeping its relative path (\`${proposals.dir}/lessons/x.md\` goes to \`${proposals.archiveDir}/lessons/x.md\`). Never delete a file.`,
+          `Write \`${proposals.archiveDir}/tidy-report.md\` — even when you archived nothing — with the headings \`## Archived\` and \`## Unsure\` (\`None\` when empty). The tidy of every folder is rolled back if the report is missing, a proposal was changed, or one that is not eligible was moved.`,
         ]
       : []),
   ].join("\n");
@@ -566,6 +685,17 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
         ? records.entries.map((e) => `${e.rel}  ${e.status}  ${e.date || "no date"}  ${e.bytes} B  ${e.title}${e.invalid ? `  [INVALID: ${e.invalid}]` : ""}`)
         : ["(none)"]),
       ...(records.otherFiles.length ? ["", "Other files (leave them alone):", ...records.otherFiles.map((f) => `${f.rel}  ${f.bytes} B`)] : []),
+    );
+  }
+  if (proposals) {
+    parts.push(
+      ...(parts.length ? [""] : []),
+      "# Proposals",
+      `Proposals archive directory: ${proposals.archiveDir}`,
+      `Proposals directory: ${proposals.dir}`,
+      "",
+      "Entries (path  status  date  decided  size  title; ELIGIBLE = may be archived now):",
+      ...(proposals.entries.length ? proposals.entries.map((e) => `${e.rel}  ${e.status}  ${e.date || "no date"}  ${e.decided || "-"}  ${e.bytes} B  ${e.title}${e.eligible ? "  [ELIGIBLE]" : ""}`) : ["(none)"]),
     );
   }
   return { systemPrompt, userPrompt: parts.join("\n") };

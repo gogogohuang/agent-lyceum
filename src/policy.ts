@@ -43,6 +43,21 @@ export function recordsKindDir(project: ResolvedProject, kind: "decisions" | "le
   return path.join(recordsDir(project), kind);
 }
 
+/**
+ * Proposals of lessons and decisions written by agents that run alone (spec 30). A sibling of `shared/`, not under `records/`:
+ * the records directory is denied to everyone but the lead, and a parent's deny beats a child's allow.
+ */
+export function proposalsDir(project: ResolvedProject): string {
+  return project.proposalsRef?.proposalsRoot ?? path.join(project.paths.root, "proposals");
+}
+
+/** Whether the agent of this solo project may write proposals: `run --agent`, and `call -p` (a plain `call` has no project). */
+export const mayPropose = (project: ResolvedProject): boolean => project.solo === "run" || (project.solo === "call" && !!project.proposalsRef);
+
+export function proposalsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
+  return path.join(proposalsDir(project), kind);
+}
+
 /** The lead-maintained files shared by every run of the project. */
 export function sharedContextFiles(project: ResolvedProject): string[] {
   return [commonFile(project)];
@@ -189,6 +204,8 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(ws ? [ws.gitDir] : []),
     ...(shared && mayWriteShared ? [shared] : []),
     ...(isLead ? [recordsDir(project)] : []),
+    // Proposals: the lead (it decides them) and a solo agent (it writes them); the guard holds the solo agent to its own `proposed` files.
+    ...(isLead || mayPropose(project) ? [proposalsDir(project)] : []),
     ...(grantOwnDir ? [ownDir] : []),
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),

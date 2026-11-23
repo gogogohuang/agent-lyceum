@@ -59,3 +59,5 @@ agent 的 `sandbox`（`write`、`network`、`local_binding`、`unix_sockets`；�
 | Codex 無 OS sandbox（Linux 沒有 `bwrap`） | **只靠提示**：只是告訴實例不要寫 |
 
 以上是 policy 交給各 runtime 的路徑；真實 CLI 與 sandbox 是否照做尚未驗證。guard 不保護記憶，所以寫進去的內容不會被還原：以最後寫入者為準。單一寫者只在同一個 run 內成立：`memory.project` 跨 run 共用，同時進行的兩個 run 的實例 1 仍可能同時寫入，和以往的並行 run 相同。（23.11）
+
+**提案（spec 30）。** 單獨執行的 agent（`run --agent`、`call -p`）可以寫專案資料夾裡 `proposals/` 下的提案；它不在 records 之下，所以 records 的 deny 不涵蓋它。guard 現在把這個 agent 當成它實際的身分：即使它是一人團隊的 lead，寫 records 也會被**還原**（以前會放行；這是 `run --agent` 的行為變更）。在 `proposals/` 裡它只能新增與修改 `<它的短 id>-<slug>.md`，而且只在檔案仍是 `proposed` 時；別的前綴、`.archive/`、刪除、已決議的提案都會被還原。與 records 一樣，若同專案另一個 run 仍存活，或在監看期間開始又結束，改動無法歸屬，會被保留；這是盡力而為，不是保證。一般 run 的其他成員只靠 write policy 唯讀。

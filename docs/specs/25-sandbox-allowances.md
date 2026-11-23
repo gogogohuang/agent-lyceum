@@ -92,7 +92,7 @@ export const SandboxPartial = z.object({
 
 `agent fe-member: sandbox.write[0] /Users/x contains protected path /Users/x/agent-lyceum-config (agent-lyceum home); pick a narrower directory.`
 
-**載入時早期檢查**：保留 `project.home`、`project.dir` 根及其祖先的 blanket ban，兩個根底下任何路徑都不能用這兩個欄位放寬，**自己的 memory 也一樣**（它原本已可寫）。另外 canonicalize 所有 agents 的 agentMd、所有 memoryDirs（含自己）、sharedContextFiles、repoInstructionFiles、recordsDir，以及 `~/.claude`、`$CODEX_HOME`（未設用 `~/.codex`）。禁止其祖先，不接受以「本來已可寫」為由繞過驗證。
+**載入時早期檢查**：保留 `project.home`、`project.dir` 根及其祖先的 blanket ban，兩個根底下任何路徑都不能用這兩個欄位放寬，**自己的 memory 也一樣**（它原本已可寫）。另外 canonicalize 所有 agents 的 agentMd、所有 memoryDirs（含自己）、sharedContextFiles、repoInstructionFiles、recordsDir，以及 `~/.claude`、`$CODEX_HOME`（未設用 `~/.codex`）。禁止其祖先，不接受以「本來已可寫」為由繞過驗證。（[spec 30](30-solo-lesson-proposals.md) 註記：提案區 `<project root>/proposals/` 在 `project.home` 之下，天然受保護，不需另列。）
 
 **每次 invocation 的共同邊界**：新增小函式 `invokeWithSandboxChecks`（建議 `src/sandbox-invocation.ts`），作為所有 adapter invocations 的唯一入口；run wake、resume redo、dynamic instance、lazy workspace 後的 member、fallback attempt 與 `call` 都必經，包含 injected fake Invoker。不得只把檢查放 `realInvoker`，否則 fake fixture 會繞過。此函式先以當次已綁定的 project、agent、override policy、cwd 產生 concrete policy，重新 canonicalize entries 與保護對象，做 path conflict + 25.9 fallback parity，成功後記 25.8 的事件，最後才呼叫底層 invoker。無 sandbox 時直接走原路，不產生額外輸出／探測。
 

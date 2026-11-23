@@ -50,7 +50,7 @@
 
 ## call
 
-**用法:** `call <agent> ["task"] [--task-file f] [--dir d]`
+**用法:** `call <agent> ["task"] [--task-file f] [--dir d] [-p project]`
 
 **不經過任何專案**，單獨呼叫 global 資料庫（`team.yaml`）裡的一個 agent：不讀 `project.yaml`、不取專案鎖、不會出現在 `status`。agent 使用它的 global `AGENT.md` 與 global 記憶。它可以改工作目錄的檔案與自己的 global 記憶；不能寄信、不能向你提問。
 
@@ -59,6 +59,7 @@
 - `"task"`：任務文字。與 `--task-file` 擇一。
 - `--task-file f`：從檔案讀取任務。
 - `--dir d`：agent 工作的目錄（預設是目前目錄）。位於 agent-lyceum home 之內或其上層的目錄會被拒絕，因為 call 只列出被呼叫的 agent，否則它可能改到 home 裡其他 agent 的檔案。
+- `-p project`：已註冊的專案，agent 可以對它寫**教訓與決策提案**（見 [proposals](#proposals)）。沒有它時，call 不讀也不寫任何專案。有它時，call 會對該專案取一把非獨占的鎖（run 與其他 call 照常進行；`tidy` 與 `proposals review` 要等它結束），並看得到專案 records 的標題（不含內文）；它仍然不能寫 records。專案不存在是錯誤（結束碼 `1`）。
 
 只有被呼叫 agent 自己的 `AGENT.md`、`COMMON.md`，以及工作目錄的 `CLAUDE.md`／`AGENTS.md` 會被檢查：動到這些檔案會被還原並回報。
 
@@ -241,12 +242,27 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 **專案紀錄：**使用 `--layer project`（預設）時，lead 的那次喚醒也會整理專案紀錄（`shared/common/records/`），即使 lead 沒有記憶資料夾；`--agent <lead>` 包含它們，`--agent <其他>` 與 `--layer global` 不包含。合併或過時的條目會搬到 `records/.archive/<時間戳>/` 並附上 `tidy-report.md`；不會刪除任何東西。任何違規都會讓記憶資料夾與紀錄一起還原，結束碼為 `1`。`--dry-run` 也會印出一行紀錄資訊（檔案數、大小、各類別的有效 active 條目數）。某類別超過 12 KB 預算時，`doctor` 與 `status` 會提示；`doctor` 另外會警告 frontmatter 無效與未知的 `supersedes` id。
 
+**提案：** lead 的那次喚醒也會把已決議的提案封存到 `proposals/.archive/<時間戳>/`（見 [proposals](#proposals)），即使專案只有提案；仍是 `proposed` 或決議不到 30 天的提案不會被封存，改動了提案的 tidy 會被還原。
+
 **`tidy --undo <時間戳>`** 還原一次整理：把 `memory/.archive/<時間戳>/` 的檔案搬回原處，`MEMORY.md` 沒有提到的就補一行索引；搭配 `--agent <lead>` 時也會還原該時間戳的紀錄封存。`tidy` 結束時會印出時間戳與可以直接執行的還原指令。
 
 - `--agent a`：還原誰的記憶。必填。
 - `--layer project|global`：哪一層記憶（預設 `project`）。
 - `--dry-run` 不能與 `--undo` 並用。
 - 若現在已有同名檔案，不會覆蓋，只會回報並留在封存裡。
+
+## proposals
+
+**用法:** `proposals list [-p name]` · `proposals review [-p name]`
+
+單獨執行的 agent（`run --agent` 或 `call -p`）不屬於任何團隊，它學到的東西沒有路徑進入專案 records，因為只有 lead 能寫 records。它可以改寫**提案**：在專案資料夾的 `proposals/lessons/` 或 `proposals/decisions/`（與 `shared/` 同層，不在 `records/` 之下）寫一個 Markdown 檔，`status: proposed`，寫下觀察到的事實、對原因的推測，以及至少一項 `evidence`（檔案路徑加行號與 commit、commit、信件，或指令加重點輸出）。檔名以這次 run 的短 id 開頭，prompt 會直接給它字面值。它只能新增與修改自己的 `proposed` 檔：在那裡寫的其他東西，以及寫進 records 的東西，都會被還原並回報。
+
+只有 lead 能決議提案：收下就**新建**一筆正式 record，並把提案標為 `status: accepted`、`accepted_as: <kind>/<id>`、`decided: <日期>`；拒絕就寫 `reject_reason` 與 `decided`。一般 run 的 lead 會看到待審提案（最多 10 筆，最舊的在前，附證據可驗證的程度），而 `accepted` 或 `rejected` 的決議不完整時，它的 `done` 會被拒絕。待審的提案永遠不擋 `done`。
+
+- `proposals list`：顯示有幾筆待審、最舊日期、證據與每一筆不完整的決議。不改任何東西。`status` 與 `doctor` 也會提示待審數量。
+- `proposals review`：給沒有一般 run 的專案（只有 `run --agent` 或 `call -p`）用，喚醒 lead 一次，由它決議待審提案並寫 records。它需要獨占專案（有 run 或 `call -p` 在執行時會被拒絕）；lead 只能寫 records 與 proposals；決議不完整、有 record 或提案被刪、已決議的提案被改、某類 records 超過 12 KB，或缺少報告 `proposals/.reviews/<時間戳>.md`，整個 review 都會還原。`proposals review` 與 `proposals list` 自己不會寫任何提案或 record，也沒有替你收下或拒絕的指令。
+
+`tidy` 會把 `decided` 超過 30 天的已決議提案封存到 `proposals/.archive/<時間戳>/`；`tidy --undo` 可還原。
 
 ## 中止 run
 

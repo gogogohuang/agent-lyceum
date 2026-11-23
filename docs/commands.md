@@ -50,7 +50,7 @@ If the lead's done asks for a pull request (`open_pr: true`) and the run complet
 
 ## call
 
-**Usage:** `call <agent> ["task"] [--task-file f] [--dir d]`
+**Usage:** `call <agent> ["task"] [--task-file f] [--dir d] [-p project]`
 
 Call one agent of the global library (`team.yaml`) on its own, **outside any project**: no `project.yaml` is read, no project lock is taken and nothing shows in `status`. The agent uses its global `AGENT.md` and its global memory. It may change files in the working directory and its own global memory; it cannot mail anyone or ask you.
 
@@ -59,6 +59,7 @@ Options:
 - `"task"`: the task as text. Give this *or* `--task-file`.
 - `--task-file f`: read the task from a file.
 - `--dir d`: the directory the agent works in (default: the current directory). A directory inside or above the agent-lyceum home is refused, because a call lists only the called agent and could otherwise change other agents' files there.
+- `-p project`: a registered project the agent may write **lesson and decision proposals** to (see [proposals](#proposals)). Without it a call reads and writes no project. With it, the call takes a non-exclusive lock on the project (runs and other calls carry on; `tidy` and `proposals review` wait for it) and sees the titles, not the bodies, of the project's records; it still cannot write the records. A project that does not exist is an error (exit code `1`).
 
 Only the called agent's own `AGENT.md`, `COMMON.md` and the working directory's `CLAUDE.md`/`AGENTS.md` are checked: a change to one of them is put back and reported.
 
@@ -241,12 +242,27 @@ agent-lyceum checks the result: every file that existed before must still be in 
 
 **Project records:** with `--layer project` (the default) the lead's wake-up also tidies the project records (`shared/common/records/`), even if the lead has no memory dir; `--agent <lead>` includes them, `--agent <other>` and `--layer global` do not. Merged or obsolete entries move to `records/.archive/<timestamp>/` with a `tidy-report.md`; nothing is deleted. Any violation rolls back both the memory dir and the records, and the exit code is `1`. `--dry-run` also prints a records line (files, size, active entries per kind). `doctor` and `status` hint when a kind is over its 12 KB budget; `doctor` also warns about invalid frontmatter and unknown `supersedes` ids.
 
+**Proposals:** the lead's wake-up also archives decided proposals (see [proposals](#proposals)) to `proposals/.archive/<timestamp>/`, even in a project that has only proposals; a proposal that is still `proposed`, or decided less than 30 days ago, is never archived, and a tidy that edits a proposal is rolled back.
+
 **`tidy --undo <timestamp>`** undoes one tidy: it moves the files of `memory/.archive/<timestamp>/` back to where they were and adds them to `MEMORY.md` if the index does not mention them. With `--agent <lead>` it also restores the records archive of that timestamp. `tidy` prints the timestamp, and the exact undo command, when it finishes.
 
 - `--agent a`: whose memory to restore. Required.
 - `--layer project|global`: which memory layer (default `project`).
 - `--dry-run` cannot be combined with `--undo`.
 - A file whose name exists now is not overwritten; it is reported and stays in the archive.
+
+## proposals
+
+**Usage:** `proposals list [-p name]` · `proposals review [-p name]`
+
+An agent that runs alone (`run --agent`, or `call -p`) is not part of a team, so what it learns has no way into the project records, which only the lead may write. It can write a **proposal** instead: one Markdown file in `proposals/lessons/` or `proposals/decisions/` (next to `shared/` in the project folder, not under `records/`), with `status: proposed`, the facts it observed, its guess at the cause and at least one `evidence` entry (a file path with line and commit, a commit, a mail, or a command with its key output). The file name starts with a short id of its run, which the prompt gives it as a literal. It can only create and change its own `proposed` files: anything else it writes there, and anything it writes to the records, is put back and reported.
+
+Only the lead decides a proposal: it accepts it by creating a **new** record and setting `status: accepted` with `accepted_as: <kind>/<id>` and `decided: <date>`, or rejects it with `reject_reason` and `decided`. In a normal run the lead is shown the pending proposals (at most 10, oldest first, with how well the evidence checks out) and its `done` is refused while an accepted or rejected proposal is incomplete. Pending proposals never block `done`.
+
+- `proposals list`: show how many wait, the oldest date, the evidence and every incomplete decision. Changes nothing. `status` and `doctor` also mention what waits.
+- `proposals review`: for a project with no normal run (only `run --agent` or `call -p`), wake the lead once to decide the pending ones and write the records. It needs the project to itself (refused while a run or a `call -p` is active); the lead may write only the records and the proposals; and the whole review is undone if a decision is incomplete, a record or proposal is deleted, an already decided proposal changes, a records kind goes over 12 KB or the report `proposals/.reviews/<timestamp>.md` is missing. `proposals review` and `proposals list` never write a proposal or a record themselves, and there is no command that accepts or rejects for you.
+
+`tidy` archives a decided proposal to `proposals/.archive/<timestamp>/` once its `decided` date is more than 30 days old; `tidy --undo` brings it back.
 
 ## Stopping a run
 

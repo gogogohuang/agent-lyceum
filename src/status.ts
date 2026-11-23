@@ -12,6 +12,7 @@ import { parseSlotName } from "./instances.js";
 import { inboxDir } from "./policy.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { inspectRunLock, lockHolderAlive } from "./project-lock.js";
+import { oldestPending, pendingProposals } from "./proposals.js";
 
 /** The run to show: the newest one still running (a resumed run keeps its old id, so newer runs may sit above it), else the newest run. */
 export function currentRun(project: ResolvedProject): { dir: string; state: RunState } | undefined {
@@ -458,6 +459,8 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
     ...(advice.length ? { memory_advice: advice } : {}),
   };
   belowCeiling.set(out, below);
+  const waiting = pendingProposals(project);
+  if (waiting.length) pendingOf.set(out, { count: waiting.length, ...(oldestPending(waiting) ? { oldest: oldestPending(waiting) } : {}) });
   return out;
 }
 
@@ -646,6 +649,9 @@ function fallbackLines(agents: AgentReport[], c: Paint): string[] {
   return out;
 }
 
+/** Proposals waiting for the lead (spec 30), for the human page only: `status --json` stays as it was (it carries `schema_version: 1` for the web monitor). */
+const pendingOf = new WeakMap<StatusReport, { count: number; oldest?: string }>();
+
 /** Agents whose latest wake ran on a tiered model below the ceiling; kept off the report so `status --json` is unchanged. */
 const belowCeiling = new WeakMap<StatusReport, Set<string>>();
 
@@ -690,5 +696,7 @@ export function formatStatusReport(report: StatusReport, now = Date.now(), color
   if (tl.length) lines.push(...(fb.length ? [] : [""]), ...tl);
   if (run) lines.push("", `輸出 tokens：${tokens(run.output_tokens)}${cacheText(run.cache_read_tokens, run.cache_write_tokens) ? `　${cacheText(run.cache_read_tokens, run.cache_write_tokens)}` : ""}`);
   if (report.memory_advice?.length) lines.push("", `記憶：${report.memory_advice.join("；")}（建議執行 agent-lyceum tidy -p ${report.project.name}；status 只提示，不會自動整理）`);
+  const waiting = pendingOf.get(report);
+  if (waiting) lines.push("", `提案：${waiting.count} 筆待審${waiting.oldest ? `（最舊 ${waiting.oldest}）` : ""}（agent-lyceum proposals review -p ${report.project.name}；status 只提示，不會自動審）`);
   return lines.join("\n");
 }
