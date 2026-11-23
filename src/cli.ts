@@ -584,7 +584,8 @@ program
   .description("Call one agent of the global library on its own, outside any project.\n\n  - it works in --dir (default: the current directory)\n  - its final answer is printed\n  - it cannot mail anyone or ask you")
   .option("--task-file <path>", "read the task from a file")
   .option("--dir <path>", "the directory the agent works in (default: the current directory)")
-  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string }) => {
+  .option("-p, --project <name>", "a registered project the agent may write lesson/decision proposals to (it also sees the titles of the project's records; the lead decides the proposals)")
+  .action(async (agentName: string, task: string | undefined, opts: { taskFile?: string; dir?: string; project?: string }) => {
     try {
       if (task !== undefined && opts.taskFile) fail("Give the task either as text or with --task-file, not both.");
       const text = opts.taskFile ? readTaskFile(absPath(opts.taskFile, process.cwd())) : task;
@@ -597,7 +598,7 @@ program
       const cancel = cancelOnSignals();
       let r: Awaited<ReturnType<typeof callAgent>>;
       try {
-        r = await callAgent({ home: h, agent: agentName, task: text, dir, signal: cancel.signal });
+        r = await callAgent({ home: h, agent: agentName, task: text, dir, ...(opts.project ? { project: opts.project } : {}), signal: cancel.signal });
       } finally {
         cancel.dispose();
       }

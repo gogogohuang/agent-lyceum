@@ -7,7 +7,7 @@ import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
 import { checkEvidence, oldestPending, pendingProposals, PENDING_SHOWN, shortIdOf, type Proposal } from "./proposals.js";
-import { activeRecordsBytes, buildRecordsView, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
+import { activeRecordsBytes, buildRecordsView, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
 import { commonFile, mayPropose, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, proposalsDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
@@ -243,10 +243,22 @@ function pendingProposalLines(project: ResolvedProject): string[] {
   ];
 }
 
+/** One line per effective-active record of the real project a `call -p` proposes to. */
+function realRecordTitles(project: ResolvedProject): string[] {
+  const ref = project.proposalsRef;
+  if (!ref) return [];
+  // The call's own project roots at its call directory: look at the real project's `shared/` instead.
+  const real: ResolvedProject = { ...project, paths: { ...project.paths, shared: path.dirname(path.dirname(ref.recordsRoot)) } };
+  return RECORD_KINDS.flatMap((k) => effectiveActive(listRecords(real, k)).map((r) => `- [${k}/${r.id}] ${r.title}`));
+}
+
 /** The prompt of a `call`: the memory indexes the agent is used to, then the task. */
-export function buildCallUserPrompt(agent: ResolvedAgent, task: string): string {
+export function buildCallUserPrompt(agent: ResolvedAgent, task: string, project?: ResolvedProject): string {
   const parts: string[] = [];
   for (const dir of memoryDirs(agent)) parts.push(...memoryBlock(agent, dir), "");
+  // `call -p` (spec 30, D-16): the titles of what the project already records, so a proposal does not repeat it. Bodies are read on demand.
+  const titles = project?.proposalsRef ? realRecordTitles(project) : [];
+  if (titles.length) parts.push('<existing_records note="titles only; the files are in the project records folders">', ...titles, "</existing_records>", "");
   parts.push("<task>", task.trim(), "</task>");
   return parts.join("\n");
 }

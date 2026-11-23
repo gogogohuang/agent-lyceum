@@ -3,13 +3,14 @@ import path from "node:path";
 import { invokeWithSandboxChecks } from "./sandbox-invocation.js";
 import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import { must } from "./assert.js";
-import { ConfigError, loadGlobal, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
+import { ConfigError, loadGlobal, loadProjectRaw, resolveProjectFrom, type ResolvedAgent, type ResolvedProject } from "./config.js";
 import { agentForCandidate, type Candidate, candidatesFor, Cooldowns, runWithFallback, type Tried } from "./fallback.js";
 import { atomicWrite } from "./fs-util.js";
-import { ProtectedGuard } from "./guard.js";
-import { assertName, homePaths, isInside, type ProjectPaths } from "./paths.js";
+import { otherCallPrefixes, ProtectedGuard, runsStartedAfter } from "./guard.js";
+import { assertName, configPath, homePaths, isInside, projectPaths, type ProjectPaths } from "./paths.js";
 import { memoryDirs } from "./policy.js";
-import { lockHolderAlive, type LockInfo } from "./project-lock.js";
+import { acquireProjectLock, listRunLocks, lockHolderAlive, type LockInfo, type ProjectLease } from "./project-lock.js";
+import { shortIdOf } from "./proposals.js";
 import { buildCallUserPrompt, buildSoloSystemPrompt } from "./prompt.js";
 import { newRunId } from "./run-store.js";
 import { DISPATCHER_DEFAULTS } from "./schema.js";
@@ -24,6 +25,8 @@ export interface CallOptions {
   task: string;
   /** Working directory; must exist. */
   dir: string;
+  /** `call -p`: a registered project this call may write proposals to (spec 30). Without it a call reads and writes no project. */
+  project?: string;
   invoker?: Invoker;
   signal?: AbortSignal;
   say?: (line: string) => void;
@@ -64,6 +67,14 @@ export function resolveCallAgent(home: string, name: string): ResolvedAgent {
     canAskUser: false,
     canEditAgentMd: false,
   };
+}
+
+/** The registered project a `call -p` proposes to: where its trees are and its repository. Reads only `project.yaml`; no members, no permissions, never a guess from the current directory. */
+export function resolveProjectRef(home: string, name: string): { paths: ProjectPaths; dir: string } {
+  assertName("project", name);
+  const paths = projectPaths(home, name);
+  const raw = loadProjectRaw(home, name); // throws a ConfigError when there is no such project
+  return { paths, dir: configPath(raw.dir, paths.root) };
 }
 
 /** The made-up project a call runs in: the working directory is its repo, and every other path is inside the call's own folder. */
@@ -155,16 +166,31 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     throw new Error(`Working directory ${dir} overlaps the agent-lyceum home ${o.home}: a call could change other agents' files there. Pass a --dir that is neither inside nor above the agent-lyceum home.`);
   }
   if (!o.task.trim()) throw new Error("No task given: pass it as text or with --task-file.");
+  const ref = o.project ? resolveProjectRef(o.home, o.project) : undefined;
 
   const callId = newRunId();
   const callDir = path.join(callsDir(o.home), callId);
   const lease = lockAgent(o.home, agent.name, callId);
+  let projectLease: ProjectLease | undefined;
   try {
+    // A `call -p` is active in the project like a run without being one: a memory tidy or `proposals review` must wait for it, other runs need not (spec 30, D-04).
+    if (ref) projectLease = acquireProjectLock(ref.paths.root, callId, { call: true });
     fs.mkdirSync(path.join(callDir, "log"), { recursive: true });
     fs.writeFileSync(path.join(callDir, "task.md"), o.task);
     for (const d of memoryDirs(agent)) fs.mkdirSync(d, { recursive: true });
-    const project = callProject(o.home, agent, dir, callDir);
-    const guard = new ProtectedGuard(project);
+    const base = callProject(o.home, agent, dir, callDir);
+    const project: ResolvedProject = ref
+      ? { ...base, proposalsRef: { projectRoot: ref.paths.root, recordsRoot: path.join(ref.paths.shared, "common", "records"), proposalsRoot: path.join(ref.paths.root, "proposals"), dir: ref.dir, shortId: shortIdOf(callId) } }
+      : base;
+    if (project.proposalsRef) fs.mkdirSync(project.proposalsRef.proposalsRoot, { recursive: true });
+    // Another run of the project that is live, or began and ended while this call worked, may have written the shared files legitimately; this call may not.
+    const guard = ref
+      ? new ProtectedGuard(
+          project,
+          () => listRunLocks(ref.paths.root).filter((l) => !l.call && lockHolderAlive(l)).map((l) => l.run_id),
+          { recordsRoot: project.proposalsRef!.recordsRoot, proposalsRoot: project.proposalsRef!.proposalsRoot, shortId: project.proposalsRef!.shortId, violationsDir: path.join(callDir, "guard-violations"), startedAfter: (stamp) => runsStartedAfter(ref.paths.runs, stamp), otherPrefixes: otherCallPrefixes(o.home, ref.paths.root, callId) },
+        )
+      : new ProtectedGuard(project);
 
     say(`Calling ${agent.name} in ${dir} (call ${callId})`);
     const invoke = o.invoker ?? realInvoker;
@@ -193,7 +219,7 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
             agent: agentForCandidate(agent, c),
             workDir: callDir,
             systemPrompt: buildSoloSystemPrompt(project, agent),
-            userPrompt: buildCallUserPrompt(agent, o.task),
+            userPrompt: buildCallUserPrompt(agent, o.task, project),
             timeoutSec: project.dispatcher.wake_timeout_sec,
             signal: o.signal,
             logDir: logDirFor(c),
@@ -214,6 +240,7 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
     atomicWrite(path.join(callDir, "result.md"), result.ok ? `${result.text.trimEnd()}\n` : `# Call ${cancelled ? "cancelled" : "failed"}\n\n${error}\n${triedList}`);
     return { callId, callDir, ok: result.ok, cancelled, text: result.ok ? result.text : "", error, ...(tried ? { tried } : {}), reverted };
   } finally {
+    projectLease?.release();
     lease.release();
   }
 }

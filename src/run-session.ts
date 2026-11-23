@@ -8,7 +8,7 @@ import type { DispatcherSettings, VerifySettings } from "./schema.js";
 import { compareWithLastRejection, repeatAction, repeatStopNote, stoppedInSegment, withRepeatLabel } from "./repeat-detect.js";
 import { commandPassed, describeFailure, rejectionMessage, runVerify, verificationSection } from "./verify.js";
 import { briefOf, digestOf, doneContract, mergeSteps, parseSteps, type DoneContract } from "./format.js";
-import { ProtectedGuard, runsStartedAfter, type GuardOptions } from "./guard.js";
+import { otherCallPrefixes, ProtectedGuard, runsStartedAfter, type GuardOptions } from "./guard.js";
 import { listRunLocks, lockHolderAlive } from "./project-lock.js";
 import { addBatch, askersWithAnswers, askReplyPath, checkAnswers, describeCheck, isComplete, markDelivered, parseAskBody, readAskReply, renderAnswers, resolveOptionLetters, writeAskReply } from "./ask-reply.js";
 import { deliver, deliverOnce, ensureAgentDirs, ensureProjectDirs, finishDone, listUnread, PENDING_DIR, readMessageNoFollow, rejectDone, routeOutboxes, unreadFiles, type InstanceRouting, type RouteResult } from "./mailbox.js";
@@ -362,9 +362,9 @@ export class RunSession {
     const saveState = () => saveRunState(runDir, state);
 
     // Concurrent runs: the repo's instruction files the run can touch are the lead worktree's copies; your own tree is never watched (or restored).
-    const otherLiveRuns = () => listRunLocks(project.paths.root).filter((l) => l.run_id !== runId && lockHolderAlive(l)).map((l) => l.run_id);
+    const otherLiveRuns = () => listRunLocks(project.paths.root).filter((l) => !l.call && l.run_id !== runId && lockHolderAlive(l)).map((l) => l.run_id);
     // A solo agent is judged against every other run that began while it worked, live or not (spec 30, D-03): such a run's lead may write the shared files.
-    const guardOpts: GuardOptions = project.solo ? { startedAfter: (stamp) => runsStartedAfter(project.paths.runs, stamp, runId) } : {};
+    const guardOpts: GuardOptions = project.solo ? { startedAfter: (stamp) => runsStartedAfter(project.paths.runs, stamp, runId), otherPrefixes: otherCallPrefixes(project.home, project.paths.root, runId) } : {};
     const guard = new ProtectedGuard(leadSpace ? { ...project, workspaces: { ...project.workspaces, [project.lead]: leadSpace } } : project, otherLiveRuns, guardOpts);
     if (resume) {
       log("resume", { rounds: state.rounds, interrupted: Object.keys(resume.active ?? {}) });

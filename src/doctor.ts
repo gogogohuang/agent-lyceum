@@ -239,7 +239,7 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       level: "warn",
       subject: "lock",
       message: alive
-        ? `A run is active: ${lock.run_id} (pid ${lock.pid}).`
+        ? `${lock.call ? "A call is active" : "A run is active"}: ${lock.run_id} (pid ${lock.pid}).`
         : `A stale run lock is left by ${lock.run_id} (pid ${lock.pid} is gone); \`agent-lyceum clear --lock ${lock.run_id} --force\` clears it.`,
     });
   }

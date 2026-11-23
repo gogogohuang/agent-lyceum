@@ -5,7 +5,8 @@ import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { readRegularFileNoFollow } from "./fs-util.js";
 import { escapesParent } from "./paths.js";
 import { mayEditProtected, proposalsDir, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
-import { proposalStatusOf, shortIdOf } from "./proposals.js";
+import { listRunLocks, lockHolderAlive } from "./project-lock.js";
+import { prefixOf, proposalStatusOf, shortIdOf } from "./proposals.js";
 
 export interface Violation {
   file: string;
@@ -42,6 +43,25 @@ export interface GuardOptions {
    * inside one watched window leaves no live lock for `check()` to see, yet its lead may have written to the shared files.
    */
   startedAfter?: (stamp: string) => string[];
+  /**
+   * File-name prefixes (short ids) of the other `call -p` and `run --agent` agents that wrote proposals while this one worked,
+   * live or already finished (see `otherCallPrefixes`). Their proposals sit in the same tree: changes under those prefixes are theirs, not this agent's.
+   */
+  otherPrefixes?: (stamp: string) => string[];
+}
+
+/** The short ids of the calls other than `selfId` that hold a live project lock, or that started after `stamp` (their ids sort by start time). */
+export function otherCallPrefixes(home: string, projectRoot: string, selfId: string): (stamp: string) => string[] {
+  return (stamp) => {
+    const ids = new Set<string>();
+    for (const l of listRunLocks(projectRoot)) if (l.call && l.run_id !== selfId && lockHolderAlive(l)) ids.add(l.run_id);
+    try {
+      for (const n of fs.readdirSync(path.join(home, "calls"))) if (n !== selfId && /^\d{8}T\d+Z-/.test(n) && n.slice(0, n.indexOf("-")) > stamp) ids.add(n);
+    } catch {
+      /* no calls yet */
+    }
+    return [...ids].map(shortIdOf);
+  };
 }
 
 /** The timestamp part of a run id, for `Date` (the same text `newRunId` starts with). */
@@ -244,6 +264,7 @@ export class ProtectedGuard {
     const now = readTree(root);
     const suspects = running.map((a) => a.name);
     const fixedDirs = new Set<string>();
+    const theirs = new Set(this.opts.otherPrefixes?.(this.baseStamp) ?? []);
     const own = new RegExp(`^(?:lessons|decisions)${escapeRe(path.sep)}${escapeRe(prefix)}-[a-z0-9-]+\\.md$`);
     for (const file of new Set([...this.proposals.keys(), ...now.keys()])) {
       const before = this.proposals.get(file) ?? null;
@@ -253,6 +274,8 @@ export class ProtectedGuard {
         this.unattributed.push({ file, agents: suspects, otherRuns: other });
         continue;
       }
+      // A proposal of another live or just-finished call is that call's own, not a change by this agent.
+      if (theirs.has(prefixOf(path.basename(file)))) continue;
       let ok = own.test(path.relative(root, file));
       if (ok && before && proposalStatusOf(before) !== "proposed" && proposalStatusOf(before) !== undefined) ok = false;
       if (ok && cur) {
