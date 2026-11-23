@@ -128,14 +128,14 @@ decided: YYYY-MM-DD       # accepted／rejected 時必填；tidy 以此判斷 30
 | 7 | 同一個 agent 同時只能一個 call（`lockAgent`） | 平行提案的測試用「兩個不同 agent」或「一個 call 加一個 `run --agent`」，並補同 agent 被擋的反向案例 |
 | 8 | 提案者與 lead 同模型，審核可能只是附和 | 不在本 spec 範圍；獨立複核延後 |
 | 9 | D-03 讓使用者在 solo run 進行中手改 records 被還原 | 行為變更，寫進 30.10 與文件 |
-| 10 | `status --json` 加欄位會影響 `web/` 的消費端 | plan 的 Task 8 確認 `web/` 是否讀未知欄位 |
+| 10 | `status --json` 加欄位會影響 `web/` 的消費端 | 不加：待審提案資訊只進人類輸出與 `doctor`（30.9 #4） |
 
 ## 30.9 待確認（plan 的 Task 0 要先查）
 
 1. guard 對提案區的監看實作細節：`rebase()`（`run-session.ts:1493`）每個 batch 重取基準，與檔名前綴判定無關（第三次審查已讀過確認）；剩下要確認的是 D-03 (b) 的「基準版本 status」如何從 `readTree` 取得。
 2. ~~call id 格式~~ 已結案：call id 就是 `newRunId()`（`call.ts:159`），與 run id 同格式，短 id 取法相同。
 3. 提案區加入 spec 25 的受保護路徑：`sandbox-invocation.ts:86` 已把 `project.home` 整個列為保護，只需在 spec 25 加註（已確認，不需再查）。
-4. `web/` 是否消費 `status --json` 的固定欄位。
+4. ~~`web/` 與 `status --json`~~ 已結案：待審數與最舊日期只進人類輸出與 `doctor`，**不加進 `status --json`**（`status.ts:380`、`:649` 已有同樣先例），`web/` 不受影響。
 5. 一般 run 中「非 lead 成員寫提案區」目前 guard **完全不知道提案區**（已讀程式確認），D-03 的監看只對 solo 實作；一般成員的偵測本版不做，只靠 policy 唯讀，記入 30.8。
 
 ## 30.10 風險

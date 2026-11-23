@@ -64,9 +64,9 @@
 - [x] 0.1 `rebase()` 與前綴判定無關（已結案）；剩下：D-03 (b) 的「基準版本 status」如何從 guard 的 `readTree` 取得（在 Task 2 先讀程式再實作）。
 - [x] 0.2 已結案：call id＝`newRunId()`。
 - [x] 0.3 已結案：guard 不知道提案區，一般成員偵測本版不做（spec 30.8 #12）。
-- [ ] 0.4 `web/` 是否消費 `status --json` 的固定欄位（加欄位是否安全）。
-- [ ] 0.5 「records 存在才處理」前提改成「records 或提案區存在」的最小改動，位置是 `memory-tidy.ts:326-331`、`:424`、`:437`（不是 `:299`）。
-- [ ] 0.6 `proposals review` 的 post-check 與回滾要重用 `tidyOne` 的哪些函式（含 `watched` 監看 `COMMON.md`，`memory-tidy.ts:336`）。
+- [x] 0.4 `web/` 是否消費 `status --json` 的固定欄位（結案：不加欄位，見末尾 Task 0 結論）。
+- [x] 0.5 「records 存在才處理」前提改成「records 或提案區存在」的最小改動，位置是 `memory-tidy.ts:326-331`、`:424`、`:437`（不是 `:299`）。
+- [x] 0.6 `proposals review` 的 post-check 與回滾要重用 `tidyOne` 的哪些函式（含 `watched` 監看 `COMMON.md`，`memory-tidy.ts:336`）。
 
 ### Task 1：提案的路徑、解析與兩層檢查
 
@@ -131,7 +131,7 @@
 
 **Files:** `src/status.ts`、`src/doctor.ts`、對應測試
 
-- [ ] 8.1 `status`、`doctor`、`proposals list` 顯示待審數量與最舊日期（**不**顯示 guard 的 `unattributed` 事件：本版沒有資料通路，列為已知限制，spec 30.3、30.8 #6）；`doctor` 對 `accepted_as` 指向不存在的 record 與格式不符的提案報警；依 Task 0.4 處理 `status --json` 欄位。
+- [ ] 8.1 `status`（僅人類輸出，**不動 `--json`**）、`doctor`、`proposals list` 顯示待審數量與最舊日期（**不**顯示 guard 的 `unattributed` 事件：本版沒有資料通路，列為已知限制，spec 30.3、30.8 #6）；`doctor` 對 `accepted_as` 指向不存在的 record 與格式不符的提案報警；依 Task 0.4 處理 `status --json` 欄位。
 - [ ] 8.2 驗收對應：17、19（doctor 半邊：`accepted_as` 指向 records `.archive/` 的 record 不誤報）。
 
 ### Task 9：tidy 納入提案區
@@ -173,4 +173,9 @@
 
 ## Task 0 結論
 
-（Task 0 完成後填寫。）
+Task 0 全部結案（只讀查證，讀的是 `2e87449` 等同 `main` 的 `src/`；沒有跑測試）。
+
+- **0.4 `web/` 與 `status --json`：** `web/src/types.ts` 的 `StatusReport` 是 `schema_version: 1` 的型別，WatchFrame 註明「unchanged, the web stream only wraps it」。`status.ts` 已有先例：`lastVerify`（`:380`）、`:649` 的分級模型都刻意「kept off the report so `status --json` is unchanged」。**決定：待審提案數與最舊日期只進 `status` 的人類輸出與 `doctor`，不加進 `status --json`**，不動 `schema_version`，`web/` 不受影響。
+- **0.5 tidy 的 records 前提：** `tidyOne`（`memory-tidy.ts:318` 起）以 `recLive = withRecords ? liveRecordFiles(project) : []`、`recPart = recLive.length > 0`，兩者皆空就 `skipped`；`tidyMemory` 的 `withRecords` 也要求 `liveRecordFiles(...).length > 0`（`:424`）。最小改動：新增 `liveProposalFiles(project)`（同 `liveRecordFiles`，排除 `.archive/`，目錄不存在回空）；`withRecords`、`recPart` 改成「records 或提案區有檔」；`dirs`／`allowDirs` 加 `proposalsDir`（只在它存在時）；提案區自己一份 `recBefore`／`earlierArchives`／`recArchive`（`proposals/.archive/<stamp>/`）／`hasReport`／`verifyConservation`；`recordsContext` 增加提案條目。**注意：只有提案區時 `recordsDir` 可能不存在**，`snapshotDirs`、`allowDirs`、`describeRecords` 要容許缺目錄（`liveRecordFiles` 已用 `isPlainDir` 判斷）。
+- **0.6 review 可重用的 `tidyOne` 部分：** `tidyWorkDir`、`snapshotDirs`／`restoreDirs`、`fingerprint`（含 `othersBefore` 比對）、`watched`（`commonFile`）、`hasReport`／`TIDY_REPORT_FILE`、`verifyConservation`、`policy` 組裝（`writePolicy` 的 `deny`＋`readDirs`）、`invoke` 與 `fail` 回滾。Task 7.0 要抽出的共用函式：`wakeWithRollback({ project, agent, dirs, allowDirs, prompts, watched, postCheck(problems) })`，內含 snapshot、policy、invoke、失敗與 post-check 回滾；`tidyOne` 與 `proposals review` 各自提供 prompt 與 `postCheck`。review 的 `allowDirs` ＝ `[recordsDir, proposalsDir]`。
+- **0.1 剩餘項：** guard 的 `this.records` 是 `Map<string, Buffer>`，(b) 的基準 status 在 Task 2 直接解析 Buffer，不需另做基準。
