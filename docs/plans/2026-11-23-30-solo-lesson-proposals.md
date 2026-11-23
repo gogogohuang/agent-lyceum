@@ -151,7 +151,8 @@
 - [x] 10.1 中英文件同步；說明 Task 2 的行為變更、多 run 並存時的已知限制（spec 30.8 #6）。
 - [x] 10.2 spec 11 決議 3、7 與 spec 25 受保護路徑加註「由 spec 30 修訂」。
 - [x] 10.3 **完整驗證一次**：`npm run typecheck`、`npm test`、`npm run lint`、`npm run check:docs` 通過；驗收 1–19 各有對應測試。
-- [ ] 10.4 端到端（真實 `claude`／`codex` 會花 token，刻意手動）：`run --agent` 寫一條提案 → `proposals list` → `proposals review` 收下 → 下一次 run 的 lead prompt 看得到正式 record。
+- [x] 10.4 端到端（真實 `claude`／`codex` 會花 token，刻意手動）：`run --agent` 寫一條提案 → `proposals list` → `proposals review` 收下 → 下一次 run 的 lead prompt 看得到正式 record。
+  - 2026-11-24 以 `claude` haiku（暫存 home，`dist/cli.js`）實測通過：solo 在真實沙箱可寫 `proposals/lessons/`；`proposals list` 顯示 evidence verified；`proposals review` 收下並建出 record；下一次 lead run 的 prompt 含該 record。實測中發現 solo prompt 沒說 `evidence` 每項是單鍵 mapping，haiku 寫成純字串被判格式不符，已在 `src/prompt.ts` 補範例並同步 spec 30.12。未測：codex、Cursor、無 OS 沙箱。
 
 ## Self-Review（決議與驗收對應 Task）
 

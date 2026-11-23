@@ -176,7 +176,7 @@ decided: YYYY-MM-DD       # accepted／rejected 時必填；tidy 以此判斷 30
 ```
 ## Proposals
 You cannot write the project's decisions or lessons. When you learn something that stays true across tasks and would change how the next run should work, write it as a proposal: one Markdown file `<short-id>-<slug>.md` in `<proposals>/lessons/` or `<proposals>/decisions/`. `<short-id>` is exactly `{{prefix}}` (the dispatcher fills in the literal value, for example `ab12cd34`; never derive it yourself). Use only lowercase letters, digits and `-`.
-Start the file with `status: proposed`, `date`, `title`, `proposed_by`, `run` and at least one `evidence` entry (a file path with line and commit, a commit, a mail, or a command with its key output). Put `repo` when the evidence is in a different repository than the project. Write the facts you observed first, then your guess about the cause, and mark it as a guess.
+Start the file with `status: proposed`, `date`, `title`, `proposed_by`, `run` and at least one `evidence` entry. Each entry is a mapping with exactly one key, never a bare string: `- path: src/a.ts:42 @ <commit sha>`, `- commit: <sha>`, `- mail: <id or subject>` or `- output: <command and its key output>`. Put `repo` when the evidence is in a different repository than the project. Write the facts you observed first, then your guess about the cause, and mark it as a guess.
 Never edit an existing proposal of another run, and never set `status` to anything but `proposed`. The lead decides.
 Where things go: a proposal is for lessons and decisions that outlive this task; {{handoff clause, only for `run --agent`: the handoff notes are for the state, next steps and pitfalls of this task only;}} your memory is for habits that matter to you alone.
 ```
