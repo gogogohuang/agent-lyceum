@@ -131,8 +131,8 @@
 
 **Files:** `src/status.ts`、`src/doctor.ts`、對應測試
 
-- [ ] 8.1 `status`（僅人類輸出，**不動 `--json`**）、`doctor`、`proposals list` 顯示待審數量與最舊日期（**不**顯示 guard 的 `unattributed` 事件：本版沒有資料通路，列為已知限制，spec 30.3、30.8 #6）；`doctor` 對 `accepted_as` 指向不存在的 record 與格式不符的提案報警；依 Task 0.4 處理 `status --json` 欄位。
-- [ ] 8.2 驗收對應：17、19（doctor 半邊：`accepted_as` 指向 records `.archive/` 的 record 不誤報）。
+- [x] 8.1 `status`（僅人類輸出，**不動 `--json`**）、`doctor`、`proposals list` 顯示待審數量與最舊日期（**不**顯示 guard 的 `unattributed` 事件：本版沒有資料通路，列為已知限制，spec 30.3、30.8 #6）；`doctor` 對 `accepted_as` 指向不存在的 record 與格式不符的提案報警；依 Task 0.4 處理 `status --json` 欄位。
+- [x] 8.2 驗收對應：17、19（doctor 半邊：`accepted_as` 指向 records `.archive/` 的 record 不誤報）。
 
 ### Task 9：tidy 納入提案區
 

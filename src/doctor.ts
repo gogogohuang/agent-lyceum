@@ -8,6 +8,7 @@ import { findOnPath } from "./fs-util.js";
 import { tidyAdvice } from "./memory-tidy.js";
 import { listRecords, RECORD_KINDS } from "./records.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
+import { checkDecisions, listProposals, oldestPending, pendingProposals } from "./proposals.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
@@ -258,6 +259,14 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       for (const s of r.supersedes) if (!ids.has(s)) checks.push({ level: "warn", subject: "records", message: `${r.file}: supersedes "${s}", but no ${kind} entry has that id.` });
     }
   }
+
+  // Spec 30: proposals waiting for the lead, and decisions or files that are not in the right format.
+  const waiting = pendingProposals(project);
+  if (waiting.length) checks.push({ level: "info", subject: "proposals", message: `${waiting.length} proposal(s) wait for the lead (oldest ${oldestPending(waiting) ?? "unknown"}): \`agent-lyceum proposals review -p ${project.name}\`.` });
+  for (const pr of listProposals(project)) {
+    if (pr.problems.length && (pr.status === undefined || pr.status === "proposed")) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: ${pr.problems.join("; ")}.` });
+  }
+  for (const d of checkDecisions(listProposals(project), project)) checks.push({ level: "warn", subject: "proposals", message: `${d.file}: ${d.problem}.` });
 
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));
