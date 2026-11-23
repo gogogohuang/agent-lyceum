@@ -8,6 +8,8 @@ import { Command } from "commander";
 import { ConfigError, findProjectForCwd, flattenResolved, listProjects, loadGlobal, resolveProject, resolveProjectWithSources, type ResolvedProject, type SourceInfo } from "./config.js";
 import { openInEditor, prepareAnswers } from "./ask-answer.js";
 import { restoreMemory, tidyMemory, tidyStamp, type Layer } from "./memory-tidy.js";
+import { describeProposals, pendingProposals } from "./proposals.js";
+import { reviewProposals } from "./proposals-review.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes, runtimesUsed } from "./doctor.js";
@@ -687,6 +689,62 @@ program
     }
   });
 
+const proposals = program
+  .command("proposals")
+  .summary("List, or have the lead decide, lesson and decision proposals of agents that ran alone")
+  .description(
+    "Agents that run alone (`run --agent`, `call -p`) write lesson and decision proposals; only the lead decides them.\n\n" +
+      "Subcommands:\n  - list: show the proposals (reads only)\n  - review: wake the lead once to accept or reject the pending ones and write the records\n\n" +
+      "Neither writes a proposal or a record itself, and a review that leaves a decision incomplete is rolled back.",
+  );
+
+proposals
+  .command("list")
+  .description("Show the proposals of a project: how many wait, their evidence, and decisions that are incomplete. Reads only.")
+  .option("-p, --project <name>")
+  .action((opts: { project?: string }) => {
+    try {
+      for (const line of describeProposals(loadProject(opts.project))) console.log(line);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
+proposals
+  .command("review")
+  .description("Wake the project's lead once to decide the pending proposals.\n\n  - needs the project to itself: refused while a run or a `call -p` is active\n  - the lead may write only the records and the proposals\n  - an incomplete decision, a deleted record or proposal, or a records kind over budget undoes the whole review")
+  .option("-p, --project <name>")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const pr = loadProject(opts.project);
+      if (pendingProposals(pr).length === 0) {
+        console.log("No pending proposals.");
+        return;
+      }
+      const res = validateProject(pr);
+      for (const i of res.issues) console.error(`${i.level === "error" ? "ERROR" : "warn "}  ${i.message}`);
+      if (!res.ok) fail("Configuration is invalid; fix the errors above (see `agent-lyceum doctor`).");
+      await preflight(pr);
+      const lease = takeLock(pr, `review-${tidyStamp()}`, { exclusive: true });
+      const cancel = cancelOnSignals();
+      let r: Awaited<ReturnType<typeof reviewProposals>>;
+      try {
+        r = await reviewProposals({ project: pr, signal: cancel.signal });
+      } finally {
+        cancel.dispose();
+        lease.release();
+      }
+      if (r.status === "failed") {
+        console.error("Review FAILED; the records and proposals are back as they were:");
+        for (const p of r.problems) console.error(`  - ${p}`);
+        process.exit(1);
+      }
+      console.log(`Reviewed: ${r.accepted} accepted, ${r.rejected} rejected. Report: ${r.report}`);
+    } catch (e) {
+      fail(e instanceof ConfigError ? e.message : (e as Error).message);
+    }
+  });
+
 function useColor(): boolean {
   if (process.env.NO_COLOR) return false;
   if (process.env.FORCE_COLOR) return process.env.FORCE_COLOR !== "0";
@@ -961,7 +1019,7 @@ program
 const HELP_LAYERS: Record<string, string[]> = {
   "Project:": ["init", "project"],
   "Diagnose:": ["doctor", "status"],
-  "Run:": ["run", "resume", "clear", "call", "tidy"],
+  "Run:": ["run", "resume", "clear", "call", "tidy", "proposals"],
   "Try it:": ["demo"],
 };
 for (const [heading, names] of Object.entries(HELP_LAYERS)) for (const c of program.commands) if (names.includes(c.name())) c.helpGroup(heading);

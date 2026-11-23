@@ -208,6 +208,24 @@ export function oldestPending(pending: Proposal[]): string | undefined {
   return dates[0];
 }
 
+/** What `proposals list` shows: the counts, the pending ones with their evidence, and every decision that is not complete. Reads only. */
+export function describeProposals(project: ResolvedProject): string[] {
+  const all = listProposals(project);
+  if (all.length === 0) return ["No proposals."];
+  const pending = pendingProposals(project);
+  const count = (s: ProposalStatus): number => all.filter((p) => p.status === s).length;
+  const lines = [`${all.length} proposal(s): ${pending.length} pending, ${count("accepted")} accepted, ${count("rejected")} rejected${oldestPending(pending) ? `; oldest pending ${oldestPending(pending)}` : ""}.`];
+  for (const p of [...pending].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))) {
+    const strength = p.problems.length ? `format problem: ${p.problems.join("; ")}` : (() => {
+      const c = checkEvidence(p, project.dir);
+      return c.strength === "verified" ? "evidence verified" : c.strength === "weak" ? "weak evidence (no commit)" : "no machine-verifiable evidence";
+    })();
+    lines.push(`  pending   ${p.file} — ${p.title} (${p.date || "no date"}) — ${strength}`);
+  }
+  for (const d of checkDecisions(all, project)) lines.push(`  problem   ${d.file}: ${d.problem}`);
+  return lines;
+}
+
 export interface DecisionProblem {
   file: string;
   problem: string;

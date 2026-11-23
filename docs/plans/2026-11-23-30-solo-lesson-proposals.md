@@ -120,12 +120,12 @@
 
 ### Task 7：`proposals list` 與 `proposals review`
 
-**Files:** `src/cli.ts`、`src/prompt.ts`、`src/memory-tidy.ts`（重用的函式）、既有 CLI 測試檔
+**Files:** `src/cli.ts`、`src/prompt.ts`、`src/memory-tidy.ts`（重用的函式）、新 `src/proposals-review.ts`、新 `test/proposals-review.test.ts`、`test/proposals-cli.test.ts`
 
 - [x] 7.0 **獨立的純重構 commit（先於 7.1）**：把 review 要重用的 `tidyOne` 部分（鎖、snapshot、restore、`watched`）抽成共用函式，行為不變、既有 tidy 測試全過。Task 9 在此之後做，避免兩者同改 `tidyOne` 而衝突。
-- [ ] 7.1 先寫測試：`list` 前後專案檔案位元組不變；`review` 在同專案有活著的 run 或 `call -p` 時被拒；policy 覆寫的可寫範圍只有 `recordsDir` 與 `proposalsDir`；喚醒期間不經 guard；post-check（`checkDecisions`＋與 `done` 共用的 12 KB 預算檢查函式）未過或報告缺少時整批回滾（收下提案使 records 超過預算要被擋）；`review` 與一般 run 對同一批不合格提案結果相同（fake invoker）；收下流程：正式 record 含 `evidence`、`proposed_by`，提案檔 `accepted` 且有 `accepted_as`。
-- [ ] 7.2 實作，依 Task 0.6 重用 7.0 抽出的共用函式；review 啟動時 `mkdir -p proposals/`；review 的回滾要監看 `COMMON.md`。
-- [ ] 7.3 驗收對應：8、13、14、15、18（review 部分）。
+- [x] 7.1 先寫測試：`list` 前後專案檔案位元組不變；`review` 在同專案有活著的 run 或 `call -p` 時被拒；policy 覆寫的可寫範圍只有 `recordsDir` 與 `proposalsDir`；喚醒期間不經 guard；post-check（`checkDecisions`＋與 `done` 共用的 12 KB 預算檢查函式）未過或報告缺少時整批回滾（收下提案使 records 超過預算要被擋）；`review` 與一般 run 對同一批不合格提案結果相同（fake invoker）；收下流程：正式 record 含 `evidence`、`proposed_by`，提案檔 `accepted` 且有 `accepted_as`。
+- [x] 7.2 實作，依 Task 0.6 重用 7.0 抽出的共用函式；review 啟動時 `mkdir -p proposals/`；review 的回滾要監看 `COMMON.md`。
+- [x] 7.3 驗收對應：8、13、14、15、18（review 部分）。
 
 ### Task 8：status、doctor
 

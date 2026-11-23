@@ -14,7 +14,7 @@ import { isVerdict, type Verdict } from "./attribution.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
 import { checkDecisions, listProposals } from "./proposals.js";
-import { activeRecordsBytes, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
+import { RECORDS_BUDGET, recordsOverBudget } from "./records.js";
 import { must } from "./assert.js";
 
 export { atomicWrite };
@@ -395,10 +395,10 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           reject(`only the lead ("${project.lead}") may send a "done" message.`);
           continue;
         }
-        const over = RECORD_KINDS.map((k) => ({ k, n: activeRecordsBytes(project, k) })).filter((x) => x.n > RECORDS_BUDGET);
+        const over = recordsOverBudget(project);
         if (over.length) {
           reject(
-            `${over.map((x) => `records/${x.k} hold ${x.n} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (${RECORDS_BUDGET / 1024} KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
+            `${over.map((x) => `records/${x.kind} hold ${x.bytes} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (${RECORDS_BUDGET / 1024} KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
           );
           continue;
         }

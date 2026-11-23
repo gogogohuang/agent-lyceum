@@ -224,7 +224,7 @@ function proposalRules(project: ResolvedProject, isCall: boolean): string[] {
 }
 
 /** The lead's note about proposals waiting for a decision (spec 30, D-06, D-11, D-15); empty when there are none. */
-function pendingProposalLines(project: ResolvedProject): string[] {
+export function pendingProposalLines(project: ResolvedProject): string[] {
   const pending = pendingProposals(project).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   if (pending.length === 0) return [];
   const strength = (p: Proposal): string => {
@@ -241,6 +241,37 @@ function pendingProposalLines(project: ResolvedProject): string[] {
     ...shown.map((p) => `- \`${p.file}\` — ${p.title} — ${strength(p)}`),
     `For each one, check the evidence yourself, then either create the record (a new file, not a copy) and set the proposal to \`status: accepted\` with \`accepted_as: <kind>/<id>\`, or set \`status: rejected\` with \`reject_reason\`. In both cases also write \`decided: <today's date>\`. Put a short summary of the evidence in the record's body. Active entries use ${used}; merge or supersede before you exceed it.`,
   ];
+}
+
+/** The prompts of a `proposals review` wake-up (spec 30, D-14): the lead decides the pending proposals and writes the records, nothing else. */
+export function buildReviewPrompts(project: ResolvedProject, agent: ResolvedAgent, reportFile: string): { systemPrompt: string; userPrompt: string } {
+  const dirs = `\`${recordsKindDir(project, "decisions")}/\` and \`${recordsKindDir(project, "lessons")}/\``;
+  const systemPrompt = [
+    readPersona(agent),
+    "",
+    "---",
+    "",
+    "# Proposals review (injected by agent-lyceum)",
+    "",
+    `You are **${agent.name}**, the lead of this project. Agents that ran alone wrote proposals of lessons and decisions; you decide them now. This is a short maintenance wake-up: there is no task, no mail and nobody to ask.`,
+    "",
+    "## What you may write",
+    `- The project records, in ${dirs}, and the proposals in \`${proposalsDir(project)}\`. Nothing else: not the repository, not COMMON.md, not any memory or mail.`,
+    "- Never delete a proposal or a record. An outdated record is marked `status: superseded` or named in a new entry's `supersedes`.",
+    "- A record is one Markdown file per entry; the file name without `.md` is its id (lowercase letters, digits, `-`). It starts with YAML frontmatter: `status: active`, `date: YYYY-MM-DD`, `title: <one line>`, optionally `run` and `supersedes: [<ids>]`; the body is the decision or lesson and its reason, with a short summary of the evidence.",
+    "",
+    "## How to decide",
+    "- Check the evidence yourself in the repository before you accept: read the file at the line, look at the commit. A proposal whose evidence you cannot confirm, or that only repeats an existing record, is rejected with a reason.",
+    "- Facts and guesses are written apart in a proposal: accept the facts, and state the guess as a guess in the record, or leave it out.",
+    "- Accepting means creating a new record (a new file, not a copy of the proposal) and setting the proposal to `status: accepted` with `accepted_as: <kind>/<id>` and `decided: <today's date>`. Rejecting means `status: rejected` with `reject_reason: <one line>` and `decided`.",
+    `- Active entries of one kind may not exceed ${RECORDS_BUDGET} bytes together; merge or supersede first.`,
+  ].join("\n");
+  const userPrompt = [
+    ...pendingProposalLines(project),
+    "",
+    `When you are done, write a short report to \`${reportFile}\`: one line per proposal you decided (accepted or rejected, and why), and anything you left for a person.`,
+  ].join("\n");
+  return { systemPrompt, userPrompt };
 }
 
 /** One line per effective-active record of the real project a `call -p` proposes to. */
