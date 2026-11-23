@@ -9,7 +9,7 @@ export type RecordKind = "decisions" | "lessons";
 export const RECORD_KINDS: readonly RecordKind[] = ["decisions", "lessons"];
 
 /** Cap of one kind's effective-active entries in a prompt (and, for `done`, the most they may add up to). */
-export const RECORDS_BUDGET = 6 * 1024;
+export const RECORDS_BUDGET = 12 * 1024;
 
 const ID_RE = /^[a-z0-9-]+$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

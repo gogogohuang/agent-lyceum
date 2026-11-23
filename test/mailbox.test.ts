@@ -197,19 +197,19 @@ describe("mailbox routing", () => {
     expect(routeOutboxes(p).done).toMatchObject({ from: "lead", subject: "shipped", body: "summary" });
   });
 
-  it("rejects the lead's done while a records kind is over its 6 KB budget", () => {
+  it("rejects the lead's done while a records kind is over its 12 KB budget", () => {
     env = makeEnv();
     const p = env.project();
     ensureProjectDirs(p);
     const rec = (id: string, status: string, size: number) =>
       write(path.join(recordsKindDir(p, "lessons"), `${id}.md`), `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: T${id}\n---\n${"x".repeat(size)}\n`);
-    rec("big", "active", 7000);
+    rec("big", "active", 14000);
     send(p, "lead", "d1.md", "type: done\nsubject: ship", "summary");
     const r = routeOutboxes(p);
     expect(r.done).toBeUndefined();
-    expect(r.rejected[0].reason).toMatch(/records\/lessons hold \d+ bytes.*6144.*superseded.*supersedes/);
+    expect(r.rejected[0].reason).toMatch(/records\/lessons hold \d+ bytes.*12288.*superseded.*supersedes/);
 
-    rec("big", "superseded", 7000);
+    rec("big", "superseded", 14000);
     send(p, "lead", "d2.md", "type: done\nsubject: ship2", "summary");
     expect(routeOutboxes(p).done).toMatchObject({ subject: "ship2" });
   });

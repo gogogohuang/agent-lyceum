@@ -397,7 +397,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         const over = RECORD_KINDS.map((k) => ({ k, n: activeRecordsBytes(project, k) })).filter((x) => x.n > RECORDS_BUDGET);
         if (over.length) {
           reject(
-            `${over.map((x) => `records/${x.k} hold ${x.n} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (6 KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
+            `${over.map((x) => `records/${x.k} hold ${x.n} bytes of active entries`).join(" and ")}; the budget is ${RECORDS_BUDGET} bytes (${RECORDS_BUDGET / 1024} KB) per kind. Merge entries, or mark obsolete ones "status: superseded" (or name them in a newer entry's "supersedes"), then send "done" again.`,
           );
           continue;
         }

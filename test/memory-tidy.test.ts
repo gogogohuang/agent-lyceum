@@ -491,7 +491,7 @@ describe("restoreMemory", () => {
 });
 
 describe("tidyAdvice for records", () => {
-  const big = (id: string, status = "active", extra = "") => `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: ${id}\n${extra}---\n${"x".repeat(4000)}\n`;
+  const big = (id: string, status = "active", extra = "") => `---\nstatus: ${status}\ndate: 2026-01-02\ntitle: ${id}\n${extra}---\n${"x".repeat(7000)}\n`;
 
   it("hints at the lead only when a kind's effective-active size is over the budget; superseded entries do not count", () => {
     env = makeEnv();
@@ -502,7 +502,7 @@ describe("tidyAdvice for records", () => {
     const a = tidyAdvice(env.project());
     expect(a).toHaveLength(1);
     expect(a[0]?.agent).toBe(env.project().lead);
-    expect(a[0]?.reason).toMatch(/decisions.*6144/);
+    expect(a[0]?.reason).toMatch(/decisions.*12288/);
     write(path.join(rd, "decisions", "d-b.md"), big("d-b", "superseded"));
     expect(tidyAdvice(env.project())).toEqual([]);
     write(path.join(rd, "decisions", "d-b.md"), big("d-b", "active", "supersedes: [d-a]\n"));
