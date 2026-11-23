@@ -61,6 +61,19 @@ export function shortIdOf(runId: string): string {
   return rest.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
 }
 
+/** The `status` in a proposal's frontmatter, or undefined when the text has none of the three values (or is not a proposal at all). */
+export function proposalStatusOf(buf: Buffer): ProposalStatus | undefined {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(buf.toString("utf8"));
+  if (!m) return undefined;
+  try {
+    const fm = parseYaml(m[1]!) as Record<string, unknown> | null;
+    const st = fm && typeof fm === "object" ? fm.status : undefined;
+    return st === "proposed" || st === "accepted" || st === "rejected" ? st : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The id's own prefix: what comes before the first `-`. */
 export const prefixOf = (id: string): string => id.split("-")[0] ?? "";
 

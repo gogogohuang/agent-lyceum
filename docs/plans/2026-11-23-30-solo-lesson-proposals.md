@@ -80,11 +80,11 @@
 
 **Files:** `src/guard.ts`、新 `test/guard-proposals.test.ts`（並確認既有 `test/guard-concurrent-runs.test.ts`、`test/project-write-scope.test.ts` 不因授權修正而失敗）
 
-- [ ] 2.1 先寫測試（會先失敗）：solo run 寫 `records/lessons/x.md` 被還原並記違規；非 solo 的 lead 仍可寫；單一 live run 下：寫別人前綴的新檔或改既有、寫 `accepted`、基準已 `accepted`／`rejected` 的提案（含自己前綴、同 run id resume）被改動或改回 `proposed`，都被還原並記違規；自己前綴、基準 `proposed` 或不存在、結果仍 `proposed` 允許；有其他 live run 時走 `unattributed`；`proposals/lessons` 換成 symlink 時不跟隨、還原不寫到區外。**不測 tidy／review 喚醒**（它們不經 guard，移到 Task 7）。
-- [ ] 2.1b 加測試：路徑限制（只有 `proposals/(lessons|decisions)/<短id>-<slug>.md` 可被 solo 新增或變更，`.archive/`、別人前綴、其他子目錄與**刪除**別人的提案違規）；自家檔 frontmatter 壞掉放行；**其他 run 在本 guard 基準之後啟動又結束，lead 的寫入不被還原**（`run --agent` 與 `call -p` 各一）；`otherLiveRuns` 每次 `check` 重取。
-- [ ] 2.2 `authorized` 改為 `a.name === lead && !project.solo`（`guard.ts:159`）。
-- [ ] 2.3 新增提案區監看（D-03 a–d，重用 `realDirs`／`isLink`；(b) 的基準 status 直接解析 `this.records` 的 Buffer）。**簽名：保留第二個位置參數 `otherLiveRuns`，新增第三個選用 opts `{ recordsRoot, proposalsRoot, shortId, violationsDir }`**，既有呼叫與 `guard-concurrent-runs.test.ts` 不改。「其他 run」＝當下存活者＋id 大於本基準 id 的 run（`run-store.ts:210`），且不計 `kind: "call"` 的鎖。
-- [ ] 2.4 驗收對應：1（guard 半邊）、2、3、11。
+- [x] 2.1 先寫測試（會先失敗）：solo run 寫 `records/lessons/x.md` 被還原並記違規；非 solo 的 lead 仍可寫；單一 live run 下：寫別人前綴的新檔或改既有、寫 `accepted`、基準已 `accepted`／`rejected` 的提案（含自己前綴、同 run id resume）被改動或改回 `proposed`，都被還原並記違規；自己前綴、基準 `proposed` 或不存在、結果仍 `proposed` 允許；有其他 live run 時走 `unattributed`；`proposals/lessons` 換成 symlink 時不跟隨、還原不寫到區外。**不測 tidy／review 喚醒**（它們不經 guard，移到 Task 7）。
+- [x] 2.1b 加測試：路徑限制（只有 `proposals/(lessons|decisions)/<短id>-<slug>.md` 可被 solo 新增或變更，`.archive/`、別人前綴、其他子目錄與**刪除**別人的提案違規）；自家檔 frontmatter 壞掉放行；**其他 run 在本 guard 基準之後啟動又結束，lead 的寫入不被還原**（`run --agent` 與 `call -p` 各一）；`otherLiveRuns` 每次 `check` 重取。
+- [x] 2.2 `authorized` 改為 `a.name === lead && !project.solo`（`guard.ts:159`）。
+- [x] 2.3 新增提案區監看（D-03 a–d，重用 `realDirs`／`isLink`；(b) 的基準 status 直接解析 `this.records` 的 Buffer）。**簽名：保留第二個位置參數 `otherLiveRuns`，新增第三個選用 opts `{ recordsRoot, proposalsRoot, shortId, violationsDir }`**，既有呼叫與 `guard-concurrent-runs.test.ts` 不改。「其他 run」＝當下存活者＋id 大於本基準 id 的 run（`run-store.ts:210`），且不計 `kind: "call"` 的鎖。
+- [x] 2.4 驗收對應：1（guard 半邊）、2、3、11。
 
 ### Task 3：write policy 放行提案區
 

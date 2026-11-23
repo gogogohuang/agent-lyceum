@@ -4,7 +4,8 @@ import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { readRegularFileNoFollow } from "./fs-util.js";
 import { escapesParent } from "./paths.js";
-import { mayEditProtected, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
+import { mayEditProtected, proposalsDir, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
+import { proposalStatusOf, shortIdOf } from "./proposals.js";
 
 export interface Violation {
   file: string;
@@ -26,6 +27,37 @@ export interface Unattributed {
 
 export const MAX_KEEP_BYTES = 1024 * 1024;
 
+/** Options for a guard that watches more than the project it was made for (spec 30): a `call -p` watches the real project, and a solo agent's proposals. */
+export interface GuardOptions {
+  /** The records tree to watch, when it is not `recordsDir(project)` (a `call -p` project is a temporary one). */
+  recordsRoot?: string;
+  /** The proposals tree to watch, when it is not `proposalsDir(project)`. */
+  proposalsRoot?: string;
+  /** The only file-name prefix this agent may write in the proposals tree. Without it (and without `project.run`) proposals are not watched. */
+  shortId?: string;
+  /** Where rejected versions are kept for a project that is bound to no run (a `call -p`). */
+  violationsDir?: string;
+  /**
+   * Run ids that started after the given run-id timestamp (see `runStamp`), alive or not. A run that began and ended
+   * inside one watched window leaves no live lock for `check()` to see, yet its lead may have written to the shared files.
+   */
+  startedAfter?: (stamp: string) => string[];
+}
+
+/** The timestamp part of a run id, for `Date` (the same text `newRunId` starts with). */
+export const runStamp = (d: Date = new Date()): string => d.toISOString().replace(/[-:]/g, "").replace(/\.(\d+)Z$/, "$1Z");
+
+/** Ids under `runsDir` whose timestamp is after `stamp`, except `selfId`. Run ids sort by start time. */
+export function runsStartedAfter(runsDir: string, stamp: string, selfId?: string): string[] {
+  try {
+    return fs
+      .readdirSync(runsDir)
+      .filter((n) => n !== selfId && /^\d{8}T\d+Z-/.test(n) && n.slice(0, n.indexOf("-")) > stamp);
+  } catch {
+    return [];
+  }
+}
+
 function safeName(file: string): string {
   return file.replace(/[\\/:]/g, "_").replace(/^_+/, "");
 }
@@ -41,16 +73,25 @@ export class ProtectedGuard {
 
   /** Changes kept (not reverted) because another live run may have made them; see `takeUnattributed`. */
   private unattributed: Unattributed[] = [];
+  /** Regular files of the proposals tree, for a solo agent (spec 30): only its own proposed files may change. */
+  private proposals = new Map<string, Buffer>();
   /** Other runs that were live at the last `rebase()` (or at `check()` time); computed once per batch. */
   private liveAtBase: string[] = [];
+  /** When the current batch's baseline was taken, as a run-id timestamp. */
+  private baseStamp = runStamp();
 
-  /** `otherLiveRuns`: ids of the project's other runs that have a live lock holder right now. */
+  /** `otherLiveRuns`: ids of the project's other runs that have a live lock holder right now (asked again on every `check`). */
   constructor(
     private project: ResolvedProject,
     private otherLiveRuns: () => string[] = () => [],
+    private opts: GuardOptions = {},
   ) {
     this.rebase();
   }
+
+  private recordsRoot = (): string => this.opts.recordsRoot ?? recordsDir(this.project);
+  private proposalsRoot = (): string => this.opts.proposalsRoot ?? proposalsDir(this.project);
+  private ownPrefix = (): string | undefined => this.opts.shortId ?? (this.project.run ? shortIdOf(this.project.run.id) : undefined);
 
   /** The unattributed changes since the last call (they were kept and adopted as the baseline). */
   takeUnattributed(): Unattributed[] {
@@ -70,9 +111,11 @@ export class ProtectedGuard {
    * judged: edits made in between (you, or another run of the project) are not the batch's doing.
    */
   rebase(): void {
+    this.baseStamp = runStamp();
     this.liveAtBase = this.otherLiveRuns();
     for (const f of ProtectedGuard.protectedFiles(this.project)) this.baseline.set(f, read(f));
-    this.records = readTree(recordsDir(this.project));
+    this.records = readTree(this.recordsRoot());
+    this.proposals = readTree(this.proposalsRoot());
   }
 
   static protectedFiles(project: ResolvedProject): string[] {
@@ -97,10 +140,10 @@ export class ProtectedGuard {
 
   /** Keep what an agent wrote into a protected file before it is reverted. Nothing is written without a bound run. */
   private keep(file: string, content: Buffer | null): Pick<Violation, "saved" | "sha256" | "truncated"> {
-    const run = this.project.run;
-    if (!content || !run) return {};
+    const base = this.project.run?.dir ?? this.opts.violationsDir;
+    if (!content || !base) return {};
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
-    const dir = path.join(run.dir, "violations");
+    const dir = this.project.run ? path.join(base, "violations") : base;
     fs.mkdirSync(dir, { recursive: true });
     const n = String(fs.readdirSync(dir).length + 1).padStart(3, "0");
     const saved = path.join(dir, `${n}-${safeName(file)}`);
@@ -112,7 +155,7 @@ export class ProtectedGuard {
   /** Compare against the baseline after `running` agents finished; revert unauthorized changes. */
   check(running: ResolvedAgent[]): Violation[] {
     const violations: Violation[] = [];
-    const other = [...new Set([...this.liveAtBase, ...this.otherLiveRuns()])];
+    const other = [...new Set([...this.liveAtBase, ...this.otherLiveRuns(), ...(this.opts.startedAfter?.(this.baseStamp) ?? [])])];
     for (const [file, before] of this.baseline) {
       if (unsafeToRead(file)) {
         const kept = this.keep(file, null);
@@ -148,15 +191,17 @@ export class ProtectedGuard {
       }
     }
     this.checkRecords(running, violations, other);
+    this.checkProposals(running, violations, other);
     return violations;
   }
 
   private checkRecords(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
-    const root = recordsDir(this.project);
+    const root = this.recordsRoot();
     // Never write through a symlinked parent of the records tree: skip its protection for this batch.
     if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
     const now = readTree(root);
-    const authorized = running.some((a) => a.name === this.project.lead);
+    // A solo agent is the lead of a team of one, but it may not write the records: only a real lead may (spec 30, D-03).
+    const authorized = !this.project.solo && running.some((a) => a.name === this.project.lead);
     const suspects = running.map((a) => a.name);
     const fixedDirs = new Set<string>();
     for (const file of new Set([...this.records.keys(), ...now.keys()])) {
@@ -184,6 +229,53 @@ export class ProtectedGuard {
   }
 
   /**
+   * A solo agent may create and change only its own `proposals/<kind>/<short id>-<slug>.md`, and only while the file is
+   * `proposed` (spec 30, D-03). Everything else under the proposals tree is put back: other prefixes, other folders,
+   * `.archive/`, deletions, a file that was already decided (even one with its own prefix, e.g. after a resume), and a
+   * write of `accepted` or `rejected`. A file that is merely badly formed is let through; D-09 flags it for the lead.
+   * Not watched for an ordinary run: its members are held back by the write policy only (30.8).
+   */
+  private checkProposals(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
+    if (!this.project.solo) return;
+    const prefix = this.ownPrefix();
+    if (!prefix) return;
+    const root = this.proposalsRoot();
+    if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
+    const now = readTree(root);
+    const suspects = running.map((a) => a.name);
+    const fixedDirs = new Set<string>();
+    const own = new RegExp(`^(?:lessons|decisions)${escapeRe(path.sep)}${escapeRe(prefix)}-[a-z0-9-]+\\.md$`);
+    for (const file of new Set([...this.proposals.keys(), ...now.keys()])) {
+      const before = this.proposals.get(file) ?? null;
+      const cur = now.get(file) ?? null;
+      if (same(before, cur)) continue;
+      if (other.length) {
+        this.unattributed.push({ file, agents: suspects, otherRuns: other });
+        continue;
+      }
+      let ok = own.test(path.relative(root, file));
+      if (ok && before && proposalStatusOf(before) !== "proposed" && proposalStatusOf(before) !== undefined) ok = false;
+      if (ok && cur) {
+        const st = proposalStatusOf(cur);
+        if (st === "accepted" || st === "rejected") ok = false;
+      }
+      if (ok) continue;
+      const kept = this.keep(file, cur);
+      if (before === null) {
+        if (!insideRoot(root, path.dirname(file))) continue;
+        fs.rmSync(file, { force: true });
+        violations.push({ file, action: "removed", suspects, ...kept });
+      } else {
+        if (!this.realDirs(root, path.dirname(file), fixedDirs, suspects, violations)) continue;
+        fs.rmSync(file, { recursive: true, force: true });
+        fs.writeFileSync(file, before);
+        violations.push({ file, action: "restored", suspects, ...kept });
+      }
+    }
+    this.proposals = readTree(root);
+  }
+
+  /**
    * Make every directory from the records root down to `dir` a real directory. A symlink or file standing in for one is an
    * unauthorized change: unlink it (never follow it), recreate the directory and report it. False when `dir` is not safe to write into.
    */
@@ -208,6 +300,8 @@ export class ProtectedGuard {
     return insideRoot(root, dir);
   }
 }
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function isLink(p: string): boolean {
   try {
