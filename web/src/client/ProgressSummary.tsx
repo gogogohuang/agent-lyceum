@@ -1,10 +1,11 @@
 import { Button } from "@base-ui/react/button";
 import { useState } from "react";
+import { summaries } from "./summary-store";
 
 export function ProgressSummary({ project, runId }: { project: string; runId: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const [text, setText] = useState<string>();
+  const [text, setText] = useState<string | undefined>(() => summaries.load(project, runId)?.text);
 
   const summarize = () => {
     setPending(true);
@@ -15,7 +16,10 @@ export function ProgressSummary({ project, runId }: { project: string; runId: st
       body: JSON.stringify({ project, runId }),
     })
       .then(readSummary)
-      .then(setText)
+      .then((next) => {
+        summaries.save(project, runId, { text: next, generatedAt: Date.now() });
+        setText(next);
+      })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "沒有寫出摘要。"))
       .finally(() => setPending(false));
   };
