@@ -104,11 +104,11 @@
 
 ### Task 5：`done` 時的決議完整性檢查
 
-**Files:** `src/mailbox.ts`、mailbox 既有測試檔（先 `ls test | grep mailbox` 確認，沒有則新建 `test/mailbox-proposals.test.ts`）
+**Files:** `src/mailbox.ts`、mailbox 既有測試檔（新建 `test/mailbox-proposals.test.ts`）
 
-- [ ] 5.1 先寫測試：一般 run 中存在 `accepted` 缺 `accepted_as`／`decided`、或 `rejected` 缺 `reject_reason`／`decided` 的提案時，lead 的 `done` 被退回並指出路徑；`proposed` 的待審提案不影響 `done`；證據不存在**不**擋 `done`；**`project.solo` 時同樣的提案不擋 `done`**。
-- [ ] 5.2 在 `mailbox.ts:397` 同處呼叫 `checkDecisions`，以 `!project.solo` 為條件。
-- [ ] 5.3 驗收對應：5、9（不擋 `done` 的部分）。
+- [x] 5.1 先寫測試：一般 run 中存在 `accepted` 缺 `accepted_as`／`decided`、或 `rejected` 缺 `reject_reason`／`decided` 的提案時，lead 的 `done` 被退回並指出路徑；`proposed` 的待審提案不影響 `done`；證據不存在**不**擋 `done`；**`project.solo` 時同樣的提案不擋 `done`**。
+- [x] 5.2 在 `mailbox.ts:397` 同處呼叫 `checkDecisions`，以 `!project.solo` 為條件。
+- [x] 5.3 驗收對應：5、9（不擋 `done` 的部分）。
 
 ### Task 6：`call -p`
 
