@@ -122,7 +122,7 @@ decided: YYYY-MM-DD       # accepted／rejected 時必填；tidy 以此判斷 30
 | 4 | `evidence` 可能被編造 | 30.7 只擋不存在的 `path:`／`commit:`；擋不住錯誤因果，靠 lead 審核與「事實與推測分開寫」 |
 | 5 | 各 runtime 強制程度不同 | D-03；30.1.1 已列各 runtime 的實際程度；`AgentEnforcement`（`policy.ts:9-20`）目前沒有 records／proposals 欄位，plan 決定是否加入以便 `doctor` 顯示 |
 | 6 | **多 run 並存時 D-03 對提案區與 records 不還原**（`unattributed` 採納） | 已知限制，與現有 records 的行為一致；30.3 已把保證強度改為「單一存活 run 機制保證，並行盡力而為」；`unattributed` 事件只進 run log，不顯示給 lead（無資料通路，延後）；文件要寫明 |
-| 13 | `call` 與一般 run 並行時，一般 run 的 guard 不計入 call（`kind: "call"` 的鎖），call 對 records 的越界寫入會被當成 lead 授權而採納；call 本身的 guard 仍監看 | 已知降級，換取 call 不削弱 run 的 guard 與兩個並行 `call -p` 前綴規則仍生效 |
+| 13 | `call` 與一般 run 並行時，一般 run 的 guard 不計入 call（`call: true` 的鎖），call 對 records 的越界寫入會被當成 lead 授權而採納；call 本身的 guard 仍監看 | 已知降級，換取 call 不削弱 run 的 guard 與兩個並行 `call -p` 前綴規則仍生效 |
 | 12 | 一般 run 中非 lead 成員寫提案區，guard 不偵測（guard 目前不知道提案區） | 本版只靠 policy 唯讀；偵測延後 |
 | 11 | guard 只在視窗頭尾各看一次，期間啟動又結束的 run 看不到，會誤還原 lead 的合法寫入 | D-03 已把「id 大於本 guard 基準的 run」也算 other，並要求 `otherLiveRuns` 每次 `check` 重取；驗收 4 加此案例（對 `run --agent` 同樣適用） |
 | 7 | 同一個 agent 同時只能一個 call（`lockAgent`） | 平行提案的測試用「兩個不同 agent」或「一個 call 加一個 `run --agent`」，並補同 agent 被擋的反向案例 |

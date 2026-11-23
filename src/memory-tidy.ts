@@ -316,6 +316,93 @@ const hasReport = (archiveDir: string): boolean => {
   return fs.existsSync(f) && fs.readFileSync(f, "utf8").trim() !== "";
 };
 
+/** What `wakeWithRollback` needs to run one maintenance wake of an agent and undo it when it goes wrong. */
+export interface RollbackWake {
+  project: ResolvedProject;
+  /** The agent to wake. */
+  agentName: string;
+  /** Directories copied aside first and put back on any failure. */
+  dirs: string[];
+  /** The only directories the runtime may write (what it could read before stays readable). */
+  allowDirs: string[];
+  /** Directories that must come out exactly as they went in. */
+  others: string[];
+  /** Appended to "the agent changed <dir>, which is ..." */
+  othersLabel: string;
+  workDir: string;
+  prompts: { systemPrompt: string; userPrompt: string };
+  invoker?: Invoker;
+  signal?: AbortSignal;
+  /** Problems with what the wake left behind; a throw counts as a failed wake. */
+  check: () => string[];
+  /** Runs once the wake is accepted, before the snapshot is dropped. */
+  onSuccess?: () => void;
+}
+
+/**
+ * One maintenance wake (a memory tidy, a proposals review) with all-or-nothing effect: the directories are copied aside, the
+ * agent may write only `allowDirs`, the shared COMMON.md and every directory in `others` must come out unchanged, and anything
+ * `check` reports puts everything back as it was. Never goes through the guard (spec 30: it has none on this path).
+ */
+export async function wakeWithRollback(j: RollbackWake): Promise<{ ok: true } | { ok: false; problems: string[] }> {
+  const { project } = j;
+  const agent = project.agents[j.agentName]!;
+  const watched = [commonFile(project)].filter((f) => fs.existsSync(f));
+  const watchedBefore = watched.map((f) => fs.readFileSync(f, "utf8"));
+  const othersBefore = j.others.map((d) => fingerprint(d));
+  const snapshot = path.join(j.workDir, "snapshot");
+
+  ensureProjectDirs(project);
+  snapshotDirs(j.dirs, snapshot);
+  const fail = (problems: string[]): { ok: false; problems: string[] } => {
+    restoreDirs(j.dirs, snapshot);
+    for (const [i, f] of watched.entries()) atomicWrite(f, watchedBefore[i]!);
+    fs.rmSync(snapshot, { recursive: true, force: true });
+    return { ok: false, problems };
+  };
+
+  // The runtime may write only the directories being worked on (and read what it could read before): not the repo, outbox or shared files.
+  const normal = writePolicy(project, agent);
+  const policy: WritePolicy = {
+    allowDirs: j.allowDirs,
+    allowFiles: [],
+    readDirs: [...new Set([repoDirFor(project, j.agentName), ...normal.readDirs, ...normal.allowDirs.filter((d) => !j.allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
+    deny: normal.deny,
+  };
+
+  const invoke = j.invoker ?? realInvoker;
+  const result = await invoke({
+    project,
+    agent,
+    workDir: j.workDir,
+    systemPrompt: j.prompts.systemPrompt,
+    userPrompt: j.prompts.userPrompt,
+    timeoutSec: project.dispatcher.wake_timeout_sec,
+    signal: j.signal,
+    logDir: path.join(j.workDir, "log"),
+    policy,
+  }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+  if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
+
+  // Anything that throws from here on (a report path that is a directory, a state file that cannot be written) is a failed wake that is rolled back.
+  let problems: string[] = [];
+  try {
+    j.others.forEach((d, i) => {
+      if (JSON.stringify(fingerprint(d)) !== JSON.stringify(othersBefore[i])) problems.push(`the agent changed ${d}, which is ${j.othersLabel}`);
+    });
+    watched.forEach((f, i) => {
+      if (!fs.existsSync(f) || fs.readFileSync(f, "utf8") !== watchedBefore[i]) problems.push(`the agent changed ${f}, which a tidy may not touch`);
+    });
+    problems.push(...j.check());
+    if (!problems.length) j.onSuccess?.();
+  } catch (e) {
+    problems = [...problems, `the tidy could not be checked or finished: ${(e as Error).message}`];
+  }
+  if (problems.length) return fail(problems);
+  fs.rmSync(snapshot, { recursive: true, force: true });
+  return { ok: true };
+}
+
 /** Tidy one agent's memory directory (`dir`, if it has files) and, for the lead, the project records, in one wake-up. */
 async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: string | undefined }, stamp: string, withRecords: boolean): Promise<TidyResult> {
   const { project } = o;
@@ -333,14 +420,10 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
   const others = dirs.filter((d) => d !== t.dir && d !== recDir);
   const before = t.dir && memPart ? listMemoryFiles(t.dir).map((f) => f.rel) : [];
   const recBefore = recPart ? listMemoryFiles(recDir).map((f) => f.rel) : [];
-  const watched = [commonFile(project)].filter((f) => fs.existsSync(f));
-  const watchedBefore = watched.map((f) => fs.readFileSync(f, "utf8"));
-  const othersBefore = others.map((d) => fingerprint(d));
   const archivesBefore = { mem: t.dir && memPart ? earlierArchives(t.dir, stamp) : {}, rec: recPart ? earlierArchives(recDir, stamp) : {} };
   const archiveDir = t.dir ? path.join(t.dir, ARCHIVE_DIR, stamp) : undefined;
   const recArchive = path.join(recDir, ARCHIVE_DIR, stamp);
   const workDir = tidyWorkDir(project, stamp, t.agent);
-  const snapshot = path.join(workDir, "snapshot");
   const state = t.dir ? readTidyState(t.dir) : undefined;
   const changes = memPart && t.layer === "project" ? projectChanges(project.dir, state?.head) : undefined;
   const missing = memPart && t.dir ? findMissingPaths(t.dir, t.layer === "project" ? project.dir : undefined) : [];
@@ -355,66 +438,38 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
     ...(recPart ? { records: recordsContext(project, recArchive, recLive) } : {}),
   });
 
-  ensureProjectDirs(project);
-  snapshotDirs(dirs, snapshot);
-  const fail = (problems: string[]): TidyResult => {
-    restoreDirs(dirs, snapshot);
-    for (const [i, f] of watched.entries()) atomicWrite(f, watchedBefore[i]!);
-    fs.rmSync(snapshot, { recursive: true, force: true });
-    return { ...base, status: "failed", ...(recPart ? { recordsDir: recDir } : {}), problems };
-  };
-
-  // The runtime may write only the directories being tidied (and read what it could read before): not the repo, outbox or shared files.
-  const normal = writePolicy(project, agent);
   const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : [])];
-  const policy: WritePolicy = {
-    allowDirs,
-    allowFiles: [],
-    readDirs: [...new Set([repoDirFor(project, t.agent), ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
-    deny: normal.deny,
-  };
-
   say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}) …`);
-  const invoke = o.invoker ?? realInvoker;
-  const result = await invoke({
+  const woke = await wakeWithRollback({
     project,
-    agent,
+    agentName: t.agent,
+    dirs,
+    allowDirs,
+    others,
+    othersLabel: `not the ${t.layer} memory being tidied`,
     workDir,
-    systemPrompt: prompts.systemPrompt,
-    userPrompt: prompts.userPrompt,
-    timeoutSec: project.dispatcher.wake_timeout_sec,
+    prompts,
+    invoker: o.invoker,
     signal: o.signal,
-    logDir: path.join(workDir, "log"),
-    policy,
-  }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
-  if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
-
-  // Anything that throws from here on (a report path that is a directory, a state file that cannot be written) is a failed tidy that is rolled back.
-  let problems: string[] = [];
-  try {
-    others.forEach((d, i) => {
-      if (JSON.stringify(fingerprint(d)) !== JSON.stringify(othersBefore[i])) problems.push(`the agent changed ${d}, which is not the ${t.layer} memory being tidied`);
-    });
-    watched.forEach((f, i) => {
-      if (!fs.existsSync(f) || fs.readFileSync(f, "utf8") !== watchedBefore[i]) problems.push(`the agent changed ${f}, which a tidy may not touch`);
-    });
-    if (memPart && t.dir && archiveDir) {
-      if (JSON.stringify(earlierArchives(t.dir, stamp)) !== JSON.stringify(archivesBefore.mem)) problems.push(`the agent changed an earlier archive under ${path.join(t.dir, ARCHIVE_DIR)}`);
-      problems.push(...verifyConservation(before, t.dir, stamp));
-      if (!hasReport(archiveDir)) problems.push(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
-    }
-    if (recPart) {
-      if (JSON.stringify(earlierArchives(recDir, stamp)) !== JSON.stringify(archivesBefore.rec)) problems.push(`project records: the agent changed an earlier archive under ${path.join(recDir, ARCHIVE_DIR)}`);
-      problems.push(...verifyConservation(recBefore, recDir, stamp).map((p) => `project records: ${p}`));
-      if (!hasReport(recArchive)) problems.push(`project records: ${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
-    }
-    if (!problems.length && memPart && t.dir) writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
-  } catch (e) {
-    problems = [...problems, `the tidy could not be checked or finished: ${(e as Error).message}`];
-  }
-  if (problems.length) return fail(problems);
-
-  fs.rmSync(snapshot, { recursive: true, force: true });
+    check: () => {
+      const problems: string[] = [];
+      if (memPart && t.dir && archiveDir) {
+        if (JSON.stringify(earlierArchives(t.dir, stamp)) !== JSON.stringify(archivesBefore.mem)) problems.push(`the agent changed an earlier archive under ${path.join(t.dir, ARCHIVE_DIR)}`);
+        problems.push(...verifyConservation(before, t.dir, stamp));
+        if (!hasReport(archiveDir)) problems.push(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+      }
+      if (recPart) {
+        if (JSON.stringify(earlierArchives(recDir, stamp)) !== JSON.stringify(archivesBefore.rec)) problems.push(`project records: the agent changed an earlier archive under ${path.join(recDir, ARCHIVE_DIR)}`);
+        problems.push(...verifyConservation(recBefore, recDir, stamp).map((p) => `project records: ${p}`));
+        if (!hasReport(recArchive)) problems.push(`project records: ${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
+      }
+      return problems;
+    },
+    onSuccess: () => {
+      if (memPart && t.dir) writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
+    },
+  });
+  if (!woke.ok) return { ...base, status: "failed", ...(recPart ? { recordsDir: recDir } : {}), problems: woke.problems };
   return { ...base, status: "tidied", archive: stamp, ...(recPart ? { recordsDir: recDir } : {}), problems: [] };
 }
 

@@ -115,14 +115,14 @@
 **Files:** `src/call.ts`、`src/cli.ts`、`src/paths.ts`、`src/config.ts`、`src/prompt.ts`（`buildCallUserPrompt` 加選用 project 參數）、新 `test/call-proposals.test.ts`
 
 - [x] 6.1 先寫測試：無 `-p` 不可寫、prompt 無提案區、不取專案鎖；有 `-p` 可寫、prompt 含提案規則與既有 active records **標題清單**（不含內文）、取非 exclusive 專案鎖、guard 監看真實專案的 `recordsRoot`／`proposalsRoot` 且傳入 `otherLiveRuns`；**`call -p` 進行中另一個 run 的 lead 新增 record 或標 `accepted`，不被還原**；專案不存在 exit 非 0；`-p` 與 `--dir` 不同時的證據根目錄與 `repo:` 規則；`call -p` 進行中 `proposals review` 被 exclusive lock 拒絕；同 agent 第二個 call 被 `lockAgent` 擋、兩個不同 agent 各寫一條都保留。
-- [x] 6.2 實作：新 helper `resolveProjectRef`（放 `src/call.ts`，用 `loadProjectRaw` 只讀 `dir`），不重用 `loadProject`；設 `proposalsRef`；取非 exclusive 專案鎖，**鎖檔寫 `call: true`**（`project-lock.ts` 的 `readLockFile` 只驗 `token`／`pid`／`run_id`，多欄位可行；`listRunLocks` 的呼叫端排除 `kind: "call"`）；`call -p` 啟動時 `mkdir -p proposals/`（D-18）；`callAgent` 以 call id 算出 `shortId` 放進 `proposalsRef`，prompt 與 guard 共用；guard 傳 `otherLiveRuns`（每次重取，含 id 大於 call id 的 run）與 `violationsDir`；**`writeScopeRules`（`prompt.ts:128-137`）有 `proposalsRef` 時改用真實 `recordsRoot` 與 COMMON.md 路徑**。
+- [x] 6.2 實作：新 helper `resolveProjectRef`（放 `src/call.ts`，用 `loadProjectRaw` 只讀 `dir`），不重用 `loadProject`；設 `proposalsRef`；取非 exclusive 專案鎖，**鎖檔寫 `call: true`**（`project-lock.ts` 的 `readLockFile` 只驗 `token`／`pid`／`run_id`，多欄位可行；`listRunLocks` 的呼叫端排除 `call: true`）；`call -p` 啟動時 `mkdir -p proposals/`（D-18）；`callAgent` 以 call id 算出 `shortId` 放進 `proposalsRef`，prompt 與 guard 共用；guard 傳 `otherLiveRuns`（每次重取，含 id 大於 call id 的 run）與 `violationsDir`；**`writeScopeRules`（`prompt.ts:128-137`）有 `proposalsRef` 時改用真實 `recordsRoot` 與 COMMON.md 路徑**。
 - [x] 6.3 驗收對應：4、7、10（`call -p` 部分）、18（`call -p` 部分）。
 
 ### Task 7：`proposals list` 與 `proposals review`
 
 **Files:** `src/cli.ts`、`src/prompt.ts`、`src/memory-tidy.ts`（重用的函式）、既有 CLI 測試檔
 
-- [ ] 7.0 **獨立的純重構 commit（先於 7.1）**：把 review 要重用的 `tidyOne` 部分（鎖、snapshot、restore、`watched`）抽成共用函式，行為不變、既有 tidy 測試全過。Task 9 在此之後做，避免兩者同改 `tidyOne` 而衝突。
+- [x] 7.0 **獨立的純重構 commit（先於 7.1）**：把 review 要重用的 `tidyOne` 部分（鎖、snapshot、restore、`watched`）抽成共用函式，行為不變、既有 tidy 測試全過。Task 9 在此之後做，避免兩者同改 `tidyOne` 而衝突。
 - [ ] 7.1 先寫測試：`list` 前後專案檔案位元組不變；`review` 在同專案有活著的 run 或 `call -p` 時被拒；policy 覆寫的可寫範圍只有 `recordsDir` 與 `proposalsDir`；喚醒期間不經 guard；post-check（`checkDecisions`＋與 `done` 共用的 12 KB 預算檢查函式）未過或報告缺少時整批回滾（收下提案使 records 超過預算要被擋）；`review` 與一般 run 對同一批不合格提案結果相同（fake invoker）；收下流程：正式 record 含 `evidence`、`proposed_by`，提案檔 `accepted` 且有 `accepted_as`。
 - [ ] 7.2 實作，依 Task 0.6 重用 7.0 抽出的共用函式；review 啟動時 `mkdir -p proposals/`；review 的回滾要監看 `COMMON.md`。
 - [ ] 7.3 驗收對應：8、13、14、15、18（review 部分）。
