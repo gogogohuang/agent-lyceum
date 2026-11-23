@@ -98,9 +98,9 @@
 
 **Files:** `src/prompt.ts`、新 `test/prompt-proposals.test.ts`
 
-- [ ] 4.1 先寫測試：`run --agent` 的 solo prompt 含 30.12 的提案規則與判準，且 records 區塊與現況位元組相同；**solo agent 的 prompt 不含「待審提示」**；lead prompt 顯示待審筆數、路徑、剩餘預算、最多 10 條，以筆數 > 0 為條件且帶 `!project.solo`；沒有任何提案或目錄為空時 lead 與一般成員的 prompt 位元組與現在相同。**`call` 與 `call -p` 的 prompt 測試移到 Task 6**（`-p` 解析在那裡）。
-- [ ] 4.2 實作；逐字文字已在 spec 30.12，實作時以它為準：`{{prefix}}` 由 dispatcher 填字面短 id（`run --agent` 由 run-session 算），handoff 子句只在 `run --agent` 輸出。**提案規則段只在有 `proposalsRef` 或 `run --agent` 時輸出，使 `call` 無 `-p` 的 prompt 在 Task 4 到 6 之間不變**；`buildCallUserPrompt` 的簽名改動留到 Task 6。lead 待審提示條件寫成 `agent.name === project.lead && !project.solo`。
-- [ ] 4.3 驗收對應：5（prompt 部分）、6、9（prompt 半邊：標「無可機械驗證的證據」）、10（`run --agent` 部分）、16。
+- [x] 4.1 先寫測試：`run --agent` 的 solo prompt 含 30.12 的提案規則與判準，且 records 區塊與現況位元組相同；**solo agent 的 prompt 不含「待審提示」**；lead prompt 顯示待審筆數、路徑、剩餘預算、最多 10 條，以筆數 > 0 為條件且帶 `!project.solo`；沒有任何提案或目錄為空時 lead 與一般成員的 prompt 位元組與現在相同。**`call` 與 `call -p` 的 prompt 測試移到 Task 6**（`-p` 解析在那裡）。
+- [x] 4.2 實作；逐字文字已在 spec 30.12，實作時以它為準：`{{prefix}}` 由 dispatcher 填字面短 id（`run --agent` 由 run-session 算），handoff 子句只在 `run --agent` 輸出。**提案規則段只在有 `proposalsRef` 或 `run --agent` 時輸出，使 `call` 無 `-p` 的 prompt 在 Task 4 到 6 之間不變**；`buildCallUserPrompt` 的簽名改動留到 Task 6。lead 待審提示條件寫成 `agent.name === project.lead && !project.solo`。
+- [x] 4.3 驗收對應：5（prompt 部分）、6、9（prompt 半邊：標「無可機械驗證的證據」）、10（`run --agent` 部分）、16。
 
 ### Task 5：`done` 時的決議完整性檢查
 

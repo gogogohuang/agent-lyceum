@@ -6,8 +6,9 @@ import { senderLabel, slotName } from "./instances.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
-import { buildRecordsView, RECORDS_BUDGET } from "./records.js";
-import { commonFile, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { checkEvidence, oldestPending, pendingProposals, PENDING_SHOWN, shortIdOf, type Proposal } from "./proposals.js";
+import { activeRecordsBytes, buildRecordsView, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
+import { commonFile, mayPropose, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, proposalsDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -129,11 +130,15 @@ function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string
   const ownDir = projectAgentDir(project, agent.name);
   const mayWriteOwn = project.solo !== "call" && ownAgentDirAllowed(project, agent);
   const ownPersona = mayWriteOwn && (agent.agentMd === path.join(ownDir, "AGENT.md") || agent.agentMd.startsWith(ownDir + path.sep));
-  const records = `decisions in \`${recordsKindDir(project, "decisions")}/\` and lessons in \`${recordsKindDir(project, "lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`;
+  // A `call -p` has a temporary project: the records and COMMON.md it reads are the real project's (spec 30, D-04).
+  const recRoot = project.proposalsRef?.recordsRoot;
+  const kindDir = (k: "decisions" | "lessons") => (recRoot ? path.join(recRoot, k) : recordsKindDir(project, k));
+  const commonPath = recRoot ? path.join(path.dirname(recRoot), "COMMON.md") : commonFile(project);
+  const records = `decisions in \`${kindDir("decisions")}/\` and lessons in \`${kindDir("lessons")}/\`. The file name without \`.md\` is the entry id (lowercase letters, digits, \`-\`). Each file starts with YAML frontmatter between \`---\` lines: \`status: active|superseded\`, \`date: YYYY-MM-DD\`, \`title: <one line>\`, optionally \`run: <run id>\` and \`supersedes: [<ids of entries of the same kind>]\`; the body is the decision or lesson and its reason. Prompts show only effective-active entries (\`status: active\` and not named in another entry's \`supersedes\`), newest first, up to ${CONTEXT_LIMIT / 1024} KB per kind, and list what does not fit as one line each. When an entry becomes outdated, mark it \`status: superseded\` or name it in a new entry's \`supersedes\`.`;
   return [
     isLead
-      ? `- You keep the shared team context \`${commonFile(project)}\` (you maintain it; keep it short) and two kinds of durable records for every future run of this project, one Markdown file per entry: ${records} Add or update entries before you send \`done\`.`
-      : `- The shared team context is in \`${commonFile(project)}\` (read-only). Project records are ${records} Both are read-only.`,
+      ? `- You keep the shared team context \`${commonPath}\` (you maintain it; keep it short) and two kinds of durable records for every future run of this project, one Markdown file per entry: ${records} Add or update entries before you send \`done\`.`
+      : `- The shared team context is in \`${commonPath}\` (read-only). Project records are ${records} Both are read-only.`,
     ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
     ...(agent.canEditAgentMd
@@ -187,6 +192,7 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
       "Use memory only for durable lessons that stay true across tasks; never record task-specific details there.",
     );
   }
+  lines.push(...proposalRules(project, isCall));
   lines.push(
     "",
     "## Rules",
@@ -195,6 +201,46 @@ export function buildSoloSystemPrompt(project: ResolvedProject, agent: ResolvedA
     NO_DAEMONS_RULE,
   );
   return lines.join("\n");
+}
+
+/**
+ * What an agent working alone is told about proposals (spec 30, D-17, 30.12). The file-name prefix is given as a literal:
+ * the guard removes a proposal whose name does not start with it, so the agent must not derive it from a run id itself.
+ * Nothing is said when the agent may not propose (a plain `call`).
+ */
+function proposalRules(project: ResolvedProject, isCall: boolean): string[] {
+  if (!mayPropose(project)) return [];
+  const prefix = project.proposalsRef?.shortId ?? (project.run ? shortIdOf(project.run.id) : undefined);
+  if (!prefix) return [];
+  const dir = proposalsDir(project);
+  return [
+    "",
+    "## Proposals",
+    `You cannot write the project's decisions or lessons. When you learn something that stays true across tasks and would change how the next run should work, write it as a proposal: one Markdown file \`${prefix}-<slug>.md\` in \`${dir}/lessons/\` or \`${dir}/decisions/\`. The prefix \`${prefix}\` is fixed for this run (never derive another one); the slug uses only lowercase letters, digits and \`-\`.`,
+    "Start the file with `status: proposed`, `date`, `title`, `proposed_by`, `run` and at least one `evidence` entry (a file path with line and commit, a commit, a mail, or a command with its key output). Put `repo` when the evidence is in a different repository than the project. Quote any YAML value that contains `: `. Write the facts you observed first, then your guess about the cause, and mark it as a guess.",
+    "Never edit an existing proposal of another run, and never set `status` to anything but `proposed`. The lead decides.",
+    `Where things go: a proposal is for lessons and decisions that outlive this task; ${isCall ? "" : "the handoff notes are for the state, next steps and pitfalls of this task only; "}your memory is for habits that matter to you alone.`,
+  ];
+}
+
+/** The lead's note about proposals waiting for a decision (spec 30, D-06, D-11, D-15); empty when there are none. */
+function pendingProposalLines(project: ResolvedProject): string[] {
+  const pending = pendingProposals(project).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  if (pending.length === 0) return [];
+  const strength = (p: Proposal): string => {
+    if (p.problems.length) return `format problem: ${p.problems[0]}`;
+    const c = checkEvidence(p, project.dir);
+    return c.strength === "verified" ? "evidence verified" : c.strength === "weak" ? "weak evidence (no commit)" : "no machine-verifiable evidence";
+  };
+  const shown = pending.slice(0, PENDING_SHOWN);
+  const used = RECORD_KINDS.map((k) => `${k} ${activeRecordsBytes(project, k)} of ${RECORDS_BUDGET} bytes`).join(", ");
+  return [
+    "",
+    "## Proposals waiting for you",
+    `${pending.length} proposals await a decision (oldest: ${oldestPending(pending) ?? "unknown"}). Showing ${shown.length}:`,
+    ...shown.map((p) => `- \`${p.file}\` — ${p.title} — ${strength(p)}`),
+    `For each one, check the evidence yourself, then either create the record (a new file, not a copy) and set the proposal to \`status: accepted\` with \`accepted_as: <kind>/<id>\`, or set \`status: rejected\` with \`reject_reason\`. In both cases also write \`decided: <today's date>\`. Put a short summary of the evidence in the record's body. Active entries use ${used}; merge or supersede before you exceed it.`,
+  ];
 }
 
 /** The prompt of a `call`: the memory indexes the agent is used to, then the task. */
@@ -403,6 +449,9 @@ export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, 
     const view = buildRecordsView(project, kind, CONTEXT_LIMIT);
     if (view) parts.push("", `<${tag}>`, view, `</${tag}>`); // nothing recorded yet: no tag, no tokens
   }
+
+  // Only the real lead decides proposals: a solo agent is the lead of a team of one and must not be told to (spec 30, D-02).
+  if (agent.name === project.lead && !project.solo) parts.push(...pendingProposalLines(project));
 
   parts.push(...userTaskBlock(project, agent, unread, userTask?.text, userTask?.file));
 
