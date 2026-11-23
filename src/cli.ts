@@ -649,7 +649,9 @@ program
           for (const s of r.skipped) console.log(`  skipped   ${s.rel}: ${s.reason}`);
           for (const f of r.records?.restored ?? []) console.log(`  restored  records/${f}`);
           for (const k of r.records?.skipped ?? []) console.log(`  skipped   records/${k.rel}: ${k.reason}`);
-          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
+          for (const f of r.proposals?.restored ?? []) console.log(`  restored  proposals/${f}`);
+          for (const k of r.proposals?.skipped ?? []) console.log(`  skipped   proposals/${k.rel}: ${k.reason}`);
+          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length && !r.proposals?.restored.length && !r.proposals?.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
         } finally {
           undoLease.release();
         }
@@ -676,10 +678,10 @@ program
       }
       if (results.length === 0) console.log(`No agent has ${layer} memory configured. ${layer === "project" ? "The template gives agents global memory only: set `memory.project` for an agent in project.yaml (or tidy global memory with --layer global)." : "Set `memory.global` for an agent."}`);
       for (const r of results) {
-        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")}${r.recordsDir && r.recordsDir !== r.dir ? `, records: ${path.join(r.recordsDir, ".archive", r.archive ?? "")}` : ""} — undo with: agent-lyceum tidy --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
+        if (r.status === "tidied") console.log(`  ${r.agent} (${r.layer}): tidied. Archive: ${path.join(r.dir, ".archive", r.archive ?? "")}${r.recordsDir && r.recordsDir !== r.dir ? `, records: ${path.join(r.recordsDir, ".archive", r.archive ?? "")}` : ""}${r.proposalsDir ? `, proposals: ${path.join(r.proposalsDir, ".archive", r.archive ?? "")}` : ""} — undo with: agent-lyceum tidy --undo ${r.archive} -p ${pr.name} --agent ${r.agent}${r.layer === "global" ? " --layer global" : ""}`);
         else if (r.status === "skipped") console.log(`  ${r.agent} (${r.layer}): skipped — ${r.problems.join("; ")}`);
         else if (r.status === "failed") {
-          console.error(`  ${r.agent} (${r.layer}): FAILED, ${r.recordsDir === r.dir ? "project records" : r.recordsDir ? "memory and project records" : "memory"} restored to how it was`);
+          console.error(`  ${r.agent} (${r.layer}): FAILED, ${r.recordsDir === r.dir ? "project records" : r.recordsDir ? "memory and project records" : r.proposalsDir ? "memory and proposals" : "memory"} restored to how it was`);
           for (const p of r.problems) console.error(`    - ${p}`);
         }
       }

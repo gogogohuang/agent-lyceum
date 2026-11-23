@@ -554,6 +554,20 @@ export interface TidyRecordsContext {
   otherFiles: MemoryFile[];
 }
 
+/** The proposals of lessons and decisions (spec 30, D-12): the lead's tidy also archives the ones decided long enough ago. */
+export interface TidyProposalsContext {
+  /** The proposals folder (`<project>/proposals`). */
+  dir: string;
+  /** Absolute path of this tidy's archive folder for the proposals (the agent creates it). */
+  archiveDir: string;
+  /** Today, `YYYY-MM-DD`; the rule below counts from it. */
+  today: string;
+  /** Days a proposal stays after it was decided. */
+  keepDays: number;
+  /** One line per proposal: rel path, status, date, decided date, size and title. */
+  entries: { rel: string; status: string; date: string; decided: string; bytes: number; title: string; eligible: boolean }[];
+}
+
 export interface TidyContext {
   layer: Layer;
   /** The memory directory being tidied; absent when only the project records are tidied (the lead has no memory directory). */
@@ -569,12 +583,14 @@ export interface TidyContext {
   missing: MissingPath[];
   /** Set only for the lead's project-layer tidy: the project records are tidied in the same wake-up. */
   records?: TidyRecordsContext;
+  /** Set for the lead's project-layer tidy when the project has proposals. */
+  proposals?: TidyProposalsContext;
 }
 
 /** The prompts of a memory-tidy wake-up: a maintenance job, not a task, so it has none of the mail protocol. */
 export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { systemPrompt: string; userPrompt: string } {
-  const { dir, archiveDir, records } = ctx;
-  const touch = [dir ? `your ${ctx.layer} memory (\`${dir}\`)` : "", records ? `the project records (\`${records.dir}\`)` : ""].filter(Boolean).join(" and ");
+  const { dir, archiveDir, records, proposals } = ctx;
+  const touch = [dir ? `your ${ctx.layer} memory (\`${dir}\`)` : "", records ? `the project records (\`${records.dir}\`)` : "", proposals ? `the proposals (\`${proposals.dir}\`)` : ""].filter(Boolean).join(" and ");
   const systemPrompt = [
     readPersona(agent),
     "",
@@ -582,10 +598,10 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
     "",
     "# Memory tidy (injected by agent-lyceum)",
     "",
-    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy ${records ? touch : `your own ${ctx.layer} memory`} so it stays small, accurate and useful.`,
+    `You are **${agent.name}**. This wake-up is a maintenance job, not a task: there is no mail to send or read, and nothing to do in the repository. Your only job is to tidy ${records || proposals ? touch : `your own ${ctx.layer} memory`} so it stays small, accurate and useful.`,
     "",
     "## What you may touch",
-    `Only files inside ${[dir ? `\`${dir}\`` : "", records ? `\`${records.dir}\`` : ""].filter(Boolean).join(" and ")}. Everything else is read-only. Do not touch your other memory directories, \`${dir ? `${dir}/` : ""}.tidy-state.json\` or the archive folders of earlier tidies.`,
+    `Only files inside ${[dir ? `\`${dir}\`` : "", records ? `\`${records.dir}\`` : "", proposals ? `\`${proposals.dir}\`` : ""].filter(Boolean).join(" and ")}. Everything else is read-only. Do not touch your other memory directories, \`${dir ? `${dir}/` : ""}.tidy-state.json\` or the archive folders of earlier tidies.`,
     ...(dir && archiveDir
       ? [
           "",
@@ -614,6 +630,17 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
           "- **When unsure, keep it.** Never delete a file.",
           `To archive a record, move it into \`${records.archiveDir}\`, keeping its relative path (\`${records.dir}/lessons/x.md\` goes to \`${records.archiveDir}/lessons/x.md\`).`,
           `Write \`${records.archiveDir}/tidy-report.md\` — even when you changed nothing — with the headings \`## Merged\`, \`## Archived\`, \`## Unsure\` (\`None\` when empty). The tidy of both folders is rolled back if the report is missing or any file went missing.`,
+        ]
+      : []),
+    ...(proposals
+      ? [
+          "",
+          "## What to do with the proposals",
+          `Agents that ran alone wrote proposals of lessons and decisions (\`${proposals.dir}/lessons/<id>.md\`, \`${proposals.dir}/decisions/<id>.md\`); the lead decided them with \`status: accepted\` or \`status: rejected\` and a \`decided\` date. Today is ${proposals.today}.`,
+          `- Archive only a proposal that is decided (\`accepted\` or \`rejected\`) and whose \`decided\` date is more than ${proposals.keepDays} days before today (the list below marks them). Never archive a proposal that is still \`proposed\`.`,
+          "- Do not edit any proposal, and do not merge or rewrite them: moving a file is the only change.",
+          `To archive one, move it into \`${proposals.archiveDir}\`, keeping its relative path (\`${proposals.dir}/lessons/x.md\` goes to \`${proposals.archiveDir}/lessons/x.md\`). Never delete a file.`,
+          `Write \`${proposals.archiveDir}/tidy-report.md\` — even when you archived nothing — with the headings \`## Archived\` and \`## Unsure\` (\`None\` when empty). The tidy of every folder is rolled back if the report is missing, a proposal was changed, or one that is not eligible was moved.`,
         ]
       : []),
   ].join("\n");
@@ -658,6 +685,17 @@ export function buildTidyPrompts(agent: ResolvedAgent, ctx: TidyContext): { syst
         ? records.entries.map((e) => `${e.rel}  ${e.status}  ${e.date || "no date"}  ${e.bytes} B  ${e.title}${e.invalid ? `  [INVALID: ${e.invalid}]` : ""}`)
         : ["(none)"]),
       ...(records.otherFiles.length ? ["", "Other files (leave them alone):", ...records.otherFiles.map((f) => `${f.rel}  ${f.bytes} B`)] : []),
+    );
+  }
+  if (proposals) {
+    parts.push(
+      ...(parts.length ? [""] : []),
+      "# Proposals",
+      `Proposals archive directory: ${proposals.archiveDir}`,
+      `Proposals directory: ${proposals.dir}`,
+      "",
+      "Entries (path  status  date  decided  size  title; ELIGIBLE = may be archived now):",
+      ...(proposals.entries.length ? proposals.entries.map((e) => `${e.rel}  ${e.status}  ${e.date || "no date"}  ${e.decided || "-"}  ${e.bytes} B  ${e.title}${e.eligible ? "  [ELIGIBLE]" : ""}`) : ["(none)"]),
     );
   }
   return { systemPrompt, userPrompt: parts.join("\n") };

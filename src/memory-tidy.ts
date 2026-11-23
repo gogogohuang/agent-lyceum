@@ -6,8 +6,9 @@ import { realInvoker, type Invoker } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
-import { commonFile, memoryDirs, recordsDir, repoDirFor, writePolicy, type WritePolicy } from "./policy.js";
-import { buildTidyPrompts, MEMORY_INDEX_LIMIT, type TidyRecordsContext } from "./prompt.js";
+import { commonFile, memoryDirs, proposalsDir, recordsDir, repoDirFor, writePolicy, type WritePolicy } from "./policy.js";
+import { parseProposal, PROPOSAL_KINDS, type Proposal } from "./proposals.js";
+import { buildTidyPrompts, MEMORY_INDEX_LIMIT, type TidyProposalsContext, type TidyRecordsContext } from "./prompt.js";
 import { activeRecordsBytes, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
 import { git, isGitRepo } from "./worktree.js";
 
@@ -259,6 +260,8 @@ export interface TidyResult {
   archive?: string;
   /** Set when the project records were tidied too: their folder (its archive is `<recordsDir>/.archive/<archive>`). */
   recordsDir?: string;
+  /** Set when the proposals were tidied too: their folder (its archive is `<proposalsDir>/.archive/<archive>`). */
+  proposalsDir?: string;
   problems: string[];
 }
 
@@ -279,6 +282,31 @@ function describeTarget(t: MemoryTarget, project: ResolvedProject, say: (l: stri
 
 /** The live files of the project records (the archive is not listed). */
 const liveRecordFiles = (project: ResolvedProject): MemoryFile[] => (isPlainDir(recordsDir(project)) ? listMemoryFiles(recordsDir(project)).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`)) : []);
+
+/** A decided proposal stays this many days before a tidy may archive it (spec 30, D-12). */
+export const PROPOSAL_KEEP_DAYS = 30;
+
+/** The live proposals (not `.archive/`, not the review reports in `.reviews/`). */
+const liveProposalFiles = (project: ResolvedProject): MemoryFile[] =>
+  isPlainDir(proposalsDir(project)) ? listMemoryFiles(proposalsDir(project)).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`) && !f.rel.startsWith(".reviews/")) : [];
+
+/** Decided (accepted or rejected) and decided more than `PROPOSAL_KEEP_DAYS` before `now`. The decision date counts, not the proposal date: an old proposal accepted today stays. */
+export function proposalArchivable(p: Pick<Proposal, "status" | "decided">, now: Date): boolean {
+  if ((p.status !== "accepted" && p.status !== "rejected") || !p.decided) return false;
+  const t = Date.parse(`${p.decided}T00:00:00Z`);
+  return Number.isFinite(t) && (now.getTime() - t) / 86_400_000 > PROPOSAL_KEEP_DAYS;
+}
+
+function proposalsContext(project: ResolvedProject, archiveDir: string, live: MemoryFile[], now: Date): TidyProposalsContext {
+  const entries: TidyProposalsContext["entries"] = [];
+  for (const f of live) {
+    const kind = PROPOSAL_KINDS.find((k) => f.rel.startsWith(`${k}/`));
+    if (!kind || !f.rel.endsWith(".md")) continue;
+    const p = parseProposal(kind, path.join(proposalsDir(project), f.rel));
+    entries.push({ rel: f.rel, status: p.status ?? "unreadable", date: p.date, decided: p.decided ?? "", bytes: f.bytes, title: p.title, eligible: proposalArchivable(p, now) });
+  }
+  return { dir: proposalsDir(project), archiveDir, today: now.toISOString().slice(0, 10), keepDays: PROPOSAL_KEEP_DAYS, entries };
+}
 
 function isPlainDir(p: string): boolean {
   try {
@@ -315,6 +343,34 @@ const hasReport = (archiveDir: string): boolean => {
   const f = path.join(archiveDir, TIDY_REPORT_FILE);
   return fs.existsSync(f) && fs.readFileSync(f, "utf8").trim() !== "";
 };
+
+/**
+ * What a tidy may do to the proposals (spec 30, D-12), checked after the wake: nothing disappears (`verifyConservation`), every
+ * file that moved went to this tidy's archive unchanged and is decided long enough ago, every file that stayed is byte for byte
+ * as it was (the lead may not edit a proposal while tidying), earlier archives are untouched, and the report was written.
+ */
+function checkProposalsTidy(pDir: string, before: string[], hashBefore: Record<string, string>, earlierNow: Record<string, string>, earlierBefore: Record<string, string>, stamp: string, now: Date): string[] {
+  const problems: string[] = [];
+  const label = (m: string) => `proposals: ${m}`;
+  if (JSON.stringify(earlierNow) !== JSON.stringify(earlierBefore)) problems.push(label(`the agent changed an earlier archive under ${path.join(pDir, ARCHIVE_DIR)}`));
+  problems.push(...verifyConservation(before, pDir, stamp).map(label));
+  if (!hasReport(path.join(pDir, ARCHIVE_DIR, stamp))) problems.push(label(`${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`));
+  const hashNow = fingerprint(pDir);
+  for (const rel of before) {
+    if (rel.startsWith(`${ARCHIVE_DIR}/`)) continue; // earlier archives: checked above
+    if (rel in hashNow) {
+      if (hashNow[rel] !== hashBefore[rel]) problems.push(label(`${rel} was changed; a tidy may only move proposals`));
+      continue;
+    }
+    const moved = `${ARCHIVE_DIR}/${stamp}/${rel}`;
+    if (!(moved in hashNow)) continue; // reported by verifyConservation
+    if (hashNow[moved] !== hashBefore[rel]) problems.push(label(`${rel} was changed while it was archived`));
+    const kind = PROPOSAL_KINDS.find((k) => rel.startsWith(`${k}/`));
+    if (!kind) problems.push(label(`${rel} is not a proposal and may not be archived`));
+    else if (!proposalArchivable(parseProposal(kind, path.join(pDir, moved)), now)) problems.push(label(`${rel} was archived, but it is not decided more than ${PROPOSAL_KEEP_DAYS} days ago`));
+  }
+  return problems;
+}
 
 /** What `wakeWithRollback` needs to run one maintenance wake of an agent and undo it when it goes wrong. */
 export interface RollbackWake {
@@ -407,22 +463,29 @@ export async function wakeWithRollback(j: RollbackWake): Promise<{ ok: true } | 
 async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: string | undefined }, stamp: string, withRecords: boolean): Promise<TidyResult> {
   const { project } = o;
   const say = o.say ?? ((s: string) => console.log(s));
-  const base = { agent: t.agent, layer: t.layer, dir: t.dir ?? recordsDir(project) };
+  const base = { agent: t.agent, layer: t.layer, dir: t.dir ?? (!withRecords || liveRecordFiles(project).length || !liveProposalFiles(project).length ? recordsDir(project) : proposalsDir(project)) };
   const agent = project.agents[t.agent]!;
   const live = t.dir ? listMemoryFiles(t.dir).filter((f) => !f.rel.startsWith(`${ARCHIVE_DIR}/`)) : [];
   const recLive = withRecords ? liveRecordFiles(project) : [];
+  const propLive = withRecords ? liveProposalFiles(project) : [];
   const memPart = live.length > 0;
   const recPart = recLive.length > 0;
-  if (!memPart && !recPart) return { ...base, status: "skipped", problems: ["no memory files: nothing to tidy"] };
+  const propPart = propLive.length > 0;
+  if (!memPart && !recPart && !propPart) return { ...base, status: "skipped", problems: ["no memory files: nothing to tidy"] };
 
   const recDir = recordsDir(project);
-  const dirs = [...memoryDirs(agent), ...(recPart ? [recDir] : [])];
-  const others = dirs.filter((d) => d !== t.dir && d !== recDir);
+  const pDir = proposalsDir(project);
+  const dirs = [...memoryDirs(agent), ...(recPart ? [recDir] : []), ...(propPart ? [pDir] : [])];
+  const others = dirs.filter((d) => d !== t.dir && d !== recDir && d !== pDir);
   const before = t.dir && memPart ? listMemoryFiles(t.dir).map((f) => f.rel) : [];
   const recBefore = recPart ? listMemoryFiles(recDir).map((f) => f.rel) : [];
-  const archivesBefore = { mem: t.dir && memPart ? earlierArchives(t.dir, stamp) : {}, rec: recPart ? earlierArchives(recDir, stamp) : {} };
+  const propBefore = propPart ? listMemoryFiles(pDir).map((f) => f.rel) : [];
+  const propHashBefore = propPart ? fingerprint(pDir) : {};
+  const today = o.now?.() ?? new Date();
+  const archivesBefore = { mem: t.dir && memPart ? earlierArchives(t.dir, stamp) : {}, rec: recPart ? earlierArchives(recDir, stamp) : {}, prop: propPart ? earlierArchives(pDir, stamp) : {} };
   const archiveDir = t.dir ? path.join(t.dir, ARCHIVE_DIR, stamp) : undefined;
   const recArchive = path.join(recDir, ARCHIVE_DIR, stamp);
+  const propArchive = path.join(pDir, ARCHIVE_DIR, stamp);
   const workDir = tidyWorkDir(project, stamp, t.agent);
   const state = t.dir ? readTidyState(t.dir) : undefined;
   const changes = memPart && t.layer === "project" ? projectChanges(project.dir, state?.head) : undefined;
@@ -436,10 +499,11 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
     changes,
     missing,
     ...(recPart ? { records: recordsContext(project, recArchive, recLive) } : {}),
+    ...(propPart ? { proposals: proposalsContext(project, propArchive, propLive, today) } : {}),
   });
 
-  const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : [])];
-  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}) …`);
+  const allowDirs = [...(memPart && t.dir ? [t.dir] : []), ...(recPart ? [recDir] : []), ...(propPart ? [pDir] : [])];
+  say(`tidying ${t.layer} memory of ${t.agent} (${live.length} file(s)${recPart ? `, ${recLive.length} project record file(s)` : ""}${propPart ? `, ${propLive.length} proposal file(s)` : ""}) …`);
   const woke = await wakeWithRollback({
     project,
     agentName: t.agent,
@@ -463,20 +527,22 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
         problems.push(...verifyConservation(recBefore, recDir, stamp).map((p) => `project records: ${p}`));
         if (!hasReport(recArchive)) problems.push(`project records: ${ARCHIVE_DIR}/${stamp}/${TIDY_REPORT_FILE} is missing or empty`);
       }
+      if (propPart) problems.push(...checkProposalsTidy(pDir, propBefore, propHashBefore, earlierArchives(pDir, stamp), archivesBefore.prop, stamp, today));
       return problems;
     },
     onSuccess: () => {
       if (memPart && t.dir) writeTidyState(t.dir, { ...(changes?.head ? { head: changes.head } : {}), at: (o.now?.() ?? new Date()).toISOString(), archive: stamp });
     },
   });
-  if (!woke.ok) return { ...base, status: "failed", ...(recPart ? { recordsDir: recDir } : {}), problems: woke.problems };
-  return { ...base, status: "tidied", archive: stamp, ...(recPart ? { recordsDir: recDir } : {}), problems: [] };
+  const parts = { ...(recPart ? { recordsDir: recDir } : {}), ...(propPart ? { proposalsDir: pDir } : {}) };
+  if (!woke.ok) return { ...base, status: "failed", ...parts, problems: woke.problems };
+  return { ...base, status: "tidied", archive: stamp, ...parts, problems: [] };
 }
 
 /** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum tidy`). */
 export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   const say = o.say ?? ((s: string) => console.log(s));
-  const withRecords = recordsInScope(o) && liveRecordFiles(o.project).length > 0;
+  const withRecords = recordsInScope(o) && (liveRecordFiles(o.project).length > 0 || liveProposalFiles(o.project).length > 0);
   const lead = o.project.lead;
   let targets: MemoryTarget[];
   try {
@@ -493,7 +559,11 @@ export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   for (const j of jobs) {
     if (o.dryRun) {
       if (j.dir) describeTarget(j as MemoryTarget, o.project, say);
-      if (withRecords && j.agent === lead) describeRecords(o.project, say);
+      if (withRecords && j.agent === lead) {
+        describeRecords(o.project, say);
+        const n = liveProposalFiles(o.project).length;
+        if (n) say(`proposals ${proposalsDir(o.project)}: ${n} file(s)`);
+      }
       results.push({ agent: j.agent, layer: j.layer, dir: j.dir ?? recordsDir(o.project), status: "dry-run", problems: [] });
       continue;
     }
@@ -509,6 +579,8 @@ export interface RestoreResult {
   skipped: { rel: string; reason: string }[];
   /** The same for the project records archive of that stamp, when the lead's undo found one. */
   records?: { restored: string[]; skipped: { rel: string; reason: string }[] };
+  /** The same for the proposals archive of that stamp. */
+  proposals?: { restored: string[]; skipped: { rel: string; reason: string }[] };
 }
 
 function titleOf(file: string, rel: string): string {
@@ -556,6 +628,9 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
   const recDir = recordsDir(o.project);
   const recArchive = path.join(recDir, ARCHIVE_DIR, o.stamp);
   const recHas = isLead && isPlainDir(recDir) && fs.existsSync(recArchive);
+  const pDir = proposalsDir(o.project);
+  const propArchive = path.join(pDir, ARCHIVE_DIR, o.stamp);
+  const propHas = isLead && isPlainDir(pDir) && fs.existsSync(propArchive);
   let dir: string | undefined;
   try {
     dir = targetsFor(o.project, { layer: o.layer, agent: o.agent })[0]!.dir;
@@ -564,7 +639,7 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
   }
   const archive = dir ? path.join(dir, ARCHIVE_DIR, o.stamp) : undefined;
   const memHas = !!archive && fs.existsSync(archive);
-  if (!memHas && !recHas) {
+  if (!memHas && !recHas && !propHas) {
     const recs = isLead ? `${dir ? "; project records archives: " : " Project records archives: "}${listArchives(recDir).join(", ") || "(none)"}` : "";
     throw new Error(`No archive ${o.stamp} for ${o.agent} (${o.layer}).${dir ? ` Archives: ${listArchives(dir).join(", ") || "(none)"}` : ""}${recs}.`);
   }
@@ -576,7 +651,7 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
     const add = mem.restored.filter((rel) => rel.endsWith(".md") && !index.includes(rel)).map((rel) => `- [${titleOf(path.join(dir, rel), rel)}](${rel}) — restored from tidy ${o.stamp}`);
     if (add.length) atomicWrite(indexFile, `${index.replace(/\n*$/, index ? "\n" : "")}${add.join("\n")}\n`);
   }
-  return { ...mem, ...(recHas ? { records: moveBack(recDir, recArchive) } : {}) };
+  return { ...mem, ...(recHas ? { records: moveBack(recDir, recArchive) } : {}), ...(propHas ? { proposals: moveBack(pDir, propArchive) } : {}) };
 }
 
 /** The stamps of the archives in a memory directory, oldest first. */

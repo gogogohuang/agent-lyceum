@@ -140,9 +140,9 @@
 
 **前置：Task 7.0 已完成。**
 
-- [ ] 9.1 先寫測試：`status` 不是 `proposed` 且 **`decided` 超過 30 天**的提案被封存到 `proposals/.archive/<tidy-id>/`（提案日舊但剛決議的不封存），`proposed` 的不動；post-check 驗證沒有檔案消失、被封存的每一個符合規則、**未封存提案的 `fingerprint` 前後相同**；只有提案區的專案也被處理；`tidy --undo` 還原（`restoreMemory` 擴充）；`.archive/` 不進任何 prompt。
-- [ ] 9.2 實作（依 Task 0.5，位置 `memory-tidy.ts:326-331`、`:424`、`:437`）。
-- [ ] 9.3 驗收對應：12。
+- [x] 9.1 先寫測試：`status` 不是 `proposed` 且 **`decided` 超過 30 天**的提案被封存到 `proposals/.archive/<tidy-id>/`（提案日舊但剛決議的不封存），`proposed` 的不動；post-check 驗證沒有檔案消失、被封存的每一個符合規則、**未封存提案的 `fingerprint` 前後相同**；只有提案區的專案也被處理；`tidy --undo` 還原（`restoreMemory` 擴充）；`.archive/` 不進任何 prompt。
+- [x] 9.2 實作（依 Task 0.5，位置 `memory-tidy.ts:326-331`、`:424`、`:437`）。
+- [x] 9.3 驗收對應：12。
 
 ### Task 10：文件、註記與最後驗證
 
