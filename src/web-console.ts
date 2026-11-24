@@ -2,12 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { prepareAnswers } from "./ask-answer.js";
 import { readAskReply, writeAskReply } from "./ask-reply.js";
-import { listProjects } from "./config.js";
+import { listProjects, resolveProject } from "./config.js";
 import { parseRaw } from "./mailbox.js";
 import { NAME_RE, projectPaths } from "./paths.js";
+import { listDecisionLog, listRecords, type ProjectRecord } from "./records.js";
 
 export type ReportItem = { id: string; kind: "result" | "done" | "agent"; title: string; agent?: string; outcome?: string; created?: string };
 
+export type DecisionItem = { id: string; title: string; status: "active" | "superseded"; date: string; run?: string; supersedes: string[]; supersededBy: string[]; invalid?: string };
+export type DecisionGroup = { project: string; decisions: DecisionItem[]; error?: string };
+export type DecisionDoc = DecisionItem & { markdown: string };
+
+const DECISION_ID_RE = /^[a-z0-9-]{1,120}$/;
 const REPORT_ID_RE = /^(result|done-\d{1,4}|mail-[0-9a-f]{8})$/;
 const AGENT_MAIL_TYPES = new Set(["reply", "done", "failure"]);
 
@@ -45,6 +51,24 @@ function agentMails(runDir: string): { id: string; file: string; from: string; s
 }
 
 /** What the web page's command console needs from this side of the package (`web/` cannot import `src/`). Same shape as `ConsoleDeps` in `web/src/server/api.ts`. */
+/** An entry is "active" only while its own status says so and no other entry supersedes it. */
+function allDecisions(project: ReturnType<typeof resolveProject>): ProjectRecord[] {
+  const records = listRecords(project, "decisions");
+  const seen = new Set(records.map((r) => r.id));
+  return [...records, ...listDecisionLog(project).filter((r) => !seen.has(r.id))];
+}
+
+function decisionItems(records: ProjectRecord[]): DecisionItem[] {
+  const by = new Map<string, string[]>();
+  for (const r of records) for (const id of r.supersedes) if (id !== r.id) by.set(id, [...(by.get(id) ?? []), r.id]);
+  return records
+    .map((r) => {
+      const supersededBy = by.get(r.id) ?? [];
+      return { id: r.id, title: r.title, status: r.status === "active" && supersededBy.length === 0 ? ("active" as const) : ("superseded" as const), date: r.date, ...(r.run ? { run: r.run } : {}), supersedes: r.supersedes, supersededBy, ...(r.invalid ? { invalid: r.invalid } : {}) };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+}
+
 export function createConsoleDeps(home: string, cliFile: string) {
   const projectDir = (name: string): string | undefined => listProjects(home).find((p) => p.name === name)?.dir;
 
@@ -104,6 +128,30 @@ export function createConsoleDeps(home: string, cliFile: string) {
       if (!fs.existsSync(file)) return undefined;
       const markdown = fs.readFileSync(file, "utf8");
       return { id, title: headingOf(markdown) ?? id, markdown };
+    },
+    /** Decisions of every registered project, read-only. They live outside the run folders, so they survive `clear`. */
+    listDecisions(): DecisionGroup[] {
+      return listProjects(home)
+        .map((p) => p.name)
+        .sort((a, b) => a.localeCompare(b))
+        .map((project): DecisionGroup => {
+          try {
+            return { project, decisions: decisionItems(allDecisions(resolveProject(home, project))) };
+          } catch {
+            return { project, decisions: [], error: "讀不到這個專案的設定。" };
+          }
+        });
+    },
+    readDecision(project: string, id: string): DecisionDoc | undefined {
+      if (!NAME_RE.test(project) || !DECISION_ID_RE.test(id) || !projectDir(project)) return undefined;
+      try {
+        const records = allDecisions(resolveProject(home, project));
+        const item = decisionItems(records).find((d) => d.id === id);
+        const record = records.find((r) => r.id === id);
+        return item && record ? { ...item, markdown: record.body } : undefined;
+      } catch {
+        return undefined;
+      }
     },
     saveAnswers(project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean): { complete: boolean; problems: string[] } {
       const dir = runDirOf(project, runId);

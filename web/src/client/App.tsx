@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { QuotaReport, WatchFrame, WebEvent } from "../types";
 import { Allowance } from "./Allowance";
 import { cn } from "./cn";
+import { DecisionsPage } from "./DecisionsPage";
 import { JobsPage } from "./JobsPage";
 import { ProjectView } from "./ProjectView";
 import { headline, railText } from "./rail";
@@ -81,7 +82,7 @@ export function App() {
           })
         )}
         <div className="flex items-center gap-2 md:mt-4 md:flex-col md:items-stretch md:border-t md:border-line md:pt-3">
-          {([["tools", "工具"], ["jobs", "任務輸出"]] as const).map(([view, label]) => (
+          {([["decisions", "決策"], ["tools", "工具"], ["jobs", "任務輸出"]] as const).map(([view, label]) => (
             <a
               key={view}
               href={`#!${view}`}
@@ -112,7 +113,9 @@ export function App() {
       </nav>
       <main className="min-h-0 overflow-y-auto bg-wall">
         {(live === "up" || (quota && quota.length > 0)) && <Allowance reports={quota ?? []} onReports={setQuota} />}
-        {hash.view === "tools" ? (
+        {hash.view === "decisions" ? (
+          <DecisionsPage />
+        ) : hash.view === "tools" ? (
           <ToolsPage projects={names} />
         ) : hash.view === "jobs" ? (
           <JobsPage />
@@ -139,11 +142,11 @@ function select(project: string, run?: string): void {
   location.hash = next;
 }
 
-function readHash(): { project?: string; run?: string; view?: "tools" | "jobs" } {
+function readHash(): { project?: string; run?: string; view?: "tools" | "jobs" | "decisions" } {
   try {
     const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
     if (!raw) return {};
-    if (raw === "!tools" || raw === "!jobs") return { view: raw === "!tools" ? "tools" : "jobs" };
+    if (raw === "!tools" || raw === "!jobs" || raw === "!decisions") return { view: raw.slice(1) as "tools" | "jobs" | "decisions" };
     const slash = raw.indexOf("/");
     if (slash === -1) return { project: raw };
     return { project: raw.slice(0, slash), run: raw.slice(slash + 1) };

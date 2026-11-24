@@ -49,6 +49,22 @@ describe("createConsoleDeps", () => {
     expect(deps.readAsk("demo", "../../etc")).toBeUndefined();
     expect(deps.readAsk("other", "r1")).toBeUndefined();
   });
+  it("listDecisions/readDecision read project records, mark superseded ones and refuse bad ids", () => {
+    env = makeEnv();
+    const dir = path.join(env.home, "projects", "demo", "shared", "common", "records", "decisions");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "old.md"), "---\nstatus: active\ndate: 2026-01-01\ntitle: Old way\n---\nold body\n");
+    fs.writeFileSync(path.join(dir, "new.md"), "---\nstatus: active\ndate: 2026-02-01\ntitle: New way\nsupersedes: [old]\n---\nnew body\n");
+    fs.writeFileSync(path.join(dir, "bad.md"), "no frontmatter\n");
+    const deps = createConsoleDeps(env.home, "/x/cli.js");
+    const demo = deps.listDecisions().find((g) => g.project === "demo");
+    expect(demo?.decisions.map((d) => [d.id, d.status])).toEqual([["new", "active"], ["old", "superseded"], ["bad", "active"]]);
+    expect(demo?.decisions.find((d) => d.id === "old")?.supersededBy).toEqual(["new"]);
+    expect(demo?.decisions.find((d) => d.id === "bad")?.invalid).toBeTruthy();
+    expect(deps.readDecision("demo", "new")).toMatchObject({ title: "New way", markdown: "new body", supersedes: ["old"] });
+    for (const bad of ["../old", "old.md", "OLD", "", "nope"]) expect(deps.readDecision("demo", bad)).toBeUndefined();
+    expect(deps.readDecision("nope", "new")).toBeUndefined();
+  });
   it("listReports/readReport expose result, done-N and agent mail, and nothing else", () => {
     env = makeEnv();
     const runDir = path.join(env.home, "projects", "demo", "runs", "r1");

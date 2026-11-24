@@ -34,6 +34,7 @@ import { onlyAgent, soloProject } from "./solo.js";
 import { DEMO_PROJECT, DEMO_TASK, defaultDemoDir, detectRuntime, prepareDemo } from "./demo.js";
 import { claudeQuota, codexQuota, cursorQuota, type QuotaReport } from "./quota.js";
 import { summarizeProgress } from "./summarize.js";
+import { saveRunDecisions } from "./decision-log.js";
 import { createConsoleDeps } from "./web-console.js";
 
 const program = new Command();
@@ -506,6 +507,7 @@ program
         const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees });
         console.log("Dry run: nothing is deleted.");
         showPlan(plan);
+        console.log("  would keep    the run's ## Decisions in the project's decision log (shared/common/decision-log/)");
         if (plan.refusals.length) refuse(plan);
         return;
       }
@@ -514,6 +516,10 @@ program
         const plan = planRunCleanup(pr, full, { keepWorktrees: opts.keepWorktrees, lockHeld: true });
         if (plan.refusals.length) refuse(plan);
         showPlan(plan);
+        // The run folder (and its report) is about to go: keep the decisions first, and stop if they cannot be kept.
+        const kept = saveRunDecisions(pr, full);
+        if (kept.status === "saved") console.log(`  kept          decisions -> ${kept.file}`);
+        else if (kept.status === "none") console.log(`  no decisions to keep (${kept.reason})`);
         const report = executeRunCleanup(plan);
         if (report.failed.length) {
           for (const f of report.failed) console.error(`FAILED  ${f.item.label}: ${f.error}`);
