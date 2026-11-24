@@ -3,7 +3,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ResolvedProject } from "./config.js";
 import { readRegularFileNoFollow } from "./fs-util.js";
-import { recordsDir, recordsKindDir } from "./policy.js";
+import { decisionLogDir, recordsDir, recordsKindDir } from "./policy.js";
 
 export type RecordKind = "decisions" | "lessons";
 export const RECORD_KINDS: readonly RecordKind[] = ["decisions", "lessons"];
@@ -89,6 +89,17 @@ export function listRecords(project: ResolvedProject, kind: RecordKind): Project
     .filter((n) => n.endsWith(".md"))
     .sort()
     .map((n) => parseEntry(kind, path.join(dir, n)));
+}
+
+/** Decisions kept from cleared runs, same file format as a record. A missing or symlinked folder is an empty list. */
+export function listDecisionLog(project: ResolvedProject): ProjectRecord[] {
+  const dir = decisionLogDir(project);
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return [];
+    return fs.readdirSync(dir).filter((n) => n.endsWith(".md")).sort().map((n) => parseEntry("decisions", path.join(dir, n)));
+  } catch {
+    return [];
+  }
 }
 
 /** Entries shown in prompts: `status: active` and not named in another entry's `supersedes`. */

@@ -107,6 +107,34 @@ function seedNamed() {
   seed("20261013-010000", undefined, "An old run without a name");
 }
 
+describe("clear keeps the run's decisions", { timeout: 30_000 }, () => {
+  it("--dry-run writes nothing; clear saves the decisions first, then deletes the run", () => {
+    env = makeEnv();
+    seedNamed();
+    const runDir = path.join(env.home, "projects", "demo", "runs", "20261014-010000");
+    fs.writeFileSync(path.join(runDir, "result.md"), "# Add login\n\n## Decisions\n- Session cookies, not JWT.\n");
+    const log = path.join(env.home, "projects", "demo", "shared", "common", "decision-log");
+    const dry = run(["clear", "login", "-p", "demo", "--dry-run"]);
+    expect(dry.code).toBe(0);
+    expect(dry.out).toContain("would keep");
+    expect(fs.existsSync(log)).toBe(false);
+    const del = run(["clear", "login", "-p", "demo"]);
+    expect(del.code).toBe(0);
+    expect(del.out).toContain("kept          decisions");
+    expect(fs.existsSync(runDir)).toBe(false);
+    const files = fs.readdirSync(log);
+    expect(files).toHaveLength(1);
+    expect(fs.readFileSync(path.join(log, files[0]!), "utf8")).toContain("Session cookies, not JWT.");
+  });
+  it("a run without decisions is still cleared", () => {
+    env = makeEnv();
+    seedNamed();
+    const del = run(["clear", "login", "-p", "demo"]);
+    expect(del.code).toBe(0);
+    expect(del.out).toContain("no decisions to keep");
+  });
+});
+
 describe("runs found by id, name or unique prefix", { timeout: 30_000 }, () => {
   it("status --task-id, status --json --task-id and clear --dry-run accept a full id, a name and a unique prefix", () => {
     env = makeEnv();

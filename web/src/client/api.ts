@@ -126,3 +126,25 @@ export async function getReport(project: string, run: string, id: string): Promi
     return undefined;
   }
 }
+
+export type DecisionItem = { id: string; title: string; status: "active" | "superseded"; date: string; run?: string; supersedes: string[]; supersededBy: string[]; invalid?: string };
+export type DecisionGroup = { project: string; decisions: DecisionItem[]; error?: string };
+export type DecisionDoc = DecisionItem & { markdown: string };
+
+export async function getDecisions(): Promise<DecisionGroup[] | undefined> {
+  try {
+    const res = await fetch("/api/decisions", { headers: { "X-Lyceum-Token": token() } });
+    return res.ok ? (((await res.json()) as { projects: DecisionGroup[] }).projects ?? []) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function getDecision(project: string, id: string): Promise<DecisionDoc | undefined> {
+  try {
+    const res = await fetch(`/api/decision?project=${encodeURIComponent(project)}&id=${encodeURIComponent(id)}`, { headers: { "X-Lyceum-Token": token() } });
+    return res.ok ? ((await res.json()) as DecisionDoc) : undefined;
+  } catch {
+    return undefined;
+  }
+}

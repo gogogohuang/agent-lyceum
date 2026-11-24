@@ -39,6 +39,11 @@ export function recordsDir(project: ResolvedProject): string {
   return path.join(project.paths.shared, "common", "records");
 }
 
+/** Decisions kept from cleared runs (see decision-log.ts). Not a record kind: never shown in prompts and not counted against the records budget. */
+export function decisionLogDir(project: ResolvedProject): string {
+  return path.join(project.paths.shared, "common", "decision-log");
+}
+
 export function recordsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
   return path.join(recordsDir(project), kind);
 }

@@ -27,6 +27,13 @@ Commands that can run for a long time (`run`, `resume`, `call`, `tidy`, `demo`) 
 - `id` is `result`, `done-<n>` or `mail-<8 hex characters>`. Any other value (a file name, `../state`) is answered with HTTP 404, so no other file of the run can be read.
 - Report text is written by agents. The page turns markdown into HTML with `marked` and cleans it with `DOMPurify`; HTML tags in a report are shown as text or dropped, never run.
 
+## Decisions
+
+**決策** (`#!decisions`) lists the decisions of every registered project, one tab per project, and shows each as an ADR (status, date, source run, supersedes / superseded by, then the body). They are read from `shared/common/records/decisions/`, not from the run folders, so `clear` does not remove them. Superseded entries are hidden until you tick the box.
+
+- `GET /api/decisions` returns every project's list; `GET /api/decision?project=&id=` returns one entry as markdown. Both are read-only; `id` must be a record id (`[a-z0-9-]`), so no other file can be read.
+- Two sources: the lead's records, and `shared/common/decision-log/`, where `clear` (CLI or the **刪除這次任務** button) keeps a run's `## Decisions` before deleting the run. The log is not a record kind, so it is never shown in prompts and does not count against the 12 KB records budget.
+
 ## Confirmation
 
 The server enforces the tier; the page only asks first. The tier can depend on the request, and `web/src/commands.ts` is the source of truth.

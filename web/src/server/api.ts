@@ -9,6 +9,9 @@ export type AskView = { status: "pending" | "answered"; questions: AskQuestionVi
 
 export type ReportItem = { id: string; kind: "result" | "done" | "agent"; title: string; agent?: string; outcome?: string; created?: string };
 
+export type DecisionItem = { id: string; title: string; status: "active" | "superseded"; date: string; run?: string; supersedes: string[]; supersededBy: string[]; invalid?: string };
+export type DecisionGroup = { project: string; decisions: DecisionItem[]; error?: string };
+
 export type ConsoleDeps = {
   home: string;
   cli: CliLauncher;
@@ -17,6 +20,8 @@ export type ConsoleDeps = {
   readAsk: (project: string, runId: string) => AskView | undefined;
   listReports: (project: string, runId: string) => ReportItem[] | undefined;
   readReport: (project: string, runId: string, id: string) => { id: string; title: string; markdown: string } | undefined;
+  listDecisions: () => DecisionGroup[];
+  readDecision: (project: string, id: string) => (DecisionItem & { markdown: string }) | undefined;
   saveAnswers: (project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean) => { complete: boolean; problems: string[] };
   shortTimeoutMs?: number;
 };
@@ -168,6 +173,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
         if (report) send(res, 200, report);
         else send(res, 404, { error: "找不到這份報告。" });
       }
+    } else if (req.method === "GET" && p === "/api/decisions") {
+      send(res, 200, { projects: deps.listDecisions() });
+    } else if (req.method === "GET" && p === "/api/decision") {
+      const project = url.searchParams.get("project") ?? "";
+      const decision = deps.readDecision(project, url.searchParams.get("id") ?? "");
+      if (decision) send(res, 200, decision);
+      else send(res, 404, { error: "找不到這個決策。" });
     } else if (req.method === "POST" && p === "/api/ask/answers") {
       const b = await body(req, res);
       if (!b) return true;

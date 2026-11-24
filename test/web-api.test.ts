@@ -32,6 +32,8 @@ beforeEach(() => {
     cli: { execPath: process.execPath, args: [fake] },
     projectDir: (name) => (name === "web" ? repo : undefined),
     readAsk: (p, r) => (p === "web" && r === "r1" ? { status: "pending", questions: [{ id: "q1", text: "A or B?", asker: "lead", options: ["A", "B"], delivered: false }] } : undefined),
+    listDecisions: () => [{ project: "web", decisions: [{ id: "d1", title: "Use X", status: "active", date: "2026-01-01", supersedes: [], supersededBy: [] }] }],
+    readDecision: (p, id) => (p === "web" && id === "d1" ? { id, title: "Use X", status: "active", date: "2026-01-01", supersedes: [], supersededBy: [], markdown: "why" } : undefined),
     saveAnswers: (p, r, a, d) => {
       saved.args = [p, r, a, d];
       return { complete: true, problems: [] };
@@ -222,5 +224,17 @@ describe("errors", () => {
     deps.readAsk = orig;
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.json)).not.toContain("secret");
+  });
+});
+
+describe("decisions routes", () => {
+  it("lists decisions per project and reads one; unknown ids answer 404", async () => {
+    const list = await call("GET", "/api/decisions");
+    expect(list.status).toBe(200);
+    expect(list.json.projects[0]).toMatchObject({ project: "web", decisions: [{ id: "d1" }] });
+    const one = await call("GET", "/api/decision?project=web&id=d1");
+    expect(one.status).toBe(200);
+    expect(one.json.markdown).toBe("why");
+    expect((await call("GET", "/api/decision?project=web&id=nope")).status).toBe(404);
   });
 });

@@ -27,6 +27,13 @@
 - `id` 只能是 `result`、`done-<n>` 或 `mail-<8 個十六進位字元>`。其他值（檔名、`../state`）一律回 HTTP 404，所以讀不到任務裡的其他檔案。
 - 報告文字由 agent 寫成。頁面用 `marked` 把 markdown 轉成 HTML，再用 `DOMPurify` 清理；報告裡的 HTML 標籤只會顯示成文字或被丟掉，不會執行。
 
+## 決策
+
+**決策**（`#!decisions`）列出每個已註冊專案的決策，一個專案一個分頁，每筆以 ADR 呈現（狀態、日期、來源 run、取代／被取代，然後是內文）。資料不是從 run 目錄讀的，所以 `clear` 不會移除它們。已被取代的條目預設隱藏，勾選後才顯示。
+
+- `GET /api/decisions` 回傳每個專案的清單；`GET /api/decision?project=&id=` 以 markdown 回傳一筆。兩者都是唯讀；`id` 必須是紀錄 id（`[a-z0-9-]`），所以讀不到其他檔案。
+- 兩個來源：lead 寫的專案紀錄，以及 `shared/common/decision-log/`：`clear`（CLI 或**刪除這次任務**按鈕）在刪除 run 之前，會把它的 `## Decisions` 留在這裡。這份 log 不是一種紀錄類型，所以不會出現在 prompt 裡，也不計入 12 KB 的紀錄預算。
+
 ## 確認
 
 確認等級由伺服器強制執行，頁面只是先問一次。等級可能隨請求內容而變，以 `web/src/commands.ts` 為準。
