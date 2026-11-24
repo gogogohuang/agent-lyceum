@@ -1066,16 +1066,16 @@ export class RunSession {
     const workDir = path.join(runDir, "agents", agent.name);
     const aproject = this.invocationProject();
     // An enrolled claim wake (and only that: tidy, verify, format and call never come through here) is told, and granted, its request directory.
-    const proposalsDir = this.proposalsPath(agent.name);
+    const requestDir = this.proposalsPath(agent.name);
     const base = {
       project: aproject,
       agent,
       workDir,
       workspace: aproject.workspaces?.[agent.name],
-      systemPrompt: buildSystemPrompt(aproject, agent, proposalsDir),
-      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask(), proposalsDir),
+      systemPrompt: buildSystemPrompt(aproject, agent, requestDir),
+      userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask(), requestDir),
       timeoutSec: cfg.wake_timeout_sec,
-      ...(proposalsDir === undefined ? {} : { proposalsDir }),
+      ...(requestDir === undefined ? {} : { requestDir }),
     };
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
     // A lead's `tier` (spec 24.5.3): only for an agent with a ladder, and only a valid value counts.

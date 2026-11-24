@@ -88,25 +88,25 @@ describe('enrolled call lifecycle', () => {
     const seen: WakeInput[] = [];
     const entered: string[][] = [];
     const r = await run(async (input) => {
-      entered.push(input.proposalsDir ? fs.readdirSync(input.proposalsDir) : ['missing']);
+      entered.push(input.requestDir ? fs.readdirSync(input.requestDir) : ['missing']);
       seen.push(input);
       return seen.length === 1 ? fail('rate_limit') : OK('from backup');
     });
     expect(r.ok).toBe(true);
     expect(seen).toHaveLength(2);
     expect(entered).toEqual([[], []]);
-    const dir = seen[0]?.proposalsDir;
+    const dir = seen[0]?.requestDir;
     expect(dir).toEqual(expect.any(String));
-    expect(seen[1]?.proposalsDir).toBe(dir);
+    expect(seen[1]?.requestDir).toBe(dir);
     expect(fs.lstatSync(dir!).isDirectory()).toBe(true);
     for (const input of seen) {
       expect(input.systemPrompt).toMatch(/Approval requests/);
-      expect(input.systemPrompt).toContain(input.proposalsDir!);
-      expect(input.userPrompt).toContain(`Approval request directory (see the system prompt): ${input.proposalsDir}`);
-      const settings = buildClaudeSettings(input.project, input.agent, undefined, input.proposalsDir);
+      expect(input.systemPrompt).toContain(input.requestDir!);
+      expect(input.userPrompt).toContain(`Approval request directory (see the system prompt): ${input.requestDir}`);
+      const settings = buildClaudeSettings(input.project, input.agent, undefined, input.requestDir);
       const allow = (settings.sandbox as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite;
-      expect(allow).toContain(input.proposalsDir);
-      expect(writePolicy(input.project, input.agent, input.proposalsDir).allowDirs).toContain(input.proposalsDir);
+      expect(allow).toContain(input.requestDir);
+      expect(writePolicy(input.project, input.agent, input.requestDir).allowDirs).toContain(input.requestDir);
     }
 
     env.cleanup();
@@ -114,14 +114,14 @@ describe('enrolled call lifecycle', () => {
     const single: WakeInput[] = [];
     const singleEntered: string[][] = [];
     const solo = await run(async (input) => {
-      singleEntered.push(input.proposalsDir ? fs.readdirSync(input.proposalsDir) : ['missing']);
+      singleEntered.push(input.requestDir ? fs.readdirSync(input.requestDir) : ['missing']);
       single.push(input);
       return OK('once');
     });
     expect(solo.ok).toBe(true);
     expect(single).toHaveLength(1);
     expect(singleEntered).toEqual([[]]);
-    expect(single[0]?.proposalsDir).toEqual(expect.any(String));
+    expect(single[0]?.requestDir).toEqual(expect.any(String));
   });
 
   it('call refuses unsafe or unattributable proposals before invoking', async () => {
@@ -173,7 +173,7 @@ describe('enrolled call lifecycle', () => {
     let n = 0;
     const r = await run(async (input) => {
       n += 1;
-      put(input.proposalsDir!, `n${n}.req`, req(`body-${n}`));
+      put(input.requestDir!, `n${n}.req`, req(`body-${n}`));
       return n === 1 ? fail('rate_limit') : OK('done');
     });
     expect(r.ok).toBe(true);
@@ -193,9 +193,9 @@ describe('enrolled call lifecycle', () => {
     let n = 0;
     const r = await run(async (input) => {
       n += 1;
-      if (!input.proposalsDir) { during.push('missing'); return n === 1 ? fail('rate_limit') : OK('done'); }
-      during.push(readCallApprovalOk(env.home, callIdOf(input.proposalsDir))?.call_id ?? null);
-      put(input.proposalsDir, 'a.req', req(`try-${n}`));
+      if (!input.requestDir) { during.push('missing'); return n === 1 ? fail('rate_limit') : OK('done'); }
+      during.push(readCallApprovalOk(env.home, callIdOf(input.requestDir))?.call_id ?? null);
+      put(input.requestDir, 'a.req', req(`try-${n}`));
       return n === 1 ? fail('rate_limit') : OK('done');
     });
     expect(during[0]).toBeNull();
@@ -217,7 +217,7 @@ describe('enrolled call lifecycle', () => {
       let calls = 0;
       const out = await run(async (input) => {
         calls += 1;
-        put(input.proposalsDir!, `f${calls}.req`, req(`fail-${calls}`));
+        put(input.requestDir!, `f${calls}.req`, req(`fail-${calls}`));
         if (spec.reply === 'throw') throw new Error('kaboom');
         return spec.reply;
       });
@@ -254,7 +254,7 @@ describe('enrolled call lifecycle', () => {
     });
     const r = await run(async (input) => {
       fs.writeFileSync(persona, '# hijacked\n');
-      if (input.proposalsDir) put(input.proposalsDir, 'kept.req', req('kept-body'));
+      if (input.requestDir) put(input.requestDir, 'kept.req', req('kept-body'));
       return OK('kept');
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -270,10 +270,10 @@ describe('enrolled call lifecycle', () => {
     enroll();
     const started = Date.now();
     const r = await run(async (input) => {
-      const id = callIdOf(input.proposalsDir!);
+      const id = callIdOf(input.requestDir!);
       execFileSync('mkfifo', [path.join(env.home, 'calls', id, 'log.jsonl')]);
       fs.writeFileSync(path.join(env.home, 'executors.yaml'), 'not: [yaml\n');
-      put(input.proposalsDir!, 'keep.req', req('fifo-body'));
+      put(input.requestDir!, 'keep.req', req('fifo-body'));
       return OK('still-ok');
     });
     expect(Date.now() - started).toBeLessThan(5_000);
@@ -302,7 +302,7 @@ describe('enrolled call lifecycle', () => {
       }
       const r = await run(async (input) => {
         calls += 1;
-        put(input.proposalsDir!, 'keep.req', req('recover-me'));
+        put(input.requestDir!, 'keep.req', req('recover-me'));
         if (kind === 'config-invalid') fs.writeFileSync(path.join(env.home, 'executors.yaml'), 'not: [yaml\n');
         if (kind === 'allow-removed') fs.writeFileSync(path.join(env.home, 'executors.yaml'), yaml.replace('[{call: fe-member}]', '[]'));
         if (kind === 'premise') premiseOk = false;
@@ -337,7 +337,7 @@ describe('enrolled call lifecycle', () => {
     const r = await run(async (input) => {
       calls += 1;
       prompts.push(input.systemPrompt, input.userPrompt);
-      if (input.proposalsDir) put(input.proposalsDir, 'mine.req', req('mine'));
+      if (input.requestDir) put(input.requestDir, 'mine.req', req('mine'));
       return calls === 1 ? fail('rate_limit') : OK('done');
     });
     expect(r.ok).toBe(true);
@@ -362,7 +362,7 @@ describe('enrolled call lifecycle', () => {
     let calls = 0;
     const parked = await run(async (input) => {
       calls += 1;
-      put(input.proposalsDir!, 'a.req', req('park-me'));
+      put(input.requestDir!, 'a.req', req('park-me'));
       return fail('rate_limit');
     });
     parkSpy.mockRestore();
@@ -382,7 +382,7 @@ describe('enrolled call lifecycle', () => {
       return realRename(from, to);
     }) as typeof fs.renameSync);
     const cancelled = await run(async (input) => {
-      put(input.proposalsDir!, 'c.req', req('cancel-me'));
+      put(input.requestDir!, 'c.req', req('cancel-me'));
       return CANCELLED;
     });
     cancelSpy.mockRestore();
@@ -411,7 +411,7 @@ describe('enrolled call lifecycle', () => {
       return realLink(from, to);
     }) as typeof fs.linkSync);
     await expect(run(async (input) => {
-      put(input.proposalsDir!, 'm.req', req('marker'));
+      put(input.requestDir!, 'm.req', req('marker'));
       return OK('yes');
     })).rejects.toThrow(/Approval call success marker could not be committed; no collection was attempted\. Inspect requests\/calls\/.+\/ok\.json\./);
     link.mockRestore();
@@ -424,7 +424,7 @@ describe('enrolled call lifecycle', () => {
       return realRename(from, to);
     }) as typeof fs.renameSync);
     await expect(run(async (input) => {
-      put(input.proposalsDir!, 'r.req', req('result'));
+      put(input.requestDir!, 'r.req', req('result'));
       return OK('yes');
     })).rejects.toThrow(/result\.md/);
     resultSpy.mockRestore();
@@ -441,18 +441,18 @@ describe('enrolled call lifecycle', () => {
     put(runSlot.proposals, 'y.req', req('run'));
     const notes: string[] = [];
     const r = await run(async (input) => {
-      if (!input.proposalsDir) notes.push('missing proposalsDir');
+      if (!input.requestDir) notes.push('missing requestDir');
       else {
-        const settings = buildClaudeSettings(input.project, input.agent, undefined, input.proposalsDir);
+        const settings = buildClaudeSettings(input.project, input.agent, undefined, input.requestDir);
         const fsSandbox = (settings.sandbox as { filesystem: { allowWrite: string[]; denyWrite: string[] } }).filesystem;
-        const own = slotOf(callIdOf(input.proposalsDir));
-        if (!fsSandbox.allowWrite.includes(input.proposalsDir)) notes.push('own proposals not allowed');
+        const own = slotOf(callIdOf(input.requestDir));
+        if (!fsSandbox.allowWrite.includes(input.requestDir)) notes.push('own proposals not allowed');
         for (const blocked of [own.ok, own.collected, own.parked, path.join(env.home, 'approvals'), other.proposals, runSlot.proposals]) {
           if (blocked && fsSandbox.allowWrite.includes(blocked)) notes.push(`allowed ${blocked}`);
         }
         if (!fsSandbox.denyWrite.some((p) => p.includes(`${path.sep}approvals`))) notes.push('store not denied');
         if (!fsSandbox.denyWrite.some((p) => p.includes('other-call'))) notes.push('other proposals not denied');
-        if (!writePolicy(input.project, input.agent, input.proposalsDir).allowDirs.includes(input.proposalsDir)) notes.push('policy missing proposals');
+        if (!writePolicy(input.project, input.agent, input.requestDir).allowDirs.includes(input.requestDir)) notes.push('policy missing proposals');
       }
       return OK('granted');
     });
@@ -467,7 +467,7 @@ describe('enrolled call lifecycle', () => {
     const plain = await callAgent({
       home: env.home, agent: 'fe-member', task: 'what is here?', dir: env.repo,
       invoker: async (input) => {
-        plainDir = input.proposalsDir;
+        plainDir = input.requestDir;
         plainGrant = writePolicy(input.project, input.agent).allowDirs.some((d) => d.includes(`${path.sep}proposals`));
         return OK('plain');
       },
@@ -521,7 +521,7 @@ describe('enrolled call lifecycle', () => {
     let r: Awaited<ReturnType<typeof run>>;
     try {
       r = await run(async (input) => {
-        grants.push(writePolicy(input.project, input.agent, input.proposalsDir).allowDirs);
+        grants.push(writePolicy(input.project, input.agent, input.requestDir).allowDirs);
         return OK('from the view');
       });
     } finally {

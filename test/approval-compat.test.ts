@@ -233,7 +233,7 @@ describe("approval default-off byte compatibility at run time (invocations, sett
         .split(id).join("fixture-call");
       expect(normalize(seen!.systemPrompt), scenario).toBe(prompts["system.call"]);
       expect(normalize(seen!.userPrompt), scenario).toBe(prompts["user.call"]);
-      expect(seen!.proposalsDir, scenario).toBeUndefined();
+      expect(seen!.requestDir, scenario).toBeUndefined();
       const livePolicy = normalize(JSON.stringify({
         writePolicy: writePolicy(seen!.project, seen!.agent),
         enforcementFor: enforcementFor(seen!.project, seen!.agent),

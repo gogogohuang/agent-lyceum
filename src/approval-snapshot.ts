@@ -18,7 +18,7 @@ import { soloProject } from "./solo.js";
  */
 
 /** Grants that exist only inside one run, so they never take part in the run-independent hash. */
-export const RUN_ONLY_SOURCES: ReadonlySet<GrantSource> = new Set<GrantSource>(["memory-task", "outbox", "git-dir", "shared", "shared-index", "proposals"]);
+export const RUN_ONLY_SOURCES: ReadonlySet<GrantSource> = new Set<GrantSource>(["memory-task", "outbox", "git-dir", "shared", "shared-index", "approval-request"]);
 
 const split = (entries: readonly GrantEntry[], pick: (e: GrantEntry) => string): WritableSet => ({
   dirs: entries.filter((e) => e.kind === "dir").map(pick),
@@ -32,8 +32,8 @@ const inSet = (e: GrantEntry, set: WritableSet, pick: (e: GrantEntry) => string)
  * `repo-instruction` path is the logical one (`<project dir>/<name>`), `run_only` holds the run-only paths, and `static_duplicates` the paths that also
  * have a static (non run-only) source, so a path is dropped from the hash only when every source of it is run-only.
  */
-export function slotGrants(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): { full: WritableSet; grant: GrantInput } {
-  const entries = grantEntries(project, agent, proposalsDir);
+export function slotGrants(project: ResolvedProject, agent: ResolvedAgent, requestDir?: string): { full: WritableSet; grant: GrantInput } {
+  const entries = grantEntries(project, agent, requestDir);
   const real = (e: GrantEntry): string => canonicalPath(e.path);
   const logical = (e: GrantEntry): string => (e.source === "repo-instruction" ? canonicalPath(path.join(project.dir, path.basename(e.path))) : canonicalPath(e.path));
   const none: WritableSet = { dirs: [], files: [] };
@@ -51,7 +51,7 @@ export function slotGrants(project: ResolvedProject, agent: ResolvedAgent, propo
  * What `qualificationHash` is computed from, for each executor `slot`'s role may use, plus `full`. `bound` is a run-bound project.
  * `enrolled` and `approval` are dropped before the policy is built, so no approval deny scan runs (the allow lists do not depend on them).
  */
-export function snapshotInputs(project: ResolvedProject, slot: string, config: ExecutorsConfig, proposalsDir?: string): { full: WritableSet; inputs: Map<string, SnapshotInput> } {
+export function snapshotInputs(project: ResolvedProject, slot: string, config: ExecutorsConfig, requestDir?: string): { full: WritableSet; inputs: Map<string, SnapshotInput> } {
   const inputs = new Map<string, SnapshotInput>();
   const agent = project.agents[slot];
   if (!agent) return { full: { dirs: [], files: [] }, inputs };
@@ -59,7 +59,7 @@ export function snapshotInputs(project: ResolvedProject, slot: string, config: E
   const { executors } = qualificationOf(config, { project: project.solo === "call" ? null : project.name, role });
   const { enrolled: _e, approval: _a, ...plain } = agent;
   if (executors.length === 0) return { full: { dirs: [], files: [] }, inputs };
-  const { full, grant } = slotGrants(project, plain as ResolvedAgent, proposalsDir);
+  const { full, grant } = slotGrants(project, plain as ResolvedAgent, requestDir);
   const writable = staticWritable(grant);
   const candidates: CandidateSnapshot[] = candidatesFor(agent).map((c) => {
     const eff = agentForCandidate(agent, c);

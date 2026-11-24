@@ -23,14 +23,14 @@
 |---|---|
 | call 先解析 agent、檢查 --dir，再 gate；gate 前不建 call dir 或 lease | `src/call.ts:146-180` |
 | resolveCallAgent 用 project:null enrollment；callProject 的 name 卻是 `(call)`，solo 是 call | `src/call.ts:21,61,77-99` |
-| call 每 model retry=0；fallback callback 沒有 proposalsDir；guard 後只寫 result，finally release | `src/call.ts:193-235` |
+| call 每 model retry=0；fallback callback 沒有 requestDir；guard 後只寫 result，finally release | `src/call.ts:193-235` |
 | attempt 是跨 candidate 的 0-based 序號，candidateAttempt 換 model 會歸零；config failure 停止，包括 legacy | `src/fallback.ts:115-118,163-167,233-258` |
 | collectSlot/prepareSlot 需要 config、origin、inputs、premises；collector 自己拿 .coord、先處理 un-done 再 rotate；失敗回 verdict | `src/approval-collect.ts:38-50,145,394-465` |
 | prepareSlot 可能收走舊 collected；不能拿它當「沒有 ok 的 call」的一般 preflight | `src/approval-collect.ts:416,429-439,463-465` |
 | call slot 的 ok 在 requests/calls/<id>/ok.json，不在 calls/<id> | `src/approval-paths.ts:52-64` |
 | snapshotInputs 用 project.name 求 qualification；call allow 必須 project:null；直接拿現有 snapshotInputs(callProject) 得不到 call executors | `src/approval-snapshot.ts:54-75`、`src/approval-executors.ts:79-87` |
 | proposals 是 run-only，不進 qualification hash；完整 grant 可另取 | `src/approval-snapshot.ts:21,35-47,62-75` |
-| allowDirs 有既存可選 proposalsDir；adapter 已接 WakeInput.proposalsDir | `src/policy.ts:205-225,235-244`、`src/adapters/types.ts:31`、`src/adapters/claude.ts:86-89` |
+| allowDirs 有既存可選 requestDir；adapter 已接 WakeInput.requestDir | `src/policy.ts:205-225,235-244`、`src/adapters/types.ts:31`、`src/adapters/claude.ts:86-89` |
 | buildSystemPrompt 可在 solo 基本文字後加 approvalRequestsBlock；call user prompt 無可選參數 | `src/prompt.ts:201-222,225-226` |
 | gate containment 比對靜態 grants，不含 proposals；requests 整體受保護 | `src/approval-wake-gate.ts:369-379`、`src/doctor-approval-containment.ts:367-370,437-449,476-479` |
 | .coord 是同步 callback 的短鎖，finally 式釋放；不可把 Promise callback 當作跨 await 鎖 | `src/approval-rotation.ts:150-174` |
@@ -42,9 +42,9 @@
 
 ### D1 — grant、prompt、containment
 
-只在 agent.enrolled 分支做以下工作；未列入保留目前 callback 及兩個 prompt builder 的呼叫。新增 helper 使用現有 `snapshotInputs(project, agent.name, config, proposalsDir)`；在 `approval-snapshot.ts:59` 將 qualification identity 改為 `project.solo === "call" ? null : project.name`。其餘候選／grant／hash 演算法不變。
+只在 agent.enrolled 分支做以下工作；未列入保留目前 callback 及兩個 prompt builder 的呼叫。新增 helper 使用現有 `snapshotInputs(project, agent.name, config, requestDir)`；在 `approval-snapshot.ts:59` 將 qualification identity 改為 `project.solo === "call" ? null : project.name`。其餘候選／grant／hash 演算法不變。
 
-每次 invoke callback 先確認 proposals 存在、為真目錄且空，才設定 WakeInput.proposalsDir。enrolled system prompt 改用 `buildSystemPrompt(project, agent, proposalsDir)`，它會走現有 solo 基底再附格式說明。user prompt 保留 `buildCallUserPrompt` 原文，在 call.ts 附 `\n\nApproval request directory (see the system prompt): ${proposalsDir}`。不擴任何 prompt 函式簽名；透過 WakeInput 讓 adapter 呼叫既有 writePolicy，不能用 input.policy override 繞過 invokeWithSandboxChecks。
+每次 invoke callback 先確認 proposals 存在、為真目錄且空，才設定 WakeInput.requestDir。enrolled system prompt 改用 `buildSystemPrompt(project, agent, requestDir)`，它會走現有 solo 基底再附格式說明。user prompt 保留 `buildCallUserPrompt` 原文，在 call.ts 附 `\n\nApproval request directory (see the system prompt): ${requestDir}`。不擴任何 prompt 函式簽名；透過 WakeInput 讓 adapter 呼叫既有 writePolicy，不能用 input.policy override 繞過 invokeWithSandboxChecks。
 
 gate 保留在建目錄之前；每候選開始前重驗 gate 與資格 baseline（D2）。containment 的靜態 grant 故意不含唯一本人的 proposals 例外，不能把 requests 父目錄加進 allow，也不能拿含 proposals 的 full grant 對整個 requests 做重疊檢查。具體例外由 requestPaths 精確定位、rotation 的逐祖先 lstat 與 policy 的 own-slot 排除組合；測試別人 proposals、ok、collected、parked 與 store 仍不可寫（`src/approval-policy.ts:60-64,126`）。不承諾同 UID 敵手競態或讀取隔離。
 

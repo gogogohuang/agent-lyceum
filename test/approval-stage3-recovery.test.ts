@@ -79,7 +79,7 @@ const noDuplicates = (): void => {
 describe('crash matrix: lifecycle fault points, each followed by a fresh session', () => {
   it('attempt:output-ready: the claim is still claimed, so recovery sets the output aside before abandoning; the unfinished wake\'s requests are never collected', async () => {
     setup();
-    const t = team((i) => { req(i.proposalsDir as string, 'first.req', 'FIRST'); return OK; });
+    const t = team((i) => { req(i.requestDir as string, 'first.req', 'FIRST'); return OK; });
     crashAt('attempt:output-ready', t);
     await expect(go(t.invoker)).rejects.toThrow(/crash at attempt:output-ready/);
     setFaultHook(undefined);
@@ -97,7 +97,7 @@ describe('crash matrix: lifecycle fault points, each followed by a fresh session
 
   it('recovery:proposals-parked: a crash between the park and the abandon repeats harmlessly', async () => {
     setup();
-    const t = team((i) => { req(i.proposalsDir as string, 'first.req', 'FIRST'); return OK; });
+    const t = team((i) => { req(i.requestDir as string, 'first.req', 'FIRST'); return OK; });
     crashAt('attempt:output-ready', t);
     await expect(go(t.invoker)).rejects.toThrow();
     crashAt('recovery:proposals-parked');
@@ -118,7 +118,7 @@ describe('crash matrix: lifecycle fault points, each followed by a fresh session
 
   it('a history of abandoned claims is not parked again on a later resume', async () => {
     setup();
-    const t = team((i) => { req(i.proposalsDir as string, 'r.req', 'P'); return OK; });
+    const t = team((i) => { req(i.requestDir as string, 'r.req', 'P'); return OK; });
     crashAt('attempt:output-ready', t);
     await expect(go(t.invoker)).rejects.toThrow();
     setFaultHook(undefined);
@@ -133,7 +133,7 @@ describe('crash matrix: lifecycle fault points, each followed by a fresh session
 
   it('failure:proposals-parked: a crash after the set-aside and before the attempt is finished never moves it again', async () => {
     setup();
-    const t = team((i, n) => { req(i.proposalsDir as string, n === 1 ? 'x.req' : 'ok.req', n === 1 ? 'FAILED-ATTEMPT' : 'GOOD'); return n === 1 ? FAIL : OK; });
+    const t = team((i, n) => { req(i.requestDir as string, n === 1 ? 'x.req' : 'ok.req', n === 1 ? 'FAILED-ATTEMPT' : 'GOOD'); return n === 1 ? FAIL : OK; });
     crashAt('failure:proposals-parked');
     await expect(go(t.invoker)).rejects.toThrow(/crash at failure:proposals-parked/);
     setFaultHook(undefined);
@@ -152,7 +152,7 @@ describe('crash matrix: lifecycle fault points, each followed by a fresh session
 
   it('collection:before-done in settle: the record is adopted by the next session, no second id, the same sequence', async () => {
     setup();
-    const t = team((i) => { req(i.proposalsDir as string, 'a.req', 'ONCE'); return OK; });
+    const t = team((i) => { req(i.requestDir as string, 'a.req', 'ONCE'); return OK; });
     let armed = true;
     const crashing = { fault: (p: string) => { if (armed && p === 'collection:before-done') throw new Error('crash in collection'); } };
     const project = env.project();

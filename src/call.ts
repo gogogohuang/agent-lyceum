@@ -325,7 +325,7 @@ export async function callAgent(o: CallOptions): Promise<CallResult> {
           timeoutSec: view.project.dispatcher.wake_timeout_sec,
           signal: o.signal,
           logDir: logDirFor(c),
-          proposalsDir: proposals,
+          requestDir: proposals,
         }, view.agent, sink, ctx.attempt);
       } catch (e) {
         result = { ok: false, text: "", exitCode: null, timedOut: false, error: (e as Error).message };

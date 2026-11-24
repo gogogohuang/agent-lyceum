@@ -53,8 +53,6 @@ export function proposalsDir(project: ResolvedProject): string {
 }
 
 /** Whether the agent of this solo project may write proposals: `run --agent`, and `call -p` (a plain `call` has no project). */
-/** `proposalsDir` is also a parameter name below (an enrolled claim wake's request directory), so the project's own proposals directory gets an alias. */
-const projectProposalsDir = proposalsDir;
 export const mayPropose = (project: ResolvedProject): boolean => project.solo === "run" || (project.solo === "call" && !!project.proposalsRef);
 
 export function proposalsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
@@ -207,7 +205,8 @@ export type GrantSource =
   | "shared-index"
   | "agent-md"
   | "repo-instruction"
-  | "proposals";
+  | "proposals"
+  | "approval-request";
 
 export interface GrantEntry {
   kind: "dir" | "file";
@@ -217,9 +216,9 @@ export interface GrantEntry {
 
 /**
  * The allow entries of `writePolicy`, in its order, each tagged with its source. Only allow entries: no deny list, no approval I/O.
- * `proposalsDir` (an enrolled claim wake's canonical request directory) is appended last; without it the entries are the old ones byte for byte.
+ * `requestDir` (an enrolled claim wake's canonical request directory) is appended last; without it the entries are the old ones byte for byte.
  */
-export function grantEntries(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): GrantEntry[] {
+export function grantEntries(project: ResolvedProject, agent: ResolvedAgent, requestDir?: string): GrantEntry[] {
   const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
   const shared = sharedDir(project);
@@ -237,11 +236,11 @@ export function grantEntries(project: ResolvedProject, agent: ResolvedAgent, pro
   if (shared && mayWriteShared) dir(shared, "shared");
   if (isLead) dir(recordsDir(project), "records");
   // Proposals: the lead (it decides them) and a solo agent (it writes them); the guard holds the solo agent to its own `proposed` files.
-  if (isLead || mayPropose(project)) dir(projectProposalsDir(project), "proposals");
+  if (isLead || mayPropose(project)) dir(proposalsDir(project), "proposals");
   if (ownAgentDirAllowed(project, agent)) dir(projectAgentDir(project, agent.name), "own-dir");
   // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
   for (const w of agent.sandbox?.write ?? []) dir(canonicalPath(w), "sandbox-write");
-  if (proposalsDir !== undefined) dir(proposalsDir, "proposals");
+  if (requestDir !== undefined) dir(requestDir, "approval-request");
   if (isLead) for (const f of sharedContextFiles(project)) file(f, "common-file");
   if (mayWriteShared && sharedIdx) file(sharedIdx, "shared-index");
   if (agent.canEditAgentMd) {
@@ -251,13 +250,13 @@ export function grantEntries(project: ResolvedProject, agent: ResolvedAgent, pro
   return out;
 }
 
-export function writePolicy(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): WritePolicy {
+export function writePolicy(project: ResolvedProject, agent: ResolvedAgent, requestDir?: string): WritePolicy {
   const isLead = agent.name === project.lead && !project.solo;
   const ws = project.workspaces?.[agent.name];
   const shared = sharedDir(project);
   const mayWriteShared = !!shared && agent.name === project.lead;
   const ownDir = projectAgentDir(project, agent.name);
-  const granted = grantEntries(project, agent, proposalsDir);
+  const granted = grantEntries(project, agent, requestDir);
   const grantOwnDir = granted.some((g) => g.source === "own-dir");
   const allowDirs = granted.filter((g) => g.kind === "dir").map((g) => g.path);
   const allowFiles = granted.filter((g) => g.kind === "file").map((g) => g.path);

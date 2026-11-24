@@ -28,7 +28,7 @@ export interface WakeInput {
    * Internal. The canonical approval request directory of an enrolled slot, set only for a claim wake (never for tidy, verify, format or call): it is
    * granted as one more writable directory. Never combined with `policy`.
    */
-  proposalsDir?: string;
+  requestDir?: string;
 }
 
 export interface WakeResult {

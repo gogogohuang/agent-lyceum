@@ -80,12 +80,12 @@ describe('settle collects finished output', () => {
   it('collects a member\'s requests after its wake, with the grant it had and the qualification the gate judged', async () => {
     setup();
     const seen: WakeInput[] = [];
-    const s = await go(team(['fe-member'], (i) => { req(i.proposalsDir as string, 'a.req'); write(path.join(i.proposalsDir as string, 'bad.req'), 'no header\n'); return OK; }, seen));
+    const s = await go(team(['fe-member'], (i) => { req(i.requestDir as string, 'a.req'); write(path.join(i.requestDir as string, 'bad.req'), 'no header\n'); return OK; }, seen));
     expect(s.endReason).toBe('done');
     const fe = seen.find((i) => i.agent.name === 'fe-member') as WakeInput;
     const proposals = canonicalPath(path.join(slotRoot('fe-member'), 'proposals'));
-    expect(fe.proposalsDir).toBe(proposals);
-    expect(writePolicy(fe.project, fe.agent, fe.proposalsDir).allowDirs).toContain(proposals);
+    expect(fe.requestDir).toBe(proposals);
+    expect(writePolicy(fe.project, fe.agent, fe.requestDir).allowDirs).toContain(proposals);
     expect(fe.systemPrompt).toContain(proposals);
     expect(fe.userPrompt).toContain(proposals);
     expect(fs.readdirSync(proposals)).toEqual([]);
@@ -104,7 +104,7 @@ describe('settle collects finished output', () => {
   it('a successful wake whose outbox mail is rejected still has its requests collected (the rejection does not undo the collection)', async () => {
     setup();
     const s = await go(team(['fe-member'], (i) => {
-      req(i.proposalsDir as string, 'a.req');
+      req(i.requestDir as string, 'a.req');
       write(path.join(outboxDir(i.project, i.agent.name), '000900-malformed.md'), 'no frontmatter at all\n');
       return OK;
     }));
@@ -120,30 +120,27 @@ describe('settle collects finished output', () => {
     const seen: WakeInput[] = [];
     await go(team(['fe-member'], () => OK, seen));
     const lead = seen.find((i) => i.agent.name === 'lead') as WakeInput;
-    expect('proposalsDir' in lead).toBe(false);
+    expect('requestDir' in lead).toBe(false);
     expect(`${lead.systemPrompt}\n${lead.userPrompt}`).not.toMatch(/Approval request|\.req|proposals/);
     expect(writePolicy(lead.project, lead.agent).allowDirs.some((d) => d.includes('requests'))).toBe(false);
   });
 
   it('tidy, verify and format never name a request directory; enrolled call may', () => {
     const src = path.join(__dirname, '..', 'src');
-    const users = fs.readdirSync(src).filter((f) => f.endsWith('.ts') && fs.readFileSync(path.join(src, f), 'utf8').includes('proposalsDir')).sort();
-    // cli.ts, guard.ts, memory-tidy.ts and proposals-review.ts use the project's own proposals directory (spec 30), not an approval request directory.
-    expect(users).toEqual(['approval-snapshot.ts', 'call.ts', 'cli.ts', 'guard.ts', 'memory-tidy.ts', 'policy.ts', 'prompt.ts', 'proposals-review.ts', 'run-session.ts']);
-    for (const f of ['verify.ts', 'format.ts']) expect(users).not.toContain(f);
-    // A tidy still never hands the runtime an approval request directory: its write policy takes no second argument.
-    expect(fs.readFileSync(path.join(src, 'memory-tidy.ts'), 'utf8')).not.toMatch(/writePolicy\(\w+, \w+(\.\w+)?, /);
-    expect(fs.readdirSync(path.join(src, 'adapters')).filter((f) => fs.readFileSync(path.join(src, 'adapters', f), 'utf8').includes('proposalsDir')).sort()).toEqual(['claude.ts', 'types.ts']);
+    const users = fs.readdirSync(src).filter((f) => f.endsWith('.ts') && fs.readFileSync(path.join(src, f), 'utf8').includes('requestDir')).sort();
+    expect(users).toEqual(['approval-snapshot.ts', 'call.ts', 'policy.ts', 'prompt.ts', 'run-session.ts']);
+    for (const f of ['memory-tidy.ts', 'verify.ts', 'format.ts']) expect(users).not.toContain(f);
+    expect(fs.readdirSync(path.join(src, 'adapters')).filter((f) => fs.readFileSync(path.join(src, 'adapters', f), 'utf8').includes('requestDir')).sort()).toEqual(['claude.ts', 'types.ts']);
   });
 
   it('a solo wake carries the grant and the prompt path, and its request is collected with the solo qualification', async () => {
     setup();
     let input: WakeInput | undefined;
-    const s = await go(async (i) => { input = i; req(i.proposalsDir as string, 's.req'); mail(i, 'fe-member', 'finished', 'done'); return OK; }, { solo: 'fe-member' });
+    const s = await go(async (i) => { input = i; req(i.requestDir as string, 's.req'); mail(i, 'fe-member', 'finished', 'done'); return OK; }, { solo: 'fe-member' });
     expect(s.endReason).toBe('done');
     const i = input as WakeInput;
     const proposals = canonicalPath(path.join(slotRoot('fe-member'), 'proposals'));
-    expect(i.proposalsDir).toBe(proposals);
+    expect(i.requestDir).toBe(proposals);
     expect(i.systemPrompt).toContain(proposals);
     expect(i.userPrompt).toContain(proposals);
     const recs = records();
@@ -163,18 +160,18 @@ describe('failure, cancel and retry', () => {
     const dirsAtEntry: string[][] = [];
     let calls = 0;
     const s = await go(team(['fe-member'], (i) => {
-      dirsAtEntry.push(fs.readdirSync(i.proposalsDir as string));
-      if (++calls === 1) { req(i.proposalsDir as string, 'x.req', 'from the failed attempt'); return FAIL; }
-      req(i.proposalsDir as string, 'ok.req');
+      dirsAtEntry.push(fs.readdirSync(i.requestDir as string));
+      if (++calls === 1) { req(i.requestDir as string, 'x.req', 'from the failed attempt'); return FAIL; }
+      req(i.requestDir as string, 'ok.req');
       return OK;
     }, seen));
     expect(s.endReason).toBe('done');
     const fe = seen.filter((i) => i.agent.name === 'fe-member');
     expect(fe).toHaveLength(2);
     for (const i of fe) {
-      expect(i.proposalsDir).toBe(canonicalPath(path.join(slotRoot('fe-member'), 'proposals')));
-      expect(i.systemPrompt).toContain(i.proposalsDir as string);
-      expect(i.userPrompt).toContain(i.proposalsDir as string);
+      expect(i.requestDir).toBe(canonicalPath(path.join(slotRoot('fe-member'), 'proposals')));
+      expect(i.systemPrompt).toContain(i.requestDir as string);
+      expect(i.userPrompt).toContain(i.requestDir as string);
     }
     expect(dirsAtEntry).toEqual([[], []]);
     const parked = fs.readdirSync(path.join(slotRoot('fe-member'), 'parked'));
@@ -189,7 +186,7 @@ describe('failure, cancel and retry', () => {
     let calls = 0;
     const leadSeen: WakeInput[] = [];
     const failingRename = { ...defaultDirIo, renameSync: () => { throw Object.assign(new Error('secret-errno-text'), { code: 'EXDEV' }); } } as typeof defaultDirIo;
-    const s = await go(team(['fe-member'], (i) => { calls++; req(i.proposalsDir as string, 'x.req'); return FAIL; }, leadSeen), { collect: { io: failingRename } });
+    const s = await go(team(['fe-member'], (i) => { calls++; req(i.requestDir as string, 'x.req'); return FAIL; }, leadSeen), { collect: { io: failingRename } });
     expect(calls).toBe(1); // no retry, no fallback, not called again while blocked
     expect(s.endReason).not.toBe('agent_failed');
     expect(events().some((e) => e.event === 'approval_collect' && e.op === 'park' && e.class === 'io')).toBe(true);
@@ -207,7 +204,7 @@ describe('failure, cancel and retry', () => {
     expect(fs.readFileSync(path.join(runDir(), 'approval-gate.json'), 'utf8')).not.toContain('secret-errno-text');
     // a new session: the abandoned claim's leftovers are classified from the latest attempt and set aside; the redo is woken on an empty directory
     const entry: string[][] = [];
-    const second = await go(team(['fe-member'], (i) => { entry.push(fs.readdirSync(i.proposalsDir as string)); return OK; }), { resume: true });
+    const second = await go(team(['fe-member'], (i) => { entry.push(fs.readdirSync(i.requestDir as string)); return OK; }), { resume: true });
     expect(second.endReason).toBe('done');
     expect(entry[0]).toEqual([]);
     expect(fs.readdirSync(path.join(slotRoot('fe-member'), 'parked')).length).toBe(1);
@@ -222,7 +219,7 @@ describe('failure, cancel and retry', () => {
       return defaultDirIo.renameSync(src, dest);
     } } as typeof defaultDirIo;
     const s = await go(team(['fe-member', 'qa-member'], (i) => {
-      seen.push(i.agent.name); req(i.proposalsDir as string, 'x.req');
+      seen.push(i.agent.name); req(i.requestDir as string, 'x.req');
       return i.agent.name === 'fe-member' ? FAIL : OK;
     }), { collect: { io } });
     expect(seen).toContain('qa-member');
@@ -238,7 +235,7 @@ describe('failure, cancel and retry', () => {
     setup();
     const leadSeen: WakeInput[] = [];
     const s = await go(team(['fe-member'], (i) => {
-      req(i.proposalsDir as string, 'x.req');
+      req(i.requestDir as string, 'x.req');
       fs.writeFileSync(path.join(env.home, 'executors.yaml'), 'executors: [');
       return OK;
     }, leadSeen));
@@ -288,7 +285,7 @@ describe('pre-claim classification and isolation of slots', () => {
     fs.mkdirSync(slotRoot('qa-member'), { recursive: true });
     fs.symlinkSync(env.root, path.join(slotRoot('qa-member'), 'proposals'));
     const seen: string[] = [];
-    const s = await go(team(['fe-member'], (i) => { seen.push(i.agent.name); req(i.proposalsDir as string, 'a.req'); return OK; }));
+    const s = await go(team(['fe-member'], (i) => { seen.push(i.agent.name); req(i.requestDir as string, 'a.req'); return OK; }));
     expect(s.endReason).toBe('done');
     expect(seen).toEqual(['fe-member']);
     expect(records()).toHaveLength(1);
@@ -302,7 +299,7 @@ describe('settle:aborted', () => {
     const ctl = new AbortController();
     const done = { n: 0 };
     const collect: RunOptions['approvalCollect'] = { fault: (point) => { if (point === 'collection:done' && ++done.n === 1) ctl.abort(); } };
-    const first = await go(team(['fe-member', 'qa-member'], (i) => { req(i.proposalsDir as string, `${i.agent.name}.req`); return OK; }), { signal: ctl.signal, collect });
+    const first = await go(team(['fe-member', 'qa-member'], (i) => { req(i.requestDir as string, `${i.agent.name}.req`); return OK; }), { signal: ctl.signal, collect });
     expect(first.endReason).toBe('cancelled');
     expect(events().some((e) => e.event === 'approval_collect' && e.class === 'cancelled')).toBe(true);
     const before = records().length;

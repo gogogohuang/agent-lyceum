@@ -65,7 +65,7 @@ async function realRun(o: { solo?: boolean; editYaml?: (t: string, runsDir: stri
   let heard = false;
   const invoker: Invoker = async (i) => {
     if (!inputs.has(i.agent.name)) inputs.set(i.agent.name, i);
-    if (i.proposalsDir) req(i.proposalsDir, `${i.agent.name}.req`);
+    if (i.requestDir) req(i.requestDir, `${i.agent.name}.req`);
     if (o.solo) { mail(i, i.agent.name, 'finished', 'done'); return OK; }
     if (i.agent.name === 'lead') {
       if (i.userPrompt.includes('from: fe-member')) heard = true;
@@ -94,11 +94,10 @@ describe('grantEntries and writePolicy', () => {
       expect(withDir.allowDirs).toEqual([...plain.allowDirs, '/canon/proposals']);
       expect(withDir.allowFiles).toEqual(plain.allowFiles);
       expect(withDir.deny).toEqual(plain.deny);
-      // The lead (and a solo agent) hold the project's own proposals directory (spec 30), which is also tagged `proposals`; the
-      // approval request directory is the extra entry that `withDir` appended last, so it is the only difference.
-      expect(entries.filter((e) => e.source === 'proposals').length).toBe(name === 'lead' ? 1 : 0);
+      // The lead holds the project's own proposals directory (spec 30, source `proposals`); the approval request directory is a different source.
+      expect(entries.some((e) => e.source === 'approval-request')).toBe(false);
     }
-    expect(RUN_ONLY_SOURCES.has('proposals') && RUN_ONLY_SOURCES.has('git-dir') && !RUN_ONLY_SOURCES.has('own-dir')).toBe(true);
+    expect(RUN_ONLY_SOURCES.has('approval-request') && RUN_ONLY_SOURCES.has('git-dir') && !RUN_ONLY_SOURCES.has('own-dir')).toBe(true);
   });
 });
 
@@ -180,12 +179,12 @@ describe('snapshot actual worktree grants (real run in a scratch git repo)', () 
       const wake = inputs.get(slot) as WakeInput;
       const rec = recordOf(slot);
       expect(rec, `record of ${slot}`).toBeDefined();
-      const pol = writePolicy(wake.project, wake.agent, wake.proposalsDir);
+      const pol = writePolicy(wake.project, wake.agent, wake.requestDir);
       expect(rec.origin.full_writable).toEqual({ dirs: canon(pol.allowDirs), files: canon(pol.allowFiles) });
       const ws = wake.project.workspaces?.[slot];
       expect(ws, `${slot} has a worktree`).toBeDefined();
       expect(rec.origin.full_writable.dirs).toContain(canonicalPath((ws as { gitDir: string }).gitDir));
-      expect(rec.origin.full_writable.dirs).toContain(canonicalPath(wake.proposalsDir as string));
+      expect(rec.origin.full_writable.dirs).toContain(canonicalPath(wake.requestDir as string));
       const leadDir = (wake.project.workspaces as Record<string, { dir: string }>).lead?.dir as string;
       for (const f of ['CLAUDE.md', 'AGENTS.md']) expect(rec.origin.full_writable.files).toContain(canonicalPath(path.join(leadDir, f)));
       // the gate's baseline (computed from the session project, which has no worktrees)
@@ -225,7 +224,7 @@ describe('snapshot actual worktree grants (real run in a scratch git repo)', () 
     expect(summary.endReason).toBe('done');
     const rec = recordOf('fe-member');
     const wake = inputs.get('fe-member') as WakeInput;
-    expect(rec.origin.full_writable).toEqual({ dirs: canon(writePolicy(wake.project, wake.agent, wake.proposalsDir).allowDirs), files: canon(writePolicy(wake.project, wake.agent, wake.proposalsDir).allowFiles) });
+    expect(rec.origin.full_writable).toEqual({ dirs: canon(writePolicy(wake.project, wake.agent, wake.requestDir).allowDirs), files: canon(writePolicy(wake.project, wake.agent, wake.requestDir).allowFiles) });
     fs.rmSync(runDir, { recursive: true, force: true });
     const fresh = resolveProject(env.home, 'demo');
     expect(hashOf(unboundSnapshotInputs(fresh, 'fe-member', config(), undefined, 'solo'))).toBe(rec.qualification.sha256);

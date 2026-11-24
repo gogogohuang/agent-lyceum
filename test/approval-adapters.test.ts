@@ -349,7 +349,7 @@ describe("stage 3: the request directory of a claim wake", () => {
     const plain = wake(p, "fe-member");
     buildClaudeInvocation(plain);
     const before = fs.readFileSync(path.join(plain.workDir, "claude-settings.json"), "utf8");
-    const granted = wake(p, "fe-member", { workDir: path.join(env.root, "work", "granted"), proposalsDir: dir() });
+    const granted = wake(p, "fe-member", { workDir: path.join(env.root, "work", "granted"), requestDir: dir() });
     const inv = buildClaudeInvocation(granted);
     const s = JSON.parse(fs.readFileSync(path.join(granted.workDir, "claude-settings.json"), "utf8"));
     expect(s.permissions.allow).toContain(`Edit(/${dir()}/**)`);
@@ -364,7 +364,7 @@ describe("stage 3: the request directory of a claim wake", () => {
   it("is never combined with a policy override (tidy, verify, format keep their minimal authority)", () => {
     const p = bound(enrolledEnv());
     const policy: WritePolicy = { allowDirs: [path.join(env.root, "only")], readDirs: [], allowFiles: [], deny: [] };
-    const w = wake(p, "fe-member", { policy, proposalsDir: dir() });
+    const w = wake(p, "fe-member", { policy, requestDir: dir() });
     buildClaudeInvocation(w);
     const s = JSON.parse(fs.readFileSync(path.join(w.workDir, "claude-settings.json"), "utf8"));
     expect(JSON.stringify(s)).not.toContain(dir());

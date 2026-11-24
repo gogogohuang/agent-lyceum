@@ -60,8 +60,8 @@ describe('enrolled call crash recovery', () => {
       approvalPremise: PREMISE, approvalCollect: freshDeps(),
       invoker: async (input) => {
         invokes += 1;
-        fs.mkdirSync(input.proposalsDir!, { recursive: true });
-        fs.writeFileSync(path.join(input.proposalsDir!, 'kept.req'), req('same-payload'));
+        fs.mkdirSync(input.requestDir!, { recursive: true });
+        fs.writeFileSync(path.join(input.requestDir!, 'kept.req'), req('same-payload'));
         return OK;
       },
     })).rejects.toThrow(/simulated crash/);
@@ -93,9 +93,9 @@ describe('enrolled call crash recovery', () => {
         home: env.home, agent: 'fe-member', task: 'what is here?', dir: env.repo, say: () => {},
         approvalPremise: PREMISE, approvalCollect: freshDeps(),
         invoker: async (input) => {
-          fs.mkdirSync(input.proposalsDir!, { recursive: true });
-          fs.writeFileSync(path.join(input.proposalsDir!, 'a.req'), req('alpha'));
-          fs.writeFileSync(path.join(input.proposalsDir!, 'b.req'), req('beta'));
+          fs.mkdirSync(input.requestDir!, { recursive: true });
+          fs.writeFileSync(path.join(input.requestDir!, 'a.req'), req('alpha'));
+          fs.writeFileSync(path.join(input.requestDir!, 'b.req'), req('beta'));
           return OK;
         },
       });

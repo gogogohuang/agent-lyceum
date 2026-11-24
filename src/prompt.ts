@@ -305,10 +305,10 @@ export function approvalRequestsBlock(dir: string): string {
   ].join("\n");
 }
 
-/** Everything that goes to the runtime's system prompt: the persona plus the team protocol. `proposalsDir`: only for an enrolled claim wake. */
-export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent, proposalsDir?: string): string {
+/** Everything that goes to the runtime's system prompt: the persona plus the team protocol. `requestDir`: only for an enrolled claim wake. */
+export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent, requestDir?: string): string {
   const text = baseSystemPrompt(project, agent);
-  return proposalsDir === undefined ? text : `${text}\n\n${approvalRequestsBlock(proposalsDir)}`;
+  return requestDir === undefined ? text : `${text}\n\n${approvalRequestsBlock(requestDir)}`;
 }
 
 function baseSystemPrompt(project: ResolvedProject, agent: ResolvedAgent): string {
@@ -487,9 +487,9 @@ export function userTaskBlock(project: ResolvedProject, agent: ResolvedAgent, un
   return ["", '<user_task note="the user\'s original request, verbatim; judge the work against it, not only against the lead\'s acceptance criteria">', text, "</user_task>"];
 }
 
-export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false, userTask?: { text: string; file?: string }, proposalsDir?: string): string {
+export function buildUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount = 1, handoff = false, userTask?: { text: string; file?: string }, requestDir?: string): string {
   const text = baseUserPrompt(project, agent, unread, handleCount, handoff, userTask);
-  return proposalsDir === undefined ? text : `${text}\n\nApproval request directory (see the system prompt): ${proposalsDir}`;
+  return requestDir === undefined ? text : `${text}\n\nApproval request directory (see the system prompt): ${requestDir}`;
 }
 
 function baseUserPrompt(project: ResolvedProject, agent: ResolvedAgent, unread: Message[], handleCount: number, handoff: boolean, userTask?: { text: string; file?: string }): string {

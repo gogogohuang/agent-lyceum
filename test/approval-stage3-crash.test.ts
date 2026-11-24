@@ -188,7 +188,7 @@ describe('collection fault windows re-enter in a new session', () => {
     const inv = team(point, (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? feMarker : qaMarker);
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? feMarker : qaMarker);
       }
       return OK;
     }, seen);
@@ -279,7 +279,7 @@ describe('collection fault windows re-enter in a new session', () => {
     const inv = team('before-done', (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-BEFORE-DONE' : 'QA-BEFORE-DONE');
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-BEFORE-DONE' : 'QA-BEFORE-DONE');
       }
       return OK;
     }, seen);
@@ -322,13 +322,13 @@ describe('collection fault windows re-enter in a new session', () => {
       if (wrote.has(i.agent.name)) return OK;
       wrote.add(i.agent.name);
       if (i.agent.name === 'fe-member') {
-        const dir = i.proposalsDir as string;
+        const dir = i.requestDir as string;
         for (let n = 0; n < 40; n++) {
           const name = `f${n}.req`;
           req(dir, name, `FE-BUDGET-${n}`);
           feSource.set(name, fs.readFileSync(path.join(dir, name), 'utf8'));
         }
-      } else req(i.proposalsDir as string, 'q.req', 'QA-BUDGET');
+      } else req(i.requestDir as string, 'q.req', 'QA-BUDGET');
       return OK;
     }, seen);
     const first = await go(inv, { collect: { budget: 400 } });
@@ -395,7 +395,7 @@ describe('collection fault windows re-enter in a new session', () => {
     const inv = team('mismatch', (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-MISMATCH' : 'QA-MISMATCH');
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-MISMATCH' : 'QA-MISMATCH');
       }
       return OK;
     }, seen);
@@ -440,10 +440,10 @@ describe('lifecycle fault windows re-enter in a new session', () => {
       if (wrote.has(i.agent.name)) return OK;
       wrote.add(i.agent.name);
       if (i.agent.name === 'fe-member') {
-        req(i.proposalsDir as string, 'fe-member.req', 'FE-PARK-RENAME');
+        req(i.requestDir as string, 'fe-member.req', 'FE-PARK-RENAME');
         return FAIL;
       }
-      req(i.proposalsDir as string, 'qa-member.req', 'QA-PARK-RENAME');
+      req(i.requestDir as string, 'qa-member.req', 'QA-PARK-RENAME');
       return OK;
     }, seen);
     const first = await go(inv, {
@@ -488,7 +488,7 @@ describe('lifecycle fault windows re-enter in a new session', () => {
     const inv = team('output-ready', (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-OUTPUT-READY' : 'QA-OUTPUT-READY');
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-OUTPUT-READY' : 'QA-OUTPUT-READY');
       }
       return OK;
     }, seen);
@@ -527,7 +527,7 @@ describe('lifecycle fault windows re-enter in a new session', () => {
     const inv = team('recovery-park', (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-RECOVERY' : 'QA-RECOVERY');
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-RECOVERY' : 'QA-RECOVERY');
       }
       return OK;
     }, seen);
@@ -565,10 +565,10 @@ describe('lifecycle fault windows re-enter in a new session', () => {
     const inv = team('failure-park', (i) => {
       if (i.agent.name === 'fe-member') {
         feCalls++;
-        if (feCalls === 1) req(i.proposalsDir as string, 'fe-member.req', 'FE-FAILURE');
+        if (feCalls === 1) req(i.requestDir as string, 'fe-member.req', 'FE-FAILURE');
         return feCalls === 1 ? FAIL : OK;
       }
-      if (!qaWrote) { qaWrote = true; req(i.proposalsDir as string, 'qa-member.req', 'QA-FAILURE'); }
+      if (!qaWrote) { qaWrote = true; req(i.requestDir as string, 'qa-member.req', 'QA-FAILURE'); }
       return OK;
     }, seen);
     setFaultHook((step) => { if (step === 'failure:proposals-parked') throw new Error('crash at failure:proposals-parked'); });
@@ -606,7 +606,7 @@ describe('lifecycle fault windows re-enter in a new session', () => {
     const inv = team('settle-abort', (i) => {
       if (!wrote.has(i.agent.name)) {
         wrote.add(i.agent.name);
-        req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-ABORT' : 'QA-ABORT');
+        req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-ABORT' : 'QA-ABORT');
       }
       return OK;
     }, seen);
@@ -647,7 +647,7 @@ describe('reviewer probes made durable', () => {
     const entry: string[][] = [];
     let feCalls = 0;
     const inv = team('cancel-park', (i) => {
-      const dir = i.proposalsDir as string;
+      const dir = i.requestDir as string;
       entry.push([i.agent.name, ...fs.readdirSync(dir)]);
       if (i.agent.name === 'fe-member') {
         feCalls++;
@@ -697,7 +697,7 @@ describe('reviewer probes made durable', () => {
     });
     const all: WakeInput[] = [];
     const inv = team('snapshot-throw', (i) => {
-      req(i.proposalsDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-SNAPSHOT' : 'QA-SNAPSHOT');
+      req(i.requestDir as string, `${i.agent.name}.req`, i.agent.name === 'fe-member' ? 'FE-SNAPSHOT' : 'QA-SNAPSHOT');
       return OK;
     }, [], all);
     const summary = await go(inv);
