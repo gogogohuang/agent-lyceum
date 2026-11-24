@@ -7,12 +7,16 @@ import { listJobs, readJob, runShort, startJob, type CliLauncher } from "./runne
 export type AskQuestionView = { id: string; text: string; asker: string; options?: string[]; suggested?: { value: string; reason?: string }; answer?: string; delivered: boolean };
 export type AskView = { status: "pending" | "answered"; questions: AskQuestionView[] };
 
+export type ReportItem = { id: string; kind: "result" | "done" | "agent"; title: string; agent?: string; outcome?: string; created?: string };
+
 export type ConsoleDeps = {
   home: string;
   cli: CliLauncher;
   /** The repo of a registered project, or undefined when the name is not registered. */
   projectDir: (name: string) => string | undefined;
   readAsk: (project: string, runId: string) => AskView | undefined;
+  listReports: (project: string, runId: string) => ReportItem[] | undefined;
+  readReport: (project: string, runId: string, id: string) => { id: string; title: string; markdown: string } | undefined;
   saveAnswers: (project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean) => { complete: boolean; problems: string[] };
   shortTimeoutMs?: number;
 };
@@ -148,6 +152,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
       const ask = deps.readAsk(project, run);
       if (ask) send(res, 200, ask);
       else send(res, 404, { error: "這次任務沒有待回答的問題。" });
+    } else if (req.method === "GET" && (p === "/api/reports" || p === "/api/report")) {
+      const project = url.searchParams.get("project") ?? "";
+      const run = url.searchParams.get("run") ?? "";
+      if (!NAME_RE.test(project) || !NAME_RE.test(run)) {
+        send(res, 400, { error: "請求格式不對。" });
+        return true;
+      }
+      if (p === "/api/reports") {
+        const reports = deps.listReports(project, run);
+        if (reports) send(res, 200, { reports });
+        else send(res, 404, { error: "找不到這次任務。" });
+      } else {
+        const report = deps.readReport(project, run, url.searchParams.get("id") ?? "");
+        if (report) send(res, 200, report);
+        else send(res, 404, { error: "找不到這份報告。" });
+      }
     } else if (req.method === "POST" && p === "/api/ask/answers") {
       const b = await body(req, res);
       if (!b) return true;

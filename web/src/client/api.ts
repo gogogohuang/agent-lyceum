@@ -105,3 +105,24 @@ export async function postAnswers(project: string, run: string, answers: Record<
     return generic;
   }
 }
+
+export type ReportItem = { id: string; kind: "result" | "done" | "agent"; title: string; agent?: string; outcome?: string; created?: string };
+export type ReportDoc = { id: string; title: string; markdown: string };
+
+export async function getReports(project: string, run: string): Promise<ReportItem[] | undefined> {
+  try {
+    const res = await fetch(`/api/reports?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`, { headers: { "X-Lyceum-Token": token() } });
+    return res.ok ? (((await res.json()) as { reports: ReportItem[] }).reports ?? []) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function getReport(project: string, run: string, id: string): Promise<ReportDoc | undefined> {
+  try {
+    const res = await fetch(`/api/report?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&id=${encodeURIComponent(id)}`, { headers: { "X-Lyceum-Token": token() } });
+    return res.ok ? ((await res.json()) as ReportDoc) : undefined;
+  } catch {
+    return undefined;
+  }
+}
