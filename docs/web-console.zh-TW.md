@@ -15,9 +15,17 @@
 | `project`、`project add`、`project remove` | **工具**（`#!tools`） |
 | `call`、`demo`、`init` | **工具**（`#!tools`） |
 | `clear --lock --force` | **工具**（`#!tools`） |
-| `status` | 頁面本身 |
+| `status` | 頁面本身；任務的報告：**查看報告**（見[查看報告](#查看報告)） |
 
 可能跑很久的指令（`run`、`resume`、`call`、`tidy`、`demo`）以背景工作啟動，關掉頁面或停掉 `status --web` 後仍會繼續。每個工作有自己的資料夾 `<home>/web-jobs/<id>/`，裡面有 `out.log`，結束後還有 `exit.json`。輸出在**任務輸出**（`#!jobs`）。`tidy --dry-run`、`tidy --undo` 與 `demo --setup-only` 很快結束，輸出直接回傳。
+
+## 查看報告
+
+專案頁的**查看報告**會打開所選任務的報告。先出現列表，點一份就以排版後的文字閱讀，按**← 回到列表**可以回去。列表包含 `result.md`、每一份 `done-N.md`，以及這次任務中 agent 寄出的每封 `reply`、`done`、`failure` 信件（agent 沒有自己的報告檔）。`task` 信不算報告。
+
+- `GET /api/reports?project=&run=` 回傳列表；`GET /api/report?project=&run=&id=` 以 markdown 回傳一份報告。兩者都是唯讀。
+- `id` 只能是 `result`、`done-<n>` 或 `mail-<8 個十六進位字元>`。其他值（檔名、`../state`）一律回 HTTP 404，所以讀不到任務裡的其他檔案。
+- 報告文字由 agent 寫成。頁面用 `marked` 把 markdown 轉成 HTML，再用 `DOMPurify` 清理；報告裡的 HTML 標籤只會顯示成文字或被丟掉，不會執行。
 
 ## 確認
 

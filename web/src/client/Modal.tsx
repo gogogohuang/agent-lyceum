@@ -6,6 +6,7 @@ export function Modal({
   title,
   onClose,
   closable = true,
+  wide = false,
   children,
 }: {
   open: boolean;
@@ -13,6 +14,7 @@ export function Modal({
   onClose: () => void;
   /** When false, Esc is blocked (the native `cancel` event is prevented). The caller must also disable its own close buttons. */
   closable?: boolean;
+  wide?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -57,7 +59,7 @@ export function Modal({
         }
         onClose();
       }}
-      className="m-auto w-[min(38rem,calc(100vw-2rem))] max-h-[90dvh] overflow-y-auto rounded-xl border border-line bg-paper p-0 text-ink backdrop:bg-black/40"
+      className={`m-auto ${wide ? "w-[min(56rem,calc(100vw-2rem))]" : "w-[min(38rem,calc(100vw-2rem))]"} max-h-[90dvh] overflow-y-auto rounded-xl border border-line bg-paper p-0 text-ink backdrop:bg-black/40`}
     >
       {open && (
         <div className="p-4 sm:p-6">

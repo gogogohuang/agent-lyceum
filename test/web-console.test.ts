@@ -49,6 +49,26 @@ describe("createConsoleDeps", () => {
     expect(deps.readAsk("demo", "../../etc")).toBeUndefined();
     expect(deps.readAsk("other", "r1")).toBeUndefined();
   });
+  it("listReports/readReport expose result, done-N and agent mail, and nothing else", () => {
+    env = makeEnv();
+    const runDir = path.join(env.home, "projects", "demo", "runs", "r1");
+    const read = path.join(runDir, "mail", "inbox", "lead", "read");
+    fs.mkdirSync(read, { recursive: true });
+    fs.writeFileSync(path.join(runDir, "result.md"), "# Final\n\n**Outcome:** completed\n\nbody");
+    fs.writeFileSync(path.join(runDir, "done-1.md"), "# First\n\n**Outcome:** partial");
+    fs.writeFileSync(path.join(runDir, "state.json"), "{}");
+    fs.writeFileSync(path.join(read, "a.md"), "---\nid: b5c01416\nfrom: dev\nto: lead\ntype: reply\nsubject: Plan\ncreated: 2026-11-14T13:55:35.867Z\n---\n\n## Changes\n\nx\n");
+    fs.writeFileSync(path.join(read, "t.md"), "---\nid: 11111111\nfrom: lead\nto: dev\ntype: task\nsubject: Do it\n---\n\nx\n");
+    const deps = createConsoleDeps(env.home, "/x/cli.js");
+    const list = deps.listReports("demo", "r1");
+    expect(list?.map((r) => r.id)).toEqual(["result", "done-1", "mail-b5c01416"]);
+    expect(list?.[0]).toMatchObject({ kind: "result", title: "Final", outcome: "completed" });
+    expect(list?.[2]).toMatchObject({ kind: "agent", agent: "dev", title: "Plan" });
+    expect(deps.readReport("demo", "r1", "mail-b5c01416")?.markdown).toBe("## Changes\n\nx");
+    expect(deps.readReport("demo", "r1", "result")?.title).toBe("Final");
+    for (const bad of ["state", "../state", "state.json", "done-1.md", "mail-11111111", "mail-zzzzzzzz", ""]) expect(deps.readReport("demo", "r1", bad)).toBeUndefined();
+    expect(deps.listReports("demo", "../x")).toBeUndefined();
+  });
   it("saveAnswers stores user answers and says what is still missing", () => {
     env = makeEnv();
     const runDir = seedAsk();

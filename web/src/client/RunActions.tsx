@@ -2,11 +2,12 @@ import { useState } from "react";
 import type { CommandId } from "../commands";
 import type { Run } from "../types";
 import { AnswerDialog } from "./AnswerDialog";
+import { ReportsDialog } from "./ReportsDialog";
 import { CommandDialog } from "./CommandDialog";
 import { isIdleRun } from "./run-state";
 import { forgetDeletedSummaries } from "./summary-cleanup";
 
-type Open = { id: CommandId; initial?: Record<string, unknown>; title?: string } | "answer" | undefined;
+type Open = { id: CommandId; initial?: Record<string, unknown>; title?: string } | "answer" | "reports" | undefined;
 
 const btn = "min-h-11 rounded-lg border border-line bg-paper px-3 text-sm hover:bg-wall focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal";
 
@@ -36,6 +37,11 @@ export function RunActions({ project, run }: { project: string; run?: Run }) {
             </button>
           </>
         )}
+        {run && (
+          <button type="button" className={btn} onClick={() => setOpen("reports")}>
+            查看報告
+          </button>
+        )}
         <button type="button" className={btn} onClick={() => setOpen({ id: "tidy" })}>
           整理記憶
         </button>
@@ -43,7 +49,8 @@ export function RunActions({ project, run }: { project: string; run?: Run }) {
           檢查設定
         </button>
       </div>
-      {open && open !== "answer" && <CommandDialog id={open.id} open fixed={{ project }} initial={open.initial} onShortResult={forgetDeletedSummaries} onClose={close} />}
+      {open && open !== "answer" && open !== "reports" && <CommandDialog id={open.id} open fixed={{ project }} initial={open.initial} onShortResult={forgetDeletedSummaries} onClose={close} />}
+      {run && <ReportsDialog project={project} runId={run.run_id} open={open === "reports"} onClose={close} />}
       {run && <AnswerDialog project={project} runId={run.run_id} open={open === "answer"} onClose={close} />}
     </>
   );
