@@ -15,9 +15,17 @@ Run every agent-lyceum command from the `status --web` page. Local use only; see
 | `project`, `project add`, `project remove` | **工具** (`#!tools`) |
 | `call`, `demo`, `init` | **工具** (`#!tools`) |
 | `clear --lock --force` | **工具** (`#!tools`) |
-| `status` | The page itself |
+| `status` | The page itself; reports of a run: **查看報告** (see [Viewing reports](#viewing-reports)) |
 
 Commands that can run for a long time (`run`, `resume`, `call`, `tidy`, `demo`) start as background jobs and keep running if you close the page or stop `status --web`. Each job has a directory `<home>/web-jobs/<id>/` with `out.log` and, once it ends, `exit.json`. Their output is under **任務輸出** (`#!jobs`). `tidy --dry-run` and `tidy --undo`, and `demo --setup-only`, are short and return their output directly.
+
+## Viewing reports
+
+**查看報告** on a project page opens the reports of the selected run. The list comes first; pick one to read it as formatted text, and use **← 回到列表** to go back. The list holds `result.md`, each `done-N.md`, and every `reply`, `done` or `failure` mail an agent sent during the run (agents have no report files of their own). `task` mails are not reports.
+
+- `GET /api/reports?project=&run=` returns the list; `GET /api/report?project=&run=&id=` returns one report as markdown. Both are read-only.
+- `id` is `result`, `done-<n>` or `mail-<8 hex characters>`. Any other value (a file name, `../state`) is answered with HTTP 404, so no other file of the run can be read.
+- Report text is written by agents. The page turns markdown into HTML with `marked` and cleans it with `DOMPurify`; HTML tags in a report are shown as text or dropped, never run.
 
 ## Confirmation
 
