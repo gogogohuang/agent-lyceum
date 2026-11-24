@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { realInvoker, type Invoker } from "./adapters/index.js";
+import { realInvoker, type Invoker, type WakeResult } from "./adapters/index.js";
 import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
@@ -417,27 +417,34 @@ export async function wakeWithRollback(j: RollbackWake): Promise<{ ok: true } | 
     return { ok: false, problems };
   };
 
-  // The runtime may write only the directories being worked on (and read what it could read before): not the repo, outbox or shared files.
-  const normal = writePolicy(project, agent);
-  const policy: WritePolicy = {
-    allowDirs: j.allowDirs,
-    allowFiles: [],
-    readDirs: [...new Set([repoDirFor(project, j.agentName), ...normal.readDirs, ...normal.allowDirs.filter((d) => !j.allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
-    deny: normal.deny,
-  };
+  // Everything from here to the end of the wake-up (policy construction, a builder that throws synchronously, an invoke that rejects)
+  // is one failed wake: restore, clean the snapshot, report, and let the next independent job run.
+  let result: WakeResult;
+  try {
+    // The runtime may write only the directories being worked on (and read what it could read before): not the repo, outbox or shared files.
+    const normal = writePolicy(project, agent);
+    const policy: WritePolicy = {
+      allowDirs: j.allowDirs,
+      allowFiles: [],
+      readDirs: [...new Set([repoDirFor(project, j.agentName), ...normal.readDirs, ...normal.allowDirs.filter((d) => !j.allowDirs.includes(d)), ...normal.allowFiles.map((f) => path.dirname(f))])],
+      deny: normal.deny,
+    };
 
-  const invoke = j.invoker ?? realInvoker;
-  const result = await invoke({
-    project,
-    agent,
-    workDir: j.workDir,
-    systemPrompt: j.prompts.systemPrompt,
-    userPrompt: j.prompts.userPrompt,
-    timeoutSec: project.dispatcher.wake_timeout_sec,
-    signal: j.signal,
-    logDir: path.join(j.workDir, "log"),
-    policy,
-  }).catch((e: Error) => ({ ok: false, text: "", exitCode: null, timedOut: false, error: e.message }));
+    const invoke = j.invoker ?? realInvoker;
+    result = await invoke({
+      project,
+      agent,
+      workDir: j.workDir,
+      systemPrompt: j.prompts.systemPrompt,
+      userPrompt: j.prompts.userPrompt,
+      timeoutSec: project.dispatcher.wake_timeout_sec,
+      signal: j.signal,
+      logDir: path.join(j.workDir, "log"),
+      policy,
+    });
+  } catch (e) {
+    result = { ok: false, text: "", exitCode: null, timedOut: false, error: (e as Error).message };
+  }
   if (!result.ok) return fail([`the wake-up failed: ${result.error ?? "unknown error"}`]);
 
   // Anything that throws from here on (a report path that is a directory, a state file that cannot be written) is a failed wake that is rolled back.
