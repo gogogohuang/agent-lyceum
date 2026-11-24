@@ -1,0 +1,37 @@
+專案：demo  （repo：<ROOT>/repo）
+
+執行 run-1  [已結束：完成]  第 4 輪
+任務：    go
+進度：    無清單；已用 4 輪（lead 可在信中加入 "## Steps" 清單）
+現在：    閒置（執行已結束：done）
+下一個：  無 — lead 已完成任務
+結果：    <ROOT>/home/projects/demo/runs/run-1/result.md
+          # bye
+          **Outcome:** completed
+          > [agent-lyceum] Format warning: this report has no `## Spot-check`, `## Quiz` …
+          ## Result
+上一次：  #4 lead 成功 → 完成：「bye」
+流程：    lead → fe-member → lead → lead
+
+成員         執行環境     未讀  上次喚醒
+-----------  -----------  ----  -----------------------------
+lead (lead)  claude-code  0     成功 2026-11-17T00:00:00.000Z
+fe-member    claude-code  0     成功 2026-11-17T00:00:00.000Z
+qa-member    claude-code  0     -
+
+輸出 tokens：0
+
+執行紀錄：
+執行 run-1  [已結束：完成]  輪次 4  輸出 tokens 0
+  任務：go
+  驗證：x
+  ⚠ lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session.
+  ⚠ lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session.
+  #1 lead 成功 (0s, 0 tok) — 來自 user 的 task：「go」 — go
+      → fe-member ← task「work」
+  #2 fe-member 成功 (0s, 0 tok) — 來自 lead 的 task：「work」 — x
+      → lead ← reply「finished」
+  #3 lead 成功 (0s, 0 tok) — 來自 fe-member 的 reply：「finished」 — body of finished
+      → 未寄出信件
+  #4 lead 成功 (0s, 0 tok) — 來自 user 的 reply：「Answers to your questions」 — <answers>
+      → 完成：「bye」

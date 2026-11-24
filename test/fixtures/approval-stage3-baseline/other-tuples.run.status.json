@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "demo",
+    "dir": "<ROOT>/repo",
+    "lead": "lead"
+  },
+  "agents": [
+    {
+      "name": "lead",
+      "runtime": "claude-code",
+      "lead": true,
+      "unread": 0,
+      "can_message": [
+        "fe-member",
+        "qa-member"
+      ],
+      "last_wake": {
+        "at": "2026-11-17T00:00:00.000Z",
+        "ok": true
+      }
+    },
+    {
+      "name": "fe-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ],
+      "last_wake": {
+        "at": "2026-11-17T00:00:00.000Z",
+        "ok": true
+      }
+    },
+    {
+      "name": "qa-member",
+      "runtime": "claude-code",
+      "lead": false,
+      "unread": 0,
+      "can_message": [
+        "lead"
+      ]
+    }
+  ],
+  "run": {
+    "run_id": "run-1",
+    "dir": "<ROOT>/home/projects/demo/runs/run-1",
+    "state": "ended",
+    "live": false,
+    "end_reason": "done",
+    "outcome": "completed",
+    "outcome_verified": true,
+    "verification": "x",
+    "started_at": "2026-11-17T00:00:00.000Z",
+    "ended_at": "2026-11-17T00:00:00.000Z",
+    "rounds": 4,
+    "max_rounds": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "task_source": "text",
+    "task_summary": "go",
+    "current_step": null,
+    "active": {},
+    "queue": [],
+    "wakes": [
+      {
+        "round": 1,
+        "agent": "lead",
+        "at": "2026-11-17T00:00:00.000Z",
+        "duration_ms": 0,
+        "ok": true,
+        "handling": [
+          {
+            "from": "user",
+            "type": "task",
+            "subject": "go",
+            "brief": "go",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "go"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "fe-member",
+            "type": "task",
+            "subject": "work"
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "agent": "fe-member",
+        "at": "2026-11-17T00:00:00.000Z",
+        "duration_ms": 0,
+        "ok": true,
+        "handling": [
+          {
+            "from": "lead",
+            "type": "task",
+            "subject": "work",
+            "brief": "x",
+            "digest": [
+              {
+                "label": "目標",
+                "lines": [
+                  "x"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "lead",
+            "type": "reply",
+            "subject": "finished"
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "agent": "lead",
+        "at": "2026-11-17T00:00:00.000Z",
+        "duration_ms": 0,
+        "ok": true,
+        "handling": [
+          {
+            "from": "fe-member",
+            "type": "reply",
+            "subject": "finished",
+            "brief": "body of finished",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "body of finished"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "round": 4,
+        "agent": "lead",
+        "at": "2026-11-17T00:00:00.000Z",
+        "duration_ms": 0,
+        "ok": true,
+        "handling": [
+          {
+            "from": "user",
+            "type": "reply",
+            "subject": "Answers to your questions",
+            "brief": "<answers>",
+            "digest": [
+              {
+                "label": "摘要",
+                "lines": [
+                  "<answers>"
+                ]
+              }
+            ]
+          }
+        ],
+        "sent": [
+          {
+            "to": "(done)",
+            "type": "done",
+            "subject": "bye"
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session.",
+      "lead has resume: true but its claude-code CLI reported no session id, so every wake-up starts a fresh session."
+    ],
+    "blocked_integrations": [],
+    "result_path": "<ROOT>/home/projects/demo/runs/run-1/result.md",
+    "result_head": [
+      "# bye",
+      "**Outcome:** completed",
+      "> [agent-lyceum] Format warning: this report has no `## Spot-check`, `## Quiz` section (advisory; the report was accepted).",
+      "## Result"
+    ],
+    "mail_layout": "run",
+    "workspace_mode": "worktree",
+    "last_wake": {
+      "lead": {
+        "at": "2026-11-17T00:00:00.000Z",
+        "ok": true
+      },
+      "fe-member": {
+        "at": "2026-11-17T00:00:00.000Z",
+        "ok": true
+      }
+    }
+  }
+}

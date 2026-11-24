@@ -1,0 +1,12 @@
+Project: demo
+
+ok     Configuration is valid.
+ok     git repo with a commit: runs and agents work in their own worktrees.
+info   A run cannot open a pull request (a lead asks for one with `open_pr: true`): `gh` is not on PATH; the repo has no `origin` remote.
+ok     claude claude fixture-version
+info   Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on.
+
+Runtime capabilities (yes / no / unknown):
+  claude-code: claude fixture-version; json yes, resume yes, sandbox yes, effort yes
+
+No problems found.

@@ -5,7 +5,14 @@ import type { ResolvedAgent, ResolvedProject } from "../config.js";
 import type { ErrorKind } from "../schema.js";
 import { canonicalPath } from "../paths.js";
 import { applyShipToWake } from "../ship-wire.js";
+import { approvalDenyPathsStrict } from "../approval-policy.js";
+import { runtimeEnv } from "./env.js";
 import type { Invocation, Parsed, StreamParser, WakeInput } from "./types.js";
+
+/** Which settings files an approval-enrolled Claude reads: the user's only, never a repo's `.claude/settings*.json`. Spec section 8 suggests `""` after a human-run check; switch it here. */
+export const ENROLLED_SETTING_SOURCES = "user";
+/** An empty MCP config: with `--strict-mcp-config` neither user MCP servers nor a repo's `.mcp.json` load. */
+export const ENROLLED_MCP_CONFIG = '{"mcpServers":{}}';
 
 /** Claude Code path rules: `//abs/path` — a leading "/" plus the absolute path. */
 const rule = (tool: string, p: string) => `${tool}(/${p})`;
@@ -24,8 +31,11 @@ function denyRules(p: string): string[] {
 }
 
 /** `override`: a policy that replaces the agent's own; `cwd` is then the (scratch) directory the runtime starts in, in place of the repo. */
-export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent, override?: { policy: WritePolicy; cwd: string }): Record<string, unknown> {
-  const pol = override?.policy ?? writePolicy(project, agent);
+export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAgent, override?: { policy: WritePolicy; cwd: string }, requestDir?: string): Record<string, unknown> {
+  // Enrolled: the approval denies are unioned in, never replaced by an override; an unavailable inventory throws (no partial list).
+  const approvalDeny = agent.enrolled ? approvalDenyPathsStrict(project, agent) : [];
+  const base = override?.policy ?? writePolicy(project, agent, requestDir);
+  const pol = agent.enrolled ? { ...base, deny: [...new Set([...base.deny, ...approvalDeny])] } : base;
   const ws = override ? undefined : project.workspaces?.[agent.name];
   const repo = override?.cwd ?? repoDirFor(project, agent.name);
   const allow = ["Bash", "Read", "Glob", "Grep"];
@@ -51,6 +61,7 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
     permissions: { allow, deny },
     sandbox: {
       enabled: true,
+      ...(agent.enrolled ? { failIfUnavailable: true } : {}),
       allowUnsandboxedCommands: false,
       filesystem: {
         allowWrite: [override?.cwd ?? ws?.root ?? project.dir, ...pol.allowDirs, ...pol.allowFiles],
@@ -64,16 +75,18 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
 export function buildClaudeInvocation(raw: WakeInput): Invocation {
   const { input, ship } = applyShipToWake(raw);
   const { project, agent, workDir } = input;
+  // Before any file is written: an enrolled wake with an unavailable request inventory must not be built at all.
+  if (agent.enrolled) approvalDenyPathsStrict(project, agent);
   fs.mkdirSync(workDir, { recursive: true });
   const settingsFile = path.join(workDir, "claude-settings.json");
   const systemFile = path.join(workDir, "system-prompt.md");
   const repo = input.policy ? scratchCwd(workDir) : repoDirFor(project, agent.name);
   const scope = input.policy ? { policy: input.policy, cwd: repo } : undefined;
   if (scope) fs.mkdirSync(repo, { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent, scope), null, 2));
+  fs.writeFileSync(settingsFile, JSON.stringify(buildClaudeSettings(project, agent, scope, input.requestDir), null, 2));
   fs.writeFileSync(systemFile, input.systemPrompt);
 
-  const pol = input.policy ?? writePolicy(project, agent);
+  const pol = input.policy ?? writePolicy(project, agent, input.requestDir);
   const addDirs = [...pol.allowDirs, ...pol.readDirs, ...pol.allowFiles.map((f) => path.dirname(f))].filter((d) => !(d === repo || d.startsWith(repo + path.sep)));
   // So Bash can read the ship session file under the run's agent workDir.
   if (ship) addDirs.push(workDir);
@@ -88,6 +101,7 @@ export function buildClaudeInvocation(raw: WakeInput): Invocation {
     settingsFile,
     "--append-system-prompt-file",
     systemFile,
+    ...(agent.enrolled ? ["--strict-mcp-config", "--mcp-config", ENROLLED_MCP_CONFIG, "--setting-sources", ENROLLED_SETTING_SOURCES] : []),
   ];
   if (agent.model) args.push("--model", agent.model);
   if (agent.effort) args.push("--effort", agent.effort);
@@ -100,7 +114,7 @@ export function buildClaudeInvocation(raw: WakeInput): Invocation {
     args,
     stdin: input.userPrompt, // prompt via stdin: --add-dir is variadic and would swallow a positional prompt
     cwd: repo,
-    env: { ...process.env, AGENT_LYCEUM_AGENT: agent.name },
+    env: runtimeEnv(agent),
     parse({ stdout, stderr, code }) {
       return interpretClaude(extractClaudeResult(stdout), stdout, stderr, code);
     },

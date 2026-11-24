@@ -1,0 +1,43 @@
+{
+  "project": "demo",
+  "ok": true,
+  "checks": [
+    {
+      "level": "ok",
+      "subject": "config",
+      "message": "Configuration is valid."
+    },
+    {
+      "level": "ok",
+      "subject": "git",
+      "message": "git repo with a commit: runs and agents work in their own worktrees."
+    },
+    {
+      "level": "info",
+      "subject": "pr",
+      "message": "A run cannot open a pull request (a lead asks for one with `open_pr: true`): `gh` is not on PATH; the repo has no `origin` remote."
+    },
+    {
+      "level": "ok",
+      "subject": "claude-code",
+      "message": "claude claude fixture-version"
+    },
+    {
+      "level": "info",
+      "subject": "login",
+      "message": "Login status is unknown: agent-lyceum does not read credentials, and the CLIs offer no read-only login check it can rely on."
+    }
+  ],
+  "runtimes": [
+    {
+      "runtime": "claude-code",
+      "binary": "found",
+      "json": "yes",
+      "resume": "yes",
+      "sandbox": "yes",
+      "effort": "yes",
+      "notes": [],
+      "version": "claude fixture-version"
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { atomicWrite } from "./fs-util.js";
+import { z } from "zod";
+import type { ProposalsOf } from "./approval-rotation.js";
+import { atomicWrite, readRegularFileCappedNoFollow } from "./fs-util.js";
 
 /** Test seam: called after every durable step of routing and claim commits, so a test can "kill the process" there. */
 let faultHook: ((step: string) => void) | undefined;
@@ -284,18 +286,109 @@ export function loadAttempt(runDir: string, id: string): AttemptRecord {
   return JSON.parse(fs.readFileSync(attemptFile(runDir, id), "utf8")) as AttemptRecord;
 }
 
-export function listAttempts(runDir: string): AttemptRecord[] {
+/** `skipFile` (file name, and which folder it is in) is asked before a file is opened, so an enrolled run reads only names it has verified; unset, nothing changes. */
+export type SkipFile = (name: string, kind: "attempts" | "claims") => boolean;
+/** When given, the text of a file is taken from here and the file is never opened by recovery (an enrolled resume passes what its scan verified); `undefined` means skip the name. */
+export type ReadFile = (name: string, kind: "attempts" | "claims") => string | undefined;
+export function listAttempts(runDir: string, skipFile?: SkipFile, readFile?: ReadFile): AttemptRecord[] {
   const dir = path.join(mailDir(runDir), "attempts");
   if (!fs.existsSync(dir)) return [];
   const out: AttemptRecord[] = [];
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+    if (skipFile?.(f, "attempts")) continue;
     try {
-      out.push(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as AttemptRecord);
+      const text = readFile ? readFile(f, "attempts") : fs.readFileSync(path.join(dir, f), "utf8");
+      if (text === undefined) continue;
+      out.push(JSON.parse(text) as AttemptRecord);
     } catch {
       /* skip */
     }
   }
   return out;
+}
+
+export type LatestAttempt =
+  | { kind: "none" }
+  | { kind: "found"; attempt: AttemptRecord; claim: ClaimStatus }
+  | { kind: "undeterminable"; why: "corrupt" | "unsafe_entry" | "scan_limit" | "tie" | "claim" | "io" };
+
+const STRICT_READ_LIMIT = 64 * 1024;
+/** Claim ids are `<base36>-<agent>-<6 hex>`; an attempt file is `<claim id>-a<n>.json`. The name only selects whose file it is, never the order. */
+const ATTEMPT_NAME = /^[0-9a-z]+-(.+)-[0-9a-f]{6}-a\d+\.json$/;
+export const StrictAttempt = z.object({
+  id: z.string(),
+  claim_id: z.string().regex(/^[0-9A-Za-z][0-9A-Za-z._-]*$/),
+  agent: z.string(),
+  n: z.number().int().safe().positive(),
+  status: z.enum(["started", "output_ready", "committed", "failed"]),
+  started_at: z.string().refine((t) => Number.isFinite(Date.parse(t))),
+});
+const StrictClaim = z.object({ id: z.string(), agent: z.string(), status: z.enum(["claimed", "output_ready", "committed", "abandoned"]) });
+
+function readStrictJson(file: string): { ok: true; value: unknown } | { ok: false; why: "unsafe_entry" | "corrupt" } {
+  const r = readRegularFileCappedNoFollow(file, STRICT_READ_LIMIT);
+  if (!r.ok) return { ok: false, why: "unsafe_entry" };
+  if (r.truncated) return { ok: false, why: "corrupt" };
+  try {
+    return { ok: true, value: JSON.parse(r.buf.toString("utf8")) };
+  } catch {
+    return { ok: false, why: "corrupt" };
+  }
+}
+
+/**
+ * The most recent attempt of `slot`, judged strictly (unlike `listAttempts`, which skips damaged files): any file of this slot that is
+ * damaged, not a regular file, too big or ambiguous makes the answer `undeterminable`. Files of other agents are never opened.
+ * Order is by the numeric `(started_at, n)` pair, never by file name (`a10` is after `a2`). Scans at most `maxEntries` entries.
+ */
+export function latestSlotAttempt(runDir: string, slot: string, maxEntries: number): LatestAttempt {
+  const dirPath = path.join(mailDir(runDir), "attempts");
+  let dir: fs.Dir;
+  try {
+    dir = fs.opendirSync(dirPath);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "none" } : { kind: "undeterminable", why: "io" };
+  }
+  const names: string[] = [];
+  let early: LatestAttempt | undefined;
+  try {
+    let count = 0;
+    for (let ent = dir.readSync(); ent !== null; ent = dir.readSync()) {
+      if (++count > maxEntries) {
+        early = { kind: "undeterminable", why: "scan_limit" };
+        break;
+      }
+      const m = ATTEMPT_NAME.exec(ent.name);
+      if (m?.[1] === slot) names.push(ent.name);
+    }
+  } catch {
+    early = { kind: "undeterminable", why: "io" };
+  }
+  // A directory that fails to close is an I/O error, never a result; a refusal found while scanning is kept.
+  try {
+    dir.closeSync();
+  } catch {
+    early ??= { kind: "undeterminable", why: "io" };
+  }
+  if (early) return early;
+  const found: { rec: AttemptRecord; at: number }[] = [];
+  for (const name of names) {
+    const r = readStrictJson(path.join(dirPath, name));
+    if (!r.ok) return { kind: "undeterminable", why: r.why };
+    const p = StrictAttempt.safeParse(r.value);
+    if (!p.success || p.data.agent !== slot || `${p.data.id}.json` !== name) return { kind: "undeterminable", why: "corrupt" };
+    found.push({ rec: r.value as AttemptRecord, at: Date.parse(p.data.started_at) });
+  }
+  if (found.length === 0) return { kind: "none" };
+  found.sort((a, b) => b.at - a.at || b.rec.n - a.rec.n);
+  const [top, next] = found;
+  if (top && next && top.at === next.at && top.rec.n === next.rec.n) return { kind: "undeterminable", why: "tie" };
+  const attempt = (top as { rec: AttemptRecord }).rec;
+  const c = readStrictJson(claimFile(runDir, attempt.claim_id));
+  if (!c.ok) return { kind: "undeterminable", why: "claim" };
+  const cp = StrictClaim.safeParse(c.value);
+  if (!cp.success || cp.data.agent !== slot || cp.data.id !== attempt.claim_id) return { kind: "undeterminable", why: "claim" };
+  return { kind: "found", attempt, claim: cp.data.status };
 }
 
 /**
@@ -326,10 +419,15 @@ export function beginAttempt(runDir: string, claimId: string): AttemptRecord {
   return rec;
 }
 
-export function finishAttempt(runDir: string, attemptId: string, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
-  const rec = { ...loadAttempt(runDir, attemptId), status, finished_at: new Date().toISOString(), ...extra };
+/** Finish an attempt from a record already in hand (recovery's verified one): the file is not read again. */
+export function finishLoadedAttempt(runDir: string, loaded: AttemptRecord, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
+  const rec = { ...loaded, status, finished_at: new Date().toISOString(), ...extra };
   saveAttempt(runDir, rec);
   return rec;
+}
+
+export function finishAttempt(runDir: string, attemptId: string, status: Exclude<AttemptStatus, "started">, extra: { error?: string; parked?: string[] } = {}): AttemptRecord {
+  return finishLoadedAttempt(runDir, loadAttempt(runDir, attemptId), status, extra);
 }
 
 /** Move whatever is in an agent's outbox into the attempt's own folder, so it can never be mistaken for a later attempt's result. */
@@ -358,21 +456,61 @@ export interface RecoveryReport {
   interrupted: { attempt: AttemptRecord; parked: string[] }[];
 }
 
+export interface RecoveryOptions {
+  outboxOf?: (agent: string) => string;
+  skipFile?: SkipFile;
+  readFile?: ReadFile;
+  /** The canonical approval request directory of an enrolled slot, or undefined (not enrolled). Only with `parkProposals`. */
+  proposalsOf?: ProposalsOf;
+  /** Set a slot's request directory aside under this attempt (idempotent). Runs before the attempt is finished or the claim abandoned; a throw leaves both as they were. */
+  parkProposals?: (agent: string, attemptId: string, canonicalProposals: string) => void;
+  /** A slot's `parkProposals` threw: the slot's remaining attempts and claims are left alone and the caller must keep the slot from waking. */
+  onProposalsError?: (agent: string) => void;
+}
+
 /** Bring a run's claims back to a consistent state. Call before waking anyone on resume. */
-export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string) => string } = {}): RecoveryReport {
+export function recoverRunMail(runDir: string, opts: RecoveryOptions = {}): RecoveryReport {
   const report: RecoveryReport = { finalized: [], abandoned: [], ready: [], interrupted: [] };
-  for (const a of listAttempts(runDir)) {
-    if (a.status !== "started") continue;
+  const attempts = listAttempts(runDir, opts.skipFile, opts.readFile);
+  // A slot whose request directory could not be set aside: nothing of it is finished or abandoned, so it is judged again next time.
+  const blocked = new Set<string>();
+  const parkFor = (agent: string, attemptId: string): boolean => {
+    if (blocked.has(agent)) return false;
+    const proposals = opts.proposalsOf?.(agent);
+    if (proposals === undefined || !opts.parkProposals) return true;
+    try {
+      opts.parkProposals(agent, attemptId, proposals);
+      return true;
+    } catch {
+      blocked.add(agent);
+      try {
+        opts.onProposalsError?.(agent);
+      } catch {
+        /* the slot stays blocked either way */
+      }
+      return false;
+    }
+  };
+  for (const a of attempts) {
+    if (a.status !== "started" || blocked.has(a.agent)) continue;
     const parked = opts.outboxOf ? parkOutbox(runDir, opts.outboxOf(a.agent), a.id) : [];
-    const done = finishAttempt(runDir, a.id, "failed", { error: "interrupted", parked });
+    if (!parkFor(a.agent, a.id)) continue;
+    // With scan-verified input the record in hand is the one judged; reading the file again could see another file.
+    const extra = { error: "interrupted", parked };
+    const done = opts.readFile ? finishLoadedAttempt(runDir, a, "failed", extra) : finishAttempt(runDir, a.id, "failed", extra);
     report.interrupted.push({ attempt: done, parked });
   }
   const dir = path.join(mailDir(runDir), "claims");
   if (!fs.existsSync(dir)) return report;
+  const newest = new Map<string, AttemptRecord>();
+  if (opts.parkProposals) for (const a of attempts) if (!newest.has(a.claim_id) || (newest.get(a.claim_id) as AttemptRecord).n < a.n) newest.set(a.claim_id, a);
   for (const name of fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+    if (opts.skipFile?.(name, "claims")) continue;
     let c: ClaimRecord;
     try {
-      c = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as ClaimRecord;
+      const text = opts.readFile ? opts.readFile(name, "claims") : fs.readFileSync(path.join(dir, name), "utf8");
+      if (text === undefined) continue;
+      c = JSON.parse(text) as ClaimRecord;
     } catch {
       continue;
     }
@@ -381,6 +519,10 @@ export function recoverRunMail(runDir: string, opts: { outboxOf?: (agent: string
       for (const f of c.files) moved = moveToRead(f) || moved;
       if (moved) report.finalized.push(c.id);
     } else if (c.status === "claimed") {
+      // The claim's newest attempt owns whatever is in the request directory: set it aside before the claim stops being `claimed`.
+      const latest = newest.get(c.id);
+      if (latest && !parkFor(c.agent, latest.id)) continue;
+      if (latest && opts.proposalsOf?.(c.agent) !== undefined) fault("recovery:proposals-parked");
       saveClaim(runDir, { ...c, status: "abandoned" });
       report.abandoned.push({ ...c, status: "abandoned" });
     } else if (c.status === "output_ready") report.ready.push(c);

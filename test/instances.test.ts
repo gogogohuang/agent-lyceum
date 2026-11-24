@@ -373,3 +373,24 @@ describe("every earlier destination of a batch is occupied; ownership from earli
     expect(p.assign[1]).toMatchObject({ slot: "fe--2", rule: "affinity" });
   });
 });
+
+describe("instanceCap for enrolled roles (approval gate)", () => {
+  const run = { id: "r", dir: "/r", layout: "run" as const };
+  const mk = (agents: Record<string, unknown>, dispatcher = {}) => ({ lead: "lead", dispatcher, run, agents });
+  const reason = "approval-enrolled roles run as a single instance";
+  it("a flagged role is capped at 1 with the approval reason", () => {
+    expect(instanceCap(mk({ lead: {}, dev: { enrolled: true } }), "worktree", "dev")).toEqual({ n: 1, reason });
+  });
+  it("a flagged bound instance caps its base role", () => {
+    const agents = { lead: {}, dev: { enrolled: true }, "dev--2": { enrolled: true, instance: { role: "dev", k: 2 } } };
+    expect(instanceCap(mk(agents), "worktree", "dev--2", undefined, ["dev--2"])).toEqual({ n: 1, reason });
+  });
+  it("false or unset keeps the legacy and default caps", () => {
+    expect(instanceCap(mk({ lead: {}, dev: { enrolled: false } }), "worktree", "dev")).toEqual({ n: 4 });
+    expect(instanceCap(mk({ lead: {}, dev: {} }, { max_instances: 2 }), "worktree", "dev")).toEqual({ n: 2 });
+    expect(instanceCap(mk({ lead: {}, dev: {} }), "checkout" as never, "dev").reason).toMatch(/take turns/);
+  });
+  it("flag on a different role does not affect this one", () => {
+    expect(instanceCap(mk({ lead: {}, dev: {}, qa: { enrolled: true } }), "worktree", "dev")).toEqual({ n: 4 });
+  });
+});

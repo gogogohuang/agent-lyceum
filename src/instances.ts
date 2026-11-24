@@ -25,7 +25,7 @@ export interface InstanceCap {
   reason?: string;
 }
 
-type CapProject = Pick<ResolvedProject, "lead" | "solo" | "run" | "dispatcher"> & { agents: Record<string, unknown> };
+type CapProject = Pick<ResolvedProject, "lead" | "solo" | "run" | "dispatcher"> & { agents: Record<string, { enrolled?: boolean; instance?: { role: string } } | undefined> };
 
 /**
  * The most instances `role` may have in this run. `check(role, k)` is the caller's extra refusal for slot k (a path
@@ -44,6 +44,7 @@ export function instanceCap(
   if (project.run?.layout !== "run") return { n: 1, reason: "this run uses the legacy mailbox layout" };
   if (role === project.lead) return { n: 1, reason: `the lead (${role}) is never run as several instances` };
   if (!NAME_RE.test(role)) return { n: 1, reason: `"${role}" is not a valid branch name, so its instances cannot be named` };
+  if (project.agents[roleOfName(project.agents, role)]?.enrolled) return { n: 1, reason: "approval-enrolled roles run as a single instance" };
   const max = project.dispatcher.max_instances ?? DEFAULT_MAX_INSTANCES;
   for (let k = 2; k <= max; k++) {
     const name = slotName(role, k);

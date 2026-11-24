@@ -1,0 +1,1764 @@
+{
+  "project.lead": {
+    "writePolicy": {
+      "allowDirs": [
+        "<ROOT>/home/agents/lead/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records",
+        "<ROOT>/home/projects/demo/proposals",
+        "<ROOT>/home/projects/demo/agents/lead"
+      ],
+      "readDirs": [],
+      "allowFiles": [
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared/MEMORY.md",
+        "<ROOT>/home/agents/lead/AGENT.md",
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/agents/qa-member/AGENT.md",
+        "<ROOT>/repo/CLAUDE.md",
+        "<ROOT>/repo/AGENTS.md"
+      ],
+      "deny": [
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+        "<ROOT>/home/agents/qa-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+        "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+        "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+        "<ROOT>/home/projects/demo/project.yaml",
+        "<ROOT>/home/team.yaml"
+      ]
+    },
+    "enforcementFor": {
+      "agent": "lead",
+      "runtime": "claude-code",
+      "memory": "os",
+      "agentMd": "os",
+      "otherContext": "os",
+      "shared": "n/a",
+      "repoInstructions": "os",
+      "writablePaths": [
+        "<ROOT>/home/agents/lead/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records",
+        "<ROOT>/home/projects/demo/proposals",
+        "<ROOT>/home/projects/demo/agents/lead",
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared/MEMORY.md",
+        "<ROOT>/home/agents/lead/AGENT.md",
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/agents/qa-member/AGENT.md"
+      ],
+      "notes": []
+    },
+    "protectedPathsFor": {
+      "static": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        }
+      ],
+      "deep": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/project.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/team.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run",
+          "reason": "run directory"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/worktrees",
+          "reason": "worktrees root"
+        },
+        {
+          "path": "<ROOT>/repo/.git",
+          "reason": "git common dir"
+        }
+      ]
+    }
+  },
+  "project.fe-member": {
+    "writePolicy": {
+      "allowDirs": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/agents/fe-member"
+      ],
+      "readDirs": [
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records"
+      ],
+      "allowFiles": [],
+      "deny": [
+        "<ROOT>/home/agents/lead/AGENT.md",
+        "<ROOT>/home/agents/lead/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+        "<ROOT>/home/agents/qa-member/AGENT.md",
+        "<ROOT>/home/agents/qa-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+        "<ROOT>/repo/CLAUDE.md",
+        "<ROOT>/repo/AGENTS.md",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records",
+        "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+        "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+        "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+        "<ROOT>/home/projects/demo/project.yaml",
+        "<ROOT>/home/team.yaml"
+      ]
+    },
+    "enforcementFor": {
+      "agent": "fe-member",
+      "runtime": "claude-code",
+      "memory": "os",
+      "agentMd": "os",
+      "otherContext": "os",
+      "shared": "os",
+      "repoInstructions": "os",
+      "writablePaths": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/agents/fe-member"
+      ],
+      "notes": []
+    },
+    "protectedPathsFor": {
+      "static": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        }
+      ],
+      "deep": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/project.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/team.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run",
+          "reason": "run directory"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/worktrees",
+          "reason": "worktrees root"
+        },
+        {
+          "path": "<ROOT>/repo/.git",
+          "reason": "git common dir"
+        }
+      ]
+    }
+  },
+  "project.qa-member": {
+    "writePolicy": {
+      "allowDirs": [
+        "<ROOT>/home/agents/qa-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/agents/qa-member"
+      ],
+      "readDirs": [
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records"
+      ],
+      "allowFiles": [],
+      "deny": [
+        "<ROOT>/home/agents/lead/AGENT.md",
+        "<ROOT>/home/agents/lead/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+        "<ROOT>/home/agents/qa-member/AGENT.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+        "<ROOT>/repo/CLAUDE.md",
+        "<ROOT>/repo/AGENTS.md",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/shared/common/records",
+        "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+        "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+        "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+        "<ROOT>/home/projects/demo/project.yaml",
+        "<ROOT>/home/team.yaml"
+      ]
+    },
+    "enforcementFor": {
+      "agent": "qa-member",
+      "runtime": "claude-code",
+      "memory": "os",
+      "agentMd": "os",
+      "otherContext": "os",
+      "shared": "os",
+      "repoInstructions": "os",
+      "writablePaths": [
+        "<ROOT>/home/agents/qa-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/agents/qa-member"
+      ],
+      "notes": [
+        "network: example.com (claude-code: per-domain)"
+      ]
+    },
+    "protectedPathsFor": {
+      "static": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        }
+      ],
+      "deep": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/project.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/team.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run",
+          "reason": "run directory"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/worktrees",
+          "reason": "worktrees root"
+        },
+        {
+          "path": "<ROOT>/repo/.git",
+          "reason": "git common dir"
+        }
+      ]
+    }
+  },
+  "solo.fe-member": {
+    "writePolicy": {
+      "allowDirs": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/proposals",
+        "<ROOT>/home/projects/demo/agents/fe-member"
+      ],
+      "readDirs": [
+        "<ROOT>/home/projects/demo/shared/common/records"
+      ],
+      "allowFiles": [
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared/MEMORY.md"
+      ],
+      "deny": [
+        "<ROOT>/home/agents/lead/AGENT.md",
+        "<ROOT>/home/agents/lead/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+        "<ROOT>/home/agents/qa-member/AGENT.md",
+        "<ROOT>/home/agents/qa-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+        "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+        "<ROOT>/repo/CLAUDE.md",
+        "<ROOT>/repo/AGENTS.md",
+        "<ROOT>/home/projects/demo/shared/common/records",
+        "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+        "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+        "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+        "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+        "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+        "<ROOT>/home/projects/demo/project.yaml",
+        "<ROOT>/home/team.yaml"
+      ]
+    },
+    "enforcementFor": {
+      "agent": "fe-member",
+      "runtime": "claude-code",
+      "memory": "os",
+      "agentMd": "os",
+      "otherContext": "os",
+      "shared": "n/a",
+      "repoInstructions": "os",
+      "writablePaths": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+        "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
+        "<ROOT>/home/projects/demo/proposals",
+        "<ROOT>/home/projects/demo/agents/fe-member",
+        "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared/MEMORY.md"
+      ],
+      "notes": []
+    },
+    "protectedPathsFor": {
+      "static": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        }
+      ],
+      "deep": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "AGENT.md of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "memory of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "outbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "inbox of lead"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "AGENT.md of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "memory of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "outbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "inbox of qa-member"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "project records"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/lead/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/lead",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/agents/qa-member/memory",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox/qa-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/COMMON.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/shared/common/records",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/state.json",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/log.1.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/result.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/task.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/snapshots",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/violations",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/agents",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/inbox",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/claims",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/attempts",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run/mail/journal.jsonl",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/project.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/team.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/runs/fixture-run",
+          "reason": "run directory"
+        },
+        {
+          "path": "<ROOT>/home/projects/demo/worktrees",
+          "reason": "worktrees root"
+        },
+        {
+          "path": "<ROOT>/repo/.git",
+          "reason": "git common dir"
+        }
+      ]
+    }
+  },
+  "call.fe-member": {
+    "writePolicy": {
+      "allowDirs": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/calls/fixture-call/agents/fe-member"
+      ],
+      "readDirs": [
+        "<ROOT>/home/calls/fixture-call/shared/common/records"
+      ],
+      "allowFiles": [],
+      "deny": [
+        "<ROOT>/home/agents/fe-member/AGENT.md",
+        "<ROOT>/home/calls/fixture-call/mail/inbox/fe-member",
+        "<ROOT>/home/calls/fixture-call/shared/common/COMMON.md",
+        "<ROOT>/repo/CLAUDE.md",
+        "<ROOT>/repo/AGENTS.md",
+        "<ROOT>/home/calls/fixture-call/shared/common/records",
+        "<ROOT>/home/calls/fixture-call/runs",
+        "<ROOT>/home/calls/fixture-call/call.yaml",
+        "<ROOT>/home/team.yaml"
+      ]
+    },
+    "enforcementFor": {
+      "agent": "fe-member",
+      "runtime": "claude-code",
+      "memory": "os",
+      "agentMd": "os",
+      "otherContext": "os",
+      "shared": "n/a",
+      "repoInstructions": "os",
+      "writablePaths": [
+        "<ROOT>/home/agents/fe-member/memory",
+        "<ROOT>/home/calls/fixture-call/agents/fe-member"
+      ],
+      "notes": []
+    },
+    "protectedPathsFor": {
+      "static": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/records",
+          "reason": "project records"
+        }
+      ],
+      "deep": [
+        {
+          "path": "<ROOT>/home",
+          "reason": "agent-lyceum home"
+        },
+        {
+          "path": "<ROOT>/repo",
+          "reason": "project directory"
+        },
+        {
+          "path": "<ROOT>/user/.claude",
+          "reason": "Claude Code settings"
+        },
+        {
+          "path": "<ROOT>/user/.codex",
+          "reason": "Codex settings"
+        },
+        {
+          "path": "<ROOT>/user/.cursor",
+          "reason": "Cursor settings and login"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "AGENT.md of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/memory",
+          "reason": "memory of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/mail/outbox/fe-member",
+          "reason": "outbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/mail/inbox/fe-member",
+          "reason": "inbox of fe-member"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/COMMON.md",
+          "reason": "shared context"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "repo instruction file"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/records",
+          "reason": "project records"
+        },
+        {
+          "path": "<ROOT>/home/agents/fe-member/AGENT.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/mail/inbox/fe-member",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/COMMON.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/CLAUDE.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/repo/AGENTS.md",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/shared/common/records",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/runs",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/call.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/team.yaml",
+          "reason": "write-protected path"
+        },
+        {
+          "path": "<ROOT>/home/calls/fixture-call/worktrees",
+          "reason": "worktrees root"
+        },
+        {
+          "path": "<ROOT>/repo/.git",
+          "reason": "git common dir"
+        }
+      ]
+    }
+  }
+}

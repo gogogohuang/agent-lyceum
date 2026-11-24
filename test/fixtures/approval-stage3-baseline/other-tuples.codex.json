@@ -1,0 +1,623 @@
+{
+  "project.lead.normal": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/repo",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/lead/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/lead\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/shared/common/records\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/lead\",\"<ROOT>/home/projects/demo/shared/common\",\"<ROOT>/home/agents/lead\",\"<ROOT>/home/agents/fe-member\",\"<ROOT>/home/agents/qa-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.lead.normal/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "lead",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.lead.session": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "resume",
+      "sess-1",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/lead/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/lead\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/shared/common/records\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/lead\",\"<ROOT>/home/projects/demo/shared/common\",\"<ROOT>/home/agents/lead\",\"<ROOT>/home/agents/fe-member\",\"<ROOT>/home/agents/qa-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.lead.session/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "lead",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.lead.worktree": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/wt/lead",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/lead/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/lead\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead\",\"<ROOT>/gd/lead\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/shared/common/records\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/lead\",\"<ROOT>/home/projects/demo/shared/common\",\"<ROOT>/home/agents/lead\",\"<ROOT>/home/agents/fe-member\",\"<ROOT>/home/agents/qa-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.lead.worktree/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/wt/lead",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "lead",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.lead.policy": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/work/project.lead.policy/cwd",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/projects/demo/scratch-allow\",\"<ROOT>\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.lead.policy/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/work/project.lead.policy/cwd",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "lead",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.fe-member.normal": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/repo",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.fe-member.normal/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.fe-member.session": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "resume",
+      "sess-1",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.fe-member.session/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.fe-member.worktree": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/wt/fe-member",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/gd/fe-member\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.fe-member.worktree/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/wt/fe-member",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.fe-member.policy": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/work/project.fe-member.policy/cwd",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/projects/demo/scratch-allow\",\"<ROOT>\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.fe-member.policy/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/work/project.fe-member.policy/cwd",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.qa-member.normal": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/repo",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/qa-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member\",\"<ROOT>/home/projects/demo/agents/qa-member\"]",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.qa-member.normal/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "qa-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.qa-member.session": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "resume",
+      "sess-1",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/qa-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member\",\"<ROOT>/home/projects/demo/agents/qa-member\"]",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.qa-member.session/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "qa-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.qa-member.worktree": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/wt/qa-member",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/qa-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/qa-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/qa-member\",\"<ROOT>/gd/qa-member\",\"<ROOT>/home/projects/demo/agents/qa-member\"]",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.qa-member.worktree/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/wt/qa-member",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "qa-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "project.qa-member.policy": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/work/project.qa-member.policy/cwd",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/projects/demo/scratch-allow\",\"<ROOT>\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/project.qa-member.policy/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/work/project.qa-member.policy/cwd",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "qa-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "solo.fe-member.normal": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/repo",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/solo.fe-member.normal/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "solo.fe-member.session": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "resume",
+      "sess-1",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/solo.fe-member.session/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "solo.fe-member.worktree": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/wt/fe-member",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/fe-member\",\"<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/fe-member\",\"<ROOT>/gd/fe-member\",\"<ROOT>/home/projects/demo/task-memory/fixture-run/_shared\",\"<ROOT>/home/projects/demo/proposals\",\"<ROOT>/home/projects/demo/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/solo.fe-member.worktree/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/wt/fe-member",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "solo.fe-member.policy": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/work/solo.fe-member.policy/cwd",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/projects/demo/scratch-allow\",\"<ROOT>\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/solo.fe-member.policy/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/work/solo.fe-member.policy/cwd",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "call.fe-member.normal": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/repo",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/calls/fixture-call/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/call.fe-member.normal/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "call.fe-member.session": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "resume",
+      "sess-1",
+      "-c",
+      "sandbox_mode=\"workspace-write\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/home/calls/fixture-call/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/call.fe-member.session/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/repo",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "call.fe-member.worktree": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/wt/fe-member",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/agents/fe-member/memory\",\"<ROOT>/gd/fe-member\",\"<ROOT>/home/calls/fixture-call/agents/fe-member\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/call.fe-member.worktree/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/wt/fe-member",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  },
+  "call.fe-member.policy": {
+    "cmd": "codex",
+    "args": [
+      "exec",
+      "-C",
+      "<ROOT>/work/call.fe-member.policy/cwd",
+      "-s",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "sandbox_workspace_write.writable_roots=[\"<ROOT>/home/calls/fixture-call/scratch-allow\",\"<ROOT>\"]",
+      "--json",
+      "-o",
+      "<ROOT>/work/call.fe-member.policy/codex-last-message.txt",
+      "-"
+    ],
+    "stdin": "SYS\n\n=====\n\nUSER",
+    "cwd": "<ROOT>/work/call.fe-member.policy/cwd",
+    "env": {
+      "AGENT_LYCEUM_AGENT": "fe-member",
+      "FAKE_SECRET_TOKEN": "fixture-secret-do-not-leak",
+      "HOME": "<ROOT>/user",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/bin:/bin",
+      "TERM": "xterm",
+      "TMPDIR": "<ROOT>/tmp",
+      "USER": "fixture-user"
+    }
+  }
+}
