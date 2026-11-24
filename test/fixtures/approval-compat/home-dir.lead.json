@@ -6,6 +6,7 @@
       "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
       "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
       "<ROOT>/home/projects/demo/shared/common/records",
+      "<ROOT>/home/projects/demo/proposals",
       "<ROOT>/home/projects/demo/agents/lead"
     ],
     "readDirs": [],
@@ -58,6 +59,7 @@
       "<ROOT>/home/projects/demo/runs/fixture-run/mail/outbox/lead",
       "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared",
       "<ROOT>/home/projects/demo/shared/common/records",
+      "<ROOT>/home/projects/demo/proposals",
       "<ROOT>/home/projects/demo/agents/lead",
       "<ROOT>/home/projects/demo/shared/common/COMMON.md",
       "<ROOT>/home/projects/demo/task-memory/fixture-run/_shared/MEMORY.md",
@@ -84,6 +86,10 @@
       {
         "path": "<ROOT>/user/.codex",
         "reason": "Codex settings"
+      },
+      {
+        "path": "<ROOT>/user/.cursor",
+        "reason": "Cursor settings and login"
       },
       {
         "path": "<ROOT>/home/agents/lead/AGENT.md",
@@ -178,6 +184,10 @@
       {
         "path": "<ROOT>/user/.codex",
         "reason": "Codex settings"
+      },
+      {
+        "path": "<ROOT>/user/.cursor",
+        "reason": "Cursor settings and login"
       },
       {
         "path": "<ROOT>/home/agents/lead/AGENT.md",

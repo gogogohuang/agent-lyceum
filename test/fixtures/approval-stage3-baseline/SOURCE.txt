@@ -11,25 +11,26 @@ Frozen: later slices must not regenerate these files.
 Scenario dropped: none (no scenario hit listen EPERM in the sandbox).
 Revision 1 (S1 review): timestamps are no longer normalized (fixed clock => exact); id normalization limited to claim/attempt/inbox file names.
 Regenerated from `git archive 734e64d` with the same commands: only *.run.status.json and *.run.status.txt changed (<TS> -> the exact fixed-clock value 2026-11-17T00:00:00.000Z); every other fixture is byte-identical.
+Revision 2 (rebase onto main 0.46.0): main added the proposals directory grant and prompt text, so the baseline moved. Regenerated from `git worktree add --detach /tmp/x df6c54d` (no approval code) with the same commands; the baseline is now main df6c54d, not 734e64d.
 sha256 of every fixture:
-4b4bb3dab4e4937dc98b2bf5a13d643dbf36d7c6e691a9455bdd0ac231aa9f2e  empty-allow.claude.json
-f3893d5ae4259b1954dc6b4dd101aa779ce918272a195dc2067dd2ab9bdf250a  empty-allow.codex.json
-a7a8d95ea0080a027a5d4b16e640f965645310d6dbcfc24f1bced9cf9c7664e2  empty-allow.policies.json
-78a21154df085680abaa7e94b079291974a6ca21dd5596859d4987dc996f1c47  empty-allow.prompts.json
+9424b22a5d17bed9eb9b969f4c3f58f4930377d136612788f4852411a4513e2a  empty-allow.claude.json
+10408fc467e25c784b11e59879c0025db5b14ec2f507e809cc989ad0c022e6b3  empty-allow.codex.json
+fdc1608187832b848718a9ab8db5c8b306fe7c1d1b1354b619823e2a9467914d  empty-allow.policies.json
+6a9030bb8d63259705348906bddc0ab56e630fcf4ae72b4e93ca84a88ab79352  empty-allow.prompts.json
 29e19983297738386876d766afa21c3ad88deb72e37a8c84c2838be305b6ea71  empty-allow.run.status.json
 deb62b8e5a7229a5df729d52e9488528f9a60fba0258e33d3f8a997ef8307abf  empty-allow.run.status.txt
 426d413270b7c4502c1f0905da4662163829b289e30eb98c95202fbff394d841  empty-allow.run.tree.txt
-4b4bb3dab4e4937dc98b2bf5a13d643dbf36d7c6e691a9455bdd0ac231aa9f2e  no-file.claude.json
-f3893d5ae4259b1954dc6b4dd101aa779ce918272a195dc2067dd2ab9bdf250a  no-file.codex.json
-a7a8d95ea0080a027a5d4b16e640f965645310d6dbcfc24f1bced9cf9c7664e2  no-file.policies.json
-78a21154df085680abaa7e94b079291974a6ca21dd5596859d4987dc996f1c47  no-file.prompts.json
+9424b22a5d17bed9eb9b969f4c3f58f4930377d136612788f4852411a4513e2a  no-file.claude.json
+10408fc467e25c784b11e59879c0025db5b14ec2f507e809cc989ad0c022e6b3  no-file.codex.json
+fdc1608187832b848718a9ab8db5c8b306fe7c1d1b1354b619823e2a9467914d  no-file.policies.json
+6a9030bb8d63259705348906bddc0ab56e630fcf4ae72b4e93ca84a88ab79352  no-file.prompts.json
 29e19983297738386876d766afa21c3ad88deb72e37a8c84c2838be305b6ea71  no-file.run.status.json
 deb62b8e5a7229a5df729d52e9488528f9a60fba0258e33d3f8a997ef8307abf  no-file.run.status.txt
 90d446cd2130c4abc5be53b529b207177da967484d67bd7efebcb5228ca15af4  no-file.run.tree.txt
-4b4bb3dab4e4937dc98b2bf5a13d643dbf36d7c6e691a9455bdd0ac231aa9f2e  other-tuples.claude.json
-f3893d5ae4259b1954dc6b4dd101aa779ce918272a195dc2067dd2ab9bdf250a  other-tuples.codex.json
-a7a8d95ea0080a027a5d4b16e640f965645310d6dbcfc24f1bced9cf9c7664e2  other-tuples.policies.json
-78a21154df085680abaa7e94b079291974a6ca21dd5596859d4987dc996f1c47  other-tuples.prompts.json
+9424b22a5d17bed9eb9b969f4c3f58f4930377d136612788f4852411a4513e2a  other-tuples.claude.json
+10408fc467e25c784b11e59879c0025db5b14ec2f507e809cc989ad0c022e6b3  other-tuples.codex.json
+fdc1608187832b848718a9ab8db5c8b306fe7c1d1b1354b619823e2a9467914d  other-tuples.policies.json
+6a9030bb8d63259705348906bddc0ab56e630fcf4ae72b4e93ca84a88ab79352  other-tuples.prompts.json
 29e19983297738386876d766afa21c3ad88deb72e37a8c84c2838be305b6ea71  other-tuples.run.status.json
 deb62b8e5a7229a5df729d52e9488528f9a60fba0258e33d3f8a997ef8307abf  other-tuples.run.status.txt
 33cbf85fcf5fabd86422ae98c7782e18c6ea7311ebeb9d493a48d4f036fd0545  other-tuples.run.tree.txt

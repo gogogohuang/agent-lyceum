@@ -128,8 +128,11 @@ describe('settle collects finished output', () => {
   it('tidy, verify and format never name a request directory; enrolled call may', () => {
     const src = path.join(__dirname, '..', 'src');
     const users = fs.readdirSync(src).filter((f) => f.endsWith('.ts') && fs.readFileSync(path.join(src, f), 'utf8').includes('proposalsDir')).sort();
-    expect(users).toEqual(['approval-snapshot.ts', 'call.ts', 'policy.ts', 'prompt.ts', 'run-session.ts']);
-    for (const f of ['memory-tidy.ts', 'verify.ts', 'format.ts']) expect(users).not.toContain(f);
+    // cli.ts, guard.ts, memory-tidy.ts and proposals-review.ts use the project's own proposals directory (spec 30), not an approval request directory.
+    expect(users).toEqual(['approval-snapshot.ts', 'call.ts', 'cli.ts', 'guard.ts', 'memory-tidy.ts', 'policy.ts', 'prompt.ts', 'proposals-review.ts', 'run-session.ts']);
+    for (const f of ['verify.ts', 'format.ts']) expect(users).not.toContain(f);
+    // A tidy still never hands the runtime an approval request directory: its write policy takes no second argument.
+    expect(fs.readFileSync(path.join(src, 'memory-tidy.ts'), 'utf8')).not.toMatch(/writePolicy\(\w+, \w+(\.\w+)?, /);
     expect(fs.readdirSync(path.join(src, 'adapters')).filter((f) => fs.readFileSync(path.join(src, 'adapters', f), 'utf8').includes('proposalsDir')).sort()).toEqual(['claude.ts', 'types.ts']);
   });
 

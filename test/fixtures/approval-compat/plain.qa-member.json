@@ -80,6 +80,10 @@
         "reason": "Codex settings"
       },
       {
+        "path": "<ROOT>/user/.cursor",
+        "reason": "Cursor settings and login"
+      },
+      {
         "path": "<ROOT>/home/agents/lead/AGENT.md",
         "reason": "AGENT.md of lead"
       },
@@ -172,6 +176,10 @@
       {
         "path": "<ROOT>/user/.codex",
         "reason": "Codex settings"
+      },
+      {
+        "path": "<ROOT>/user/.cursor",
+        "reason": "Cursor settings and login"
       },
       {
         "path": "<ROOT>/home/agents/lead/AGENT.md",

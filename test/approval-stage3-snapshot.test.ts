@@ -94,7 +94,9 @@ describe('grantEntries and writePolicy', () => {
       expect(withDir.allowDirs).toEqual([...plain.allowDirs, '/canon/proposals']);
       expect(withDir.allowFiles).toEqual(plain.allowFiles);
       expect(withDir.deny).toEqual(plain.deny);
-      expect(entries.some((e) => e.source === 'proposals')).toBe(false);
+      // The lead (and a solo agent) hold the project's own proposals directory (spec 30), which is also tagged `proposals`; the
+      // approval request directory is the extra entry that `withDir` appended last, so it is the only difference.
+      expect(entries.filter((e) => e.source === 'proposals').length).toBe(name === 'lead' ? 1 : 0);
     }
     expect(RUN_ONLY_SOURCES.has('proposals') && RUN_ONLY_SOURCES.has('git-dir') && !RUN_ONLY_SOURCES.has('own-dir')).toBe(true);
   });
