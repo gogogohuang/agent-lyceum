@@ -8,7 +8,7 @@ import { JobsPage } from "./JobsPage";
 import { ProjectView } from "./ProjectView";
 import { headline, railText } from "./rail";
 import { ToolsPage } from "./ToolsPage";
-import { focusReport } from "./view";
+import { focusReport, latestRunMs } from "./view";
 
 type Live = "up" | "down";
 
@@ -19,6 +19,8 @@ export function App() {
   const [hash, setHash] = useState(readHash);
   const [attempt, setAttempt] = useState(0);
   const [quota, setQuota] = useState<QuotaReport[] | undefined>(undefined);
+  const [hidden, setHidden] = useState<Set<string>>(loadHidden);
+  const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => {
     const source = new EventSource("/events");
@@ -47,27 +49,37 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  const names = [...projects.keys()].sort((a, b) => rank(projects.get(a)) - rank(projects.get(b)) || a.localeCompare(b));
-  const selected = hash.project && projects.has(hash.project) ? hash.project : names[0];
+  const names = [...projects.keys()].sort((a, b) => cmpRecent(latestRunMs(projects.get(a)), latestRunMs(projects.get(b))) || a.localeCompare(b));
+  const shown = showHidden ? names : names.filter((name) => !hidden.has(name));
+  const hiddenCount = names.filter((name) => hidden.has(name)).length;
+  const selected = hash.project && projects.has(hash.project) ? hash.project : (shown[0] ?? names[0]);
+  const toggleHidden = (name: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(name)) next.add(name);
+      saveHidden(next);
+      return next;
+    });
   const frame = selected ? projects.get(selected) : undefined;
 
   return (
     <div className="grid h-dvh grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-wall md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-1 xl:grid-cols-[16rem_minmax(0,1fr)]">
       <nav aria-label="已註冊專案" className="inset-safe z-20 flex items-center gap-2 overflow-x-auto border-b border-line bg-paper p-3 md:sticky md:top-0 md:h-dvh md:flex-col md:items-stretch md:overflow-y-auto md:border-r md:border-b-0">
         <p className="eyebrow hidden px-2 pt-2 pb-1 md:block">專案</p>
-        {names.length === 0 ? (
-          <p className="text-pretty px-2 text-sm">{live === "up" ? "還沒有已註冊的專案。" : "正在連上本機狀態…"}</p>
+        {shown.length === 0 ? (
+          <p className="text-pretty px-2 text-sm">{names.length > 0 ? "專案都已隱藏。" : live === "up" ? "還沒有已註冊的專案。" : "正在連上本機狀態…"}</p>
         ) : (
-          names.map((name) => {
+          shown.map((name) => {
             const item = projects.get(name);
             const on = !hash.view && name === selected;
             const running = item ? focusReport(item)?.run?.state === "running" : false;
+            const isHidden = hidden.has(name);
             return (
+              <div key={name} className={cn("group relative shrink-0", isHidden && "opacity-60")}>
               <Button
-                key={name}
                 type="button"
                 className={cn(
-                  "min-h-11 min-w-36 shrink-0 rounded-lg border px-3 py-2 text-left md:min-w-0",
+                  "min-h-11 w-full min-w-36 rounded-lg border px-3 py-2 pr-9 text-left md:min-w-0",
                   on ? "border-line bg-wall" : "border-transparent hover:bg-wall/70",
                 )}
                 onClick={() => select(name)}
@@ -78,8 +90,23 @@ export function App() {
                 </span>
                 <span className={cn("mt-0.5 block truncate pl-4 font-mono text-xs tabular-nums", running ? "text-signal" : "text-ink/60")}>{item ? railText(item) : ""}</span>
               </Button>
+              <Button
+                type="button"
+                aria-label={isHidden ? `顯示 ${name}` : `隱藏 ${name}`}
+                title={isHidden ? "取消隱藏" : "隱藏"}
+                className="absolute top-1 right-1 inline-flex size-7 items-center justify-center rounded-md text-xs text-ink/50 hover:bg-wall hover:text-ink focus-visible:outline-2 focus-visible:outline-signal md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                onClick={() => toggleHidden(name)}
+              >
+                <EyeIcon off={!isHidden} />
+              </Button>
+              </div>
             );
           })
+        )}
+        {hiddenCount > 0 && (
+          <Button type="button" className="min-h-9 shrink-0 rounded-lg px-3 text-left text-xs text-ink/60 underline" onClick={() => setShowHidden((v) => !v)}>
+            {showHidden ? "收起已隱藏" : `顯示已隱藏 (${hiddenCount})`}
+          </Button>
         )}
         <div className="flex items-center gap-2 md:mt-4 md:flex-col md:items-stretch md:border-t md:border-line md:pt-3">
           {([["decisions", "決策"], ["tools", "工具"], ["jobs", "任務輸出"]] as const).map(([view, label]) => (
@@ -166,10 +193,38 @@ function apply(prev: Map<string, WatchFrame>, event: WebEvent): Map<string, Watc
   return next;
 }
 
-function rank(frame: WatchFrame | undefined): number {
-  if (!frame || frame.error) return 3;
-  const state = focusReport(frame)?.run?.state;
-  if (state === "running") return 0;
-  if (state) return 1;
-  return 2;
+/** Newest run first; projects that never ran (-Infinity) go last. */
+function cmpRecent(a: number, b: number): number {
+  if (a === b) return 0;
+  return a > b ? -1 : 1;
+}
+
+const HIDDEN_KEY = "lyceum.hiddenProjects";
+
+function loadHidden(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]") as unknown;
+    return new Set(Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHidden(set: Set<string>): void {
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set]));
+  } catch {
+    // storage unavailable (private mode): hide still works for this session
+  }
+}
+
+/** Eye = show again; slashed eye = hide. Deliberately not an "x", which reads as close/delete. */
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <path d="M4 4l16 16" />}
+    </svg>
+  );
 }
