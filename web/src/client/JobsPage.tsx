@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { getJob, getJobs, type JobDetail, type JobSummary } from "./api";
 import { cn } from "./cn";
 import { exitInfo } from "./exit-info";
+import { LoadingBlock, LoadingStatus } from "./Loading";
 import { startPoll } from "./poll";
 
 const STATE = { running: "執行中", ended: "已結束", lost: "已結束（結束碼不明）" } as const;
 
 export function JobsPage() {
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [jobs, setJobs] = useState<JobSummary[]>();
   const [picked, setPicked] = useState<string>();
   // undefined = not loaded yet; null = request failed; a later failure keeps the last good detail
   const [detail, setDetail] = useState<JobDetail | null>();
@@ -33,6 +34,10 @@ export function JobsPage() {
       2000,
     );
   }, [picked]);
+
+  if (jobs === undefined) {
+    return <LoadingBlock label="正在讀取任務清單…" />;
+  }
 
   return (
     <article className="enter animate-in fade-in p-4 duration-200 sm:p-6">
@@ -63,7 +68,16 @@ export function JobsPage() {
           })}
         </ul>
       )}
-      {picked && detail === undefined && <p className="mt-6 text-sm">正在讀取輸出…</p>}
+      {picked && detail === undefined && (
+        <div className="mt-6 rounded-lg border border-line bg-paper p-4">
+          <LoadingStatus label="正在讀取輸出…" />
+          <div className="mt-3 space-y-2" aria-hidden="true">
+            <div className="h-3 w-full motion-safe:animate-pulse rounded bg-line" />
+            <div className="h-3 w-5/6 motion-safe:animate-pulse rounded bg-line" />
+            <div className="h-3 w-2/3 motion-safe:animate-pulse rounded bg-line" />
+          </div>
+        </div>
+      )}
       {picked && detail === null && <p className="text-pretty mt-6 text-sm text-failed">無法取得這個任務的輸出，稍後會自動重試。</p>}
       {detail && (
         <section aria-label="輸出" className="mt-6">

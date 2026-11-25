@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import { getAsk, postAnswers, postCommand, type AskView, type CommandResult } from "./api";
 import { cn } from "./cn";
 import { exitInfo } from "./exit-info";
+import { LoadingStatus } from "./Loading";
 import { Modal } from "./Modal";
 
 const input = "min-h-11 w-full rounded-lg border border-line bg-wall px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal";
@@ -54,7 +55,16 @@ export function AnswerDialog({ project, runId, open, onClose }: { project: strin
 
   return (
     <Modal open={open} title="回答問題" onClose={onClose} closable={!busy}>
-      {ask === undefined && <p className="mt-4 text-sm">讀取中…</p>}
+      {ask === undefined && (
+        <div className="mt-4">
+          <LoadingStatus label="正在讀取問題…" />
+          <div className="mt-3 space-y-2" aria-hidden="true">
+            <div className="h-3 w-full motion-safe:animate-pulse rounded bg-line" />
+            <div className="h-3 w-4/5 motion-safe:animate-pulse rounded bg-line" />
+            <div className="h-3 w-3/5 motion-safe:animate-pulse rounded bg-line" />
+          </div>
+        </div>
+      )}
       {ask === "missing" && <p className="mt-4 text-sm">這次任務現在沒有待回答的問題。</p>}
       {result ? (
         <div className="mt-4 flex flex-col gap-3">

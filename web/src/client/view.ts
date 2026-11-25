@@ -54,6 +54,13 @@ export function focusReport(frame: WatchFrame): StatusReport | undefined {
   return reports.find((report) => report.run?.state === "running") ?? reports.find((report) => report.run && isOpen(report.run)) ?? reports[0];
 }
 
+/** Start time (ms) of the project's newest run; -Infinity when it has never run. */
+export function latestRunMs(frame: WatchFrame | undefined): number {
+  if (!frame || frame.error) return -Infinity;
+  const newest = openReports(frame)[0];
+  return newest ? started(newest) : -Infinity;
+}
+
 function started(report: StatusReport): number {
   const ms = Date.parse(report.run?.started_at ?? "");
   return Number.isFinite(ms) ? ms : -Infinity;
