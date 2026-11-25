@@ -8,6 +8,7 @@ import { atomicWrite } from "./fs-util.js";
 import { ensureProjectDirs } from "./mailbox.js";
 import { commonFile, memoryDirs, proposalsDir, recordsDir, repoDirFor, writePolicy, type WritePolicy } from "./policy.js";
 import { parseProposal, PROPOSAL_KINDS, type Proposal } from "./proposals.js";
+import { listPromotable, promoteDecisions, undoPromoted } from "./decision-log.js";
 import { buildTidyPrompts, MEMORY_INDEX_LIMIT, type TidyProposalsContext, type TidyRecordsContext } from "./prompt.js";
 import { activeRecordsBytes, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
 import { git, isGitRepo } from "./worktree.js";
@@ -542,6 +543,17 @@ async function tidyOne(o: TidyOptions, t: { agent: string; layer: Layer; dir: st
 /** Tidy the memory of the chosen agents, one after another. Only ever called by a person (`agent-lyceum tidy`). */
 export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
   const say = o.say ?? ((s: string) => console.log(s));
+  const stamp = tidyStamp(o.now?.()); // one per tidy, for every agent
+  // Before the lead tidies the records, decisions that runs reported become records, so the tidy can merge them with what is there.
+  if (recordsInScope(o)) {
+    if (o.dryRun) {
+      const todo = listPromotable(o.project);
+      if (todo.length) say(`decisions to promote into the project records: ${todo.map((e) => e.id).join(", ")}`);
+    } else {
+      const ids = promoteDecisions(o.project, stamp);
+      if (ids.length) say(`promoted ${ids.length} decision(s) into the project records: ${ids.join(", ")}`);
+    }
+  }
   const withRecords = recordsInScope(o) && (liveRecordFiles(o.project).length > 0 || liveProposalFiles(o.project).length > 0);
   const lead = o.project.lead;
   let targets: MemoryTarget[];
@@ -553,7 +565,6 @@ export async function tidyMemory(o: TidyOptions): Promise<TidyResult[]> {
     targets = [];
   }
   const results: TidyResult[] = [];
-  const stamp = tidyStamp(o.now?.()); // one per tidy, for every agent
   const jobs: { agent: string; layer: Layer; dir: string | undefined }[] = targets.map((t) => ({ ...t }));
   if (withRecords && !jobs.some((j) => j.agent === lead)) jobs.push({ agent: lead, layer: o.layer, dir: undefined });
   for (const j of jobs) {
@@ -581,6 +592,8 @@ export interface RestoreResult {
   records?: { restored: string[]; skipped: { rel: string; reason: string }[] };
   /** The same for the proposals archive of that stamp. */
   proposals?: { restored: string[]; skipped: { rel: string; reason: string }[] };
+  /** The decisions that tidy had turned into records, taken back out (a file changed since is kept). */
+  promoted?: { removed: string[]; kept: { rel: string; reason: string }[] };
 }
 
 function titleOf(file: string, rel: string): string {
@@ -639,7 +652,9 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
   }
   const archive = dir ? path.join(dir, ARCHIVE_DIR, o.stamp) : undefined;
   const memHas = !!archive && fs.existsSync(archive);
-  if (!memHas && !recHas && !propHas) {
+  const promoted = isLead ? undoPromoted(o.project, o.stamp) : undefined;
+  const promotedAny = !!promoted && (promoted.removed.length > 0 || promoted.kept.length > 0);
+  if (!memHas && !recHas && !propHas && !promotedAny) {
     const recs = isLead ? `${dir ? "; project records archives: " : " Project records archives: "}${listArchives(recDir).join(", ") || "(none)"}` : "";
     throw new Error(`No archive ${o.stamp} for ${o.agent} (${o.layer}).${dir ? ` Archives: ${listArchives(dir).join(", ") || "(none)"}` : ""}${recs}.`);
   }
@@ -651,7 +666,7 @@ export function restoreMemory(o: { project: ResolvedProject; agent: string; laye
     const add = mem.restored.filter((rel) => rel.endsWith(".md") && !index.includes(rel)).map((rel) => `- [${titleOf(path.join(dir, rel), rel)}](${rel}) — restored from tidy ${o.stamp}`);
     if (add.length) atomicWrite(indexFile, `${index.replace(/\n*$/, index ? "\n" : "")}${add.join("\n")}\n`);
   }
-  return { ...mem, ...(recHas ? { records: moveBack(recDir, recArchive) } : {}), ...(propHas ? { proposals: moveBack(pDir, propArchive) } : {}) };
+  return { ...mem, ...(recHas ? { records: moveBack(recDir, recArchive) } : {}), ...(propHas ? { proposals: moveBack(pDir, propArchive) } : {}), ...(promotedAny ? { promoted } : {}) };
 }
 
 /** The stamps of the archives in a memory directory, oldest first. */

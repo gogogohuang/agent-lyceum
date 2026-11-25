@@ -658,7 +658,9 @@ program
           for (const k of r.records?.skipped ?? []) console.log(`  skipped   records/${k.rel}: ${k.reason}`);
           for (const f of r.proposals?.restored ?? []) console.log(`  restored  proposals/${f}`);
           for (const k of r.proposals?.skipped ?? []) console.log(`  skipped   proposals/${k.rel}: ${k.reason}`);
-          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length && !r.proposals?.restored.length && !r.proposals?.skipped.length) console.log(`Archive ${opts.undo} holds no files to restore.`);
+          for (const f of r.promoted?.removed ?? []) console.log(`  removed   records/${f} (promoted by that tidy)`);
+          for (const k of r.promoted?.kept ?? []) console.log(`  kept      records/${k.rel}: ${k.reason}`);
+          if (!r.restored.length && !r.skipped.length && !r.records?.restored.length && !r.records?.skipped.length && !r.proposals?.restored.length && !r.proposals?.skipped.length && !r.promoted) console.log(`Archive ${opts.undo} holds no files to restore.`);
         } finally {
           undoLease.release();
         }
