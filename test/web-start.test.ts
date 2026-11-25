@@ -161,6 +161,29 @@ describe("startWebServer routes", () => {
     await b.page.close();
   });
 
+  it("GET /snapshot returns each watched project's current frame", async () => {
+    const { page, handler } = await start({
+      factory: {
+        list: () => ["beta", "alpha"],
+        watch: (name, onFrame) => {
+          onFrame({ schema_version: 1, report: { project: { name, dir: `/repo/${name}`, lead: "lead" }, agents: [] } });
+          return { beat() {}, close() {} };
+        },
+      },
+    });
+    const r = request(handler, "GET", "/snapshot", { host: "127.0.0.1:8787" });
+    await r.done;
+    expect(r.out.status).toBe(200);
+    expect(String(r.out.headers?.["Content-Type"])).toContain("application/json");
+    expect(JSON.parse(r.out.body)).toEqual({
+      projects: [
+        { name: "alpha", frame: { schema_version: 1, report: { project: { name: "alpha", dir: "/repo/alpha", lead: "lead" }, agents: [] } } },
+        { name: "beta", frame: { schema_version: 1, report: { project: { name: "beta", dir: "/repo/beta", lead: "lead" }, agents: [] } } },
+      ],
+    });
+    await page.close();
+  });
+
   it("the URL shows the real port", async () => {
     const { state, listen } = fakeListen(5555);
     const page = await startWebServer(opts({ listen, port: 0 }));

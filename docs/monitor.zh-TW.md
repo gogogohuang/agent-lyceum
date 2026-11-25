@@ -1,6 +1,6 @@
 # 監控 mod（Claude Code）
 
-`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供通知與 `/status-monitor` 面板，資料來自 `agent-lyceum status --json --watch`：一個長駐程序，run 的檔案有變動才輸出一行（不輪詢）。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
+`plugins/status-monitor` 是 Claude Code **mod**，不是一般的 plugin：它依 Claude Code 的 mod hooks API 撰寫（`import type { Register } from 'claude-code'`），在 Claude Code session 內執行，提供通知與 `/status-monitor` 面板。`web` 設成 `pane` 或 `session` 且有指定專案名稱時，面板讀那一支 `status --web` 的 `GET /snapshot`。其他情況資料來自 `agent-lyceum status --json --watch`：每個專案一個長駐程序，run 的檔案有變動才輸出一行。需要支援 mod 的 Claude Code 版本；不會改變 agent-lyceum 本身的運作。會顯示一個或多個專案的即時執行狀態。
 
 **載入。** 先 build（`npm run build`；mod 會執行 `dist/cli.js`），再用下面的指令啟動 session：
 
@@ -21,10 +21,10 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 |---|---|---|
 | `command` | 要執行的 CLI，以空白分隔，例如 `node /path/to/agent-lyceum/dist/cli.js` | `agent-lyceum` |
 | `project` | 已註冊的專案名稱（`-p`）；用逗號分隔可同時監看多個；留空則依 session 所在目錄推斷 | 空 |
-| `intervalSeconds` | `status --watch` 啟動失敗或結束後，改用的輪詢間隔 | `1` |
+| `intervalSeconds` | `status --web` 開著時，面板讀 `GET /snapshot` 的間隔；每個專案的 `status --watch` 啟動失敗或結束後，也用這個間隔輪詢 | `1` |
 | `maxColumns` | 面板開啟寬度（終端的一半）與樹狀圖繪製寬度的上限 | `250` |
 | `autoOpen` | session 啟動時自動開啟面板（未經操作開啟時，終端需 144 欄以上才會顯示） | `false` |
-| `web` | 讓 mod 一併啟動網頁（`status --web`）：`off`、`pane`（面板或 band 顯示期間）、`session`（整個 session） | `off` |
+| `web` | 讓 mod 一併啟動網頁（`status --web`）：`off`、`pane`（面板或 band 顯示期間）、`session`（整個 session）。`pane` 與 `session` 時，面板的進度也由這一支伺服器提供 | `off` |
 | `webPort` | 網頁的埠，1 到 65535 的整數 | `8787` |
 | `webOpen` | 你自己開面板、而且這個 session 成為伺服器擁有者時，開一次瀏覽器 | `false` |
 
@@ -36,7 +36,7 @@ claude --plugin-dir /path/to/agent-lyceum/plugins/status-monitor
 
 **快取用量。** 執行那一行也會顯示這個 run 讀取與寫入的 prompt 快取輸入 token，以及讀取所占比例（`快取 讀 … 寫 … 命中 …%`），`agent-lyceum status` 的顯示相同。只記錄 `claude` agent；這項記錄出現之前的 run 與 codex agent 不顯示。
 
-**如何保持最新。** mod 對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個尚未結束的 task（已完成或部分完成者除外）各一份）；剛結束的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。
+**如何保持最新。** `web` 設成 `pane` 或 `session` 且有指定專案名稱時，mod 不會為每個專案各啟動一支 `status --watch`。那一支 `status --web` 在自己的 process 裡監看每個已註冊專案的 `runs/` 目錄，面板在它是擁有者或跟隨者時，依 `intervalSeconds` 讀 `GET /snapshot`。通知也用這些畫面。`web: off`、`project` 留空（依 session 目錄推斷）、或非互動 session，仍對每個監看的專案啟動一個 `agent-lyceum status --json --watch`。它監看專案的 `runs/` 目錄（debounce 100 ms，因為一輪會寫好幾個檔），結果與上一行不同時才輸出一行 JSON（專案報告加上每個尚未結束的 task（已完成或部分完成者除外）各一份）；剛結束的 task 會再多帶一次，讓通知能觸發。`--heartbeat <秒>`（預設 5）是慢速補查，處理檔案事件看不到的情況（鎖的持有者死掉、`runs/` 當時還不存在）。父程序消失時它會自行結束。若它跑不起來，mod 會把原因寫進 debug log，並改回依 `intervalSeconds` 輪詢。瀏覽器裡查看某次 run 的報告（`GET /api/reports`）仍由這支網頁讀檔，不經過每個專案的 `--watch`。
 
 **監看程序升級。** 安裝新版 CLI **與** mod 後，必須先重開 Claude Code session 一次：既有的舊程序無法自行更新。監看程序會在 heartbeat 檢查自己現有的程式碼目錄；指紋改變後，連續兩次讀取相同便以 `75` 結束，並向 stderr 寫出標記 `status --watch: agent-lyceum code changed on disk; restart to load it`。這是 debounce，不代表 build 已完成。mod 只在子程序以該標記結束後依序重啟，每個滾動的一分鐘內最多五次。替代程序失敗、其他結束原因或達到重啟上限，都會改為輪詢，直到重開 session。替換期間完成的任務可能漏掉通知。`npx agent-lyceum@latest` 更新若使用另一個快取目錄，也必須重開 session。
 

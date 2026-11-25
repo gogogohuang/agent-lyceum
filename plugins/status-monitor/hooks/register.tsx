@@ -4,6 +4,7 @@ import type { CommandRunInput, CommandRunResult, EngineInterface, Register } fro
 import type { Report, Snapshots } from '../types'
 import { agentStats, cacheLabel, runtimeTokens, clip, elapsed, isOpen, line, newestFirst, parseProjects, progress, roundsLabel, runLabel, tagToast, transition } from './summary'
 import { bar, clipCells, textCells } from './graph'
+import { paneProjects, type PaneProject } from './pane-feed'
 import { superviseWatch } from './watch-restart'
 import { graphView } from './graph-view'
 import { createWebServer, describeWeb, type Life, type WebServer, type WebState } from './web-server'
@@ -37,6 +38,10 @@ let web: WebServer | undefined
 let rec: Reconciler | undefined
 /** Open the browser once, when this session next becomes the owner (webOpen + the person ran /status-monitor). */
 let webOpenPending = false
+/** Page URL while `status --web` is up. The pane reads `GET /snapshot` from it instead of one `status --watch` per project. */
+let feedUrl: string | undefined
+let feedClock = false
+let pulling = false
 
 async function fetchReport($: EngineInterface, args: string[]): Promise<Report> {
   const res = await $.process.run(args, { timeoutMs: 15000 })
@@ -307,8 +312,29 @@ async function render($: EngineInterface, e: Parameters<typeof $.ui.resolve>[0] 
   )
 }
 
+/** One pull of `GET /snapshot`. A failed pull leaves the last good frames on screen. */
+async function pullPane($: EngineInterface, page: string) {
+  if (pulling) return
+  pulling = true
+  try {
+    const r = await $.http.fetch(new URL('snapshot', page).href)
+    if (r.status !== 200) return
+    const body = JSON.parse(r.text) as { projects?: PaneProject[] }
+    for (const item of paneProjects(body.projects ?? [], targets.map(t => t.key))) {
+      const t = targets.find(target => target.key === item.name)
+      if (!t) continue
+      if (item.frame.report) await apply($, t, item.frame.report, item.frame.runs ?? {})
+      else if (item.frame.error) await fail($, t, item.frame.error)
+    }
+  } catch {
+    // The server may be restarting; the next pull tries again.
+  } finally {
+    pulling = false
+  }
+}
+
 /** Wire the web server and the reconciler to this session's `$` (once per module instance). */
-function startWeb($: EngineInterface, life: Life, options: Record<string, unknown>) {
+function startWeb($: EngineInterface, life: Life, options: Record<string, unknown>, every: number) {
   if (rec) return
   const command = String(options.command ?? 'agent-lyceum').trim().split(/\s+/)
   web = createWebServer({
@@ -342,12 +368,20 @@ function startWeb($: EngineInterface, life: Life, options: Record<string, unknow
     log: line => $.ui.log(`status-monitor: web: ${line}`, { to: 'debug' }),
     publish: state => {
       void update($, webView, () => state)
+      feedUrl = (state.phase === 'owner' || state.phase === 'follower') && state.url ? state.url : undefined
+      if (feedUrl) void pullPane($, feedUrl)
       if (state.phase === 'owner' && state.url && webOpenPending) {
         webOpenPending = false
         void openBrowser($, state.url)
       } else if (state.phase === 'follower' || state.phase === 'failed' || state.phase === 'idle') webOpenPending = false
     },
   })
+  if (!feedClock) {
+    feedClock = true
+    $.clock.every(every, () => {
+      if (feedUrl) void pullPane($, feedUrl)
+    })
+  }
   const w = web
   rec = createReconciler({
     life,
@@ -391,9 +425,11 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-monitor', description: 'Show the agent-lyceum run status in a pane; `band` shows it full width above the prompt instead' })
-    watchAll($, targets, every)
+    // Named projects read the one web server. An inferred project, `web: off`, or a non-interactive session keeps one `status --watch` each.
+    const feed = webMode !== 'off' && names.every(name => name !== '') && e.isInteractive
+    if (!feed) watchAll($, targets, every)
     // The web server is never started for `-p` runs or the SDK (nobody is there to look, and its quota refresh would spawn `claude -p`).
-    if (webMode !== 'off' && e.isInteractive) startWeb($, life, options)
+    if (webMode !== 'off' && e.isInteractive) startWeb($, life, options, every)
     const open = options.autoOpen === true ? () => $.ui.open({ id: PANE, title: 'agent-lyceum', columns: 60, rows: 16 }) : undefined
     if (rec) void rec.onStart(open)
     else if (open) void open()

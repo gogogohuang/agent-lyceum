@@ -13,7 +13,7 @@
     "intervalSeconds": {
       "type": "number",
       "title": "Refresh interval (seconds)",
-      "description": "How often the run status is polled (default 1 second).",
+      "description": "How often the pane reads GET /snapshot while status --web is up, and how often it polls after a per-project status --watch ends (default 1 second).",
       "default": 1
     },
     "maxColumns": {
@@ -37,7 +37,7 @@
     "web": {
       "type": "string",
       "title": "Web page (status --web)",
-      "description": "off (default): no web server. pane: run `status --web` while the pane or band is shown, and stop it 1 second after the last one closes. session: run it for the whole session. One server is shared by all sessions on this machine; the others take over when its owner closes. Never started for -p runs.",
+      "description": "off (default): no web server; the pane starts one status --watch per project. pane: run `status --web` while the pane or band is shown, and stop it 1 second after the last one closes. session: run it for the whole session. pane and session feed the pane from that one server (GET /snapshot) instead of one status --watch per project. One server is shared by all sessions on this machine; the others take over when its owner closes. Never started for -p runs.",
       "default": "off",
       "options": [
         "off",

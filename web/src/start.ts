@@ -74,6 +74,11 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
       attachEvents(hub, req, res);
       return;
     }
+    if (pathname === "/snapshot" && req.method === "GET") {
+      res.writeHead(200, JSON_HEADERS);
+      res.end(JSON.stringify({ projects: hub.snapshot() }));
+      return;
+    }
     if (pathname === "/summary" && req.method === "POST") {
       void handleSummary(req, res, hub, opts.factory.summarize).catch(() => {
         if (res.headersSent) return;
