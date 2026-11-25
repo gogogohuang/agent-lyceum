@@ -2,7 +2,7 @@ import { Button } from "@base-ui/react/button";
 import { useState } from "react";
 import { summaries } from "./summary-store";
 
-export function ProgressSummary({ project, runId }: { project: string; runId: string }) {
+export function ProgressSummary({ project, runId, locked = false }: { project: string; runId: string; locked?: boolean }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const [text, setText] = useState<string | undefined>(() => summaries.load(project, runId)?.text);
@@ -28,9 +28,12 @@ export function ProgressSummary({ project, runId }: { project: string; runId: st
     <>
       <Button
         type="button"
-        disabled={pending}
-        className="panel shrink-0 self-stretch px-4 text-sm font-medium hover:bg-wall disabled:opacity-60"
-        onClick={summarize}
+        disabled={pending || locked}
+        className="panel shrink-0 self-stretch px-4 text-sm font-medium hover:bg-wall disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={() => {
+          if (locked) return;
+          summarize();
+        }}
       >
         {pending ? "正在總結" : "總結進度"}
       </Button>

@@ -16,7 +16,10 @@ describe("jobLabel", () => {
     expect(jobLabel(["resume", "-p", "biz", "--", "run-1", "more"])).toEqual({ project: "biz", target: "run-1", tidy: false });
     expect(jobLabel(["call", "bot", "--dir", "/d", "--", "hi"])).toEqual({ project: undefined, target: "bot：hi", tidy: false });
   });
-  it("other commands: nothing", () => {
-    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: undefined, tidy: false });
+  it("a memory tidy carries the tag; a preview or an undo does not", () => {
+    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: undefined, tidy: true });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--layer", "project"])).toMatchObject({ tidy: true });
+    expect(jobLabel(["tidy", "-p", "biz", "--dry-run"])).toMatchObject({ tidy: false });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--undo", "20261110T010203Z"])).toMatchObject({ tidy: false });
   });
 });

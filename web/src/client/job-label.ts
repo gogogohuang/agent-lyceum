@@ -12,8 +12,8 @@ export function jobLabel(argv: string[]): JobLabel {
     return i >= 0 ? flags[i + 1] : undefined;
   };
   const project = after("-p");
-  const tidy = flags.includes("--tidy");
   const cmd = argv[0];
+  const tidy = flags.includes("--tidy") || (cmd === "tidy" && !flags.includes("--dry-run") && !flags.includes("--undo"));
   let target: string | undefined;
   if (cmd === "run") target = after("--name") ?? excerpt(rest[0]);
   else if (cmd === "resume") target = rest[0];

@@ -9,7 +9,7 @@ import { TokenChart } from "./TokenChart";
 import { MailBody } from "./MailBody";
 import { readableError, resultRows, splitNote } from "./prose";
 import { ProgressSummary } from "./ProgressSummary";
-import { isTidyRun } from "./run-state";
+import { isRunControlLocked, isTidyRun } from "./run-state";
 import { cacheText, focusReport, openReports, progress, runElapsed, runLabel, tokenText, workingAgents } from "./view";
 
 export function ProjectView({
@@ -101,7 +101,7 @@ function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) 
           <Cell label="已經過" value={runElapsed(run, now)} />
           <Cell label="進度" value={progress(run)} />
         </dl>
-        <ProgressSummary key={`${name}/${run.run_id}`} project={name} runId={run.run_id} />
+        <ProgressSummary key={`${name}/${run.run_id}`} project={name} runId={run.run_id} locked={isRunControlLocked(run)} />
       </div>
       {cache && <p className="mt-3 font-mono text-sm tabular-nums text-ink/70">{cache}</p>}
       {run.current_step && <p className="text-pretty mt-3 text-sm text-ink/80"><span className="eyebrow mr-2">目前</span>{run.current_step}</p>}

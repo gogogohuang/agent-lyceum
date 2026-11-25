@@ -278,7 +278,7 @@ program
   .option("--task-file <path>", "read the task from a file")
   .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
   .option("--name <name>", "name for this run (default: made from the task)")
-  .option("--tidy", "mark this run as a commit tidy (the web console shows a tag on it)")
+  .option("--tidy", "mark this run as a commit tidy (the web console tags it and disables its controls)")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
   .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; tidy?: boolean; assumeDefaults?: boolean }) => {
     try {

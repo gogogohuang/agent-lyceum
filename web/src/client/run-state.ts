@@ -10,3 +10,8 @@ export function isIdleRun(run: Pick<Run, "state" | "live"> | undefined): boolean
 export function isTidyRun(run: Pick<Run, "name" | "tidy"> | undefined): boolean {
   return run?.tidy === true || /tidy/i.test(run?.name ?? "");
 }
+
+/** A tidy run is closed: the console must not start or change anything from its buttons. */
+export function isRunControlLocked(run: Pick<Run, "name" | "tidy"> | undefined): boolean {
+  return isTidyRun(run);
+}

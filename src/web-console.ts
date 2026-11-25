@@ -6,6 +6,7 @@ import { listProjects, resolveProject } from "./config.js";
 import { parseRaw } from "./mailbox.js";
 import { NAME_RE, projectPaths } from "./paths.js";
 import { listDecisionLog, listRecords, type ProjectRecord } from "./records.js";
+import { loadRunState, saveRunState } from "./run-store.js";
 
 export type ReportItem = { id: string; kind: "result" | "done" | "agent"; title: string; agent?: string; outcome?: string; created?: string };
 
@@ -151,6 +152,18 @@ export function createConsoleDeps(home: string, cliFile: string) {
         return item && record ? { ...item, markdown: record.body } : undefined;
       } catch {
         return undefined;
+      }
+    },
+    markRunTidy(project: string, runId: string): boolean {
+      const dir = runDirOf(project, runId);
+      const file = dir ? path.join(dir, "state.json") : "";
+      if (!dir || !fs.existsSync(file)) return false;
+      try {
+        const state = loadRunState(dir);
+        if (!state.tidy) saveRunState(dir, { ...state, tidy: true });
+        return true;
+      } catch {
+        return false;
       }
     },
     saveAnswers(project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean): { complete: boolean; problems: string[] } {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readAskReply, writeAskReply } from "../src/ask-reply.js";
+import { loadRunState, newRunState, saveRunState } from "../src/run-store.js";
 import { createConsoleDeps } from "../src/web-console.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -109,6 +110,19 @@ describe("createConsoleDeps", () => {
     env = makeEnv();
     const deps = createConsoleDeps(env.home, "/x/cli.js");
     expect(deps.saveAnswers("demo", "r9", { q1: "a" }, false).complete).toBe(false);
+  });
+  it("markRunTidy writes tidy on that run and leaves every other run alone", () => {
+    env = makeEnv();
+    const runDir = path.join(env.home, "projects", "demo", "runs", "r1");
+    fs.mkdirSync(runDir, { recursive: true });
+    saveRunState(runDir, newRunState({ run_id: "r1", task_summary: "keep" }));
+    const deps = createConsoleDeps(env.home, "/x/cli.js");
+    expect(deps.markRunTidy("demo", "r1")).toBe(true);
+    expect(loadRunState(runDir)).toMatchObject({ tidy: true, task_summary: "keep" });
+    expect(deps.markRunTidy("demo", "r1")).toBe(true);
+    expect(deps.markRunTidy("demo", "../r1")).toBe(false);
+    expect(deps.markRunTidy("demo", "missing")).toBe(false);
+    expect(deps.markRunTidy("ghost", "r1")).toBe(false);
   });
   it("unknown project, unknown run and unregistered names never touch the disk", () => {
     env = makeEnv();

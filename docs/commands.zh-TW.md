@@ -32,7 +32,7 @@
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。可參考[任務檔範本](task-template.zh-TW.md)：範圍、驗收條件、不可動的範圍、驗證指令、是否小修改。
 - `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
-- `--tidy`：標記這個 run 是 commit tidy。只是標籤：web console 會在它上面顯示「已 tidy」。（沒帶此旗標但名稱含 `tidy` 的 run 也會顯示。）
+- `--tidy`：標記這個 run 是 commit tidy。web console 會顯示「已 tidy」，並停用這個任務的操作按鈕（新任務、續跑、回答、刪除、報告、整理記憶、檢查設定、總結進度）。沒帶此旗標但名稱含 `tidy` 的 run 也一樣。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。小任務用它可以省下大量喚醒；是否適用請看 [什麼時候不需要整個團隊](configuration.zh-TW.md#什麼時候不需要整個團隊) 的四個問題，其中提到本專案通常需要跨 runtime review，所以預設仍是整個團隊。
@@ -224,7 +224,7 @@ agents.fe-member.model_tiers = ["haiku","sonnet","opus"]                        
 
 **用法:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <時間戳> -p name --agent a [--layer project|global]`
 
-讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。
+讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。從網頁在某個任務上按「整理記憶」並確定後，那個任務會標成「已 tidy」，操作按鈕會停用；預覽與還原不會標記。
 
 選項：
 
