@@ -58,6 +58,8 @@ export interface ResolvedAgent {
   canAskUser: boolean;
   /** Web access for this agent; undefined = not configured, so the runtime keeps its own default. */
   allowWeb?: WebLevel;
+  /** Exact MCP tool names added to the Claude Code allow list (agents run in dontAsk mode, so an unlisted MCP tool is denied). Unset = none. */
+  allowMcp?: string[];
   /** Spec 25 allowances; unset when none is requested (the only switch that keeps output identical). Paths are absolute, `~` expanded, not yet canonical. */
   sandbox?: SandboxAllowances;
   /** Ordered failover chain (runtime and model filled in); empty = no fallback. */
@@ -273,6 +275,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     const canEdit = pick("can_edit_agent_md");
     const canAsk = pick("can_ask_user");
     const allowWeb = pick("allow_web");
+    const allowMcp = pick("allow_mcp");
     const sandbox = resolveSandbox(agentName, pick("sandbox"));
     const shipRaw = pick("ship");
     const ship =
@@ -285,6 +288,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
             }
           : undefined;
     if (!ship) delete sources.ship;
+    if (!allowMcp?.length) delete sources.allow_mcp; // an empty list is "off": keep sources ⊆ values
     // `ship: false` is explicit off (same as unset for resolution): `pick` recorded a source but no
     // `ship` value is flattened, so drop it to keep "sources ⊆ values". Do not invent a `sources.ship`
     // default when unset: doctor --resolved fixtures and "sources ⊆ values" assume absent optional keys stay absent.
@@ -309,6 +313,7 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
       canEditAgentMd: canEdit ?? isLead,
       canAskUser: canAsk ?? isLead,
       allowWeb,
+      ...(allowMcp?.length ? { allowMcp } : {}),
       ...(sandbox ? { sandbox } : {}),
       ...(ship ? { ship } : {}),
       fallback,
@@ -408,7 +413,7 @@ export type SourceInfo =
   | { inferred_from: { file: string; key: string } }
   | { default: true };
 
-const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "fallback", "sandbox", "ship"] as const;
+const AGENT_FIELDS = ["runtime", "model", "effort", "agent_md", "memory.global", "memory.project", "resume", "can_message", "can_edit_agent_md", "can_ask_user", "allow_web", "allow_mcp", "fallback", "sandbox", "ship"] as const;
 
 /** Claude pattern metacharacters and control characters: refused in sandbox paths instead of escaped (spec 25.4.1). */
 const PATH_CHARS = /[*?[\]{}()!\\]/;
@@ -508,6 +513,7 @@ export function flattenResolved(project: ResolvedProject): Record<string, unknow
     v[`${p}.can_edit_agent_md`] = a.canEditAgentMd;
     v[`${p}.can_ask_user`] = a.canAskUser;
     v[`${p}.allow_web`] = a.allowWeb;
+    if (a.allowMcp) v[`${p}.allow_mcp`] = a.allowMcp;
     if (a.ship) v[`${p}.ship`] = a.ship;
     if (a.fallback.length) v[`${p}.fallback`] = a.fallback;
     if (a.sandbox) v[`${p}.sandbox`] = { write: a.sandbox.write, network: a.sandbox.network, local_binding: a.sandbox.localBinding, unix_sockets: a.sandbox.unixSockets };

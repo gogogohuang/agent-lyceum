@@ -99,6 +99,8 @@ export const AgentPartial = z
     can_edit_agent_md: z.boolean().optional(),
     can_ask_user: z.boolean().optional(),
     allow_web: z.enum(WEB_LEVELS).optional(),
+    /** Exact MCP tool names (`mcp__<server>__<tool>`) the agent may call without a prompt (Claude Code only). No wildcards, so write tools stay out unless named. */
+    allow_mcp: z.array(z.string().regex(/^mcp__[\w.-]+__[\w.-]+$/, "must be an exact MCP tool name like mcp__<server>__<tool> (no wildcards)")).optional(),
     fallback: z.array(FallbackEntryPartial).optional(),
     sandbox: SandboxPartial.optional(),
     /** Opt-in: wake writes a ship session and documents the `agent-lyceum ship` CLI (Claude Code and Codex). */

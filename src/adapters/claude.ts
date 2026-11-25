@@ -32,6 +32,8 @@ export function buildClaudeSettings(project: ResolvedProject, agent: ResolvedAge
   // Web tools are opt-in: `search` is the lighter one (snippets only), `fetch` also pulls whole pages into the agent's context.
   if (agent.allowWeb === "search" || agent.allowWeb === "fetch") allow.push("WebSearch");
   if (agent.allowWeb === "fetch") allow.push("WebFetch");
+  // MCP tools are opt-in by exact name: in dontAsk mode a connected server's tools are denied unless listed here.
+  if (agent.allowMcp) allow.push(...agent.allowMcp);
   allow.push(rule("Edit", `${repo}/**`));
   for (const d of pol.allowDirs) allow.push(rule("Edit", `${d}/**`));
   for (const f of pol.allowFiles) allow.push(rule("Edit", f));
