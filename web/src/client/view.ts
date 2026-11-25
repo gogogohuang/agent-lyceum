@@ -28,10 +28,6 @@ export function isOpen(run: Run): boolean {
   return !(run.state === "ended" && run.outcome === "completed");
 }
 
-export function roundsLabel(rounds: number, limit: number): string {
-  return limit > 0 ? `${rounds}/${limit}` : String(rounds);
-}
-
 export function progress(run: Run): string {
   const steps = run.steps ?? [];
   return steps.length ? `${steps.filter((step) => step.done).length}/${steps.length} 步` : `已用 ${run.rounds} 輪`;

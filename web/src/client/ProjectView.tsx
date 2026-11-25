@@ -9,7 +9,7 @@ import { TokenChart } from "./TokenChart";
 import { MailBody } from "./MailBody";
 import { readableError, resultRows, splitNote } from "./prose";
 import { ProgressSummary } from "./ProgressSummary";
-import { cacheText, focusReport, openReports, progress, roundsLabel, runElapsed, runLabel, tokenText, workingAgents } from "./view";
+import { cacheText, focusReport, openReports, progress, runElapsed, runLabel, tokenText, workingAgents } from "./view";
 
 export function ProjectView({
   name,
@@ -95,7 +95,7 @@ function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) 
             <dd className={cn("mt-1 flex items-center gap-2 font-mono text-lg tabular-nums", stateClass(run))}>{run.state === "running" && <span aria-hidden className="pulse-dot size-2 rounded-full bg-signal" />}{runLabel(run)}</dd>
             {gone && <p className="text-pretty mt-1 text-sm text-failed">程序已不存在</p>}
           </div>
-          <Cell label="輪次" value={`第 ${roundsLabel(run.rounds, run.max_rounds)} 輪`} />
+          <Cell label="輪次" value={`第 ${run.rounds} 輪`} />
           <Cell label="token" value={tokenText(run.output_tokens)} />
           <Cell label="已經過" value={runElapsed(run, now)} />
           <Cell label="進度" value={progress(run)} />

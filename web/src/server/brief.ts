@@ -29,7 +29,7 @@ function progressBrief(report: StatusReport): string {
   const lines = [
     `任務：${clip(run.task_summary || run.name || run.run_id, 400)}`,
     `狀態：${stateText(run)}`,
-    `輪次：${run.max_rounds > 0 ? `${run.rounds}/${run.max_rounds}` : String(run.rounds)}`,
+    `輪次：${run.rounds}`,
   ];
   const steps = run.steps ?? [];
   if (steps.length) lines.push(`進度：${steps.filter((step) => step.done).length}/${steps.length} 步`);
