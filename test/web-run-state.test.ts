@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isIdleRun, isTidyRun } from "../web/src/client/run-state";
+import { isIdleRun, isRunControlLocked, isTidyRun } from "../web/src/client/run-state";
 
 describe("isIdleRun", () => {
   it("covers the cases", () => {
@@ -19,5 +19,14 @@ describe("isTidyRun", () => {
     expect(isTidyRun({ name: "LT-29363-api-tidy" })).toBe(true);
     expect(isTidyRun({ name: "LT-1-Tidy-commits" })).toBe(true);
     expect(isTidyRun({ name: "LT-1-api" })).toBe(false);
+  });
+});
+
+describe("isRunControlLocked", () => {
+  it("shuts every control once a run is marked tidy", () => {
+    expect(isRunControlLocked(undefined)).toBe(false);
+    expect(isRunControlLocked({ name: "LT-1-api" })).toBe(false);
+    expect(isRunControlLocked({ tidy: true, name: "x" })).toBe(true);
+    expect(isRunControlLocked({ name: "LT-29363-api-tidy" })).toBe(true);
   });
 });

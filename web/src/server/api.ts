@@ -23,6 +23,8 @@ export type ConsoleDeps = {
   listDecisions: () => DecisionGroup[];
   readDecision: (project: string, id: string) => (DecisionItem & { markdown: string }) | undefined;
   saveAnswers: (project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean) => { complete: boolean; problems: string[] };
+  /** Set after a real memory tidy is accepted, so the selected run shows 「已 tidy」. */
+  markRunTidy?: (project: string, runId: string) => boolean;
   shortTimeoutMs?: number;
 };
 
@@ -119,6 +121,7 @@ async function runCommand(req: IncomingMessage, res: ServerResponse, deps: Conso
     return send(res, 200, { mode: "short", ...result });
   }
   const job = startJob(deps.cli, deps.home, path.join(deps.home, "web-jobs"), id, argv, cwd);
+  if (id === "tidy" && typeof b.run === "string" && b.run.trim()) deps.markRunTidy?.(String(b.project), b.run.trim());
   send(res, 202, { mode: "detached", jobId: job.id, pid: job.pid });
 }
 

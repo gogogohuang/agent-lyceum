@@ -133,6 +133,19 @@ describe("POST /api/cmd/:id", () => {
   it("validation comes before the confirmation question", async () => {
     expect((await call("POST", "/api/cmd/clear", { project: "web" })).status).toBe(400);
   });
+  it("a real tidy marks the selected run; a preview or an undo does not", async () => {
+    const marked: string[] = [];
+    deps.markRunTidy = (project, runId) => {
+      marked.push(`${project}/${runId}`);
+      return true;
+    };
+    expect((await call("POST", "/api/cmd/tidy", { project: "web", run: "r1", dryRun: true })).status).toBe(200);
+    expect((await call("POST", "/api/cmd/tidy", { project: "web", run: "r1", agent: "lead", undo: "20261110T010203Z", confirm: true })).status).toBe(200);
+    expect(marked).toEqual([]);
+    const started = await call("POST", "/api/cmd/tidy", { project: "web", run: "r1", confirm: true });
+    expect(started.status).toBe(202);
+    expect(marked).toEqual(["web/r1"]);
+  });
   it("a failing command is still a 200 with its exit code", async () => {
     const r = await call("POST", "/api/cmd/doctor", { project: "web" });
     expect(r.status).toBe(200);
