@@ -278,8 +278,9 @@ program
   .option("--task-file <path>", "read the task from a file")
   .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
   .option("--name <name>", "name for this run (default: made from the task)")
+  .option("--tidy", "mark this run as a commit tidy (the web console shows a tag on it)")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
-  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; assumeDefaults?: boolean }) => {
+  .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; tidy?: boolean; assumeDefaults?: boolean }) => {
     try {
       const pr = loadProject(opts.project);
       const res = validateProject(pr);
@@ -313,7 +314,7 @@ program
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
         if (prepared.source === "file") for (const w of lintTaskContent(prepared.content)) console.error(`warning: task file ${w}`);
         const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
-        summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, signal: cancel.signal });
+        summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, tidy: opts.tidy, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();

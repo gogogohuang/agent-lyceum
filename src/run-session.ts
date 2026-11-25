@@ -134,6 +134,8 @@ export interface RunOptions {
   name?: string;
   /** Run only this member of the project, alone (`run --agent`). A resumed run uses the one recorded in its state. */
   soloAgent?: string;
+  /** Mark a new run as a commit tidy (`run --tidy`). */
+  tidy?: boolean;
   /** The task for a new run; omit when resuming. */
   task?: PreparedTask;
   /** Continue this earlier run (same run dir, sessions and counters) instead of starting a new one. */
@@ -343,6 +345,7 @@ export class RunSession {
       state = newRunState({
         run_id: runId,
         name: opts.name,
+        ...(opts.tidy ? { tidy: true } : {}),
         project: project.name,
         task_source: task!.source,
         task_path: task!.sourcePath,
