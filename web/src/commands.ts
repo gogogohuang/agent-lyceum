@@ -141,6 +141,7 @@ export const COMMANDS: Record<CommandId, CommandDef> = {
       { name: "task", label: "任務", kind: "textarea", required: true },
       { name: "name", label: "任務名稱（可留空）", kind: "text", help: "小寫英數與 -，最多 30 字。" },
       { name: "agent", label: "只交給這一位 agent（可留空）", kind: "text" },
+      { name: "tidy", label: "標記為 tidy（整理 commit 的任務）", kind: "checkbox" },
       { name: "assumeDefaults", label: "有建議值的問題直接採用，不暫停", kind: "checkbox" },
     ],
     mode: always("detached"),
@@ -152,6 +153,7 @@ export const COMMANDS: Record<CommandId, CommandDef> = {
       if (name) out.push("--name", name);
       const agent = text(b, "agent", { re: NAME_RE, what: "agent" });
       if (agent) out.push("--agent", agent);
+      if (flag(b, "tidy")) out.push("--tidy");
       if (flag(b, "assumeDefaults")) out.push("--assume-defaults");
       out.push("--", need(text(b, "task", { required: true, what: "任務", max: TEXT_LIMIT })));
       return out;

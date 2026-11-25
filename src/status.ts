@@ -190,6 +190,8 @@ export interface RunReport {
   run_id: string;
   /** Absent on runs from older versions. */
   name?: string;
+  /** Started with `run --tidy`. */
+  tidy?: boolean;
   dir: string;
   /** running: its dispatcher is alive; interrupted: it died mid-run; ended: it stopped (see end_reason). */
   state: "running" | "interrupted" | "ended" | "waiting";
@@ -342,6 +344,7 @@ export function buildRunReport(run: { dir: string; state: RunState }, project?: 
   const report: RunReport = {
     run_id: s.run_id,
     name: s.name,
+    ...(s.tidy ? { tidy: true } : {}),
     dir: run.dir,
     state: s.end_reason === "waiting" ? "waiting" : s.end_reason ? "ended" : live ? "running" : "interrupted",
     live,

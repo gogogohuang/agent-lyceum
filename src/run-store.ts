@@ -194,6 +194,8 @@ export interface RunState {
   step_base?: Step[];
   /** Readable name; lets `resume`, `clear` and `status` find the run without its id. Absent on runs from older versions. */
   name?: string;
+  /** Set by `run --tidy`: this run only tidies existing commits. The web console marks such runs. */
+  tidy?: boolean;
   /** One entry per time a finished run was reopened with a follow-up. */
   reopened?: { at: string }[];
   /** `rounds` at the last reopen; the round limit counts from here. */
@@ -273,6 +275,7 @@ const WireState = z
     cooldowns: z.unknown().transform(lenientCooldowns).optional(),
     step_base: z.array(z.object({ text: z.string(), done: z.boolean() })).optional(),
     name: z.string().optional(),
+    tidy: z.boolean().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),
     round_floor: nonNeg.optional(),
     instances: z.object({ roles: z.record(z.string(), z.array(z.string()).min(1)) }).optional(),
