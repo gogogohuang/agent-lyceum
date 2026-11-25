@@ -35,6 +35,7 @@ export type Step = { text: string; done: boolean };
 export type Run = {
   run_id: string;
   name?: string;
+  tidy?: boolean;
   state: "running" | "interrupted" | "ended" | "waiting";
   /** False when the dispatcher process is gone. A running state can still say this. */
   live?: boolean;
