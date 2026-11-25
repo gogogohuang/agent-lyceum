@@ -84,6 +84,9 @@ export function createWebHub(factory: WatchFactory) {
       .catch(() => quota);
   };
 
+  const projectList = (): { name: string; frame: WatchFrame }[] =>
+    [...latest].map(([name, frame]) => ({ name, frame })).sort((a, b) => a.name.localeCompare(b.name));
+
   return {
     start: sync,
     beat: sync,
@@ -98,9 +101,10 @@ export function createWebHub(factory: WatchFactory) {
       watchers.clear();
       listeners.clear();
     },
+    snapshot: projectList,
     subscribe(listener: (event: WebEvent) => void): () => void {
       listeners.add(listener);
-      const projects = [...latest].map(([name, frame]) => ({ name, frame })).sort((a, b) => a.name.localeCompare(b.name));
+      const projects = projectList();
       try {
         listener({ type: "snapshot", projects, ...(quota ? { quota } : {}) });
       } catch {
