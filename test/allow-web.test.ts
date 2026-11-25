@@ -121,3 +121,35 @@ describe("allow_web in the single-agent entries", () => {
     expect(resolveCallAgent(env.home, "pm").allowWeb).toBe("fetch");
   });
 });
+
+describe("allow_mcp for Claude Code", () => {
+  const tool = "mcp__claude_ai_Datadog__search_datadog_logs";
+
+  it("adds nothing when it is not set", () => {
+    env = makeEnv();
+    expect(claudeAllow(env).some((r) => r.startsWith("mcp__"))).toBe(false);
+    expect(flattenResolved(env.project())["agents.fe-member.allow_mcp"]).toBeUndefined();
+  });
+
+  it("puts the named tools into the allow list and shows them in the resolved view", () => {
+    env = makeEnv();
+    feMember(env, `    allow_mcp: [${tool}, mcp__claude_ai_Datadog__execute_code]`);
+    expect(claudeAllow(env)).toEqual(expect.arrayContaining([tool, "mcp__claude_ai_Datadog__execute_code"]));
+    expect(flattenResolved(env.project())["agents.fe-member.allow_mcp"]).toEqual([tool, "mcp__claude_ai_Datadog__execute_code"]);
+  });
+
+  it("treats an empty list as off", () => {
+    env = makeEnv();
+    feMember(env, "    allow_mcp: []");
+    expect(claudeAllow(env).some((r) => r.startsWith("mcp__"))).toBe(false);
+  });
+
+  it("rejects wildcards, server-only names and non-MCP names, naming the field", () => {
+    for (const bad of ["mcp__claude_ai_Datadog__*", "mcp__claude_ai_Datadog", "Bash"]) {
+      env = makeEnv();
+      feMember(env, `    allow_mcp: ["${bad}"]`);
+      expect(() => resolveProject(env.home, "demo")).toThrow(/allow_mcp/);
+      env.cleanup();
+    }
+  });
+});
