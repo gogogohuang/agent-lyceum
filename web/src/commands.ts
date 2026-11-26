@@ -213,6 +213,7 @@ export const COMMANDS: Record<CommandId, CommandDef> = {
       { name: "run", label: "任務 id", kind: "text", required: true },
       { name: "dryRun", label: "只預覽，不刪除", kind: "checkbox" },
       { name: "keepWorktrees", label: "保留 agent 的 worktree 與分支", kind: "checkbox" },
+      { name: "tidy", label: "刪除成功後接著整理記憶（tidy，會把保留下來的決策併入專案記錄）", kind: "checkbox" },
     ],
     mode: always("short"),
     tier: (b) => (b.dryRun === true ? "normal" : "confirm"),

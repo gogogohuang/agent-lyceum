@@ -46,6 +46,7 @@ describe("argv", () => {
     expect(argv("clear", { project: "web", run: "r1", dryRun: true, keepWorktrees: true })).toEqual([
       "clear", "-p", "web", "--dry-run", "--keep-worktrees", "--", "r1",
     ]);
+    expect(argv("clear", { project: "web", run: "r1", tidy: true })).toEqual(["clear", "-p", "web", "--", "r1"]); // tidy is a follow-up job, not a clear flag
     expect(badField("clear", { project: "web" })).toBe("run");
     expect(argv("clear.lock", { project: "web" })).toEqual(["clear", "-p", "web", "--lock", "--force"]);
     expect(argv("clear.lock", { project: "web", run: "r1" })).toEqual(["clear", "-p", "web", "--lock", "--force", "--", "r1"]);
