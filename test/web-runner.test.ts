@@ -162,6 +162,39 @@ describe("startJob", () => {
     fs.writeFileSync(path.join(jobsDir, "short1", "out.log"), "hi\n");
     const view = readJob(jobsDir, "short1");
     expect(view?.truncated).toBe(false);
+    expect(view?.lineStart).toBe(true);
     expect(view?.tail).toBe("hi\n");
+  });
+
+  it("marks a cut that lands just after a newline, and leaves the tail bytes identical to the baseline window", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "edge1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "edge1", "job.json"), JSON.stringify({ id: "edge1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    const round = Buffer.from("[round 2/4] waking qa (codex)\ndiagnostic\n", "utf8");
+    const body = Buffer.concat([round, Buffer.alloc(20_000 - round.length, 0x78)]);
+    const file = Buffer.concat([Buffer.from("preamble\n", "utf8"), body]);
+    fs.writeFileSync(path.join(jobsDir, "edge1", "out.log"), file);
+    const view = readJob(jobsDir, "edge1");
+    expect(view?.truncated).toBe(true);
+    expect(view?.lineStart).toBe(true);
+    expect(view?.tail).toBe(file.subarray(file.length - 20_000).toString("utf8"));
+    expect(view?.tail.startsWith("[round 2/4]")).toBe(true);
+  });
+
+  it("keeps the baseline decoding when the cut splits a multibyte character", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "utf1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "utf1", "job.json"), JSON.stringify({ id: "utf1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    const you = Buffer.from("你", "utf8");
+    const rest = Buffer.from("\n[round 1/2] waking qa (claude)\n", "utf8");
+    const window = Buffer.concat([you.subarray(2), rest, Buffer.alloc(20_000 - 1 - rest.length, 0x78)]);
+    const file = Buffer.concat([Buffer.from("pre", "utf8"), you.subarray(0, 2), window]);
+    fs.writeFileSync(path.join(jobsDir, "utf1", "out.log"), file);
+    const view = readJob(jobsDir, "utf1");
+    const baseline = file.subarray(file.length - 20_000).toString("utf8");
+    expect(view?.tail).toBe(baseline);
+    expect(view?.tail.startsWith("\uFFFD\n")).toBe(true);
+    expect(view?.lineStart).toBe(false);
+    expect(view?.truncated).toBe(true);
   });
 });

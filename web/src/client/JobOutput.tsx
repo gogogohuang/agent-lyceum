@@ -2,7 +2,7 @@ import type { JobDetail } from "./api";
 import { cn } from "./cn";
 import { exitInfo } from "./exit-info";
 import { jobLabel } from "./job-label";
-import { formatElapsed, parseJobLog, type Block, type BranchConclusion, type Conclusion, type EndedConclusion, type ErrorBlock, type NextConclusion, type RoundBlock, type SkippedBlock, type TextBlock, type TidiedBlock } from "./job-log";
+import { blockKeys, formatElapsed, leafKeys, parseJobLog, type Block, type BranchConclusion, type Conclusion, type EndedConclusion, type ErrorBlock, type NextConclusion, type RoundBlock, type SkippedBlock, type TextBlock, type TidiedBlock, type TidyingBlock } from "./job-log";
 
 const OUTCOME: Record<string, string> = {
   completed: "完成",
@@ -58,7 +58,8 @@ export function JobOutput({ job, stale, raw, onRaw }: { job: JobDetail; stale: b
   const label = jobLabel(job.argv);
   const status = statusOf(job);
   const elapsed = elapsedOf(job);
-  const log = parseJobLog(job.tail, { truncated: job.truncated === true });
+  const log = parseJobLog(job.tail, { truncated: job.truncated === true, lineStart: job.lineStart === true });
+  const keys = blockKeys(log.blocks);
   const empty = job.tail === "" && log.partial === undefined;
 
   return (
@@ -131,18 +132,12 @@ export function JobOutput({ job, stale, raw, onRaw }: { job: JobDetail; stale: b
             </div>
           )}
           {log.blocks.map((block, index) => (
-            <BlockView key={blockKey(block, index)} block={block} />
+            <BlockView key={keys[index]} block={block} />
           ))}
         </div>
       )}
     </section>
   );
-}
-
-function blockKey(block: Block, index: number): string {
-  if (block.kind === "round") return `round-${block.n}-${block.agent}-${index}`;
-  if (block.kind === "tidied") return `tidied-${block.agent}-${block.layer}-${index}`;
-  return `${block.kind}-${index}`;
 }
 
 function ConclusionView({ item }: { item: Conclusion }) {
@@ -161,6 +156,12 @@ function EndedView({ item }: { item: EndedConclusion }) {
       </p>
       <p className="mt-1 break-all text-xs text-ink/70">紀錄：{item.logs}</p>
       {item.note && <p className="mt-1 break-words text-ink/80">{item.note}</p>}
+      {item.noteRaw && (
+        <details>
+          <summary className={cn(summaryBtn, "text-xs text-ink/60")}>原始片段</summary>
+          <pre className={cn(pre, "mb-2 max-h-40")}>{item.noteRaw}</pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -198,6 +199,7 @@ function BlockView({ block }: { block: Block }) {
   if (block.kind === "text") return <TextView block={block} />;
   if (block.kind === "skipped") return <SkippedView block={block} />;
   if (block.kind === "tidied") return <TidiedView block={block} />;
+  if (block.kind === "tidying") return <TidyingView block={block} />;
   return <p className="break-words text-sm">{block.text}</p>;
 }
 
@@ -206,12 +208,13 @@ function RoundView({ block }: { block: RoundBlock }) {
   const bits = [`第 ${block.n}${block.max ? `/${block.max}` : ""} 輪`, block.agent, who];
   if (block.tier) bits.push(`層級 ${block.tier}`);
   if (block.retry) bits.push(`重試 ${block.retry}`);
+  const keys = leafKeys(block.body);
   return (
     <section className="rounded-lg border border-line bg-paper p-3">
       <h3 className="break-words text-sm font-medium">{bits.join(" · ")}</h3>
       {block.body.length > 0 && (
         <div className="mt-2 flex flex-col gap-2">
-          {block.body.map((leaf, index) => (leaf.kind === "error" ? <ErrorView key={`e-${index}`} block={leaf} /> : <TextView key={`t-${index}`} block={leaf} />))}
+          {block.body.map((leaf, index) => (leaf.kind === "error" ? <ErrorView key={keys[index]} block={leaf} /> : <TextView key={keys[index]} block={leaf} />))}
         </div>
       )}
     </section>
@@ -235,6 +238,15 @@ function ErrorView({ block }: { block: ErrorBlock }) {
 
 function TextView({ block }: { block: TextBlock }) {
   return <pre className={pre}>{block.text}</pre>;
+}
+
+function TidyingView({ block }: { block: TidyingBlock }) {
+  return (
+    <details className="rounded-lg border border-line bg-paper px-3">
+      <summary className={cn(summaryBtn, "text-sm")}>整理記憶（{block.lines.length}）</summary>
+      <pre className={cn(pre, "mb-2 max-h-40")}>{block.lines.join("\n")}</pre>
+    </details>
+  );
 }
 
 function SkippedView({ block }: { block: SkippedBlock }) {

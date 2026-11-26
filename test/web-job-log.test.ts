@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatElapsed, parseJobLog } from "../web/src/client/job-log";
+import { blockKeys, formatElapsed, leafKeys, parseJobLog } from "../web/src/client/job-log";
+import { retainJobs } from "../web/src/client/api";
 
 const LIMIT = "You\u2019ve hit your usage limit.";
 
@@ -66,7 +67,8 @@ describe("parseJobLog", () => {
       "promoted 2 decision(s) into the project records: a, b",
     ].join("\n");
     const log = parseJobLog(text);
-    expect(log.blocks.map((b) => b.kind)).toEqual(["text", "skipped", "tidied", "tidied", "promoted"]);
+    expect(log.blocks.map((b) => b.kind)).toEqual(["tidying", "skipped", "tidied", "tidied", "promoted"]);
+    expect(log.blocks[0]).toMatchObject({ kind: "tidying", lines: ["tidying project memory of risk (1 file(s)) …"] });
     expect(log.blocks[1]).toMatchObject({
       count: 2,
       items: [
@@ -150,6 +152,143 @@ describe("parseJobLog", () => {
   it("returns an empty log for an empty string", () => {
     expect(parseJobLog("")).toEqual({ truncated: false, conclusions: [], blocks: [] });
     expect(parseJobLog("", { truncated: true })).toEqual({ truncated: true, conclusions: [], blocks: [] });
+  });
+
+  it("extracts messages from the CLI failure templates and keeps the surrounding text on the raw span", () => {
+    const attempt = '  qa attempt 2 failed ({"type":"error","message":"quota"}). side effects may have happened.';
+    const every = 'qa was called 2 time(s) and failed every time ({"type":"error","message":"a)b"}). The run stopped.';
+    const tried = '  1. codex/gpt: unknown error ({"type":"error","message":"quota"})';
+    const fix = '  1. Read why it failed: /log (event "wake"), and the full output';
+    const log = parseJobLog([attempt, every, tried, fix].join("\n"));
+    const errors = log.blocks.filter((b) => b.kind === "error");
+    expect(errors.map((b) => (b.kind === "error" ? { message: b.message, count: b.count } : b))).toEqual([
+      { message: "quota", count: 1 },
+      { message: "a)b", count: 1 },
+      { message: "quota", count: 1 },
+    ]);
+    expect(errors[0]).toMatchObject({ kind: "error", raw: attempt });
+    expect(JSON.stringify(log.blocks)).toContain("Read why it failed");
+    expect(log.blocks.some((b) => b.kind === "text" && b.text.includes("side effects"))).toBe(false);
+  });
+
+  it("decodes JSON string escapes so a failed: fragment and a JSON line count as one message", () => {
+    const failed = String.raw`  qa failed: "other":1,"message":"\u4f60","z":2}`;
+    const json = String.raw`{"type":"error","message":"\u4f60"}`;
+    const log = parseJobLog(`${failed}\n${json}`);
+    expect(log.blocks.filter((b) => b.kind === "error")).toEqual([expect.objectContaining({ message: "你", count: 2 })]);
+  });
+
+  it("folds a template closer that follows a JSON error line into that error's raw text", () => {
+    const log = parseJobLog('{"type":"error","message":"quota"}\n). side effects may have happened.');
+    const errors = log.blocks.filter((b) => b.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ kind: "error", message: "quota" });
+    expect(errors[0]?.kind === "error" && errors[0].raw.includes("). side effects")).toBe(true);
+    expect(log.blocks.some((b) => b.kind === "text")).toBe(false);
+
+    const split = parseJobLog('  qa attempt 2 failed ({"type":"error","message":"quota"}\n). side effects may have happened.');
+    const splitError = split.blocks.find((b) => b.kind === "error");
+    expect(splitError).toMatchObject({ kind: "error", message: "quota" });
+    expect(splitError?.kind === "error" && splitError.raw.includes("). side effects")).toBe(true);
+    expect(split.blocks.some((b) => b.kind === "text")).toBe(false);
+  });
+
+  it("shows the decoded message of a Note error and keeps the original note", () => {
+    const raw = String.raw`qa failed 2 time(s) in a row ({"type":"error","message":"\u4f60"}), so the run stopped.`;
+    const log = parseJobLog(["Run name (id) ended: lead_failed, outcome: failed, after 2 round(s). Logs: /l", `Note: ${raw}`].join("\n"));
+    expect(log.conclusions[0]).toMatchObject({
+      kind: "ended",
+      note: "qa failed 2 time(s) in a row (你), so the run stopped.",
+      noteRaw: raw,
+    });
+  });
+
+  it("reads tier names and does not leave them on the model", () => {
+    const log = parseJobLog("[round 4/9] waking qa (codex/gpt-6, tier low) — retry 1\n[round 5/9] waking qa (claude-code/claude-opus-5-5, tier high)\n[round 6] waking qa (claude, tier mid)");
+    expect(log.blocks[0]).toMatchObject({ kind: "round", runtime: "codex", model: "gpt-6", tier: "low", retry: "1" });
+    expect(log.blocks[1]).toMatchObject({ kind: "round", runtime: "claude-code", model: "claude-opus-5-5", tier: "high" });
+    expect(log.blocks[2]).toMatchObject({ kind: "round", runtime: "claude", tier: "mid" });
+    expect(log.blocks[2]).not.toHaveProperty("model");
+  });
+
+  it("collapses tidying headers into one block and keeps every line", () => {
+    const first = "tidying project memory of risk (1 file(s)) …";
+    const second = "tidying global memory of qa (2 file(s), 3 project record file(s), 1 proposal file(s)) …";
+    const log = parseJobLog(`${first}\n  risk (project): skipped — busy\n${second}`);
+    expect(log.blocks[0]).toMatchObject({ kind: "tidying", lines: [first, second] });
+    expect(log.blocks.filter((b) => b.kind === "tidying")).toHaveLength(1);
+    expect(log.blocks.some((b) => b.kind === "text" && b.text.includes("tidying"))).toBe(false);
+    expect(log.blocks.some((b) => b.kind === "skipped")).toBe(true);
+  });
+
+  it("leaves quotes inside the lead report in the body, and ignores a branch line without its bring-in line", () => {
+    const text = [
+      "Run name (id) ended: done, outcome: completed, after 1 round(s). Logs: /l",
+      "The work is on branch real (1 file(s)); your working tree was not touched.",
+      "Bring it in with: git merge real",
+      "Lead's final message — subject",
+      "To go on:",
+      "  arbitrary text",
+      "The work is on branch demo (2 file(s)); your working tree was not touched.",
+      "The work is on branch quoted (3 file(s)); your working tree was not touched.",
+      "Bring it in with: git merge quoted",
+    ].join("\n");
+    const log = parseJobLog(text);
+    expect(log.conclusions.map((c) => c.kind)).toEqual(["ended", "branch"]);
+    expect(log.conclusions[1]).toMatchObject({ branch: "real", bringIn: "git merge real" });
+    const body = JSON.stringify(log.blocks);
+    expect(body).toContain("arbitrary text");
+    expect(body).toContain("branch demo");
+    expect(body).toContain("branch quoted");
+    expect(JSON.stringify(log.conclusions)).not.toContain("arbitrary text");
+    expect(JSON.stringify(log.conclusions)).not.toContain("demo");
+
+    const lone = parseJobLog("The work is on branch demo (2 file(s)); your working tree was not touched.\nstill here");
+    expect(lone.conclusions).toEqual([]);
+    expect(JSON.stringify(lone.blocks)).toContain("still here");
+  });
+
+  it("does not merge the same error across a lifted ending line", () => {
+    const line = '{"type":"error","message":"x"}';
+    const ended = "Run name (id) ended: lead_failed, outcome: failed, after 1 round(s). Logs: /l";
+    const log = parseJobLog(`${line}\n${ended}\n${line}`);
+    expect(log.blocks.filter((b) => b.kind === "error")).toHaveLength(2);
+  });
+
+  it("keeps a full first line when the tail was cut just after a newline", () => {
+    const head = "[round 2/4] waking qa (codex)\ndiagnostic\n";
+    const aligned = parseJobLog(`before\n${head}`, { truncated: true, lineStart: true });
+    expect(aligned.partial).toBeUndefined();
+    expect(aligned.blocks[0]).toMatchObject({ kind: "text", text: "before" });
+    expect(aligned.blocks[1]).toMatchObject({ kind: "round", n: "2", agent: "qa", runtime: "codex" });
+    expect(JSON.stringify(aligned.blocks)).toContain("diagnostic");
+
+    const slid = parseJobLog(`e\n${head}`, { truncated: true });
+    expect(slid.partial).toBe("e");
+    expect(slid.blocks[0]).toMatchObject({ kind: "round", n: "2", agent: "qa" });
+
+    const torn = parseJobLog("\uFFFD\n[round 1/2] waking qa (claude)\nkept", { truncated: true });
+    expect(torn.partial).toBe("\uFFFD");
+    expect(torn.blocks[0]).toMatchObject({ kind: "round", agent: "qa" });
+    expect(JSON.stringify(torn.blocks)).toContain("kept");
+  });
+
+  it("keeps the open round and its error when the tail slides and a list poll fails", () => {
+    const head = '[round 2/4] waking qa (codex)\nhello\n  qa failed: {"type":"error","message":"quota"}\n';
+    const wide = parseJobLog(`before\n${head}`, { truncated: true, lineStart: true });
+    const slid = parseJobLog(`e\n${head}`, { truncated: true });
+    const wideKey = blockKeys(wide.blocks).find((key) => key.startsWith("round-2-qa"));
+    const slidKey = blockKeys(slid.blocks).find((key) => key.startsWith("round-2-qa"));
+    expect(slidKey).toBe(wideKey);
+    const added = parseJobLog(`[round 2/4] waking qa (codex)\nnote\n${head.slice(head.indexOf("\n") + 1)}`);
+    const baseRound = wide.blocks.find((block) => block.kind === "round");
+    const addedRound = added.blocks.find((block) => block.kind === "round");
+    const baseLeaves = baseRound?.kind === "round" ? leafKeys(baseRound.body) : [];
+    const addedLeaves = addedRound?.kind === "round" ? leafKeys(addedRound.body) : [];
+    expect(addedLeaves.filter((key) => key.startsWith("e-"))).toEqual(baseLeaves.filter((key) => key.startsWith("e-")));
+    const jobs = [{ id: "job-1" }];
+    const kept = [jobs, null, jobs].reduce<(typeof jobs) | undefined>((prev, next) => retainJobs(prev, next), undefined);
+    expect(kept?.some((job) => job.id === "job-1")).toBe(true);
   });
 });
 

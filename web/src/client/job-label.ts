@@ -18,6 +18,7 @@ export function jobLabel(argv: string[]): JobLabel {
   if (cmd === "run") target = after("--name") ?? excerpt(rest[0]);
   else if (cmd === "resume") target = rest[0];
   else if (cmd === "call") target = [flags[1], excerpt(rest[0])].filter(Boolean).join("：") || undefined;
+  else if (cmd === "tidy") target = after("--agent") ?? "全部";
   return { project, target, tidy };
 }
 

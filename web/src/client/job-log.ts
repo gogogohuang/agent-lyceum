@@ -6,6 +6,8 @@ export type EndedConclusion = {
   rounds: string;
   logs: string;
   note?: string;
+  /** Set when `note` was rewritten so a JSON error inside it reads as its message. */
+  noteRaw?: string;
 };
 
 /** The commands under `To go on:`. */
@@ -52,7 +54,10 @@ export type TidiedBlock = {
 
 export type PromotedBlock = { kind: "promoted"; text: string };
 
-export type Block = TextBlock | ErrorBlock | RoundBlock | SkippedBlock | TidiedBlock | PromotedBlock;
+/** One or more `tidying … memory of <agent>` headers, collapsed. Every line is kept. */
+export type TidyingBlock = { kind: "tidying"; lines: string[] };
+
+export type Block = TextBlock | ErrorBlock | RoundBlock | SkippedBlock | TidiedBlock | TidyingBlock | PromotedBlock;
 
 export type JobLog = {
   truncated: boolean;
@@ -64,6 +69,47 @@ export type JobLog = {
 
 type Leaf = TextBlock | ErrorBlock;
 
+/**
+ * Keys that stay put when an earlier block slides out of the tail.
+ * A repeated block of the same text gets a `#n` suffix; if an earlier copy slides away, that suffix can change.
+ */
+export function blockKeys(blocks: Block[]): string[] {
+  return enumerate(blocks.map(blockIdentity));
+}
+
+/** Keys for the lines inside one round. Same rule as `blockKeys`. */
+export function leafKeys(leaves: Leaf[]): string[] {
+  return enumerate(leaves.map((leaf) => (leaf.kind === "error" ? `e-${leaf.message}-${leaf.count}-${leaf.raw}` : `t-${leaf.text}`)));
+}
+
+function enumerate(bases: string[]): string[] {
+  const seen = new Map<string, number>();
+  return bases.map((base) => {
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}#${n}`;
+  });
+}
+
+function blockIdentity(block: Block): string {
+  switch (block.kind) {
+    case "round":
+      return `round-${block.n}-${block.agent}-${block.retry ?? ""}`;
+    case "tidied":
+      return `tidied-${block.agent}-${block.layer}-${block.archive}`;
+    case "error":
+      return `error-${block.message}-${block.count}-${block.raw}`;
+    case "skipped":
+      return `skipped-${block.items.map((item) => `${item.agent}/${item.layer}/${item.reason}`).join("\n")}`;
+    case "tidying":
+      return `tidying-${block.lines.join("\n")}`;
+    case "text":
+      return `text-${block.text}`;
+    case "promoted":
+      return `promoted-${block.text}`;
+  }
+}
+
 const ROUND_RE = /^\[round (\d+)(?:\/(\d+))?\] waking (\S+) \(([^)]+)\)(?: — retry (\d+))?$/;
 const ENDED_RE = /^Run (.+) ended: ([^,]+), outcome: ([^,]+), after (\d+) round\(s\)\. Logs: (.+)$/;
 const NOTE_RE = /^Note: (.*)$/;
@@ -73,6 +119,8 @@ const PATCH_RE = /^\(or apply the patch: (.+)\)$/;
 const SKIP_RE = /^\s*(\S+) \((project|global)\): skipped — (.*)$/;
 const TIDIED_RE = /^\s*(\S+) \((project|global)\): tidied\. Archive: (.+) — undo with: (.+)$/;
 const PROMOTED_RE = /^promoted \d+ decision\(s\) into the project records: /;
+const TIDYING_RE = /^tidying (?:project|global) memory of \S+ \(/;
+const REPORT_RE = /^Lead's final message — /;
 
 /** How long a job has been running, for the detail summary. Negative or non-finite values read as zero. */
 export function formatElapsed(ms: number): string {
@@ -90,48 +138,65 @@ export function formatElapsed(ms: number): string {
  * Turn a job's stdout/stderr tail into sections a person can read.
  * Nothing is discarded: merged and lifted lines stay on the result, and the page also keeps the raw tail.
  */
-export function parseJobLog(text: string, opts?: { truncated?: boolean }): JobLog {
+export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStart?: boolean }): JobLog {
   const truncated = opts?.truncated === true;
+  const lineStart = opts?.lineStart === true;
   if (text === "") return { truncated, conclusions: [], blocks: [] };
-  const peeled = peel(text, truncated);
+  const peeled = peel(text, truncated, lineStart);
   const lines = splitLines(peeled.body);
   const conclusions: Conclusion[] = [];
   const blocks: Block[] = [];
   let round: RoundBlock | undefined;
   let skipped: SkippedBlock | undefined;
+  let tidying: TidyingBlock | undefined;
   let separated = false;
+  let inReport = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
+    if (REPORT_RE.test(line)) inReport = true;
 
-    const ended = takeEnded(lines, i);
-    if (ended) {
-      conclusions.push(ended.conclusion);
-      i = ended.next - 1;
-      separated = false;
-      continue;
-    }
-    const nextStep = takeNext(lines, i);
-    if (nextStep) {
-      conclusions.push(nextStep.conclusion);
-      i = nextStep.next - 1;
-      separated = false;
-      continue;
-    }
-    const branch = takeBranch(lines, i);
-    if (branch) {
-      conclusions.push(branch.conclusion);
-      i = branch.next - 1;
-      separated = false;
-      continue;
+    if (!inReport) {
+      const ended = takeEnded(lines, i);
+      if (ended) {
+        conclusions.push(ended.conclusion);
+        i = ended.next - 1;
+        separated = true;
+        continue;
+      }
+      const nextStep = takeNext(lines, i);
+      if (nextStep) {
+        conclusions.push(nextStep.conclusion);
+        i = nextStep.next - 1;
+        separated = true;
+        continue;
+      }
+      const branch = takeBranch(lines, i);
+      if (branch) {
+        conclusions.push(branch.conclusion);
+        i = branch.next - 1;
+        separated = true;
+        continue;
+      }
     }
 
     const roundHead = parseRound(line);
     if (roundHead) {
       round = roundHead;
       blocks.push(round);
-      separated = false;
+      separated = true;
+      continue;
+    }
+
+    if (TIDYING_RE.test(line)) {
+      round = undefined;
+      if (!tidying) {
+        tidying = { kind: "tidying", lines: [] };
+        blocks.push(tidying);
+      }
+      tidying.lines.push(line);
+      separated = true;
       continue;
     }
 
@@ -144,7 +209,7 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean }): JobLo
       }
       skipped.items.push({ agent: skip[1], layer: skip[2], reason: skip[3] });
       skipped.count = skipped.items.length;
-      separated = false;
+      separated = true;
       continue;
     }
 
@@ -152,20 +217,21 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean }): JobLo
     if (tidied) {
       round = undefined;
       blocks.push(tidied);
-      separated = false;
+      separated = true;
       continue;
     }
 
     if (PROMOTED_RE.test(line)) {
       round = undefined;
       blocks.push({ kind: "promoted", text: line });
-      separated = false;
+      separated = true;
       continue;
     }
 
-    const message = errorMessage(line);
-    if (message !== undefined) {
-      separated = absorb(bucket(round, blocks), { kind: "error", message, count: 1, raw: line }, separated);
+    const cli = takeCliError(lines, i);
+    if (cli) {
+      separated = absorb(bucket(round, blocks), { kind: "error", message: cli.message, count: 1, raw: cli.raw }, separated);
+      i = cli.next - 1;
       continue;
     }
     separated = absorb(bucket(round, blocks), { kind: "text", text: line }, separated);
@@ -176,10 +242,14 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean }): JobLo
   return log;
 }
 
-/** Drop a leading partial line only when the read started mid-line. A leading newline means the cut landed on a boundary. */
-function peel(text: string, truncated: boolean): { body: string; partial?: string } {
+/**
+ * Drop a leading partial line only when the read started mid-line.
+ * `lineStart` means the byte before the window was a newline, so the first line is whole even though this string does not start with one.
+ * A leading newline is the same boundary when the newline itself is inside the window.
+ */
+function peel(text: string, truncated: boolean, lineStart: boolean): { body: string; partial?: string } {
   if (!truncated) return { body: text };
-  if (text.startsWith("\n")) return { body: text.slice(1) };
+  if (lineStart || text.startsWith("\n")) return { body: text.startsWith("\n") ? text.slice(1) : text };
   const nl = text.indexOf("\n");
   if (nl < 0) return { body: "", partial: text };
   return { partial: text.slice(0, nl), body: text.slice(nl + 1) };
@@ -198,8 +268,9 @@ function takeEnded(lines: string[], i: number): { conclusion: EndedConclusion; n
   if (!m?.[2] || !m[3] || !m[4] || !m[5]) return undefined;
   let next = i + 1;
   const noteLine = lines[next]?.match(NOTE_RE);
-  const note = noteLine?.[1];
+  const noteBody = noteLine?.[1];
   if (noteLine) next += 1;
+  const shown = noteBody !== undefined ? readableNote(noteBody) : undefined;
   return {
     conclusion: {
       kind: "ended",
@@ -207,7 +278,7 @@ function takeEnded(lines: string[], i: number): { conclusion: EndedConclusion; n
       outcome: m[3],
       rounds: m[4],
       logs: m[5],
-      ...(note !== undefined ? { note } : {}),
+      ...(shown ? { note: shown.note, ...(shown.noteRaw ? { noteRaw: shown.noteRaw } : {}) } : {}),
     },
     next,
   };
@@ -231,11 +302,10 @@ function takeBranch(lines: string[], i: number): { conclusion: BranchConclusion;
   if (!m?.[1] || !m[2]) return undefined;
   let next = i + 1;
   const bring = lines[next]?.match(BRING_RE);
-  let bringIn = "";
-  if (bring?.[1]) {
-    bringIn = bring[1];
-    next += 1;
-  }
+  // The official print always follows the branch sentence with this line. A quote of the sentence alone stays in the body.
+  if (!bring?.[1]) return undefined;
+  const bringIn = bring[1];
+  next += 1;
   const patchLine = lines[next]?.match(PATCH_RE);
   const patch = patchLine?.[1];
   if (patch) next += 1;
@@ -264,7 +334,7 @@ function parseRound(line: string): RoundBlock | undefined {
 }
 
 function parseWho(raw: string): { runtime: string; model?: string; tier?: string } {
-  const tierMatch = raw.match(/^(.*), tier (\d+)$/);
+  const tierMatch = raw.match(/^(.*), tier (low|mid|high|\d+)$/);
   const main = tierMatch?.[1] ?? raw;
   const tier = tierMatch?.[2];
   const slash = main.indexOf("/");
@@ -301,21 +371,127 @@ function splitArchive(blob: string): { archive: string; records?: string; propos
   return { archive: rest, ...(records !== undefined ? { records } : {}), ...(proposals !== undefined ? { proposals } : {}) };
 }
 
-/** Whole-line error JSON, or a `failed:` line that still contains a `"message"` fragment. Other JSON stays text. */
-function errorMessage(line: string): string | undefined {
-  const trimmed = line.trim();
+const WRAP_RES = [
+  /attempt \d+ failed \(/,
+  /failed \d+ time\(s\) in a row \(/,
+  /failed every time \(/,
+  /^\s*\d+\. \S+: (?:rate_limit|quota|timeout|network|crash|auth|config|unknown error|unknown) \(/,
+];
+
+/** An error the CLI printed in a known template, a JSON line, or a `failed:` fragment. `next` may pass a closer left on the following line. */
+function takeCliError(lines: string[], i: number): { message: string; raw: string; next: number } | undefined {
+  const line = lines[i];
+  if (line === undefined) return undefined;
+  const open = wrapOpen(line);
+  if (open !== undefined) {
+    const span = insideParens(line, open);
+    const message = messageFromPayload(span.inside);
+    if (message === undefined) return undefined;
+    return withCloser(lines, i, line, message, span.closed);
+  }
+  const fromJson = jsonLineMessage(line);
+  if (fromJson !== undefined) return withCloser(lines, i, line, fromJson, false);
+  if (!line.includes("failed:")) return undefined;
+  const message = lastMessage(line);
+  if (message === undefined) return undefined;
+  return { message, raw: line, next: i + 1 };
+}
+
+function withCloser(lines: string[], i: number, line: string, message: string, closed: boolean): { message: string; raw: string; next: number } {
+  const closer = lines[i + 1];
+  if (!closed && closer?.startsWith(")")) return { message, raw: `${line}\n${closer}`, next: i + 2 };
+  return { message, raw: line, next: i + 1 };
+}
+
+function wrapOpen(line: string): number | undefined {
+  for (const re of WRAP_RES) {
+    const found = line.match(re);
+    if (found?.index !== undefined) return found.index + found[0].length - 1;
+  }
+  return undefined;
+}
+
+/** The text inside the template's parentheses. A `{` starts a JSON value so a `)` inside a string does not close it. */
+function insideParens(line: string, open: number): { inside: string; closed: boolean } {
+  const rest = line.slice(open + 1);
+  if (rest.startsWith("{")) {
+    const json = sliceJsonValue(rest);
+    if (json !== undefined && rest[json.length] === ")") return { inside: json, closed: true };
+    return { inside: rest, closed: false };
+  }
+  const close = rest.indexOf(")");
+  if (close < 0) return { inside: rest, closed: false };
+  return { inside: rest.slice(0, close), closed: true };
+}
+
+function messageFromPayload(inside: string): string | undefined {
+  const trimmed = inside.trim();
+  if (trimmed === "") return undefined;
   if (trimmed.startsWith("{")) {
-    try {
-      const value = JSON.parse(trimmed) as { type?: unknown; message?: unknown; error?: { message?: unknown } };
-      if (value.type === "error" && typeof value.message === "string") return value.message;
-      if (value.type === "turn.failed" && typeof value.error?.message === "string") return value.error.message;
-      return undefined;
-    } catch {
-      // A broken fragment may still carry a message field.
+    const obj = sliceJsonValue(trimmed);
+    if (obj) {
+      const parsed = messageOfValue(obj);
+      if (parsed !== undefined) return parsed;
+      if (obj.length === trimmed.length) return undefined;
     }
   }
-  if (!line.includes("failed:")) return undefined;
-  return lastMessage(line);
+  const field = lastMessage(trimmed);
+  if (field !== undefined) return field;
+  if (!trimmed.includes("{") && !trimmed.includes('"')) return trimmed;
+  return undefined;
+}
+
+function jsonLineMessage(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  return messageOfValue(trimmed);
+}
+
+function messageOfValue(obj: string): string | undefined {
+  try {
+    const value = JSON.parse(obj) as { type?: unknown; message?: unknown; error?: { message?: unknown } };
+    if (value.type === "error" && typeof value.message === "string") return value.message;
+    if (value.type === "turn.failed" && typeof value.error?.message === "string") return value.error.message;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sliceJsonValue(text: string): string | undefined {
+  if (!text.startsWith("{")) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(0, i + 1);
+    }
+  }
+  return undefined;
+}
+
+/** Replace a JSON payload in a note with its message. The original stays on `noteRaw` when the text changes. */
+function readableNote(note: string): { note: string; noteRaw?: string } {
+  const open = wrapOpen(note);
+  if (open === undefined) return { note };
+  const span = insideParens(note, open);
+  if (!span.closed) return { note };
+  const message = messageFromPayload(span.inside);
+  if (message === undefined || message === span.inside) return { note };
+  const replaced = `${note.slice(0, open + 1)}${message}${note.slice(open + 1 + span.inside.length)}`;
+  if (replaced === note) return { note };
+  return { note: replaced, noteRaw: note };
 }
 
 function lastMessage(line: string): string | undefined {
@@ -329,16 +505,13 @@ function lastMessage(line: string): string | undefined {
   return found;
 }
 
+/** Decode one JSON string body (no surrounding quotes) with JSON's own escape rules, including `\uXXXX`. */
 function unescapeJson(raw: string): string {
-  return raw.replace(/\\(.)/g, (match) => {
-    const ch = match[1] ?? "";
-    if (ch === "n") return "\n";
-    if (ch === "r") return "\r";
-    if (ch === "t") return "\t";
-    if (ch === "b") return "\b";
-    if (ch === "f") return "\f";
-    return ch;
-  });
+  try {
+    return JSON.parse(`"${raw}"`) as string;
+  } catch {
+    return raw;
+  }
 }
 
 type Bucket = {

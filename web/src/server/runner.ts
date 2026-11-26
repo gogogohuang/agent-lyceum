@@ -145,16 +145,16 @@ export function listJobs(jobsDir: string, limit = 50): JobView[] {
   return jobs.sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, limit);
 }
 
-export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean }) | undefined {
+export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean; lineStart: boolean }) | undefined {
   if (!ID_RE.test(id)) return undefined;
   const dir = path.join(jobsDir, id);
   const found = view(dir);
   if (!found) return undefined;
   const tail = tailOf(path.join(dir, "out.log"));
-  return { ...found, tail: tail.text, truncated: tail.truncated };
+  return { ...found, tail: tail.text, truncated: tail.truncated, lineStart: tail.lineStart };
 }
 
-function tailOf(file: string): { text: string; truncated: boolean } {
+function tailOf(file: string): { text: string; truncated: boolean; lineStart: boolean } {
   try {
     const size = fs.statSync(file).size;
     const start = Math.max(0, size - TAIL_BYTES);
@@ -162,11 +162,17 @@ function tailOf(file: string): { text: string; truncated: boolean } {
     try {
       const buf = Buffer.alloc(size - start);
       fs.readSync(fd, buf, 0, buf.length, start);
-      return { text: buf.toString("utf8"), truncated: start > 0 };
+      let lineStart = true;
+      if (start > 0) {
+        const prev = Buffer.alloc(1);
+        const n = fs.readSync(fd, prev, 0, 1, start - 1);
+        lineStart = n === 1 && prev[0] === 0x0a;
+      }
+      return { text: buf.toString("utf8"), truncated: start > 0, lineStart };
     } finally {
       fs.closeSync(fd);
     }
   } catch {
-    return { text: "", truncated: false };
+    return { text: "", truncated: false, lineStart: true };
   }
 }

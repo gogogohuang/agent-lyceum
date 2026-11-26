@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getJobs, retainJobs } from "../web/src/client/api";
 import { jobLabel } from "../web/src/client/job-label";
 
 describe("jobLabel", () => {
@@ -17,9 +18,32 @@ describe("jobLabel", () => {
     expect(jobLabel(["call", "bot", "--dir", "/d", "--", "hi"])).toEqual({ project: undefined, target: "bot：hi", tidy: false });
   });
   it("a memory tidy carries the tag; a preview or an undo does not", () => {
-    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: undefined, tidy: true });
-    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--layer", "project"])).toMatchObject({ tidy: true });
-    expect(jobLabel(["tidy", "-p", "biz", "--dry-run"])).toMatchObject({ tidy: false });
-    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--undo", "20261110T010203Z"])).toMatchObject({ tidy: false });
+    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: "全部", tidy: true });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--layer", "project"])).toMatchObject({ tidy: true, target: "lead" });
+    expect(jobLabel(["tidy", "-p", "biz", "--dry-run"])).toMatchObject({ tidy: false, target: "全部" });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--undo", "20261110T010203Z"])).toMatchObject({ tidy: false, target: "lead" });
+  });
+});
+
+describe("getJobs", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports a failed list request as null and an empty list as an empty array", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 500 })));
+    expect(await getJobs()).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("down"))));
+    expect(await getJobs()).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ jobs: [] }), { status: 200 })));
+    expect(await getJobs()).toEqual([]);
+  });
+});
+
+describe("retainJobs", () => {
+  it("keeps the previous list when a poll fails, and replaces it when the poll succeeds", () => {
+    const prev = [{ id: "a" }];
+    expect(retainJobs(prev, null)).toBe(prev);
+    expect(retainJobs(undefined, null)).toBeUndefined();
+    expect(retainJobs(prev, [])).toEqual([]);
+    expect(retainJobs(prev, [{ id: "b" }])).toEqual([{ id: "b" }]);
   });
 });

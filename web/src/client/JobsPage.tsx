@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getJob, getJobs, type JobDetail, type JobSummary } from "./api";
+import { getJob, getJobs, retainJobs, type JobDetail, type JobSummary } from "./api";
 import { cn } from "./cn";
 import { exitInfo } from "./exit-info";
 import { JobOutput } from "./JobOutput";
@@ -15,10 +15,22 @@ export function JobsPage() {
   // undefined = not loaded yet; null = request failed; a later failure keeps the last good detail
   const [detail, setDetail] = useState<JobDetail | null>();
   const [stale, setStale] = useState(false);
-  // Resets only when the selected job changes. The 2s poll updates `detail` in place, so this and the open `<details>` stay put.
+  // Resets only when the selected job changes. Block keys do not use the list index, and a failed list poll keeps the last jobs, so an open disclosure is not remounted.
   const [raw, setRaw] = useState(false);
+  const [listDown, setListDown] = useState(false);
 
-  useEffect(() => startPoll(getJobs, setJobs, 3000), []);
+  useEffect(
+    () =>
+      startPoll(
+        getJobs,
+        (next) => {
+          setListDown(next === null);
+          setJobs((prev) => retainJobs(prev, next));
+        },
+        3000,
+      ),
+    [],
+  );
 
   useEffect(() => {
     setDetail(undefined);
@@ -41,13 +53,14 @@ export function JobsPage() {
   }, [picked]);
 
   if (jobs === undefined) {
-    return <LoadingBlock label="正在讀取任務清單…" />;
+    return listDown ? <p className="text-pretty p-4 text-sm text-failed">無法取得任務清單，稍後會自動重試。</p> : <LoadingBlock label="正在讀取任務清單…" />;
   }
 
   return (
     <article className="enter animate-in fade-in p-4 duration-200 sm:p-6">
       <h1 className="text-balance text-2xl font-semibold tracking-tight">任務輸出</h1>
       <p className="text-pretty mt-2 text-sm">從網頁啟動的背景指令。它們獨立於這個頁面，關掉頁面也會繼續跑。</p>
+      {listDown && <p className="mt-2 text-sm text-warn">清單更新失敗，顯示上次的結果。</p>}
       {jobs.length === 0 ? (
         picked ? null : <p className="text-pretty mt-6 text-sm">還沒有從網頁啟動過的背景指令；若剛啟動過卻沒看到，可能是暫時無法取得清單，稍後會自動重試。</p>
       ) : (
