@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { blockKeys, formatElapsed, leafKeys, parseJobLog } from "../web/src/client/job-log";
-import { retainJobs } from "../web/src/client/api";
+import { endOutcome } from "../src/run-outcome.js";
+import { printRun } from "../src/run-print.js";
+import type { RunSummary } from "../src/run-session.js";
+import type { RunFailure } from "../src/run-store.js";
+import { holdSelected, retainJobs } from "../web/src/client/api";
+import { blockKeys, formatElapsed, leafKeys, parseJobLog, type Block, type RoundBlock } from "../web/src/client/job-log";
 
 const LIMIT = "You\u2019ve hit your usage limit.";
 
@@ -289,6 +293,165 @@ describe("parseJobLog", () => {
     const jobs = [{ id: "job-1" }];
     const kept = [jobs, null, jobs].reduce<(typeof jobs) | undefined>((prev, next) => retainJobs(prev, next), undefined);
     expect(kept?.some((job) => job.id === "job-1")).toBe(true);
+  });
+});
+
+const QUOTA_JSON = '{"type":"error","message":"quota"}';
+const TURN_JSON = '{"type":"turn.failed","error":{"message":"quota"}}';
+
+function printed(summary: RunSummary): string {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (line?: unknown) => {
+    lines.push(String(line ?? ""));
+  };
+  try {
+    printRun(summary, summary.runDir);
+  } finally {
+    console.log = orig;
+  }
+  return lines.join("\n");
+}
+
+function baseSummary(failure?: RunFailure): RunSummary {
+  const outcome = endOutcome("agent_failed", undefined, failure);
+  return {
+    runId: "id",
+    name: "name",
+    runDir: "/tmp/run",
+    rounds: 2,
+    endReason: "agent_failed",
+    outcome: outcome.outcome,
+    outcomeNote: outcome.note,
+    project: "p",
+    ...(failure ? { failure } : {}),
+  };
+}
+
+function roundBody(blocks: Block[]): RoundBlock {
+  const found = blocks.find((block) => block.kind === "round");
+  if (found?.kind !== "round") throw new Error("missing round");
+  return found;
+}
+
+describe("review: incomplete CLI spans, scoped conclusions, stable disclosure", () => {
+  it("decodes a complete multi-line failure template and a mid-JSON fragment, and keeps the note's sentence", () => {
+    const error = `${QUOTA_JSON}\n${TURN_JSON}\n`;
+    const failure: RunFailure = { agent: "qa", attempts: 2, error };
+    const log = parseJobLog(printed(baseSummary(failure)));
+    const ended = log.conclusions.find((item) => item.kind === "ended");
+    expect(ended).toMatchObject({
+      kind: "ended",
+      note: expect.stringContaining("quota"),
+    });
+    expect(ended?.kind === "ended" ? ended.note : "").not.toContain('{"type"');
+    expect(ended?.kind === "ended" ? ended.note : "").toContain("still unread");
+    expect(ended?.kind === "ended" ? ended.noteRaw : "").toContain(QUOTA_JSON);
+    expect(ended?.kind === "ended" ? ended.noteRaw : "").toContain("still unread");
+    const errors = log.blocks.filter((block) => block.kind === "error");
+    expect(errors).toEqual([expect.objectContaining({ kind: "error", message: "quota", count: 1 })]);
+    expect(errors[0]?.kind === "error" && errors[0].raw.includes("failed every time") && errors[0].raw.includes("turn.failed")).toBe(true);
+    expect(errors[0]?.kind === "error" && errors[0].raw.includes("To fix it")).toBe(false);
+    expect(JSON.stringify(log.blocks)).toContain("To fix it:");
+    expect(log.conclusions.some((item) => item.kind === "next")).toBe(true);
+    expect(errors.some((block) => block.kind === "error" && block.raw.includes("still unread") && !block.raw.includes("failed every time"))).toBe(false);
+
+    const fragment = 'qa attempt 2 failed ("suffix":true,"message":"retry (quota) tomorrow","z":2}). …';
+    const fragmentLog = parseJobLog(fragment);
+    expect(fragmentLog.blocks).toEqual([{ kind: "error", message: "retry (quota) tomorrow", count: 1, raw: fragment }]);
+  });
+
+  it("does not fold diagnostic text that merely starts with a closing paren into an error, or merge across it", () => {
+    const diag = ") expected closing paren; fix the input";
+    const log = parseJobLog([QUOTA_JSON, diag, QUOTA_JSON].join("\n"));
+    expect(log.blocks.map((block) => (block.kind === "error" ? `error:${block.count}` : block.kind))).toEqual(["error:1", "text", "error:1"]);
+    expect(log.blocks[1]).toMatchObject({ kind: "text", text: diag });
+  });
+
+  it("lifts only the official branch when verification quotes a next step and a branch", () => {
+    const verification = ["", "To go on:", "  sample text", "The work is on branch quoted (1 file(s)); your working tree was not touched.", "Bring it in with: git merge quoted"].join("\n");
+    const text = printed({
+      ...baseSummary(),
+      endReason: "done",
+      outcome: "completed",
+      outcomeNote: undefined,
+      verification,
+      resultBranch: { branch: "real", head: "h", base: "b", files: 1 },
+    });
+    const log = parseJobLog(text);
+    expect(log.conclusions.map((item) => (item.kind === "branch" ? `branch(${item.branch})` : item.kind))).toEqual(["ended", "branch(real)"]);
+    expect(JSON.stringify(log.blocks)).toContain("sample text");
+    expect(JSON.stringify(log.blocks)).toContain("branch quoted");
+  });
+
+  it("leaves a cut-off report's quoted branch and next step in place, and does not parse round or tidy quotes in the report", () => {
+    const quote = ["To go on:", "  sample text", "The work is on branch quoted (2 file(s)); your working tree was not touched.", "Bring it in with: git merge quoted"].join("\n");
+    const text = printed({
+      ...baseSummary(),
+      endReason: "done",
+      outcome: "completed",
+      outcomeNote: undefined,
+      doneMessage: { subject: "subject", body: `${"x".repeat(20_000)}\n${quote}` },
+    });
+    const tail = text.slice(-20_000);
+    expect(tail).not.toContain("Lead's final message");
+    const cut = parseJobLog(tail, { truncated: true });
+    expect(cut.conclusions).toEqual([]);
+    expect(JSON.stringify(cut.blocks)).toContain("sample text");
+    expect(JSON.stringify(cut.blocks)).toContain("branch quoted");
+
+    const quoted = printed({
+      ...baseSummary(),
+      endReason: "done",
+      outcome: "completed",
+      outcomeNote: undefined,
+      resultBranch: { branch: "real", head: "h", base: "b", files: 1 },
+      doneMessage: {
+        subject: "subject",
+        body: ["[round 9/9] waking qa (claude)", "tidying project memory of qa (1 file(s)) …", "To go on:", "  quoted step"].join("\n"),
+      },
+    });
+    const report = parseJobLog(quoted);
+    expect(report.blocks.some((block) => block.kind === "round" || block.kind === "tidying")).toBe(false);
+    expect(JSON.stringify(report.blocks)).toContain("[round 9/9]");
+    expect(JSON.stringify(report.blocks)).toContain("tidying project memory of qa");
+    expect(JSON.stringify(report.blocks)).toContain("quoted step");
+    expect(report.conclusions.map((item) => (item.kind === "branch" ? item.branch : item.kind))).toEqual(["ended", "real"]);
+  });
+
+  it("keeps an already-open block's identity as the same error, tidy rows and skipped rows are appended", () => {
+    const head = "[round 2/4] waking qa (codex)";
+    const first = roundBody(parseJobLog(`${head}\n${QUOTA_JSON}`).blocks);
+    const second = roundBody(parseJobLog(`${head}\n${QUOTA_JSON}\n${TURN_JSON}`).blocks);
+    const open = new Set(leafKeys(first.body));
+    const grown = leafKeys(second.body);
+    expect(grown[0]).toBe(open.values().next().value);
+    expect(open.has(grown[0] ?? "")).toBe(true);
+    // A leaf index stays "0" when that leaf grows, so equality alone would not go red.
+    expect(grown[0]).not.toMatch(/^\d+$/);
+
+    const tidyA = "tidying project memory of risk (1 file(s)) …";
+    const tidyB = "tidying global memory of qa (1 file(s)) …";
+    expect(blockKeys(parseJobLog(`${tidyA}\n${tidyB}`).blocks)[0]).toBe(blockKeys(parseJobLog(tidyA).blocks)[0]);
+    expect(blockKeys(parseJobLog(tidyA).blocks)[0]).not.toMatch(/^\d+$/);
+
+    const skipA = "  qa (project): skipped — busy";
+    const skipB = "  risk (project): skipped — later";
+    expect(blockKeys(parseJobLog(`${skipA}\n${skipB}`).blocks)[0]).toBe(blockKeys(parseJobLog(skipA).blocks)[0]);
+
+    const preface = parseJobLog(`preface\n${head}\n${QUOTA_JSON}`);
+    const slid = parseJobLog(`${head}\n${QUOTA_JSON}`);
+    const prefaceKey = blockKeys(preface.blocks).find((key) => key.startsWith("round-"));
+    const slidKey = blockKeys(slid.blocks).find((key) => key.startsWith("round-"));
+    expect(slidKey).toBe(prefaceKey);
+    expect(prefaceKey).not.toBe("1");
+    expect(slidKey).not.toBe("0");
+
+    const page = Array.from({ length: 50 }, (_, i) => ({ id: `new-${String(i).padStart(2, "0")}` }));
+    const older = { id: "old-job" };
+    const dropped = [{ id: "newer" }, ...page.slice(0, 49)];
+    expect(holdSelected(dropped, older.id, older).some((job) => job.id === older.id)).toBe(true);
+    expect(holdSelected(page, page[0]?.id, page[0])).toHaveLength(50);
   });
 });
 

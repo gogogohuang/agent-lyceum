@@ -70,16 +70,22 @@ export type JobLog = {
 type Leaf = TextBlock | ErrorBlock;
 
 /**
- * Keys that stay put when an earlier block slides out of the tail.
- * A repeated block of the same text gets a `#n` suffix; if an earlier copy slides away, that suffix can change.
+ * Keys that stay put when a block grows or an earlier block slides out of the tail.
+ * The identity is the block's start, not its length. A repeated start gets a `#n` suffix;
+ * that suffix can change if an earlier copy of the same start slides away.
  */
 export function blockKeys(blocks: Block[]): string[] {
   return enumerate(blocks.map(blockIdentity));
 }
 
-/** Keys for the lines inside one round. Same rule as `blockKeys`. */
+/** Keys for the lines inside one round. Appending to a leaf does not change its key. */
 export function leafKeys(leaves: Leaf[]): string[] {
-  return enumerate(leaves.map((leaf) => (leaf.kind === "error" ? `e-${leaf.message}-${leaf.count}-${leaf.raw}` : `t-${leaf.text}`)));
+  return enumerate(leaves.map((leaf) => (leaf.kind === "error" ? `e-${leaf.message}-${firstLine(leaf.raw)}` : `t-${firstLine(leaf.text)}`)));
+}
+
+function firstLine(text: string): string {
+  const nl = text.indexOf("\n");
+  return nl < 0 ? text : text.slice(0, nl);
 }
 
 function enumerate(bases: string[]): string[] {
@@ -98,13 +104,15 @@ function blockIdentity(block: Block): string {
     case "tidied":
       return `tidied-${block.agent}-${block.layer}-${block.archive}`;
     case "error":
-      return `error-${block.message}-${block.count}-${block.raw}`;
-    case "skipped":
-      return `skipped-${block.items.map((item) => `${item.agent}/${item.layer}/${item.reason}`).join("\n")}`;
+      return `error-${block.message}-${firstLine(block.raw)}`;
+    case "skipped": {
+      const first = block.items[0];
+      return first ? `skipped-${first.agent}/${first.layer}/${first.reason}` : "skipped";
+    }
     case "tidying":
-      return `tidying-${block.lines.join("\n")}`;
+      return `tidying-${block.lines[0] ?? ""}`;
     case "text":
-      return `text-${block.text}`;
+      return `text-${firstLine(block.text)}`;
     case "promoted":
       return `promoted-${block.text}`;
   }
@@ -150,33 +158,62 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
   let skipped: SkippedBlock | undefined;
   let tidying: TidyingBlock | undefined;
   let separated = false;
-  let inReport = false;
+  // Conclusions are lifted only after the footer anchor (`Run … ended`). Verification and the lead report stay as text.
+  let phase: "log" | "footer" | "verification" | "report" = "log";
+  let prevBlank = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
-    if (REPORT_RE.test(line)) inReport = true;
+    if (REPORT_RE.test(line) && (phase !== "verification" || prevBlank)) phase = "report";
 
-    if (!inReport) {
+    if (phase === "report") {
+      separated = absorb(bucket(round, blocks), { kind: "text", text: line }, separated);
+      prevBlank = line === "";
+      continue;
+    }
+
+    if (phase === "verification") {
+      if (line !== "" && prevBlank && officialAfterVerification(line)) phase = "footer";
+      else {
+        separated = absorb(bucket(round, blocks), { kind: "text", text: line }, separated);
+        prevBlank = line === "";
+        continue;
+      }
+    }
+
+    if (phase === "footer" && VERIFICATION_RE.test(line)) {
+      phase = "verification";
+      separated = absorb(bucket(round, blocks), { kind: "text", text: line }, separated);
+      prevBlank = false;
+      continue;
+    }
+
+    if (phase === "log" && ENDED_RE.test(line)) phase = "footer";
+
+    if (phase === "footer") {
       const ended = takeEnded(lines, i);
       if (ended) {
         conclusions.push(ended.conclusion);
-        i = ended.next - 1;
         separated = true;
+        prevBlank = lines[ended.next - 1] === "";
+        i = ended.next - 1;
         continue;
       }
       const nextStep = takeNext(lines, i);
       if (nextStep) {
         conclusions.push(nextStep.conclusion);
-        i = nextStep.next - 1;
         separated = true;
+        prevBlank = lines[nextStep.next - 1] === "";
+        i = nextStep.next - 1;
         continue;
       }
       const branch = takeBranch(lines, i);
       if (branch) {
         conclusions.push(branch.conclusion);
-        i = branch.next - 1;
         separated = true;
+        prevBlank = lines[branch.next - 1] === "";
+        i = branch.next - 1;
         continue;
       }
     }
@@ -186,6 +223,7 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
       round = roundHead;
       blocks.push(round);
       separated = true;
+      prevBlank = false;
       continue;
     }
 
@@ -197,6 +235,7 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
       }
       tidying.lines.push(line);
       separated = true;
+      prevBlank = false;
       continue;
     }
 
@@ -210,6 +249,7 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
       skipped.items.push({ agent: skip[1], layer: skip[2], reason: skip[3] });
       skipped.count = skipped.items.length;
       separated = true;
+      prevBlank = false;
       continue;
     }
 
@@ -218,6 +258,7 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
       round = undefined;
       blocks.push(tidied);
       separated = true;
+      prevBlank = false;
       continue;
     }
 
@@ -225,16 +266,19 @@ export function parseJobLog(text: string, opts?: { truncated?: boolean; lineStar
       round = undefined;
       blocks.push({ kind: "promoted", text: line });
       separated = true;
+      prevBlank = false;
       continue;
     }
 
     const cli = takeCliError(lines, i);
     if (cli) {
       separated = absorb(bucket(round, blocks), { kind: "error", message: cli.message, count: 1, raw: cli.raw }, separated);
+      prevBlank = lines[cli.next - 1] === "";
       i = cli.next - 1;
       continue;
     }
     separated = absorb(bucket(round, blocks), { kind: "text", text: line }, separated);
+    prevBlank = line === "";
   }
 
   const log: JobLog = { truncated, conclusions, blocks };
@@ -267,10 +311,9 @@ function takeEnded(lines: string[], i: number): { conclusion: EndedConclusion; n
   const m = line?.match(ENDED_RE);
   if (!m?.[2] || !m[3] || !m[4] || !m[5]) return undefined;
   let next = i + 1;
-  const noteLine = lines[next]?.match(NOTE_RE);
-  const noteBody = noteLine?.[1];
-  if (noteLine) next += 1;
-  const shown = noteBody !== undefined ? readableNote(noteBody) : undefined;
+  const note = lines[next] !== undefined && NOTE_RE.test(lines[next] ?? "") ? consumeNote(lines, next) : undefined;
+  if (note) next = note.next;
+  const shown = note ? readableNote(note.body) : undefined;
   return {
     conclusion: {
       kind: "ended",
@@ -282,6 +325,15 @@ function takeEnded(lines: string[], i: number): { conclusion: EndedConclusion; n
     },
     next,
   };
+}
+
+/** A `Note:` line, plus the following lines when they finish an unclosed failure template. */
+function consumeNote(lines: string[], i: number): { body: string; next: number } {
+  const first = lines[i] ?? "";
+  const open = wrapOpen(first);
+  const grown = open === undefined ? undefined : growWrapped(lines, i, open);
+  const raw = grown?.raw ?? first;
+  return { body: raw.replace(/^Note: /, ""), next: grown?.next ?? i + 1 };
 }
 
 function takeNext(lines: string[], i: number): { conclusion: NextConclusion; next: number } | undefined {
@@ -371,6 +423,8 @@ function splitArchive(blob: string): { archive: string; records?: string; propos
   return { archive: rest, ...(records !== undefined ? { records } : {}), ...(proposals !== undefined ? { proposals } : {}) };
 }
 
+const VERIFICATION_RE = /^Verification \(/;
+const FORMAL_CLOSER = /^\)(?:\.|, so the run stopped|; \d+ output file\(s\) set aside)/;
 const WRAP_RES = [
   /attempt \d+ failed \(/,
   /failed \d+ time\(s\) in a row \(/,
@@ -378,29 +432,94 @@ const WRAP_RES = [
   /^\s*\d+\. \S+: (?:rate_limit|quota|timeout|network|crash|auth|config|unknown error|unknown) \(/,
 ];
 
-/** An error the CLI printed in a known template, a JSON line, or a `failed:` fragment. `next` may pass a closer left on the following line. */
+/** A line printRun emits as its own section after the verification paragraph. */
+function officialAfterVerification(line: string): boolean {
+  return (
+    BRANCH_RE.test(line) ||
+    line.startsWith("Dispatcher verification (run by agent-lyceum):") ||
+    line.startsWith("Pull request ") ||
+    line.startsWith("A pull request ") ||
+    line.startsWith("The pull request could not be opened")
+  );
+}
+
+/** An error the CLI printed in a complete template, a whole JSON line, or a `failed:` fragment. */
 function takeCliError(lines: string[], i: number): { message: string; raw: string; next: number } | undefined {
   const line = lines[i];
   if (line === undefined) return undefined;
   const open = wrapOpen(line);
   if (open !== undefined) {
-    const span = insideParens(line, open);
-    const message = messageFromPayload(span.inside);
+    const grown = growWrapped(lines, i, open);
+    if (!grown) return undefined;
+    const message = messageFromPayload(grown.inside);
     if (message === undefined) return undefined;
-    return withCloser(lines, i, line, message, span.closed);
+    return { message, raw: grown.raw, next: grown.next };
   }
   const fromJson = jsonLineMessage(line);
-  if (fromJson !== undefined) return withCloser(lines, i, line, fromJson, false);
-  if (!line.includes("failed:")) return undefined;
-  const message = lastMessage(line);
-  if (message === undefined) return undefined;
-  return { message, raw: line, next: i + 1 };
+  if (fromJson === undefined) {
+    if (!line.includes("failed:")) return undefined;
+    const message = lastMessage(line);
+    if (message === undefined) return undefined;
+    return { message, raw: line, next: i + 1 };
+  }
+  const closer = lines[i + 1];
+  if (closer !== undefined && FORMAL_CLOSER.test(closer)) return { message: fromJson, raw: `${line}\n${closer}`, next: i + 2 };
+  return { message: fromJson, raw: line, next: i + 1 };
 }
 
-function withCloser(lines: string[], i: number, line: string, message: string, closed: boolean): { message: string; raw: string; next: number } {
-  const closer = lines[i + 1];
-  if (!closed && closer?.startsWith(")")) return { message, raw: `${line}\n${closer}`, next: i + 2 };
-  return { message, raw: line, next: i + 1 };
+type Scan = { inside: string; closed: boolean; inString: boolean; depth: number };
+
+/** Join following lines only while they still belong to an unclosed template, and only when the `)` is found. */
+function growWrapped(lines: string[], i: number, open: number): { raw: string; inside: string; next: number } | undefined {
+  let end = i;
+  let joined = lines[i] ?? "";
+  let scan = scanParen(joined, open);
+  while (!scan.closed && end + 1 < lines.length) {
+    const next = lines[end + 1];
+    if (next === undefined || !continuesTemplate(scan, next)) break;
+    end += 1;
+    joined = `${joined}\n${next}`;
+    scan = scanParen(joined, open);
+  }
+  if (!scan.closed) return undefined;
+  return { raw: joined, inside: scan.inside, next: end + 1 };
+}
+
+function continuesTemplate(scan: Scan, nextLine: string): boolean {
+  if (ROUND_RE.test(nextLine) || ENDED_RE.test(nextLine) || nextLine === "To go on:" || REPORT_RE.test(nextLine) || TIDYING_RE.test(nextLine) || VERIFICATION_RE.test(nextLine)) return false;
+  if (scan.inString || scan.depth > 0) return true;
+  if (FORMAL_CLOSER.test(nextLine)) return true;
+  return nextLine.trimStart().startsWith("{");
+}
+
+/** Find the template's `)`, skipping `)` inside JSON strings and unclosed objects. */
+function scanParen(text: string, open: number): Scan {
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      if (depth > 0) depth -= 1;
+      continue;
+    }
+    if (ch === ")" && depth === 0) return { inside: text.slice(open + 1, i), closed: true, inString, depth };
+  }
+  return { inside: text.slice(open + 1), closed: false, inString, depth };
 }
 
 function wrapOpen(line: string): number | undefined {
@@ -409,19 +528,6 @@ function wrapOpen(line: string): number | undefined {
     if (found?.index !== undefined) return found.index + found[0].length - 1;
   }
   return undefined;
-}
-
-/** The text inside the template's parentheses. A `{` starts a JSON value so a `)` inside a string does not close it. */
-function insideParens(line: string, open: number): { inside: string; closed: boolean } {
-  const rest = line.slice(open + 1);
-  if (rest.startsWith("{")) {
-    const json = sliceJsonValue(rest);
-    if (json !== undefined && rest[json.length] === ")") return { inside: json, closed: true };
-    return { inside: rest, closed: false };
-  }
-  const close = rest.indexOf(")");
-  if (close < 0) return { inside: rest, closed: false };
-  return { inside: rest.slice(0, close), closed: true };
 }
 
 function messageFromPayload(inside: string): string | undefined {
@@ -481,15 +587,16 @@ function sliceJsonValue(text: string): string | undefined {
   return undefined;
 }
 
-/** Replace a JSON payload in a note with its message. The original stays on `noteRaw` when the text changes. */
+/** Replace a complete template payload in a note with its message. The original stays on `noteRaw` when the text changes. */
 function readableNote(note: string): { note: string; noteRaw?: string } {
   const open = wrapOpen(note);
   if (open === undefined) return { note };
-  const span = insideParens(note, open);
+  const span = scanParen(note, open);
   if (!span.closed) return { note };
   const message = messageFromPayload(span.inside);
   if (message === undefined || message === span.inside) return { note };
-  const replaced = `${note.slice(0, open + 1)}${message}${note.slice(open + 1 + span.inside.length)}`;
+  const closeAt = open + 1 + span.inside.length;
+  const replaced = `${note.slice(0, open + 1)}${message}${note.slice(closeAt)}`;
   if (replaced === note) return { note };
   return { note: replaced, noteRaw: note };
 }

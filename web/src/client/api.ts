@@ -79,6 +79,16 @@ export function retainJobs<T>(prev: T[] | undefined, next: T[] | null): T[] | un
   return next === null ? prev : next;
 }
 
+/**
+ * Keep a selected job on the page when a newer `listJobs` page drops it.
+ * The detail stays under that same row instead of moving to another parent.
+ */
+export function holdSelected<T extends { id: string }>(jobs: T[], picked: string | undefined, held: T | undefined): T[] {
+  if (!picked || !held || held.id !== picked) return jobs;
+  if (jobs.some((job) => job.id === picked)) return jobs;
+  return [...jobs, held];
+}
+
 export async function getJob(id: string): Promise<JobDetail | undefined> {
   try {
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
