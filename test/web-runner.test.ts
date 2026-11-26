@@ -135,4 +135,33 @@ describe("startJob", () => {
     expect(listJobs(jobsDir).map((j) => j.id)).toEqual(["b2", "c3", "a1"]);
     expect(listJobs(jobsDir, 2).map((j) => j.id)).toEqual(["b2", "c3"]);
   });
+  it("marks a log past the tail window as truncated and returns the last bytes", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "long1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "long1", "job.json"), JSON.stringify({ id: "long1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "long1", "out.log"), `HEAD-PARTIAL${"x".repeat(20_000)}`);
+    const view = readJob(jobsDir, "long1");
+    expect(view?.truncated).toBe(true);
+    expect(view?.tail.startsWith("HEAD")).toBe(false);
+    expect(view?.tail.endsWith("x")).toBe(true);
+    expect(Buffer.byteLength(view?.tail ?? "")).toBe(20_000);
+  });
+  it("a log of exactly the tail window is not truncated", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "cap1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "cap1", "job.json"), JSON.stringify({ id: "cap1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "cap1", "out.log"), "y".repeat(20_000));
+    const view = readJob(jobsDir, "cap1");
+    expect(view?.truncated).toBe(false);
+    expect(view?.tail).toBe("y".repeat(20_000));
+  });
+  it("a short log is not truncated", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "short1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "short1", "job.json"), JSON.stringify({ id: "short1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "short1", "out.log"), "hi\n");
+    const view = readJob(jobsDir, "short1");
+    expect(view?.truncated).toBe(false);
+    expect(view?.tail).toBe("hi\n");
+  });
 });

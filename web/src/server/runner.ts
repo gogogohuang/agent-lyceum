@@ -145,15 +145,16 @@ export function listJobs(jobsDir: string, limit = 50): JobView[] {
   return jobs.sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, limit);
 }
 
-export function readJob(jobsDir: string, id: string): (JobView & { tail: string }) | undefined {
+export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean }) | undefined {
   if (!ID_RE.test(id)) return undefined;
   const dir = path.join(jobsDir, id);
   const found = view(dir);
   if (!found) return undefined;
-  return { ...found, tail: tailOf(path.join(dir, "out.log")) };
+  const tail = tailOf(path.join(dir, "out.log"));
+  return { ...found, tail: tail.text, truncated: tail.truncated };
 }
 
-function tailOf(file: string): string {
+function tailOf(file: string): { text: string; truncated: boolean } {
   try {
     const size = fs.statSync(file).size;
     const start = Math.max(0, size - TAIL_BYTES);
@@ -161,11 +162,11 @@ function tailOf(file: string): string {
     try {
       const buf = Buffer.alloc(size - start);
       fs.readSync(fd, buf, 0, buf.length, start);
-      return buf.toString("utf8");
+      return { text: buf.toString("utf8"), truncated: start > 0 };
     } finally {
       fs.closeSync(fd);
     }
   } catch {
-    return "";
+    return { text: "", truncated: false };
   }
 }
