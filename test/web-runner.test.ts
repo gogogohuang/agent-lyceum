@@ -163,6 +163,8 @@ describe("startJob", () => {
     const view = readJob(jobsDir, "short1");
     expect(view?.truncated).toBe(false);
     expect(view?.lineStart).toBe(true);
+    expect(view?.byteStart).toBe(0);
+    expect(view?.gaps).toEqual([]);
     expect(view?.tail).toBe("hi\n");
   });
 
@@ -179,6 +181,8 @@ describe("startJob", () => {
     expect(view?.lineStart).toBe(true);
     expect(view?.tail).toBe(file.subarray(file.length - 20_000).toString("utf8"));
     expect(view?.tail.startsWith("[round 2/4]")).toBe(true);
+    expect(view?.byteStart).toBe(file.length - 20_000);
+    expect(view?.gaps).toEqual([]);
   });
 
   it("keeps the baseline decoding when the cut splits a multibyte character", () => {
@@ -196,5 +200,8 @@ describe("startJob", () => {
     expect(view?.tail.startsWith("\uFFFD\n")).toBe(true);
     expect(view?.lineStart).toBe(false);
     expect(view?.truncated).toBe(true);
+    expect(view?.byteStart).toBe(file.length - 20_000);
+    expect(Buffer.byteLength(view?.tail ?? "")).not.toBe(20_000);
+    expect(view?.gaps).toEqual([{ at: 0, source: 1 }]);
   });
 });

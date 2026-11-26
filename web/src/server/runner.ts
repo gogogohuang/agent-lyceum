@@ -145,16 +145,18 @@ export function listJobs(jobsDir: string, limit = 50): JobView[] {
   return jobs.sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, limit);
 }
 
-export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean; lineStart: boolean }) | undefined {
+export type Utf8Gap = { at: number; source: number };
+
+export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean; lineStart: boolean; byteStart: number; gaps: Utf8Gap[] }) | undefined {
   if (!ID_RE.test(id)) return undefined;
   const dir = path.join(jobsDir, id);
   const found = view(dir);
   if (!found) return undefined;
   const tail = tailOf(path.join(dir, "out.log"));
-  return { ...found, tail: tail.text, truncated: tail.truncated, lineStart: tail.lineStart };
+  return { ...found, tail: tail.text, truncated: tail.truncated, lineStart: tail.lineStart, byteStart: tail.byteStart, gaps: tail.gaps };
 }
 
-function tailOf(file: string): { text: string; truncated: boolean; lineStart: boolean } {
+function tailOf(file: string): { text: string; truncated: boolean; lineStart: boolean; byteStart: number; gaps: Utf8Gap[] } {
   try {
     const size = fs.statSync(file).size;
     const start = Math.max(0, size - TAIL_BYTES);
@@ -168,11 +170,39 @@ function tailOf(file: string): { text: string; truncated: boolean; lineStart: bo
         const n = fs.readSync(fd, prev, 0, 1, start - 1);
         lineStart = n === 1 && prev[0] === 0x0a;
       }
-      return { text: buf.toString("utf8"), truncated: start > 0, lineStart };
+      const text = buf.toString("utf8");
+      return { text, truncated: start > 0, lineStart, byteStart: start, gaps: utf8Gaps(buf, text) };
     } finally {
       fs.closeSync(fd);
     }
   } catch {
-    return { text: "", truncated: false, lineStart: true };
+    return { text: "", truncated: false, lineStart: true, byteStart: 0, gaps: [] };
   }
+}
+
+/** File bytes each U+FFFD replaced, when that run is shorter than the character's own UTF-8 encoding. */
+function utf8Gaps(buf: Buffer, text: string): Utf8Gap[] {
+  const gaps: Utf8Gap[] = [];
+  let b = 0;
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i);
+    if (cp === undefined) break;
+    const width = cp > 0xffff ? 2 : 1;
+    if (cp === 0xfffd) {
+      const expect = text.slice(0, i + width);
+      let best = 0;
+      for (let k = 1; b + k <= buf.length; k++) {
+        const got = buf.subarray(0, b + k).toString("utf8");
+        if (got === expect) best = k;
+        else if (best > 0) break;
+      }
+      if (best === 0) break;
+      if (best !== Buffer.byteLength(text.slice(i, i + width))) gaps.push({ at: i, source: best });
+      b += best;
+    } else {
+      b += Buffer.byteLength(text.slice(i, i + width));
+    }
+    i += width;
+  }
+  return gaps;
 }

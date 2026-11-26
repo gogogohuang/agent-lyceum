@@ -1,4 +1,5 @@
 import type { Body, CommandId } from "../commands";
+import type { Utf8Gap } from "./job-log";
 
 export type ShortOutcome = { mode: "short"; exit: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean; truncated: boolean };
 export type CommandResult =
@@ -10,7 +11,7 @@ export type CommandResult =
   | { kind: "error"; message: string };
 
 export type JobSummary = { id: string; command: string; argv: string[]; cwd: string; started_at: string; pid: number; state: "running" | "ended" | "lost"; exit?: number | null; ended_at?: string };
-export type JobDetail = JobSummary & { tail: string; truncated?: boolean; lineStart?: boolean };
+export type JobDetail = JobSummary & { tail: string; truncated?: boolean; lineStart?: boolean; byteStart?: number; gaps?: Utf8Gap[] };
 export type AskQuestion = { id: string; text: string; asker: string; options?: string[]; suggested?: { value: string; reason?: string }; answer?: string; delivered: boolean };
 export type AskView = { status: "pending" | "answered"; questions: AskQuestion[] };
 

@@ -1,10 +1,14 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { endOutcome } from "../src/run-outcome.js";
 import { printRun } from "../src/run-print.js";
 import type { RunSummary } from "../src/run-session.js";
 import type { RunFailure } from "../src/run-store.js";
 import { holdSelected, retainJobs } from "../web/src/client/api";
-import { blockKeys, formatElapsed, leafKeys, parseJobLog, type Block, type RoundBlock } from "../web/src/client/job-log";
+import { blockKeys, disclosureId, formatElapsed, parseJobLog, toggleDisclosure, type Block, type JobLog, type RoundBlock, type Utf8Gap } from "../web/src/client/job-log";
+import { readJob } from "../web/src/server/runner.js";
 
 const LIMIT = "You\u2019ve hit your usage limit.";
 
@@ -98,27 +102,32 @@ describe("parseJobLog", () => {
     expect(JSON.stringify(log)).toContain("tidying project memory");
   });
 
-  it("shows only the message of JSON errors and counts consecutive repeats", () => {
+  it("shows only the message of a whole-line JSON error and counts consecutive repeats", () => {
+    const failedFragment = '  product-lead failed: >["config"]>,"message":"need a config","exit_code":0}';
+    const failedObject = '  product-lead failed: {"type":"turn.failed","error":{"message":"need a config"}}';
+    const failedEscaped = '  product-lead failed: {"type":"error","message":"say \\"hi\\""}';
     const text = [
       `{"type":"error","message":${JSON.stringify(LIMIT)}}`,
       `{"type":"turn.failed","error":{"message":${JSON.stringify(LIMIT)}}}`,
       "  product-lead falling back to claude-code/claude-opus-5-5 (quota)",
       `{"type":"error","message":${JSON.stringify(LIMIT)}}`,
-      '  product-lead failed: >["config"]>,"message":"need a config","exit_code":0}',
-      '  product-lead failed: {"type":"turn.failed","error":{"message":"need a config"}}',
-      '  product-lead failed: {"type":"error","message":"say \\"hi\\""}',
+      failedFragment,
+      failedObject,
+      failedEscaped,
     ].join("\n");
     const log = parseJobLog(text);
     const errors = log.blocks.filter((b) => b.kind === "error");
     expect(errors.map((b) => (b.kind === "error" ? { message: b.message, count: b.count } : b))).toEqual([
       { message: LIMIT, count: 2 },
       { message: LIMIT, count: 1 },
-      { message: "need a config", count: 2 },
-      { message: 'say "hi"', count: 1 },
     ]);
     const first = errors[0];
     expect(first?.kind === "error" && first.raw.includes("turn.failed")).toBe(true);
-    expect(JSON.stringify(log.blocks)).toContain("falling back");
+    expect(first?.kind === "error" && first.raw.includes("failed:")).toBe(false);
+    const textBody = log.blocks.flatMap((block) => (block.kind === "text" ? [block.text] : []));
+    expect(textBody.some((text) => text.includes("falling back"))).toBe(true);
+    expect(textBody.some((text) => text.includes(failedFragment) && text.includes(failedObject) && text.includes(failedEscaped))).toBe(true);
+    expect(errors.every((block) => block.kind === "error" && !block.raw.includes("failed:"))).toBe(true);
   });
 
   it("does not merge the same error across a blank line", () => {
@@ -132,7 +141,7 @@ describe("parseJobLog", () => {
     const other = '{"type":"item.completed","item":"ok"}';
     const withMessage = '{"type":"item.completed","message":"kept whole"}';
     const log = parseJobLog(`${fragment}\nhello\n${other}\n${withMessage}`);
-    expect(log.blocks).toEqual([{ kind: "text", text: `${fragment}\nhello\n${other}\n${withMessage}` }]);
+    expect(log.blocks).toEqual([{ kind: "text", at: 0, text: `${fragment}\nhello\n${other}\n${withMessage}` }]);
   });
 
   it("peels a partial first line only when the tail was truncated", () => {
@@ -158,53 +167,47 @@ describe("parseJobLog", () => {
     expect(parseJobLog("", { truncated: true })).toEqual({ truncated: true, conclusions: [], blocks: [] });
   });
 
-  it("extracts messages from the CLI failure templates and keeps the surrounding text on the raw span", () => {
-    const attempt = '  qa attempt 2 failed ({"type":"error","message":"quota"}). side effects may have happened.';
+  it("leaves CLI failure templates, notes and broken JSON as the original lines", () => {
+    const attempt = '  qa attempt 2 failed ({"type":"error","message":"quota"}); 1 output file(s) set aside in mail/attempts/a/outbox. side effects may have happened.';
     const every = 'qa was called 2 time(s) and failed every time ({"type":"error","message":"a)b"}). The run stopped.';
     const tried = '  1. codex/gpt: unknown error ({"type":"error","message":"quota"})';
+    const closer = "). Then fix the input";
     const fix = '  1. Read why it failed: /log (event "wake"), and the full output';
-    const log = parseJobLog([attempt, every, tried, fix].join("\n"));
-    const errors = log.blocks.filter((b) => b.kind === "error");
-    expect(errors.map((b) => (b.kind === "error" ? { message: b.message, count: b.count } : b))).toEqual([
-      { message: "quota", count: 1 },
-      { message: "a)b", count: 1 },
-      { message: "quota", count: 1 },
-    ]);
-    expect(errors[0]).toMatchObject({ kind: "error", raw: attempt });
-    expect(JSON.stringify(log.blocks)).toContain("Read why it failed");
-    expect(log.blocks.some((b) => b.kind === "text" && b.text.includes("side effects"))).toBe(false);
-  });
+    const log = parseJobLog([QUOTA_JSON, closer, QUOTA_JSON, attempt, every, tried, fix].join("\n"));
+    expect(log.blocks.map((block) => (block.kind === "error" ? `error:${block.count}` : block.kind))).toEqual(["error:1", "text", "error:1", "text"]);
+    const errors = log.blocks.filter((block) => block.kind === "error");
+    expect(errors.every((block) => block.kind === "error" && block.raw.trim().startsWith("{") && !block.raw.includes("set aside") && !block.raw.includes(closer))).toBe(true);
+    const textBody = log.blocks.flatMap((block) => (block.kind === "text" ? [block.text] : [])).join("\n");
+    expect(textBody).toContain(attempt);
+    expect(textBody).toContain("failed every time");
+    expect(textBody).toContain("Read why it failed");
+    expect(textBody).toContain(closer);
 
-  it("decodes JSON string escapes so a failed: fragment and a JSON line count as one message", () => {
     const failed = String.raw`  qa failed: "other":1,"message":"\u4f60","z":2}`;
     const json = String.raw`{"type":"error","message":"\u4f60"}`;
-    const log = parseJobLog(`${failed}\n${json}`);
-    expect(log.blocks.filter((b) => b.kind === "error")).toEqual([expect.objectContaining({ message: "你", count: 2 })]);
+    const beside = parseJobLog(`${failed}\n${json}`);
+    expect(beside.blocks.filter((block) => block.kind === "error")).toEqual([expect.objectContaining({ message: "你", count: 1 })]);
+    expect(beside.blocks.some((block) => block.kind === "text" && block.text.includes(failed))).toBe(true);
+
+    const split = parseJobLog(`  qa attempt 2 failed (${QUOTA_JSON}\n). side effects may have happened.`);
+    expect(split.blocks.some((block) => block.kind === "error")).toBe(false);
+    expect(JSON.stringify(split.blocks)).toContain("). side effects may have happened.");
+    expect(JSON.stringify(split.blocks)).toContain("attempt 2 failed");
+
+    const padded = parseJobLog(`  ${QUOTA_JSON}  \nprefix ${QUOTA_JSON}`);
+    expect(errorsOf(padded)).toEqual([expect.objectContaining({ message: "quota", count: 1 })]);
+    expect(padded.blocks.some((block) => block.kind === "text" && block.text.includes(`prefix ${QUOTA_JSON}`))).toBe(true);
   });
 
-  it("folds a template closer that follows a JSON error line into that error's raw text", () => {
-    const log = parseJobLog('{"type":"error","message":"quota"}\n). side effects may have happened.');
-    const errors = log.blocks.filter((b) => b.kind === "error");
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ kind: "error", message: "quota" });
-    expect(errors[0]?.kind === "error" && errors[0].raw.includes("). side effects")).toBe(true);
-    expect(log.blocks.some((b) => b.kind === "text")).toBe(false);
-
-    const split = parseJobLog('  qa attempt 2 failed ({"type":"error","message":"quota"}\n). side effects may have happened.');
-    const splitError = split.blocks.find((b) => b.kind === "error");
-    expect(splitError).toMatchObject({ kind: "error", message: "quota" });
-    expect(splitError?.kind === "error" && splitError.raw.includes("). side effects")).toBe(true);
-    expect(split.blocks.some((b) => b.kind === "text")).toBe(false);
-  });
-
-  it("shows the decoded message of a Note error and keeps the original note", () => {
+  it("keeps a Note as the original sentence and does not open an empty next step", () => {
     const raw = String.raw`qa failed 2 time(s) in a row ({"type":"error","message":"\u4f60"}), so the run stopped.`;
-    const log = parseJobLog(["Run name (id) ended: lead_failed, outcome: failed, after 2 round(s). Logs: /l", `Note: ${raw}`].join("\n"));
-    expect(log.conclusions[0]).toMatchObject({
-      kind: "ended",
-      note: "qa failed 2 time(s) in a row (你), so the run stopped.",
-      noteRaw: raw,
-    });
+    const ended = "Run name (id) ended: lead_failed, outcome: failed, after 2 round(s). Logs: /l";
+    const log = parseJobLog([ended, `Note: ${raw}`, "To go on:"].join("\n"));
+    expect(log.conclusions.map((item) => item.kind)).toEqual(["ended"]);
+    expect(log.conclusions[0]).toMatchObject({ kind: "ended", note: raw });
+    expect(log.conclusions[0]).not.toHaveProperty("noteRaw");
+    expect(JSON.stringify(log.blocks)).toContain("To go on:");
+    expect(JSON.stringify(log.conclusions)).not.toContain("To go on:");
   });
 
   it("reads tier names and does not leave them on the model", () => {
@@ -277,19 +280,7 @@ describe("parseJobLog", () => {
     expect(JSON.stringify(torn.blocks)).toContain("kept");
   });
 
-  it("keeps the open round and its error when the tail slides and a list poll fails", () => {
-    const head = '[round 2/4] waking qa (codex)\nhello\n  qa failed: {"type":"error","message":"quota"}\n';
-    const wide = parseJobLog(`before\n${head}`, { truncated: true, lineStart: true });
-    const slid = parseJobLog(`e\n${head}`, { truncated: true });
-    const wideKey = blockKeys(wide.blocks).find((key) => key.startsWith("round-2-qa"));
-    const slidKey = blockKeys(slid.blocks).find((key) => key.startsWith("round-2-qa"));
-    expect(slidKey).toBe(wideKey);
-    const added = parseJobLog(`[round 2/4] waking qa (codex)\nnote\n${head.slice(head.indexOf("\n") + 1)}`);
-    const baseRound = wide.blocks.find((block) => block.kind === "round");
-    const addedRound = added.blocks.find((block) => block.kind === "round");
-    const baseLeaves = baseRound?.kind === "round" ? leafKeys(baseRound.body) : [];
-    const addedLeaves = addedRound?.kind === "round" ? leafKeys(addedRound.body) : [];
-    expect(addedLeaves.filter((key) => key.startsWith("e-"))).toEqual(baseLeaves.filter((key) => key.startsWith("e-")));
+  it("keeps a selected job when a list poll fails", () => {
     const jobs = [{ id: "job-1" }];
     const kept = [jobs, null, jobs].reduce<(typeof jobs) | undefined>((prev, next) => retainJobs(prev, next), undefined);
     expect(kept?.some((job) => job.id === "job-1")).toBe(true);
@@ -334,31 +325,83 @@ function roundBody(blocks: Block[]): RoundBlock {
   return found;
 }
 
-describe("review: incomplete CLI spans, scoped conclusions, stable disclosure", () => {
-  it("decodes a complete multi-line failure template and a mid-JSON fragment, and keeps the note's sentence", () => {
+function errorsOf(log: JobLog): Array<Extract<Block, { kind: "error" }>> {
+  const found: Array<Extract<Block, { kind: "error" }>> = [];
+  for (const block of log.blocks) {
+    if (block.kind === "error") found.push(block);
+    if (block.kind === "round") {
+      for (const leaf of block.body) if (leaf.kind === "error") found.push(leaf);
+    }
+  }
+  return found;
+}
+
+function writeLog(root: string, id: string, body: Buffer): string {
+  const jobsDir = path.join(root, "web-jobs");
+  fs.mkdirSync(path.join(jobsDir, id), { recursive: true });
+  fs.writeFileSync(path.join(jobsDir, id, "job.json"), JSON.stringify({ id, command: "run", argv: [], cwd: root, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+  fs.writeFileSync(path.join(jobsDir, id, "out.log"), body);
+  return jobsDir;
+}
+
+type TailView = { tail: string; truncated: boolean; lineStart: boolean; byteStart?: number; gaps?: Utf8Gap[] };
+
+function parsed(view: TailView): JobLog {
+  return parseJobLog(view.tail, { truncated: view.truncated, lineStart: view.lineStart, byteStart: view.byteStart, gaps: view.gaps });
+}
+
+describe("subtraction: whole-line errors, no truncated conclusions, byte identity", () => {
+  it("keeps a printed multi-line failure as original text except for a line that is only error JSON", () => {
     const error = `${QUOTA_JSON}\n${TURN_JSON}\n`;
     const failure: RunFailure = { agent: "qa", attempts: 2, error };
     const log = parseJobLog(printed(baseSummary(failure)));
     const ended = log.conclusions.find((item) => item.kind === "ended");
-    expect(ended).toMatchObject({
-      kind: "ended",
-      note: expect.stringContaining("quota"),
-    });
-    expect(ended?.kind === "ended" ? ended.note : "").not.toContain('{"type"');
-    expect(ended?.kind === "ended" ? ended.note : "").toContain("still unread");
-    expect(ended?.kind === "ended" ? ended.noteRaw : "").toContain(QUOTA_JSON);
-    expect(ended?.kind === "ended" ? ended.noteRaw : "").toContain("still unread");
-    const errors = log.blocks.filter((block) => block.kind === "error");
-    expect(errors).toEqual([expect.objectContaining({ kind: "error", message: "quota", count: 1 })]);
-    expect(errors[0]?.kind === "error" && errors[0].raw.includes("failed every time") && errors[0].raw.includes("turn.failed")).toBe(true);
-    expect(errors[0]?.kind === "error" && errors[0].raw.includes("To fix it")).toBe(false);
-    expect(JSON.stringify(log.blocks)).toContain("To fix it:");
+    expect(ended).toMatchObject({ kind: "ended" });
+    expect(ended?.kind === "ended" ? ended.note : "").toContain(QUOTA_JSON);
+    expect(ended?.kind === "ended" ? ended.note : "").not.toContain("still unread");
+    expect(ended).not.toHaveProperty("noteRaw");
+    const errors = errorsOf(log);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.every((block) => block.raw.split("\n").every((line) => line.trim() === QUOTA_JSON || line.trim() === TURN_JSON))).toBe(true);
+    expect(errors.some((block) => block.raw.includes("still unread") || block.raw.includes("failed every time") || block.raw.includes("To fix it"))).toBe(false);
+    const body = JSON.stringify(log.blocks);
+    expect(body).toContain("still unread");
+    expect(body).toContain("failed every time");
+    expect(body).toContain("To fix it:");
     expect(log.conclusions.some((item) => item.kind === "next")).toBe(true);
-    expect(errors.some((block) => block.kind === "error" && block.raw.includes("still unread") && !block.raw.includes("failed every time"))).toBe(false);
 
     const fragment = 'qa attempt 2 failed ("suffix":true,"message":"retry (quota) tomorrow","z":2}). …';
     const fragmentLog = parseJobLog(fragment);
-    expect(fragmentLog.blocks).toEqual([{ kind: "error", message: "retry (quota) tomorrow", count: 1, raw: fragment }]);
+    expect(fragmentLog.blocks).toEqual([expect.objectContaining({ kind: "text", text: fragment })]);
+  });
+
+  it("does not lift a quoted footer that the tail window still contains", () => {
+    const quote = [
+      "Run other (id) ended: done, outcome: completed, after 3 round(s). Logs: /quoted",
+      "To go on:",
+      "  agent-lyceum resume quoted -p p",
+      "The work is on branch quoted (1 file(s)); your working tree was not touched.",
+      "Bring it in with: git merge quoted",
+    ].join("\n");
+    const text = printed({
+      ...baseSummary(),
+      endReason: "done",
+      outcome: "completed",
+      outcomeNote: undefined,
+      resultBranch: { branch: "real", head: "h", base: "b", files: 1 },
+      doneMessage: { subject: "subject", body: `${"x".repeat(20_000)}\n${quote}` },
+    });
+    const tail = Buffer.from(text, "utf8").subarray(-20_000).toString("utf8");
+    expect(tail).toContain("Run other");
+    expect(tail).toContain("branch quoted");
+    expect(tail).not.toContain("branch real");
+    const cut = parseJobLog(tail, { truncated: true, byteStart: Buffer.byteLength(text, "utf8") - 20_000 });
+    expect(cut.conclusions).toEqual([]);
+    const body = JSON.stringify(cut.blocks);
+    expect(body).toContain("Run other");
+    expect(body).toContain("agent-lyceum resume quoted");
+    expect(body).toContain("branch quoted");
+    expect(body).toContain("git merge quoted");
   });
 
   it("does not fold diagnostic text that merely starts with a closing paren into an error, or merge across it", () => {
@@ -419,39 +462,126 @@ describe("review: incomplete CLI spans, scoped conclusions, stable disclosure", 
     expect(report.conclusions.map((item) => (item.kind === "branch" ? item.branch : item.kind))).toEqual(["ended", "real"]);
   });
 
-  it("keeps an already-open block's identity as the same error, tidy rows and skipped rows are appended", () => {
-    const head = "[round 2/4] waking qa (codex)";
-    const first = roundBody(parseJobLog(`${head}\n${QUOTA_JSON}`).blocks);
-    const second = roundBody(parseJobLog(`${head}\n${QUOTA_JSON}\n${TURN_JSON}`).blocks);
-    const open = new Set(leafKeys(first.body));
-    const grown = leafKeys(second.body);
-    expect(grown[0]).toBe(open.values().next().value);
-    expect(open.has(grown[0] ?? "")).toBe(true);
-    // A leaf index stays "0" when that leaf grows, so equality alone would not go red.
-    expect(grown[0]).not.toMatch(/^\d+$/);
+  it("keeps an open block on the file byte of its first line when the body grows or an earlier copy slides out", () => {
+    const head = "[round 2/4] waking qa (codex)\n";
+    const preface = "preface\n";
+    const origin = 80;
+    const first = roundBody(parseJobLog(`${head}${QUOTA_JSON}`, { byteStart: origin }).blocks);
+    const second = roundBody(parseJobLog(`${head}${QUOTA_JSON}\n${TURN_JSON}`, { byteStart: origin }).blocks);
+    const errorAt = origin + Buffer.byteLength(head);
+    expect(first.body[0]).toMatchObject({ kind: "error", at: errorAt, count: 1 });
+    expect(second.body[0]).toMatchObject({ kind: "error", at: errorAt, count: 2 });
+    const open = toggleDisclosure(new Set<string>(), disclosureId(errorAt), true);
+    expect(open.has(disclosureId(second.body[0]?.at ?? -1))).toBe(true);
+    expect(toggleDisclosure(open, disclosureId(errorAt), false).has(disclosureId(errorAt))).toBe(false);
+    expect(disclosureId(errorAt)).not.toBe("0");
+    expect(blockKeys([first])[0]).toBe(String(origin));
 
     const tidyA = "tidying project memory of risk (1 file(s)) …";
     const tidyB = "tidying global memory of qa (1 file(s)) …";
-    expect(blockKeys(parseJobLog(`${tidyA}\n${tidyB}`).blocks)[0]).toBe(blockKeys(parseJobLog(tidyA).blocks)[0]);
-    expect(blockKeys(parseJobLog(tidyA).blocks)[0]).not.toMatch(/^\d+$/);
+    expect(blockKeys(parseJobLog(`${tidyA}\n${tidyB}`, { byteStart: origin }).blocks)[0]).toBe(String(origin));
+    expect(blockKeys(parseJobLog(tidyA, { byteStart: origin }).blocks)[0]).toBe(String(origin));
 
     const skipA = "  qa (project): skipped — busy";
     const skipB = "  risk (project): skipped — later";
-    expect(blockKeys(parseJobLog(`${skipA}\n${skipB}`).blocks)[0]).toBe(blockKeys(parseJobLog(skipA).blocks)[0]);
+    const skipAt = origin + Buffer.byteLength(`${preface}`);
+    expect(blockKeys(parseJobLog(`${preface}${skipA}\n${skipB}`, { byteStart: origin }).blocks).at(-1)).toBe(String(skipAt));
+    expect(blockKeys(parseJobLog(skipA, { byteStart: skipAt }).blocks)[0]).toBe(String(skipAt));
 
-    const preface = parseJobLog(`preface\n${head}\n${QUOTA_JSON}`);
-    const slid = parseJobLog(`${head}\n${QUOTA_JSON}`);
-    const prefaceKey = blockKeys(preface.blocks).find((key) => key.startsWith("round-"));
-    const slidKey = blockKeys(slid.blocks).find((key) => key.startsWith("round-"));
-    expect(slidKey).toBe(prefaceKey);
-    expect(prefaceKey).not.toBe("1");
-    expect(slidKey).not.toBe("0");
+    const wide = parseJobLog(`${preface}${head}${QUOTA_JSON}`, { byteStart: origin });
+    const slid = parseJobLog(`${head}${QUOTA_JSON}`, { byteStart: origin + Buffer.byteLength(preface) });
+    expect(blockKeys(slid.blocks)[0]).toBe(blockKeys(wide.blocks).find((key) => key === String(origin + Buffer.byteLength(preface))));
+    expect(errorsOf(slid)[0]?.at).toBe(errorsOf(wide)[0]?.at);
 
     const page = Array.from({ length: 50 }, (_, i) => ({ id: `new-${String(i).padStart(2, "0")}` }));
     const older = { id: "old-job" };
     const dropped = [{ id: "newer" }, ...page.slice(0, 49)];
     expect(holdSelected(dropped, older.id, older).some((job) => job.id === older.id)).toBe(true);
     expect(holdSelected(page, page[0]?.id, page[0])).toHaveLength(50);
+  });
+
+  it("keeps the same byte identity when readJob's window slides a round header or an earlier copy out", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lyceum-log-"));
+    try {
+      const header = Buffer.from("[round 2/4] waking qa (codex)\n");
+      const note = Buffer.from("note\n");
+      const quota = Buffer.from(`${QUOTA_JSON}\n`);
+      const core = Buffer.concat([header, note, quota]);
+      const pad = Buffer.alloc(20_000 - core.length, 0x79);
+      const prefix = Buffer.from("prefix\n");
+      const jobsDir = writeLog(root, "slide1", Buffer.concat([prefix, core, pad]));
+      const first = readJob(jobsDir, "slide1") as TailView | undefined;
+      if (!first) throw new Error("missing job");
+      const nested = parsed(first);
+      const nestedError = errorsOf(nested)[0];
+      const errorAt = prefix.length + header.length + note.length;
+      expect(nested.blocks.some((block) => block.kind === "round")).toBe(true);
+      expect(nestedError?.at).toBe(errorAt);
+      fs.writeFileSync(path.join(jobsDir, "slide1", "out.log"), Buffer.concat([prefix, core, pad, Buffer.alloc(header.length, 0x7a)]));
+      const second = readJob(jobsDir, "slide1") as TailView | undefined;
+      if (!second) throw new Error("missing slid job");
+      const top = parsed(second);
+      expect(top.blocks.some((block) => block.kind === "round")).toBe(false);
+      const topError = errorsOf(top)[0];
+      expect(topError?.at).toBe(errorAt);
+      const open = toggleDisclosure(new Set<string>(), disclosureId(nestedError?.at ?? -1), true);
+      expect(open.has(disclosureId(topError?.at ?? -1))).toBe(true);
+
+      const diag = Buffer.from("diagnostic line\n");
+      const pair = Buffer.concat([quota, diag, quota]);
+      const pairPad = Buffer.alloc(20_000 - pair.length, 0x78);
+      writeLog(root, "pair1", Buffer.concat([prefix, pair, pairPad]));
+      const pairView = readJob(jobsDir, "pair1") as TailView | undefined;
+      if (!pairView) throw new Error("missing pair");
+      const both = errorsOf(parsed(pairView));
+      expect(both.map((block) => block.at)).toEqual([prefix.length, prefix.length + quota.length + diag.length]);
+      expect(both[0]?.message).toBe(both[1]?.message);
+      fs.writeFileSync(path.join(jobsDir, "pair1", "out.log"), Buffer.concat([prefix, pair, pairPad, Buffer.alloc(quota.length, 0x7a)]));
+      const later = readJob(jobsDir, "pair1") as TailView | undefined;
+      if (!later) throw new Error("missing later pair");
+      const left = errorsOf(parsed(later));
+      expect(left).toHaveLength(1);
+      expect(left[0]?.at).toBe(both[1]?.at);
+      expect(left[0]?.at).not.toBe(both[0]?.at);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("places a line after a multibyte cut at its file byte, not the replacement character's encoded length", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lyceum-log-"));
+    try {
+      const you = Buffer.from("你");
+      const rest = Buffer.from("\n[round 1/2] waking qa (claude)\n");
+      const window = Buffer.concat([you.subarray(2), rest, Buffer.alloc(20_000 - 1 - rest.length, 0x78)]);
+      const file = Buffer.concat([Buffer.from("pre", "utf8"), you.subarray(0, 2), window]);
+      const jobsDir = writeLog(root, "utf1", file);
+      const view = readJob(jobsDir, "utf1") as TailView | undefined;
+      if (!view) throw new Error("missing utf job");
+      expect(view.tail.startsWith("\uFFFD\n")).toBe(true);
+      expect(Buffer.byteLength(view.tail.slice(0, view.tail.indexOf("[round")))).toBe(4);
+      const log = parsed(view);
+      const round = log.blocks.find((block) => block.kind === "round");
+      expect(round).toMatchObject({ kind: "round", at: (view.byteStart ?? 0) + 2 });
+      expect(log.partial).toBe("\uFFFD");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("counts every source byte when one replacement stands for more than one file byte", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lyceum-log-"));
+    try {
+      const body = Buffer.concat([Buffer.from("pre\n"), Buffer.from([0xe4, 0xbd, 0x41]), Buffer.from("\n[round 1/1] waking qa (claude)\n")]);
+      const jobsDir = writeLog(root, "gap1", body);
+      const view = readJob(jobsDir, "gap1") as TailView | undefined;
+      if (!view) throw new Error("missing gap job");
+      expect(view.gaps).toEqual([{ at: 4, source: 2 }]);
+      const round = parsed(view).blocks.find((block) => block.kind === "round");
+      expect(round).toMatchObject({ kind: "round", at: 8 });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
