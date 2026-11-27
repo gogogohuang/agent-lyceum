@@ -4,17 +4,24 @@ import type { ResolvedProject } from "./config.js";
 import { atomicWrite } from "./fs-util.js";
 import { assertName } from "./paths.js";
 import { inspectRunLock } from "./project-lock.js";
-import { loadRunState } from "./run-store.js";
+import { loadRunState, type RunState } from "./run-store.js";
 import { runIsAlive } from "./status.js";
-import { deleteSnapshotRefs, existingAgentWorkspace, inspectWorkspace, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace } from "./worktree.js";
+import { deleteSnapshotRefs, existingAgentWorkspace, inspectWorkspace, deleteTaskBranch, listSnapshotRefs, listWorkspaceAgents, removeAgentWorkspace, resolveCommit, taskBranchState } from "./worktree.js";
 import { must } from "./assert.js";
+import type { ResultBranch } from "./worktree.js";
 
 export interface CleanupItem {
-  kind: "workspace" | "refs" | "task-memory" | "run";
+  kind: "workspace" | "task-branch" | "refs" | "task-memory" | "run";
   /** One line for people. */
   label: string;
   path?: string;
   agent?: string;
+  /** `task-branch`: a checkout run's branch, in the project repo. Only branches that are deleted are items (the ones kept are in `keep`). */
+  branch?: string;
+  delete?: boolean;
+  /** `task-branch`: the tip that was checked at plan time; the branch is deleted only while it is still there. */
+  tip?: string;
+  reason?: string;
 }
 
 export interface CleanupPlan {
@@ -27,7 +34,7 @@ export interface CleanupPlan {
   /** Reasons not to clear at all. */
   refusals: string[];
   /** Work that exists only in a worktree: kept, never deleted. */
-  keep: { agent: string; branch: string; path: string; files: string[] }[];
+  keep: { agent: string; branch: string; path: string; files: string[]; /** Set for a checkout run's task branch: why it stays. */ reason?: string }[];
   /** Short description of the run, for messages. */
   summary: string;
 }
@@ -63,8 +70,9 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   if (!hasRun && !hasJournal) throw new Error(`Run "${runId}" not found in ${project.paths.runs}. List ids with: agent-lyceum status --task-list`);
 
   const plan: CleanupPlan = { project, runId, runDir, keepWorktrees, items: [], refusals: [], keep: [], summary: runId };
+  let state: RunState | undefined;
   if (hasRun) {
-    const state = loadRunState(runDir);
+    state = loadRunState(runDir);
     plan.summary = `${runId}: ${state.task_summary}`;
     if (!state.end_reason && !opts.lockHeld && runIsAlive(state, project)) {
       const holder = state.schema_version >= 2 ? inspectRunLock(project.paths.root, runId) : undefined;
@@ -74,8 +82,14 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
 
   // A concurrent run has a worktree for the lead: members' work lands there, and the lead's branch is what you merge.
   const leadWs = existingAgentWorkspace(project, runId, project.lead);
+  // A checkout run's lead worked in the project checkout on `task_branch`: members' work is looked for in what the run recorded as its
+  // result (else the branch's tip), never in whatever the user has checked out now.
+  const taskBranch = state?.workspace_mode === "checkout" && state.task_branch ? state.task_branch : undefined;
+  const branchNow = taskBranch ? safeTaskBranchState(project, taskBranch) : undefined;
+  const recorded = taskBranch ? state?.result_branch : undefined;
+  const against = taskBranch ? ((recorded && safeResolve(project, recorded.head)) ?? branchNow?.state?.tip) : undefined;
   for (const agent of listWorkspaceAgents(project, runId)) {
-    const w = inspectWorkspace(project, runId, agent, agent === project.lead ? undefined : leadWs);
+    const w = inspectWorkspace(project, runId, agent, agent === project.lead ? undefined : against ? { commit: against } : leadWs);
     if (!w) continue;
     const files = [...new Set([...w.dirty, ...w.unintegrated])];
     const holdsWork = files.length > 0 || !!w.unknown;
@@ -92,6 +106,7 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
     }
     plan.items.push({ kind: "workspace", agent, path: w.root, label: `worktree and branch of ${agent} (${w.root}, ${w.branch}): its work is in the repo` });
   }
+  if (taskBranch && branchNow) planTaskBranch(plan, taskBranch, branchNow, recorded);
   if (!keepWorktrees && listSnapshotRefs(project, runId).length) {
     plan.items.push({ kind: "refs", label: `snapshot refs refs/agent-lyceum/${runId}/*` });
   }
@@ -99,6 +114,58 @@ export function planRunCleanup(project: ResolvedProject, runId: string, opts: { 
   if (lexists(mem)) plan.items.push({ kind: "task-memory", path: mem, label: `task memory ${mem}` });
   if (hasRun || lexists(runDir)) plan.items.push({ kind: "run", path: runDir, label: `run directory ${runDir} (state, log, result, snapshots, kept violations, mailboxes)` });
   return plan;
+}
+
+function safeTaskBranchState(project: ResolvedProject, branch: string): { state?: ReturnType<typeof taskBranchState>; error?: string } {
+  try {
+    return { state: taskBranchState(project.dir, branch) };
+  } catch (e) {
+    return { error: (e as Error).message.split("\n")[0] };
+  }
+}
+
+function safeResolve(project: ResolvedProject, sha: string): string | undefined {
+  try {
+    return resolveCommit(project.dir, sha);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What happens to a checkout run's task branch. It is deleted only when all hold: a result is recorded, the worktrees are not kept, HEAD does
+ * not name the branch, and the branch's tip (not just the recorded `result_branch.head`) is in HEAD. Anything else keeps it and says why.
+ * HEAD on the branch refuses the plan: nothing is switched for the user.
+ */
+function planTaskBranch(plan: CleanupPlan, branch: string, now: { state?: ReturnType<typeof taskBranchState>; error?: string }, recorded: ResultBranch | undefined): void {
+  const { project, keepWorktrees } = plan;
+  const keep = (reason: string): void => {
+    plan.keep.push({ agent: project.lead, branch, path: project.dir, files: [], reason });
+  };
+  if (!now.state) {
+    keep(`its state could not be read (${now.error ?? "unknown"}), so it was not deleted`);
+    return;
+  }
+  const { tip, headIsBranch, tipInHead } = now.state;
+  if (headIsBranch) {
+    plan.refusals.push(`The project checkout is on the run's task branch ${branch}. Switch to another branch first (it is not switched for you), then clear again.`);
+    return;
+  }
+  if (tip === undefined) return; // gone already
+  if (keepWorktrees) {
+    keep(`kept by --keep-worktrees${recorded ? "" : "; there is also no recorded result commit"}`);
+    return;
+  }
+  if (!recorded) {
+    keep("沒有已記錄的結果 commit (the run recorded no result), so whether its work is in HEAD is not known; it was not deleted");
+    return;
+  }
+  if (!tipInHead) {
+    const later = tip !== recorded.head ? `; it has moved on from the recorded result ${recorded.head.slice(0, 8)}` : "";
+    keep(`its tip ${tip.slice(0, 8)} is not in HEAD (not merged, or squashed)${later}; it was not deleted`);
+    return;
+  }
+  plan.items.push({ kind: "task-branch", branch, delete: true, tip, label: `task branch ${branch} (its tip ${tip.slice(0, 8)} is in HEAD)` });
 }
 
 /** Remove a path without ever following a symlink, and only inside the project home. */
@@ -138,7 +205,8 @@ export function executeRunCleanup(plan: CleanupPlan, hooks: ExecuteHooks = {}): 
   for (let n = 0; n < plan.items.length; n++) {
     const item = must(plan.items[n], "cleanup item");
     try {
-      if (item.kind === "workspace") {
+      if (item.kind === "task-branch") deleteTaskBranch(project.dir, must(item.branch, "task branch"), must(item.tip, "task branch tip"));
+      else if (item.kind === "workspace") {
         removeAgentWorkspace(project, runId, item.agent!);
         const dir = path.dirname(item.path!);
         if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);

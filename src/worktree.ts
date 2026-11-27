@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -66,7 +66,7 @@ function tryGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string | 
  * otherwise visit with git reading that repository's own config (its fsmonitor and filters); `submodule.recurse` / `diff.submodule`
  * would do the same for reset and diff; signing runs gpg.program.
  */
-const PINNED_CONFIG = [
+export const PINNED_CONFIG = [
   "-c", "core.fsmonitor=false",
   "-c", "core.hooksPath=/dev/null",
   "-c", "diff.ignoreSubmodules=dirty",
@@ -261,26 +261,255 @@ export function isolationBlocker(dir: string): string | undefined {
   return undefined;
 }
 
+/** The result of one git call made through a `GitRunner`: never thrown, a failure or a timeout is `ok: false`. */
+export interface GitRunResult {
+  ok: boolean;
+  stdout?: string;
+  stderr?: string;
+}
+
+/** Runs `git <args>` in `cwd` with `env` added to the process environment. Used for `fetch`, the only call that can wait on the network. */
+export type GitRunner = (cwd: string, args: string[], env: NodeJS.ProcessEnv) => GitRunResult;
+
+/** How long a `git fetch` may take before it counts as failed. */
+const FETCH_TIMEOUT_MS = 60_000;
+
+const defaultGitRunner: GitRunner = (cwd, args, env) => {
+  const r = spawnSync("git", args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", timeout: FETCH_TIMEOUT_MS, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "pipe"] });
+  if (r.error || r.status !== 0) return { ok: false };
+  return { ok: true, stdout: r.stdout.replace(/\n$/, "") };
+};
+
+/**
+ * What `git fetch` must never do here: ask a person for a password or a host-key answer.
+ * The ssh command is the user's own (`GIT_SSH_COMMAND`, else the repo's `core.sshCommand`, else `ssh`) with `-o BatchMode=yes` added;
+ * a config that cannot be read counts as none.
+ */
+function noPromptEnv(dir: string): NodeJS.ProcessEnv {
+  const ssh = process.env.GIT_SSH_COMMAND || tryGit(dir, ["config", "--get", "core.sshCommand"]) || "ssh";
+  return { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: `${ssh} -o BatchMode=yes` };
+}
+
+export interface RemoteBase {
+  /** `origin/main` and the like. */
+  ref: string;
+  sha: string;
+  originUrl?: string;
+}
+
+const REMOTE_BASE_FALLBACKS = ["origin/main", "origin/master"];
+
+/**
+ * The commit new runs should start from: `origin/HEAD`, else `origin/main`, else `origin/master`.
+ * Fetches `origin` first when there is one; a fetch that fails or times out is not an error, the remote refs already in the repo are used.
+ * `onFetchFailed` is called when that fetch failed, so the caller can say so.
+ */
+export function resolveRemoteBase(dir: string, run: GitRunner = defaultGitRunner, onFetchFailed?: () => void): RemoteBase | undefined {
+  const originUrl = tryGit(dir, ["remote", "get-url", "--push", "origin"]);
+  if (originUrl !== undefined && !run(dir, ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "origin"], noPromptEnv(dir)).ok) onFetchFailed?.();
+  const head = tryGit(dir, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]);
+  const candidates = [...(head?.startsWith("refs/remotes/") ? [head.slice("refs/remotes/".length)] : []), ...REMOTE_BASE_FALLBACKS];
+  for (const ref of candidates) {
+    const sha = tryGit(dir, ["rev-parse", "--verify", "-q", `refs/remotes/${ref}^{commit}`]);
+    if (sha) return { ref, sha, ...(originUrl ? { originUrl } : {}) };
+  }
+  return undefined;
+}
+
 export interface WorkspacePlan {
   mode: WorkspaceMode;
   /** The lead works in its own worktree (isolation mode); otherwise it works in the checkout. */
   leadWorktree: boolean;
-  /** Why the run works in the checkout, when it was probed. */
+  /** Set on resume of a run that works in the project checkout on its own branch: the branch its state recorded. */
+  taskBranch?: string;
+  /** The remote ref (`origin/main`) and the commit it pointed at when the plan was made. */
+  baseRef?: string;
+  baseSha?: string;
+  originUrl?: string;
+  /** Set with `taskBranch` on a new run: the branch (or commit, when detached) the checkout was on before the task branch was cut. */
+  checkoutFrom?: string;
+  /** Why the run works in the checkout, or why the lead is not in the project checkout, when it was probed. */
   reason?: string;
+  /** `git fetch origin` failed or timed out while planning; the remote refs already in the repo were used. */
+  fetchFailed?: boolean;
+  /** Why a run that meant to borrow the project checkout was moved to its own worktree when the lock was taken (busy, or no longer fit). */
+  lockFallback?: string;
+}
+
+export interface PlanOptions {
+  /** Test seam: replaces the runner that fetches `origin`. */
+  fetch?: GitRunner;
+  /** The caller found the project checkout taken by another run; the plan then keeps the lead out of it. */
+  checkoutHeldByOther?: boolean;
+}
+
+/** Why the project checkout cannot be lent to a new run sitting at `base`, or undefined when it can. */
+function checkoutBlocker(dir: string, base: RemoteBase, heldByOther: boolean): string | undefined {
+  if (heldByOther) return "the project checkout is in use by another run";
+  if (dirtyPaths(dir).length > 0) return "the project checkout has uncommitted changes";
+  if (tryGit(dir, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]) !== base.sha) return `the project checkout is not at ${base.ref}`;
+  const branch = tryGit(dir, ["symbolic-ref", "-q", "HEAD"]);
+  if (branch?.startsWith("refs/heads/agent-lyceum/")) return `the project checkout is on ${branch.slice("refs/heads/".length)}`;
+  return undefined;
+}
+
+/** The plan a run falls back to when it cannot borrow the project checkout: the lead in its own worktree, no task branch; the remote base stays. */
+export function toLeadWorktree(plan: WorkspacePlan): WorkspacePlan {
+  const { taskBranch: _taskBranch, checkoutFrom: _checkoutFrom, ...rest } = plan;
+  return { ...rest, leadWorktree: true };
+}
+
+/** Does this (new run's) plan intend to borrow the project checkout? */
+export const borrowsCheckout = (plan: WorkspacePlan): boolean => plan.leadWorktree === false && plan.baseSha !== undefined;
+
+/** Why the checkout cannot be borrowed now (dirty, moved off `plan.baseSha`, on an `agent-lyceum/*` branch), or undefined when it still can. Takes no lock. */
+export function checkoutBlockedNow(dir: string, plan: WorkspacePlan): string | undefined {
+  if (plan.baseSha === undefined) return "no remote base";
+  return checkoutBlocker(dir, { ref: plan.baseRef ?? plan.baseSha, sha: plan.baseSha }, false);
+}
+
+/** Where HEAD is: `ref:refs/heads/x` on a branch, the commit when detached, undefined in a repo without a commit. Never reads the exit code of a git command that moved it. */
+const headPlace = (dir: string): string | undefined => {
+  const ref = tryGit(dir, ["symbolic-ref", "-q", "HEAD"]);
+  if (ref !== undefined) return `ref:${ref}`;
+  return tryGit(dir, ["rev-parse", "--verify", "-q", "HEAD"]);
+};
+
+/** The checkout's current branch name, or its commit when HEAD is detached: what a failed start returns to. */
+export function currentCheckoutRef(dir: string): string | undefined {
+  return tryGit(dir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? tryGit(dir, ["rev-parse", "--verify", "-q", "HEAD"]);
+}
+
+const branchTip = (dir: string, branch: string): string | undefined => tryGit(dir, ["rev-parse", "--verify", "-q", `refs/heads/${branch}^{commit}`]);
+
+/**
+ * Cut `branch` at `sha` and switch the checkout to it (`git checkout -b`, never `-B`: an existing branch is an error and is not reset).
+ * The repository's hooks run. Whether it worked is judged by where HEAD is before and after, not by git's exit code: a failing
+ * `post-checkout` hook still leaves HEAD on the new branch (`moved: true`), a hook that stops the switch leaves it where it was (`moved: false`).
+ */
+export function checkoutLeadBranch(dir: string, branch: string, sha: string): { moved: boolean } {
+  if (branchTip(dir, branch) !== undefined) throw new Error(`The branch ${branch} already exists in ${dir}; it was not touched.`);
+  const before = headPlace(dir);
+  const r = spawnSync("git", ["checkout", "-q", "-b", branch, sha], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const moved = headPlace(dir) !== before;
+  if (!moved && r.stderr) process.stderr.write(r.stderr);
+  return { moved };
+}
+
+/** Where a failed start put the checkout back to: the recorded `checkout_from` still resolves (a local branch, or a commit when it was detached). */
+function checkoutFromExists(dir: string, from: string): boolean {
+  return branchTip(dir, from) !== undefined || (/^[0-9a-f]{40}$/.test(from) && tryGit(dir, ["rev-parse", "--verify", "-q", `${from}^{commit}`]) === from);
+}
+
+/** Is the checkout on `from` now (the branch, or the detached commit)? */
+function checkoutIsAt(dir: string, from: string): boolean {
+  const here = headPlace(dir);
+  return here === `ref:refs/heads/${from}` || (/^[0-9a-f]{40}$/.test(from) && here === from);
+}
+
+const removeRunDir = (runDir: string): void => fs.rmSync(runDir, { recursive: true, force: true });
+
+/**
+ * A new checkout run whose state is written but whose task is not yet in the lead's inbox, taken back: the checkout returns to
+ * `checkout_from`, the task branch (when it is still at `base_sha`) and the whole run dir are removed. Call it with the run's lock held.
+ * It only ever changes what this start changed: a branch with commits of its own, a tree with uncommitted changes, or a `checkout_from`
+ * that is gone make it throw and leave the state, the branch and HEAD alone (it never tries a second switch).
+ */
+export function rollbackCheckoutStart(dir: string, runDir: string, state: RunState): void {
+  const branch = state.task_branch;
+  const tip = branch ? branchTip(dir, branch) : undefined;
+  if (branch === undefined || tip === undefined) {
+    removeRunDir(runDir); // the branch was never cut; HEAD never moved
+    return;
+  }
+  if (tip !== state.base_sha) {
+    throw new Error(`The branch ${branch} has commits of its own (it is at ${tip.slice(0, 8)}, not at the base ${state.base_sha?.slice(0, 8) ?? "that was not recorded"}); nothing was removed. Run ${state.run_id} is kept as it is.`);
+  }
+  const ref = `refs/heads/${branch}`;
+  if (headPlace(dir) === `ref:${ref}`) {
+    const from = state.checkout_from;
+    if (dirtyPaths(dir).length > 0) throw new Error(`The project checkout is on ${branch} and has uncommitted changes, so it was not switched back${from ? ` to ${from}` : ""}; nothing was removed. Run ${state.run_id} is kept as it is.`);
+    if (from === undefined || !checkoutFromExists(dir, from)) {
+      throw new Error(`The project checkout is on ${branch}, and the branch it was cut from (${from ?? "not recorded"}) is not there to go back to. Switch it yourself; nothing was removed. Run ${state.run_id} is kept as it is.`);
+    }
+    spawnSync("git", ["checkout", "-q", "--no-guess", from, "--"], { cwd: dir, stdio: "ignore" }); // once; hooks may fail it after it moved
+    if (!checkoutIsAt(dir, from)) {
+      throw new Error(`The project checkout could not be switched from ${branch} back to ${from}; it stays on ${branch}. Nothing was removed. Run ${state.run_id} is kept as it is.`);
+    }
+  }
+  // Only the exact commit this start cut it at: the update fails when the branch moved meanwhile.
+  git(dir, ["update-ref", "-d", ref, tip]);
+  removeRunDir(runDir);
+}
+
+/** The first thing a new checkout run does once its state is saved (without `task_sent`): cut the task branch. On any failure the run dir is gone. */
+export function beginCheckoutRun(dir: string, runDir: string, state: RunState): void {
+  const { task_branch: branch, base_sha: sha } = state;
+  if (!branch || !sha) {
+    removeRunDir(runDir);
+    throw new Error(`Run ${state.run_id} has no task branch or base commit to check out.`);
+  }
+  let moved: boolean;
+  try {
+    ({ moved } = checkoutLeadBranch(dir, branch, sha));
+  } catch (e) {
+    removeRunDir(runDir);
+    throw e;
+  }
+  if (!moved) {
+    removeRunDir(runDir);
+    throw new Error(`git could not switch the project checkout to ${branch} (HEAD did not move), so run ${state.run_id} was not started.`);
+  }
 }
 
 /**
- * Where a run's agents work. A new run is isolated when the project dir can be (see `isolationBlocker`), otherwise it shares the
- * checkout. A resumed run keeps what its state recorded, whatever the repo looks like now. Decided once, before the run's lock is taken.
+ * Under the run's lock, before a checkout run goes on. Its task never reached the lead (`task_sent` missing): the start is taken back
+ * (see `rollbackCheckoutStart`) and this throws that the run is gone. Its task was sent: the checkout must still be on the task branch;
+ * it is never switched for you, and the run is not turned into a worktree run.
  */
-export function planWorkspace(project: ResolvedProject, resume?: RunState): WorkspacePlan {
+export function assertCheckoutResumable(dir: string, runDir: string, state: RunState): void {
+  if (state.task_sent !== true) {
+    rollbackCheckoutStart(dir, runDir, state);
+    throw new Error(`Run ${state.run_id} never got its task to ${state.task_branch ? `the lead on ${state.task_branch}` : "the lead"}; the start was taken back (the project checkout is as it was, the run's folder is removed). Start it again with \`run\`.`);
+  }
+  const branch = state.task_branch;
+  if (!branch) throw new Error(`Run ${state.run_id} works in the project checkout, but its state does not record a task_branch.`);
+  if (headPlace(dir) !== `ref:refs/heads/${branch}`) {
+    const here = tryGit(dir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "a detached HEAD";
+    throw new Error(`Run ${state.run_id} works on the branch ${branch}, but the project checkout is on ${here}. Switch to ${branch} (git checkout ${branch}) and resume again; it was not switched for you.`);
+  }
+}
+
+/** Whether the repo knows an `origin` at all: a remote, or refs fetched from one. */
+const hasOrigin = (dir: string): boolean =>
+  tryGit(dir, ["remote", "get-url", "origin"]) !== undefined || (tryGit(dir, ["for-each-ref", "--count=1", "--format=%(refname)", "refs/remotes/origin/"]) ?? "") !== "";
+
+/**
+ * Where a run's agents work. A new run is isolated when the project dir can be (see `isolationBlocker`), otherwise it shares the
+ * checkout. When the repo has a remote base and the project checkout is clean, sits exactly on it and nobody else holds it, the lead
+ * borrows the checkout (`leadWorktree: false`, with `baseSha`); otherwise the lead gets its own worktree. A resumed run keeps what its
+ * state recorded, whatever the repo looks like now. Decided once, before the run's lock is taken; it takes no lock itself.
+ */
+export function planWorkspace(project: ResolvedProject, resume?: RunState, opts: PlanOptions = {}): WorkspacePlan {
   if (resume) {
     if (resume.lead_workspace === true) return { mode: "worktree", leadWorktree: true };
+    if (resume.workspace_mode === "checkout") return { mode: "worktree", leadWorktree: false, ...(resume.task_branch ? { taskBranch: resume.task_branch } : {}) };
     if (resume.workspace_mode === "worktree") return { mode: "worktree", leadWorktree: false };
     return { mode: "shared", leadWorktree: false };
   }
-  const reason = isolationBlocker(project.dir);
-  return reason === undefined ? { mode: "worktree", leadWorktree: true } : { mode: "shared", leadWorktree: false, reason };
+  const blocker = isolationBlocker(project.dir);
+  if (blocker !== undefined) return { mode: "shared", leadWorktree: false, reason: blocker };
+  let fetchFailed = false;
+  const base = resolveRemoteBase(project.dir, opts.fetch, () => (fetchFailed = true));
+  const failed = fetchFailed ? { fetchFailed: true } : {};
+  if (!base) {
+    return hasOrigin(project.dir)
+      ? { mode: "worktree", leadWorktree: true, ...failed, reason: "no remote base: origin/HEAD, origin/main and origin/master are all missing" }
+      : { mode: "worktree", leadWorktree: true };
+  }
+  const remote = { baseRef: base.ref, baseSha: base.sha, ...(base.originUrl ? { originUrl: base.originUrl } : {}), ...failed };
+  const reason = checkoutBlocker(project.dir, base, opts.checkoutHeldByOther === true);
+  return reason === undefined ? { mode: "worktree", leadWorktree: false, ...remote } : { mode: "worktree", leadWorktree: true, ...remote, reason };
 }
 
 /** Refuse to resume a worktree run when its repo can no longer be isolated; returns nothing when it is fine. */
@@ -300,6 +529,31 @@ export function snapshotHead(project: ResolvedProject, runId: string): string {
   const ref = `refs/agent-lyceum/${runId}/base-0`;
   git(top, ["update-ref", ref, sha]);
   return ref;
+}
+
+/** `refs/agent-lyceum/<run>/base-0` pointing at `sha` (a remote base the run records): where a concurrent run with a remote base starts, whatever the local HEAD is. */
+export function snapshotCommit(project: ResolvedProject, runId: string, sha: string): string {
+  const top = toplevel(project.dir);
+  const commit = git(top, ["rev-parse", "--verify", `${sha}^{commit}`]);
+  const ref = `refs/agent-lyceum/${runId}/base-0`;
+  git(top, ["update-ref", ref, commit]);
+  return ref;
+}
+
+/**
+ * What to tell the user when a new run starts from the remote base `sha` while the local HEAD is somewhere else: on another task's
+ * `agent-lyceum/*` branch the run is moved into a worktree; otherwise your local checkout has not reached that commit.
+ * Undefined when HEAD is at `sha` (or the repo has no HEAD).
+ */
+export function remoteBaseNote(project: ResolvedProject, sha: string, baseRef?: string): string | undefined {
+  const dir = project.dir;
+  const head = tryGit(dir, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
+  if (head === undefined || head === sha) return undefined;
+  const branch = tryGit(dir, ["symbolic-ref", "-q", "HEAD"]);
+  if (branch?.startsWith("refs/heads/agent-lyceum/")) {
+    return `這次 run 改在 worktree：你的 checkout 在 ${branch.slice("refs/heads/".length)}，不在 ${baseRef ?? "遠端基準"} ${sha.slice(0, 8)}`;
+  }
+  return `本地尚未進入這顆 commit（${baseRef ?? "遠端基準"} ${sha.slice(0, 8)}）：這次 run 從它開始，不含你本地 HEAD ${head.slice(0, 8)} 上的提交`;
 }
 
 /**
@@ -772,8 +1026,12 @@ export interface WorkspaceWork {
   unknown?: string;
 }
 
-/** What is in an agent's worktree that exists nowhere else: uncommitted changes, and commits whose files are not in the main repo. */
-export function inspectWorkspace(project: ResolvedProject, runId: string, agent: string, target?: AgentWorkspace): WorkspaceWork | undefined {
+/**
+ * What is in an agent's worktree that exists nowhere else: uncommitted changes, and commits whose files are not in the main repo.
+ * `target`: where the commits are looked for. A worktree (the lead's, in a concurrent run), a commit of your repo (`{ commit }`: a checkout
+ * run's recorded result, compared as it was committed, whatever your HEAD is now), or by default your repo's working tree.
+ */
+export function inspectWorkspace(project: ResolvedProject, runId: string, agent: string, target?: AgentWorkspace | { commit: string }): WorkspaceWork | undefined {
   const root = workspaceRoot(project, runId, agent);
   if (!fs.existsSync(root)) return undefined;
   let ws: AgentWorkspace | undefined;
@@ -795,14 +1053,15 @@ export function inspectWorkspace(project: ResolvedProject, runId: string, agent:
   try {
     assertNoNestedRepos(ws);
     work.dirty = parseStatus(agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"]));
-    const at: GitAt = target ? { ws: target } : { top: toplevel(project.dir) };
+    const commit = target && "commit" in target ? target.commit : undefined;
+    const at: GitAt = target && !commit ? { ws: target as AgentWorkspace } : { top: toplevel(project.dir) };
     const head = agentGit(ws, ["rev-parse", "HEAD"]);
-    if (head !== ws.base && tryGitAt(at, ["merge-base", "--is-ancestor", head, "HEAD"]) === undefined) {
+    if (head !== ws.base && tryGitAt(at, ["merge-base", "--is-ancestor", head, commit ?? "HEAD"]) === undefined) {
       const raw = agentGit(ws, ["diff", "--raw", "-z", "--no-renames", "--no-abbrev", ws.base, head]);
       const parts = raw.split("\0").filter(Boolean);
       for (let i = 1; i < parts.length; i += 2) {
         const file = parts[i] ?? "";
-        if (workingBlob(at, file) !== blobAt(at, head, file)) work.unintegrated.push(file);
+        if ((commit ? blobAt(at, commit, file) : workingBlob(at, file)) !== blobAt(at, head, file)) work.unintegrated.push(file);
       }
     }
   } catch (e) {
@@ -830,15 +1089,86 @@ export function finishLeadBranch(ws: AgentWorkspace, message: string, patchFile:
   return { branch: ws.branch, head, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
 }
 
+/** What a checkout run's task branch is now, for `clear`: its tip (undefined when the branch is gone), whether HEAD names it, and whether the tip is in HEAD. */
+export function taskBranchState(dir: string, branch: string): { tip?: string; headIsBranch: boolean; tipInHead: boolean } {
+  const top = toplevel(dir);
+  const tip = tryGit(top, ["rev-parse", "--verify", "-q", `refs/heads/${branch}^{commit}`]);
+  const headIsBranch = tryGit(top, ["symbolic-ref", "-q", "HEAD"]) === `refs/heads/${branch}`;
+  const tipInHead = tip !== undefined && tryGit(top, ["merge-base", "--is-ancestor", tip, "HEAD"]) !== undefined;
+  return { tip, headIsBranch, tipInHead };
+}
+
+/** A commit of your repo by name (a sha), or undefined when it is not there. */
+export function resolveCommit(dir: string, sha: string): string | undefined {
+  return tryGit(toplevel(dir), ["rev-parse", "--verify", "-q", `${sha}^{commit}`]);
+}
+
+/**
+ * `git branch -D` of a checkout run's task branch, only while it is still what `clear` planned to delete: HEAD does not name it, its tip
+ * is `expectedTip` (nothing was committed on it since the plan) and that tip is in HEAD. Throws, deleting nothing, otherwise.
+ */
+export function deleteTaskBranch(dir: string, branch: string, expectedTip: string): void {
+  const s = taskBranchState(dir, branch);
+  if (s.headIsBranch) throw new Error(`the project checkout is on ${branch}; switch to another branch first`);
+  if (s.tip === undefined) return; // already gone
+  if (s.tip !== expectedTip) throw new Error(`${branch} moved since the plan (now at ${s.tip.slice(0, 8)}); kept it`);
+  if (!s.tipInHead) throw new Error(`${branch} is no longer in HEAD; kept it`);
+  git(toplevel(dir), ["branch", "-D", "--", branch]);
+}
+
+/** Why the project checkout is not on its task branch `branch` (HEAD names another branch, or is detached), or undefined when it is. */
+export function checkoutHeadProblem(dir: string, branch: string): string | undefined {
+  const head = tryGit(dir, ["symbolic-ref", "-q", "HEAD"]);
+  if (head === `refs/heads/${branch}`) return undefined;
+  const where = head !== undefined ? head.replace(/^refs\/heads\//, "") : "a detached commit";
+  return `The project checkout is no longer on the task branch ${branch} (HEAD is ${where}).`;
+}
+
+/** Runs git without a time limit (`add -A` and `commit` in a big checkout may take long), keeping stdout and stderr. */
+const checkoutRunner: GitRunner = (cwd, args, env) => {
+  const r = spawnSync("git", args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  if (r.error || r.status !== 0) return { ok: false, stderr: (r.stderr || r.error?.message || "").trim() };
+  return { ok: true, stdout: r.stdout.replace(/\n$/, "") };
+};
+
+/**
+ * A checkout run, at its end: commit what is in the project checkout on the task branch `branch`, once, and write what changed since
+ * `baseSha` as a patch. Returns undefined, and touches nothing, when HEAD is not `refs/heads/<branch>` (the checkout was moved: a commit
+ * would land on the branch HEAD names now). `add -A` and `commit` run with the pinned config (no hooks, no fsmonitor, no signing, `--no-verify`),
+ * and a nested git repository in the checkout is refused first, as in an agent's worktree. `run` is a test seam, as for `resolveRemoteBase`.
+ */
+export function finishCheckoutBranch(dir: string, branch: string, baseSha: string, message: string, patchFile: string, run: GitRunner = checkoutRunner): ResultBranch | undefined {
+  if (checkoutHeadProblem(dir, branch) !== undefined) return undefined;
+  const pinned = (args: string[], env: NodeJS.ProcessEnv = {}): GitRunResult => run(dir, pinnedArgs(args), env);
+  const need = (args: string[], env?: NodeJS.ProcessEnv): string => {
+    const r = pinned(args, env);
+    if (!r.ok) throw new Error(`git ${args[0]} failed in ${dir}${r.stderr ? `: ${r.stderr.split("\n")[0]}` : ""}`);
+    return r.stdout ?? "";
+  };
+  for (const p of zList(need(["ls-files", "-o", "--exclude-standard", "-z"])).filter((e) => e.endsWith("/"))) {
+    throw new Error(`Refusing to run git in ${dir}: it contains a nested git repository at ${p.slice(0, -1)}; remove it, or add it to .gitignore if it must stay. Nothing in it was touched.`);
+  }
+  need(["add", "-A"]);
+  if (!pinned(["diff", "--cached", "--quiet"]).ok) need(["commit", "-q", "--no-verify", "-m", message], IDENTITY);
+  const head = need(["rev-parse", "HEAD"]);
+  const files = head === baseSha ? [] : need(["diff", "--name-only", baseSha, head]).split("\n").filter(Boolean);
+  if (files.length) fs.writeFileSync(patchFile, need(["diff", "--binary", "--full-index", baseSha, head]) + "\n");
+  return { branch, head, base: baseSha, files: files.length, patch: files.length ? patchFile : undefined };
+}
+
 /**
  * A reopened run whose lead branch was already merged into your HEAD starts its next segment on a fresh branch cut from HEAD,
  * so the merged work is not offered again. Only when nothing would be lost: the branch's last committed head (`resultHead`) is
  * in HEAD, the worktree is still at that head, and it holds no uncommitted work and nothing whose state is unknown.
- * Otherwise the worktree and branch are returned unchanged. Your working tree, index and HEAD are never touched.
+ * Otherwise the worktree and branch are returned unchanged. Also unchanged while HEAD is on an `agent-lyceum/*` branch (another task's).
+ * The new branch is always cut from the local HEAD, never from the run's `base_sha`, which would drop what you merged since.
+ * Your working tree, index and HEAD are never touched.
  */
 export function recutLeadWorkspace(project: ResolvedProject, runId: string, agent: string, ws: AgentWorkspace, resultHead: string | undefined): { ws: AgentWorkspace; recut: boolean } {
   const keep = { ws, recut: false };
   if (!resultHead) return keep;
+  // HEAD is on another task's branch: a branch cut from it would be built on that task's work, not on yours.
+  if (tryGit(toplevel(project.dir), ["symbolic-ref", "-q", "HEAD"])?.startsWith("refs/heads/agent-lyceum/")) return keep;
   if (tryGit(toplevel(project.dir), ["merge-base", "--is-ancestor", resultHead, "HEAD"]) === undefined) return keep;
   const work = inspectWorkspace(project, runId, agent, ws);
   if (!work || work.unknown || work.dirty.length) return keep;

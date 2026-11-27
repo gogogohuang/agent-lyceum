@@ -9,7 +9,7 @@ import { commonFile, outboxDir } from "../src/policy.js";
 import { RunSession } from "../src/run-session.js";
 import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { collectAgentChanges, integrateAgentChanges, planWorkspace, prepareAgentWorkspace, snapshotBase, type AgentWorkspace } from "../src/worktree.js";
+import { collectAgentChanges, integrateAgentChanges, planWorkspace, prepareAgentWorkspace, snapshotBase, PINNED_CONFIG, type AgentWorkspace } from "../src/worktree.js";
 import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, makeParallel, REPLY_BODY, withSections, write, type TestEnv } from "./helpers.js";
 import { PR_FOOTER, type CommandRunner } from "../src/open-pr.js";
 import type { ResolvedProject } from "../src/config.js";
@@ -627,6 +627,13 @@ describe("dispatcher integration", () => {
     expect(fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8")).toBe("feature\n");
   });
 
+  /** git runs pinned (`-c key=value` in front of the subcommand): the subcommand is what the fakes answer by. */
+  const stripPins = (args: string[]) => {
+    const a = [...args];
+    while (a[0] === "-c") a.splice(0, 2);
+    return a;
+  };
+
   /** A runner that records every call and answers like a healthy git + gh. */
   function fakePr(over: Partial<Record<string, { ok: boolean; out: string }>> = {}) {
     const calls: { cmd: string; args: string[]; cwd: string }[] = [];
@@ -638,7 +645,7 @@ describe("dispatcher integration", () => {
     };
     const run: CommandRunner = (cmd, args, cwd) => {
       calls.push({ cmd, args, cwd });
-      return answers[`${cmd} ${args[0]}`] ?? { ok: false, out: "unexpected" };
+      return answers[`${cmd} ${stripPins(args)[0]}`] ?? { ok: false, out: "unexpected" };
     };
     return { run, calls };
   }
@@ -671,11 +678,11 @@ describe("dispatcher integration", () => {
       expect(summary.outcome).toBe("completed");
       expect(summary.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
       expect(loadRunState(runDir).pr_url).toBe("https://github.com/o/r/pull/9");
-      expect(pr.calls.map((c) => `${c.cmd} ${c.args[0]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+      expect(pr.calls.map((c) => `${c.cmd} ${stripPins(c.args)[0]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
       const mainTop = git(env.repo, "rev-parse", "--show-toplevel");
       expect(pr.calls.every((c) => c.cwd === mainTop)).toBe(true); // git and gh run in your repo, never in the worktree the lead can write
       expect(leadRoot).not.toBe(mainTop);
-      expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", summary.resultBranch!.branch]);
+      expect(pr.calls[1]!.args).toEqual([...PINNED_CONFIG, "push", "-u", "origin", summary.resultBranch!.branch]);
       const body = fs.readFileSync(path.join(runDir, "pr-body.md"), "utf8");
       // the description is the lead's report as written plus the one footer line, so the dispatcher adds no name of its own
       expect(body).toBe(`${FULL_DONE.trim()}\n\n${PR_FOOTER}\n`);
@@ -687,7 +694,7 @@ describe("dispatcher integration", () => {
       let seen: { end_reason?: string; outcome?: string; pr_url?: string } | undefined;
       const pr = fakePr();
       const run: CommandRunner = (cmd, args, cwd) => {
-        if (cmd === "git" && args[0] === "push") seen = JSON.parse(fs.readFileSync(path.join(runDirSeen, "state.json"), "utf8"));
+        if (cmd === "git" && stripPins(args)[0] === "push") seen = JSON.parse(fs.readFileSync(path.join(runDirSeen, "state.json"), "utf8"));
         return pr.run(cmd, args, cwd);
       };
       const { summary, runDir } = await start(async (i) => {
@@ -830,7 +837,7 @@ describe("dispatcher integration", () => {
       });
       expect(summary.outcome).toBe("completed");
       expect(summary.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
-      expect(pr.calls[1]!.args).toEqual(["push", "-u", "origin", "agent-lyceum/run-1/fe-member"]);
+      expect(pr.calls[1]!.args).toEqual([...PINNED_CONFIG, "push", "-u", "origin", "agent-lyceum/run-1/fe-member"]);
     });
   });
 });

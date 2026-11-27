@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireProjectLock as acquireOld, lockHolderAlive as oldLockHolderAlive } from "./fixtures/lock-v0.17.3.js";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, readerPs, readerPsUtc, samePidStart, writerPs, type LivenessIo, sameStartAnyZone, signalAlive, utcPsEnv, type LockInfo, type PidStartIo } from "../src/project-lock.js";
+import { acquireProjectLock, CheckoutBusyError, forceUnlock, lockForPlan, inspectRunLock, listRunLocks, listUnreadableRunLocks, lockHolderAlive, LOCK_FILE, lockKind, LOCKS_DIR, parseProcStat, pidStartFrom, readerPs, readerPsUtc, samePidStart, writerPs, type LivenessIo, sameStartAnyZone, signalAlive, utcPsEnv, type LockInfo, type PidStartIo, type ProjectLease } from "../src/project-lock.js";
+import type { WorkspacePlan } from "../src/worktree.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const holder = path.join(here, "fixtures", "lock-holder.ts");
@@ -567,5 +568,97 @@ esac
     const lock = { pid: deadPid(), pid_started: write() };
     expect(lockHolderAlive(lock, readerIo())).toBe(false);
     expect(oldLockHolderAlive(lock as LockInfo)).toBe(false);
+  });
+});
+
+describe("CheckoutBusyError", () => {
+  it("is what a second checkout run gets, carrying the holder and naming its run id", () => {
+    const root = tmp();
+    const l = acquireProjectLock(root, "run-1", { checkout: true });
+    let caught: unknown;
+    try {
+      acquireProjectLock(root, "run-2", { checkout: true, dir: "/repo", reason: "no worktree" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CheckoutBusyError);
+    expect((caught as CheckoutBusyError).holder.run_id).toBe("run-1");
+    expect((caught as Error).message).toMatch(/run-1/);
+    l.release();
+  });
+
+  it("is not thrown for other refusals", () => {
+    const root = tmp();
+    const l = acquireProjectLock(root, "run-1", { checkout: false });
+    expect(() => acquireProjectLock(root, "run-1", { checkout: false })).not.toThrow(CheckoutBusyError);
+    l.release();
+  });
+});
+
+describe("lockForPlan", () => {
+  const borrow: WorkspacePlan = { mode: "worktree", leadWorktree: false, taskBranch: "agent-lyceum/x", baseRef: "origin/main", baseSha: "abc", originUrl: "https://example.invalid/r.git" };
+  const holderInfo = { run_id: "other" } as LockInfo;
+  const lease = (): ProjectLease & { released: number } => {
+    const l = { info: {} as LockInfo, lost: false, released: 0, release() { l.released++; } };
+    return l;
+  };
+  const lead = { mode: "worktree", leadWorktree: true, baseRef: "origin/main", baseSha: "abc", originUrl: "https://example.invalid/r.git" };
+
+  it("keeps the checkout lease and the plan when it is free and still borrowable", () => {
+    const l = lease();
+    const calls: boolean[] = [];
+    const r = lockForPlan(borrow, (c) => (calls.push(c), l), () => true);
+    expect(r.lease).toBe(l);
+    expect(r.plan).toBe(borrow);
+    expect(calls).toEqual([true]);
+  });
+
+  it("takes a worktree lock and a lead-worktree plan when the checkout is busy", () => {
+    const l = lease();
+    const calls: boolean[] = [];
+    const r = lockForPlan(borrow, (c) => {
+      calls.push(c);
+      if (c) throw new CheckoutBusyError(holderInfo, "/repo", "x");
+      return l;
+    }, () => true);
+    expect(calls).toEqual([true, false]);
+    expect(r.lease).toBe(l);
+    expect(r.plan).toEqual(lead);
+    expect(r.plan).not.toHaveProperty("taskBranch");
+  });
+
+  it("releases the checkout lease before taking a worktree lock when the checkout turned dirty", () => {
+    const first = lease();
+    const second = lease();
+    const order: string[] = [];
+    const r = lockForPlan(borrow, (c) => {
+      order.push(`acquire:${c}`);
+      return c ? { ...first, release: () => (order.push("release"), first.release()) } : second;
+    }, () => false);
+    expect(order).toEqual(["acquire:true", "release", "acquire:false"]);
+    expect(first.released).toBe(1);
+    expect(r.lease).toBe(second);
+    expect(r.plan).toEqual(lead);
+  });
+
+  it("puts the reason of a fallback on the plan, asked only when it falls back, and never when the checkout is kept", () => {
+    let asked = 0;
+    const why = () => (asked++, "the project checkout has uncommitted changes");
+    const busy = lockForPlan(borrow, (c) => {
+      if (c) throw new CheckoutBusyError(holderInfo, "/repo", "x");
+      return lease();
+    }, () => true, why);
+    expect(busy.plan).toEqual({ ...lead, lockFallback: "the project checkout has uncommitted changes" });
+    const dirty = lockForPlan(borrow, () => lease(), () => false, why);
+    expect(dirty.plan).toMatchObject({ leadWorktree: true, lockFallback: "the project checkout has uncommitted changes" });
+    expect(asked).toBe(2);
+    const kept = lockForPlan(borrow, () => lease(), () => true, why);
+    expect(kept.plan).toBe(borrow);
+    expect(asked).toBe(2);
+  });
+
+  it("rethrows any other error unchanged", () => {
+    const boom = new Error("boom");
+    expect(() => lockForPlan(borrow, () => { throw boom; }, () => true)).toThrow(boom);
   });
 });

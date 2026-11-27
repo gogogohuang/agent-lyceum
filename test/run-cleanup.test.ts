@@ -424,3 +424,174 @@ describe("clear: an interrupted run is not blocked by clear's own lock", () => {
     expect(fs.existsSync(path.join(p.paths.root, "cleanup"))).toBe(false);
   });
 });
+
+describe("clear: a checkout run's task branch", () => {
+  const BRANCH = "agent-lyceum/run-c/lead";
+  const KEPT_NO_RESULT = "沒有已記錄的結果 commit";
+
+  /** A finished checkout run: the task branch carries one commit (src/web/feature.txt) and the checkout is back on main. */
+  function checkoutRun(opts: { result?: boolean } = {}) {
+    const p = gitEnv();
+    const runDir = path.join(p.paths.runs, "run-c");
+    fs.mkdirSync(runDir, { recursive: true });
+    const base = git(env.repo, "rev-parse", "HEAD");
+    git(env.repo, "checkout", "-q", "-b", BRANCH);
+    write(path.join(env.repo, "src/web/feature.txt"), "feature\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "lead work");
+    const tip = git(env.repo, "rev-parse", "HEAD");
+    const resultBranch = opts.result === false ? undefined : { branch: BRANCH, head: tip, base, files: 1 };
+    saveRunState(runDir, {
+      ...newRunState({ run_id: "run-c", project: "demo", max_rounds: 5, task_summary: "t" }),
+      end_reason: "idle",
+      workspace_mode: "checkout",
+      task_branch: BRANCH,
+      base_sha: base,
+      result_branch: resultBranch,
+    });
+    write(path.join(p.paths.taskMemory, "run-c", "lead", "MEMORY.md"), "notes\n");
+    git(env.repo, "checkout", "-q", "main");
+    return { p, runDir, tip, base };
+  }
+  const branchList = () => git(env.repo, "branch", "--list", BRANCH);
+  const taskBranchItem = (plan: ReturnType<typeof planRunCleanup>) => plan.items.find((i) => i.kind === "task-branch");
+
+  it("refuses while the checkout is still on the task branch, and says to switch away first", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "checkout", "-q", BRANCH);
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals.join("\n")).toContain(BRANCH);
+    expect(plan.refusals.join("\n")).toMatch(/switch/i);
+    expect(() => executeRunCleanup(plan)).toThrow(/refus/i);
+    expect(git(env.repo, "symbolic-ref", "HEAD")).toBe(`refs/heads/${BRANCH}`); // not switched for the user
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("deletes the task branch once its tip is in HEAD and the result is recorded", () => {
+    const { p, runDir } = checkoutRun();
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH);
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals).toEqual([]);
+    expect(taskBranchItem(plan)).toMatchObject({ kind: "task-branch", branch: BRANCH, delete: true });
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(branchList()).toBe("");
+    expect(fs.existsSync(runDir)).toBe(false);
+    expect(git(env.repo, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+  });
+
+  it("also deletes it when HEAD is detached at a commit that holds the tip", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH);
+    git(env.repo, "checkout", "-q", "--detach");
+    const plan = planRunCleanup(p, "run-c");
+    expect(taskBranchItem(plan)).toMatchObject({ delete: true });
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(branchList()).toBe("");
+  });
+
+  it("keeps it when its tip is not in HEAD yet", () => {
+    const { p } = checkoutRun();
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals).toEqual([]);
+    expect(taskBranchItem(plan)).toBeUndefined();
+    expect(plan.keep.some((k) => k.branch === BRANCH)).toBe(true);
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("keeps it when the user committed on it after the recorded result, even though result_branch.head is in HEAD", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH); // result_branch.head is now in HEAD
+    git(env.repo, "checkout", "-q", BRANCH);
+    write(path.join(env.repo, "src/web/later.txt"), "later\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "user work after the run");
+    git(env.repo, "checkout", "-q", "main");
+    const plan = planRunCleanup(p, "run-c");
+    expect(taskBranchItem(plan)).toBeUndefined();
+    expect(plan.keep.some((k) => k.branch === BRANCH)).toBe(true);
+    expect(executeRunCleanup(plan).failed).toEqual([]);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("keeps it after a squash merge, because the tip is not an ancestor of HEAD", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "merge", "-q", "--squash", BRANCH);
+    git(env.repo, "commit", "-q", "-m", "squashed");
+    expect(fs.readFileSync(path.join(env.repo, "src/web/feature.txt"), "utf8")).toBe("feature\n");
+    const plan = planRunCleanup(p, "run-c");
+    expect(taskBranchItem(plan)).toBeUndefined();
+    expect(plan.keep.some((k) => k.branch === BRANCH)).toBe(true);
+    executeRunCleanup(plan);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("keeps it with no recorded result, and the keep list names the branch and says there is no result commit", () => {
+    const { p } = checkoutRun({ result: false });
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH); // even a merged tip is not deleted without a recorded result
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals).toEqual([]);
+    expect(taskBranchItem(plan)).toBeUndefined();
+    const kept = plan.keep.find((k) => k.branch === BRANCH);
+    expect(kept).toBeDefined();
+    expect(JSON.stringify(kept)).toContain(KEPT_NO_RESULT);
+    executeRunCleanup(plan);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("--keep-worktrees keeps it and lists it, even when it is merged", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH);
+    const plan = planRunCleanup(p, "run-c", { keepWorktrees: true });
+    expect(plan.refusals).toEqual([]);
+    expect(taskBranchItem(plan)).toBeUndefined();
+    expect(plan.keep.some((k) => k.branch === BRANCH)).toBe(true);
+    executeRunCleanup(plan);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("does not delete a branch whose tip moved between the plan and the execution", () => {
+    const { p } = checkoutRun();
+    git(env.repo, "merge", "-q", "--no-edit", BRANCH);
+    const plan = planRunCleanup(p, "run-c");
+    expect(taskBranchItem(plan)).toMatchObject({ delete: true });
+    git(env.repo, "checkout", "-q", BRANCH);
+    write(path.join(env.repo, "src/web/later.txt"), "later\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "after the plan");
+    git(env.repo, "checkout", "-q", "main");
+    expect(executeRunCleanup(plan).failed.length).toBe(1);
+    expect(branchList()).toContain(BRANCH);
+  });
+
+  it("compares a member's commits with result_branch.head, not with the checkout's HEAD", () => {
+    const { p } = checkoutRun(); // main does not have feature.txt; the recorded result does
+    const ws = prepareAgentWorkspace(p, "run-c", "fe-member", snapshotBase(p, "run-c", 1));
+    write(path.join(ws.dir, "src/web/feature.txt"), "feature\n");
+    collectAgentChanges(ws, ["src/web/**"]); // committed on the member's branch
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals.join("\n")).not.toContain("fe-member");
+    expect(plan.items.filter((i) => i.kind === "workspace").map((i) => i.agent)).toEqual(["fe-member"]);
+  });
+
+  it("still refuses a member whose work is in HEAD but not in the recorded result", () => {
+    const { p } = checkoutRun();
+    const ws = prepareAgentWorkspace(p, "run-c", "fe-member", snapshotBase(p, "run-c", 1));
+    write(path.join(ws.dir, "src/web/other.txt"), "other\n");
+    collectAgentChanges(ws, ["src/web/**"]);
+    write(path.join(env.repo, "src/web/other.txt"), "other\n"); // the same file appears in the user's checkout
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "user typed it too");
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals.join("\n")).toMatch(/fe-member.*src\/web\/other\.txt/s);
+  });
+
+  it("compares a member with the task-branch tip when no result is recorded", () => {
+    const { p } = checkoutRun({ result: false });
+    const ws = prepareAgentWorkspace(p, "run-c", "fe-member", snapshotBase(p, "run-c", 1));
+    write(path.join(ws.dir, "src/web/feature.txt"), "feature\n");
+    collectAgentChanges(ws, ["src/web/**"]);
+    const plan = planRunCleanup(p, "run-c");
+    expect(plan.refusals.join("\n")).not.toContain("fe-member");
+  });
+});

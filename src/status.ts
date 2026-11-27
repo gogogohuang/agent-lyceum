@@ -228,7 +228,7 @@ export interface RunReport {
   /** First lines of the result, for the summary page. */
   result_head: string[];
   mail_layout: "run" | "legacy";
-  workspace_mode?: "shared" | "worktree";
+  workspace_mode?: "shared" | "worktree" | "checkout";
   last_wake: Record<string, { at: string; ok: boolean; error?: string }>;
   /** Only when the run has same-role instances: each role's open instances, the role itself first. */
   instances?: Record<string, string[]>;

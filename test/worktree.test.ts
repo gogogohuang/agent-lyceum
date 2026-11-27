@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,9 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { writePolicy } from "../src/policy.js";
-import { collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { assertCheckoutResumable, checkoutLeadBranch, collectAgentChanges, commitWorkspace, dirtyPaths, finishCheckoutBranch, finishLeadBranch, PINNED_CONFIG, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, resolveRemoteBase, snapshotBase, snapshotHead, type GitRunner, type WorkspacePlan } from "../src/worktree.js";
+import { RunSession } from "../src/run-session.js";
+import { prepareTask } from "../src/task.js";
 import { git, initGitRepo, makeConcurrent, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
-import type { RunState } from "../src/run-store.js";
+import { acquireProjectLock } from "../src/project-lock.js";
+import { loadRunState, newRunState, saveRunState, type RunState } from "../src/run-store.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -50,6 +54,215 @@ describe("planWorkspace", () => {
     expect(planWorkspace(p, state({ workspace_mode: "worktree" }))).toEqual({ mode: "worktree", leadWorktree: false });
     expect(planWorkspace(p, state({ workspace_mode: "shared" }))).toEqual({ mode: "shared", leadWorktree: false });
     expect(planWorkspace(p, state({}))).toEqual({ mode: "shared", leadWorktree: false });
+  });
+
+  describe("remote base", () => {
+    const fail: GitRunner = () => ({ ok: false });
+    function addOrigin(repo: string, sha: string, head = "main"): void {
+      git(repo, "update-ref", `refs/remotes/origin/${head}`, sha);
+      git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${head}`);
+      git(repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+    }
+    const withOrigin = (): { sha: string } => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      const sha = git(env.repo, "rev-parse", "HEAD");
+      addOrigin(env.repo, sha);
+      return { sha };
+    };
+
+    it("borrows a clean checkout sitting on the remote base", () => {
+      const { sha } = withOrigin();
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan.mode).toBe("worktree");
+      expect(plan.leadWorktree).toBe(false);
+      expect(plan.taskBranch).toBeUndefined();
+      expect(plan.baseRef).toBe("origin/main");
+      expect(plan.baseSha).toBe(sha);
+      expect(plan.originUrl).toBe("https://example.invalid/repo.git");
+    });
+
+    it("uses a lead worktree when the checkout has uncommitted files", () => {
+      const { sha } = withOrigin();
+      write(path.join(env.repo, "src/web/a.txt"), "dirty\n");
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan).toMatchObject({ mode: "worktree", leadWorktree: true, baseRef: "origin/main", baseSha: sha });
+    });
+
+    it("uses a lead worktree when the local branch is ahead of the remote base", () => {
+      const { sha } = withOrigin();
+      write(path.join(env.repo, "src/web/b.txt"), "b\n");
+      git(env.repo, "add", "-A");
+      git(env.repo, "commit", "-q", "-m", "ahead");
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan).toMatchObject({ leadWorktree: true, baseSha: sha });
+      expect(git(env.repo, "rev-parse", "HEAD")).not.toBe(sha);
+    });
+
+    it("uses a lead worktree when the checkout is already on an agent-lyceum branch", () => {
+      const { sha } = withOrigin();
+      git(env.repo, "checkout", "-q", "-b", "agent-lyceum/r/lead"); // same commit as origin/main, so only the branch name rules it out
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan).toMatchObject({ leadWorktree: true, baseSha: sha });
+    });
+
+    it("uses a lead worktree when another run holds the checkout", () => {
+      const { sha } = withOrigin();
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail, checkoutHeldByOther: true });
+      expect(plan).toMatchObject({ leadWorktree: true, baseSha: sha });
+    });
+
+    it("borrows a detached HEAD that sits on the remote base", () => {
+      const { sha } = withOrigin();
+      git(env.repo, "checkout", "-q", "--detach", sha);
+      expect(planWorkspace(env.project(), undefined, { fetch: fail }).leadWorktree).toBe(false);
+    });
+
+    it("prefers origin/main over origin/master when origin/HEAD is missing", () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      const sha = git(env.repo, "rev-parse", "HEAD");
+      git(env.repo, "update-ref", "refs/remotes/origin/main", sha);
+      git(env.repo, "update-ref", "refs/remotes/origin/master", sha);
+      git(env.repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+      expect(resolveRemoteBase(env.repo, fail)).toEqual({ ref: "origin/main", sha, originUrl: "https://example.invalid/repo.git" });
+    });
+
+    it("falls back to origin/master, and follows origin/HEAD to another branch", () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      const sha = git(env.repo, "rev-parse", "HEAD");
+      git(env.repo, "update-ref", "refs/remotes/origin/master", sha);
+      expect(resolveRemoteBase(env.repo, fail)?.ref).toBe("origin/master");
+      git(env.repo, "update-ref", "refs/remotes/origin/develop", sha);
+      git(env.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop");
+      expect(resolveRemoteBase(env.repo, fail)?.ref).toBe("origin/develop");
+    });
+
+    it("has no origin url when the remote has no push url", () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      const sha = git(env.repo, "rev-parse", "HEAD");
+      git(env.repo, "update-ref", "refs/remotes/origin/main", sha);
+      expect(resolveRemoteBase(env.repo, fail)).toEqual({ ref: "origin/main", sha });
+    });
+
+    it("uses a lead worktree and says why when origin has neither main, master nor origin/HEAD", () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      const sha = git(env.repo, "rev-parse", "HEAD");
+      git(env.repo, "update-ref", "refs/remotes/origin/develop", sha);
+      git(env.repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan).toMatchObject({ mode: "worktree", leadWorktree: true });
+      expect(plan.baseRef).toBeUndefined();
+      expect(plan.reason).toContain("no remote base");
+    });
+
+    it("fetches without prompting, and still uses the local remote ref when the fetch fails", () => {
+      const { sha } = withOrigin();
+      const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+      const runner: GitRunner = (_cwd, args, e) => {
+        calls.push({ args, env: e });
+        return { ok: false };
+      };
+      const plan = planWorkspace(env.project(), undefined, { fetch: runner });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toContain("fetch");
+      expect(calls[0]?.env.GIT_TERMINAL_PROMPT).toBe("0");
+      expect(calls[0]?.env.GIT_SSH_COMMAND).toContain("BatchMode=yes");
+      expect(plan).toMatchObject({ leadWorktree: false, baseRef: "origin/main", baseSha: sha });
+      expect(plan.fetchFailed).toBe(true); // visible to the caller, which tells the user
+    });
+
+    it("does not flag a fetch that worked, and a repo with no origin never fetches", () => {
+      withOrigin();
+      expect(planWorkspace(env.project(), undefined, { fetch: () => ({ ok: true }) }).fetchFailed).toBeUndefined();
+      env.cleanup();
+      env = makeEnv();
+      initGitRepo(env.repo);
+      let called = 0;
+      expect(planWorkspace(env.project(), undefined, { fetch: () => (called++, { ok: false }) })).toEqual({ mode: "worktree", leadWorktree: true });
+      expect(called).toBe(0);
+    });
+
+    it("flags a failed fetch together with the missing-base reason", () => {
+      env = makeEnv();
+      initGitRepo(env.repo);
+      git(env.repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+      const plan = planWorkspace(env.project(), undefined, { fetch: fail });
+      expect(plan).toMatchObject({ mode: "worktree", leadWorktree: true, fetchFailed: true });
+      expect(plan.reason).toContain("no remote base");
+    });
+
+    describe("the ssh command of a fetch", () => {
+      const saved = { ssh: process.env.GIT_SSH_COMMAND, global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM };
+      const restore = (k: string, v: string | undefined): void => {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      };
+      afterEach(() => {
+        restore("GIT_SSH_COMMAND", saved.ssh);
+        restore("GIT_CONFIG_GLOBAL", saved.global);
+        restore("GIT_CONFIG_NOSYSTEM", saved.nosystem);
+      });
+      const fetchEnv = (): NodeJS.ProcessEnv => {
+        let seen: NodeJS.ProcessEnv = {};
+        resolveRemoteBase(env.repo, (_cwd, _args, e) => {
+          seen = e;
+          return { ok: false };
+        });
+        return seen;
+      };
+      const repoWithOrigin = () => {
+        env = makeEnv();
+        initGitRepo(env.repo);
+        git(env.repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+        process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+        process.env.GIT_CONFIG_NOSYSTEM = "1";
+      };
+
+      it("keeps core.sshCommand of the repo and adds BatchMode", () => {
+        repoWithOrigin();
+        delete process.env.GIT_SSH_COMMAND;
+        git(env.repo, "config", "core.sshCommand", "ssh -i /keys/work -F /cfg");
+        const e = fetchEnv();
+        expect(e.GIT_SSH_COMMAND).toBe("ssh -i /keys/work -F /cfg -o BatchMode=yes");
+        expect(e.GIT_TERMINAL_PROMPT).toBe("0");
+      });
+
+      it("prefers GIT_SSH_COMMAND from the environment over core.sshCommand", () => {
+        repoWithOrigin();
+        process.env.GIT_SSH_COMMAND = "ssh -i /keys/env";
+        git(env.repo, "config", "core.sshCommand", "ssh -i /keys/work");
+        expect(fetchEnv().GIT_SSH_COMMAND).toBe("ssh -i /keys/env -o BatchMode=yes");
+      });
+
+      it("uses plain ssh when neither is set", () => {
+        repoWithOrigin();
+        delete process.env.GIT_SSH_COMMAND;
+        expect(fetchEnv().GIT_SSH_COMMAND).toBe("ssh -o BatchMode=yes");
+      });
+    });
+
+    it("resumes a checkout run on the branch its state recorded, not the current lead name", () => {
+      env = makeEnv(); // not a git repository now
+      const plan = planWorkspace(env.project(), state({ workspace_mode: "checkout", task_branch: "agent-lyceum/r/lead" } as Partial<RunState>), { fetch: () => { throw new Error("must not fetch"); } });
+      expect(plan).toEqual({ mode: "worktree", leadWorktree: false, taskBranch: "agent-lyceum/r/lead" });
+    });
+
+    it("stays shared, without fetching, when the repo cannot be isolated", () => {
+      env = makeEnv();
+      let called = 0;
+      const runner: GitRunner = () => (called++, { ok: false });
+      expect(planWorkspace(env.project(), undefined, { fetch: runner }).mode).toBe("shared");
+      env.cleanup();
+      env = makeEnv();
+      fs.mkdirSync(env.repo, { recursive: true });
+      git(env.repo, "init", "-q", "-b", "main");
+      expect(planWorkspace(env.project(), undefined, { fetch: runner }).reason).toBe("no commit yet");
+      expect(called).toBe(0);
+    });
   });
 });
 
@@ -315,5 +528,382 @@ describe("concurrent runs: base and lead workspace", () => {
       expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head).recut).toBe(false);
       expect(fs.existsSync(lead.root)).toBe(true);
     });
+
+    it("recuts from the user's local HEAD, which holds work the run's base_sha does not", () => {
+      const { p, lead, rb } = setup();
+      const baseSha = git(env.repo, "rev-parse", "HEAD"); // what a remote base would have recorded
+      git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+      write(path.join(env.repo, "src/web/local.txt"), "l\n");
+      git(env.repo, "add", "-A");
+      git(env.repo, "commit", "-q", "-m", "local");
+      const head = git(env.repo, "rev-parse", "HEAD");
+      const r = recutLeadWorkspace(p, "run-1", "lead", lead, rb.head);
+      expect(r.recut).toBe(true);
+      expect(r.ws.base).toBe(head);
+      expect(r.ws.base).not.toBe(baseSha);
+      expect(fs.existsSync(path.join(r.ws.dir, "src/web/first.txt"))).toBe(true); // the merged work is not dropped
+      expect(fs.existsSync(path.join(r.ws.dir, "src/web/local.txt"))).toBe(true);
+    });
+
+    it("does not recut while HEAD is on another task's agent-lyceum branch, even when the old branch is merged into it", () => {
+      const { p, lead, rb } = setup();
+      git(env.repo, "merge", "-q", "--no-edit", rb.branch);
+      git(env.repo, "checkout", "-q", "-b", "agent-lyceum/other/lead"); // clean, and rb.head is still its ancestor
+      expect(git(env.repo, "merge-base", "--is-ancestor", rb.head, "HEAD")).toBe("");
+      expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head)).toEqual({ ws: lead, recut: false });
+      expect(fs.existsSync(lead.root)).toBe(true);
+      expect(git(env.repo, "rev-parse", lead.branch)).toBe(rb.head);
+    });
+  });
+});
+
+describe("a worktree run with a remote base", () => {
+  const SHA_PLAN = (baseSha: string): WorkspacePlan => ({ mode: "worktree", leadWorktree: true, baseRef: "origin/main", baseSha, originUrl: "https://example.invalid/repo.git" });
+  const start = (plan: WorkspacePlan) => {
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "build it", cwd: env.root, runDir });
+    const said: string[] = [];
+    const session = new RunSession({ project, plan, task, runDir, log: (s: string) => said.push(s), invoker: async () => ({ ok: true, text: "", exitCode: 0, timedOut: false }) });
+    return { runDir, said, session, out: () => said.join("\n") };
+  };
+  /** A repo whose local HEAD is one commit past `baseSha` (the commit the remote base had). */
+  const aheadRepo = () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const baseSha = git(env.repo, "rev-parse", "HEAD");
+    write(path.join(env.repo, "src/web/local.txt"), "l\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "local");
+    return { baseSha, head: git(env.repo, "rev-parse", "HEAD") };
+  };
+
+  it("cuts the lead worktree from baseSha, not from the local HEAD, and records the remote base in the state", () => {
+    const { baseSha, head } = aheadRepo();
+    const { runDir, session } = start(SHA_PLAN(baseSha));
+    expect(head).not.toBe(baseSha);
+    expect(git(env.repo, "rev-parse", "refs/agent-lyceum/run-1/base-0")).toBe(baseSha);
+    const ws = (session as unknown as { leadSpace: { base: string; root: string } }).leadSpace;
+    expect(ws.base).toBe(baseSha);
+    expect(git(ws.root, "rev-parse", "HEAD")).toBe(baseSha);
+    expect(fs.existsSync(path.join(ws.root, "src/web/local.txt"))).toBe(false);
+    const s = loadRunState(runDir);
+    expect(s).toMatchObject({ workspace_mode: "worktree", lead_workspace: true, base_ref: "origin/main", base_sha: baseSha, origin_url: "https://example.invalid/repo.git" });
+    expect(s.task_branch).toBeUndefined();
+    expect(s.schema_version).toBe(2);
+  });
+
+  it("says the work is not in your local checkout yet when HEAD is not on an agent-lyceum branch", () => {
+    const { baseSha } = aheadRepo();
+    const { out } = start(SHA_PLAN(baseSha));
+    expect(out()).toContain("本地尚未進入這顆 commit");
+    expect(out()).not.toContain("這次 run 改在 worktree");
+  });
+
+  it("says this run works in a worktree when HEAD is on an agent-lyceum branch", () => {
+    const { baseSha } = aheadRepo();
+    git(env.repo, "checkout", "-q", "-b", "agent-lyceum/other/lead");
+    const { out } = start(SHA_PLAN(baseSha));
+    expect(out()).toContain("這次 run 改在 worktree");
+    expect(out()).not.toContain("本地尚未進入這顆 commit");
+  });
+
+  it("without a baseSha still starts from the local HEAD, records no remote base, and prints neither note", () => {
+    const { head } = aheadRepo();
+    const { runDir, out } = start({ mode: "worktree", leadWorktree: true });
+    expect(git(env.repo, "rev-parse", "refs/agent-lyceum/run-1/base-0")).toBe(head);
+    expect(loadRunState(runDir).base_sha).toBeUndefined();
+    expect(out()).not.toMatch(/這次 run 改在 worktree|本地尚未進入這顆 commit/);
+  });
+
+  it("prints no note when HEAD already is baseSha", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const { out } = start(SHA_PLAN(git(env.repo, "rev-parse", "HEAD")));
+    expect(out()).not.toMatch(/這次 run 改在 worktree|本地尚未進入這顆 commit/);
+  });
+});
+
+describe("checkoutLeadBranch", () => {
+  const BRANCH = "agent-lyceum/run-1/lead";
+  const hook = (name: string, body: string) => {
+    const f = path.join(env.repo, ".git", "hooks", name);
+    write(f, `#!/bin/sh\n${body}\n`);
+    fs.chmodSync(f, 0o755);
+  };
+  const clean = (): string => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    return git(env.repo, "rev-parse", "HEAD");
+  };
+
+  it("cuts the task branch from sha: HEAD is on it at sha, main is untouched", () => {
+    const sha = clean();
+    expect(checkoutLeadBranch(env.repo, BRANCH, sha)).toEqual({ moved: true });
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(sha);
+    expect(git(env.repo, "rev-parse", "main")).toBe(sha);
+  });
+
+  it("throws when the branch already exists, and HEAD stays where it was (never -B)", () => {
+    const sha = clean();
+    write(path.join(env.repo, "more.txt"), "more\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "second");
+    git(env.repo, "branch", BRANCH, sha);
+    const head = git(env.repo, "rev-parse", "HEAD");
+    expect(() => checkoutLeadBranch(env.repo, BRANCH, sha)).toThrow(BRANCH);
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(head);
+    expect(git(env.repo, "rev-parse", BRANCH)).toBe(sha); // the existing branch was not reset
+  });
+
+  it("a failing post-checkout hook does not matter once HEAD is on the new branch", () => {
+    const sha = clean();
+    hook("post-checkout", "exit 1");
+    expect(checkoutLeadBranch(env.repo, BRANCH, sha)).toEqual({ moved: true });
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+  });
+
+  it("a hook that stops the switch leaves HEAD where it was: moved is false", () => {
+    const sha = clean();
+    hook("reference-transaction", '[ "$1" = prepared ] && exit 1\nexit 0');
+    expect(checkoutLeadBranch(env.repo, BRANCH, sha)).toEqual({ moved: false });
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+  });
+
+  it("runs the repository's hooks (they are not switched off)", () => {
+    const sha = clean();
+    hook("post-checkout", `echo ran > "${path.join(env.root, "hook-ran")}"`);
+    checkoutLeadBranch(env.repo, BRANCH, sha);
+    expect(fs.existsSync(path.join(env.root, "hook-ran"))).toBe(true);
+  });
+});
+
+describe("an aborted checkout start", () => {
+  const BRANCH = "agent-lyceum/run-1/lead";
+
+  /** A repo on `main`, and the run dir of a run that wrote its state (no task_sent) and was about to cut its branch. */
+  function setup(over: Partial<RunState> = {}) {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const sha = git(env.repo, "rev-parse", "HEAD");
+    const runDir = path.join(env.root, "runs", "run-1");
+    write(path.join(runDir, "task.md"), "the task\n");
+    const state = newRunState({ run_id: "run-1", workspace_mode: "checkout", task_branch: BRANCH, base_ref: "origin/main", base_sha: sha, checkout_from: "main", ...over });
+    state.schema_version = 4;
+    saveRunState(runDir, state);
+    return { sha, runDir, state: loadRunState(runDir) };
+  }
+  const onBranch = (sha: string) => {
+    git(env.repo, "checkout", "-q", "-b", BRANCH, sha);
+  };
+  const gone = (runDir: string) => expect(fs.existsSync(runDir)).toBe(false);
+
+  it("the branch was never cut: the whole run dir (task.md too) goes, HEAD stays", () => {
+    const { runDir, state } = setup();
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(/never/);
+    gone(runDir);
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+  });
+
+  it("is only done by the process that holds the run lock: while the starter holds it, the second call is refused and nothing is deleted", () => {
+    const { runDir, state } = setup();
+    const root = env.project().paths.root;
+    const starter = acquireProjectLock(root, "run-1", { checkout: true, dir: env.repo });
+    expect(() => acquireProjectLock(root, "run-1", { checkout: true, dir: env.repo })).toThrow(/still running/);
+    expect(fs.existsSync(path.join(runDir, "task.md"))).toBe(true);
+    starter.release();
+    const lease = acquireProjectLock(root, "run-1", { checkout: true, dir: env.repo });
+    try {
+      expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(/never/);
+    } finally {
+      lease.release();
+    }
+    gone(runDir);
+  });
+
+  it("HEAD is on the task branch at base_sha with a clean tree: back to checkout_from, the branch and the run dir are removed", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(/never/);
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+    expect(git(env.repo, "branch", "--list", BRANCH)).toBe("");
+    gone(runDir);
+  });
+
+  it("the branch exists at base_sha but HEAD is elsewhere: only the branch and the run dir go", () => {
+    const { sha, runDir, state } = setup();
+    git(env.repo, "branch", BRANCH, sha);
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(/never/);
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+    expect(git(env.repo, "branch", "--list", BRANCH)).toBe("");
+    gone(runDir);
+  });
+
+  it("checkout_from was deleted: no second switch; state and HEAD stay and the error names both branches", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    git(env.repo, "branch", "-D", "main");
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(new RegExp(`${BRANCH}[\\s\\S]*main|main[\\s\\S]*${BRANCH}`));
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(runDir, "task.md"))).toBe(true);
+  });
+
+  it("an origin/<checkout_from> that still exists does not bring a deleted local branch back", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    git(env.repo, "update-ref", "refs/remotes/origin/main", sha);
+    git(env.repo, "branch", "-D", "main");
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow();
+    expect(git(env.repo, "branch", "--list", "main")).toBe("");
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+  });
+
+  it("the task branch has its own commits: refused, nothing deleted", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    write(path.join(env.repo, "mine.txt"), "mine\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "mine");
+    const tip = git(env.repo, "rev-parse", "HEAD");
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(BRANCH);
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+    expect(git(env.repo, "rev-parse", BRANCH)).toBe(tip);
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+  });
+
+  it("own commits on the branch while HEAD is elsewhere: refused, the branch is kept", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    write(path.join(env.repo, "mine.txt"), "mine\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-q", "-m", "mine");
+    git(env.repo, "checkout", "-q", "main");
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(BRANCH);
+    expect(git(env.repo, "branch", "--list", BRANCH)).not.toBe("");
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+  });
+
+  it("an uncommitted change on the task branch: refused, HEAD stays and nothing is deleted", () => {
+    const { sha, runDir, state } = setup();
+    onBranch(sha);
+    write(path.join(env.repo, "src/web/a.txt"), "edited\n");
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(/uncommitted/);
+    expect(git(env.repo, "branch", "--show-current")).toBe(BRANCH);
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+  });
+
+  it("task_sent with HEAD on the task branch: the run may continue", () => {
+    const { sha, runDir, state } = setup({ task_sent: true });
+    onBranch(sha);
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).not.toThrow();
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+  });
+
+  it("task_sent but HEAD is not on the task branch: refused with the branch name; no switch, nothing deleted", () => {
+    const { sha, runDir, state } = setup({ task_sent: true });
+    git(env.repo, "branch", BRANCH, sha);
+    expect(() => assertCheckoutResumable(env.repo, runDir, state)).toThrow(BRANCH);
+    expect(git(env.repo, "branch", "--show-current")).toBe("main");
+    expect(fs.existsSync(path.join(runDir, "state.json"))).toBe(true);
+  });
+});
+
+describe("finishCheckoutBranch", () => {
+  const BRANCH = "agent-lyceum/run-1/lead";
+  const setup = () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const sha = git(env.repo, "rev-parse", "HEAD");
+    git(env.repo, "checkout", "-q", "-b", BRANCH, sha);
+    return { sha, patch: path.join(env.root, "lead.patch") };
+  };
+  /** A runner that runs real git and records every argument list. */
+  const recording = () => {
+    const calls: string[][] = [];
+    const run: GitRunner = (cwd, args, extra) => {
+      calls.push(args);
+      const r = spawnSync("git", args, { cwd, env: { ...process.env, ...extra }, encoding: "utf8" });
+      return r.status === 0 ? { ok: true, stdout: r.stdout.replace(/\n$/, "") } : { ok: false };
+    };
+    return { run, calls };
+  };
+
+  it("HEAD on the task branch with an uncommitted file: one commit on the branch, main is unchanged, the patch holds the file", () => {
+    const { sha, patch } = setup();
+    write(path.join(env.repo, "src/web/new.txt"), "new\n");
+    const rb = finishCheckoutBranch(env.repo, BRANCH, sha, "agent-lyceum: lead's work", patch);
+    expect(rb).toMatchObject({ branch: BRANCH, base: sha, files: 1, patch });
+    expect(git(env.repo, "rev-parse", "main")).toBe(sha);
+    expect(git(env.repo, "rev-list", "--count", `${sha}..${BRANCH}`)).toBe("1");
+    expect(git(env.repo, "rev-parse", BRANCH)).toBe(rb?.head);
+    expect(git(env.repo, "log", "-1", "--format=%s", BRANCH)).toBe("agent-lyceum: lead's work");
+    expect(fs.readFileSync(patch, "utf8")).toContain("src/web/new.txt");
+    expect(git(env.repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("nothing changed: no new commit, files is 0 and there is no patch", () => {
+    const { sha, patch } = setup();
+    const rb = finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch);
+    expect(rb).toEqual({ branch: BRANCH, head: sha, base: sha, files: 0, patch: undefined });
+    expect(git(env.repo, "rev-parse", BRANCH)).toBe(sha);
+    expect(fs.existsSync(patch)).toBe(false);
+  });
+
+  it("HEAD moved to main: undefined, nothing is committed, main has no new commit", () => {
+    const { sha, patch } = setup();
+    git(env.repo, "checkout", "-q", "main");
+    write(path.join(env.repo, "src/web/new.txt"), "new\n");
+    expect(finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch)).toBeUndefined();
+    expect(git(env.repo, "rev-parse", "main")).toBe(sha);
+    expect(git(env.repo, "rev-list", "--count", "main")).toBe("1");
+    expect(git(env.repo, "status", "--porcelain")).toContain("new.txt"); // left as it was, not staged
+    expect(fs.existsSync(patch)).toBe(false);
+  });
+
+  it("a detached HEAD at the task branch's commit is not the branch either", () => {
+    const { sha, patch } = setup();
+    git(env.repo, "checkout", "-q", "--detach", sha);
+    write(path.join(env.repo, "src/web/new.txt"), "new\n");
+    expect(finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch)).toBeUndefined();
+    expect(git(env.repo, "rev-list", "--count", "--all")).toBe("1");
+  });
+
+  it("git runs with the pinned config: hooks off and signing off, on the add and the commit", () => {
+    const { sha, patch } = setup();
+    write(path.join(env.repo, "src/web/new.txt"), "new\n");
+    const { run, calls } = recording();
+    finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch, run);
+    const commit = calls.find((a) => a.includes("commit"));
+    const add = calls.find((a) => a.includes("add"));
+    expect(commit).toBeDefined();
+    for (const args of [commit, add]) {
+      expect(args).toEqual(expect.arrayContaining(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "core.fsmonitor=false"]));
+      expect(args!.slice(0, PINNED_CONFIG.length)).toEqual(PINNED_CONFIG);
+    }
+    expect(commit).toContain("--no-verify");
+  });
+
+  it("a planted post-commit hook does not run", () => {
+    const { sha, patch } = setup();
+    const hook = path.join(env.repo, ".git", "hooks", "post-commit");
+    write(hook, `#!/bin/sh\necho ran > "${path.join(env.root, "hook-ran")}"\n`);
+    fs.chmodSync(hook, 0o755);
+    write(path.join(env.repo, "src/web/new.txt"), "new\n");
+    finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch);
+    expect(fs.existsSync(path.join(env.root, "hook-ran"))).toBe(false);
+  });
+
+  it("a nested git repository in the checkout is refused before anything is staged", () => {
+    const { sha, patch } = setup();
+    git(env.repo, "init", "-q", path.join(env.repo, "nested"));
+    write(path.join(env.repo, "nested", "f.txt"), "f\n");
+    expect(() => finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch)).toThrow(/nested git repository at nested/);
+    expect(git(env.repo, "rev-parse", BRANCH)).toBe(sha);
+    expect(git(env.repo, "diff", "--cached", "--name-only")).toBe("");
   });
 });
