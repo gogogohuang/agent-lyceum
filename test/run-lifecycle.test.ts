@@ -265,4 +265,29 @@ describe("run names", () => {
     expect(bad.err).toMatch(/Invalid run name/);
     expect(names(t)).toHaveLength(3); // the refused runs left nothing behind
   }, 120_000);
+
+  it("an unfinished tidy name is reused as name-2; the same name without --tidy is still refused", () => {
+    const t = setup({
+      calls: [
+        { agent: "lead", mail: [{ to: "lead", type: "done", subject: "not done", outcome: "failed" }] },
+        { agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] },
+      ],
+    });
+    const first = t.sync(["run", "tidy the commits", "--tidy", "--name", "my-tidy", "-p", "demo"]);
+    expect(first.code).toBe(1);
+    expect(JSON.parse(t.sync(["status", "-p", "demo", "--json"]).out).run).toMatchObject({ name: "my-tidy", tidy: true, outcome: "failed" });
+
+    const again = t.sync(["run", "tidy the commits", "--tidy", "--name", "my-tidy", "-p", "demo"]);
+    // `err` is in the expected value so a collision failure shows the old "already exists" text, not only the exit code.
+    expect({ code: again.code, err: again.err }).toEqual({
+      code: 0,
+      err: expect.stringMatching(/note: "my-tidy" is held by an unfinished tidy run \(failed, \S+\); this run is named "my-tidy-2"\./),
+    });
+    expect(names(t)).toEqual(["my-tidy-2", "my-tidy"]);
+
+    const plain = t.sync(["run", "x", "--name", "my-tidy", "-p", "demo"]);
+    expect(plain.code).toBe(1);
+    expect(plain.err).toMatch(/"my-tidy" already exists/);
+    expect(names(t)).toEqual(["my-tidy-2", "my-tidy"]);
+  }, 120_000);
 });

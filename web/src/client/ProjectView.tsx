@@ -9,7 +9,8 @@ import { TokenChart } from "./TokenChart";
 import { MailBody } from "./MailBody";
 import { readableError, resultRows, splitNote } from "./prose";
 import { ProgressSummary } from "./ProgressSummary";
-import { isTidyRun } from "./run-state";
+import { tidyBadge } from "./run-state";
+import { TidyBadge } from "./TidyBadge";
 import { cacheText, focusReport, openReports, progress, runElapsed, runLabel, tokenText, workingAgents } from "./view";
 
 export function ProjectView({
@@ -84,11 +85,12 @@ export function ProjectView({
 
 function RunHeader({ name, run, now }: { name: string; run: Run; now: number }) {
   const task = run.task_summary || run.name || run.run_id;
+  const badge = tidyBadge(run);
   const cache = cacheText(run.cache_read_tokens, run.cache_write_tokens);
   const gone = run.live === false && run.state === "running";
   return (
     <>
-      <h1 className="mt-1 text-balance text-2xl font-semibold leading-snug tracking-tight wrap-break-word md:text-3xl">{task}{isTidyRun(run) && <> <span className="ml-2 align-middle rounded-full border border-line px-2 py-0.5 text-xs font-normal tracking-normal text-ink/70">已 tidy</span></>}</h1>
+      <h1 className="mt-1 text-balance text-2xl font-semibold leading-snug tracking-tight wrap-break-word md:text-3xl">{task}{badge && <TidyBadge info={badge} className="ml-2 align-middle" />}</h1>
       <div className="mt-4 flex flex-wrap items-stretch gap-3">
         <dl className="grid min-w-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           <div className="panel px-3 py-2">
@@ -130,6 +132,7 @@ function History({ reports, currentId, onRun }: { reports: StatusReport[]; curre
             const run = report.run;
             if (!run) return null;
             const selected = run.run_id === currentId;
+            const badge = tidyBadge(run);
             return (
               <Button
                 key={run.run_id}
@@ -145,7 +148,7 @@ function History({ reports, currentId, onRun }: { reports: StatusReport[]; curre
                   <span className="text-ink/70">{when(run.started_at)}</span>
                   <span className={stateClass(run)}>{runLabel(run)}</span>
                 </span>
-                <span className={cn("text-pretty mt-1 block text-sm", selected && "font-medium")}>{run.task_summary || run.name || run.run_id}{isTidyRun(run) && <span className="ml-2 rounded-full border border-line px-2 py-0.5 text-xs font-normal text-ink/70">已 tidy</span>}</span>
+                <span className={cn("text-pretty mt-1 block text-sm", selected && "font-medium")}>{run.task_summary || run.name || run.run_id}{badge && <TidyBadge info={badge} className="ml-2" />}</span>
               </Button>
             );
           })}

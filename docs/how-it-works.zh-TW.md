@@ -50,7 +50,7 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 
 ## 接續已完成的 run
 
-每個 run 都有**名稱**：由 task 第一行產生（小寫字母、數字與 `-`，最多 30 字元；沒有可用字元時用 `task`；重複時加 `-2`、`-3`），或用 `run --name <name>` 指定（字元與長度限制相同；名稱已被使用會拒絕）。`resume`、`clear` 與 `status --task-id` 接受完整 run id、名稱，或兩者之一的唯一前綴；前綴有歧義時會列出候選並以 `1` 結束，空字串會被拒絕。`status` 會在 id 旁顯示名稱。
+每個 run 都有**名稱**：由 task 第一個非空白行產生（小寫字母、數字與 `-`，最多 30 字元；沒有可用字元時用 `task`；重複時加 `-2`、`-3`），或用 `run --name <name>` 指定（字元與長度限制相同；撞名規則見 [run](commands.zh-TW.md#run)）。`resume`、`clear` 與 `status --task-id` 接受完整 run id、名稱，或兩者之一的唯一前綴；前綴有歧義時會列出候選並以 `1` 結束，空字串會被拒絕。`status` 會在 id 旁顯示名稱。
 
 已完成（`done`）的 run 可以用追加要求重開：`agent-lyceum resume [run] "<追加要求>"`（或 `--task-file f`）。lead 會把這段文字當成新的 `task` 收到，run 沿用同一個 run 目錄、任務記憶、session 與 lead 的 worktree 繼續。
 

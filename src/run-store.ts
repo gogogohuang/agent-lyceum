@@ -378,6 +378,45 @@ export function slugify(text: string): string {
   return s || "task";
 }
 
+/** A named run, as `pickRunName` needs it. `live` is `runIsAlive(state, project) && !state.end_reason`. */
+export type RunNameHolder = {
+  name: string;
+  tidy?: boolean;
+  outcome?: string;
+  /** The run's `end_reason`. Finished is `outcome === "completed"` and this is `"done"`. */
+  end_reason?: string;
+  /** Used in the note when `outcome` is absent (`end_reason`, or `interrupted` when the dispatcher is gone). */
+  state?: string;
+  live: boolean;
+  run_id: string;
+};
+
+export type RunNamePick = { ok: true; name: string; note?: string } | { ok: false; error: string };
+
+/** Tidy by the flag or, for older runs, by a name containing "tidy". Not live, and not a finished success. */
+function unfinishedTidyHolder(h: RunNameHolder): boolean {
+  const tidy = h.tidy === true || /tidy/i.test(h.name);
+  const finished = h.outcome === "completed" && h.end_reason === "done";
+  return tidy && !finished && !h.live;
+}
+
+/**
+ * The name a `run --name` should use. A free name stays. When this run is `--tidy` and every exact holder is an
+ * unfinished, not-live tidy run, the name yields to `uniqueName`. The note names the first exact holder
+ * (`listRuns` order, newest first). Every other collision keeps the existing "already exists" error.
+ */
+export function pickRunName(input: { name: string; tidy: boolean; project: string; taken: string[]; holders: RunNameHolder[] }): RunNamePick {
+  if (!input.taken.includes(input.name)) return { ok: true, name: input.name };
+  const exact = input.holders.filter((h) => h.name === input.name);
+  if (input.tidy && exact.length > 0 && exact.every(unfinishedTidyHolder)) {
+    const holder = exact[0]!;
+    const next = uniqueName(input.name, input.taken);
+    const why = holder.outcome ?? holder.state ?? "unfinished";
+    return { ok: true, name: next, note: `note: "${input.name}" is held by an unfinished tidy run (${why}, ${holder.run_id}); this run is named "${next}".` };
+  }
+  return { ok: false, error: `A run named "${input.name}" already exists in project ${input.project}.` };
+}
+
 /** `base`, or `base-2`, `base-3` … the first that is not in `taken`. */
 export function uniqueName(base: string, taken: string[]): string {
   if (!taken.includes(base)) return base;
