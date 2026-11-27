@@ -583,6 +583,61 @@ describe("subtraction: whole-line errors, no truncated conclusions, byte identit
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("keeps report and verification boundaries on a truncated tail, and does not lift them", () => {
+    const tidy = "tidying project memory of qa (1 file(s)) …";
+    const skipped = "qa (project): skipped — 未完成";
+    const body = ["第一段", tidy, "第二段", skipped, "第三段"].join("\n\n");
+    const text = printed({
+      ...baseSummary(),
+      endReason: "done",
+      outcome: "completed",
+      outcomeNote: undefined,
+      doneMessage: { subject: "subject", body },
+    });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lyceum-log-"));
+    try {
+      const file = Buffer.concat([Buffer.alloc(20_001, 0x78), Buffer.from(`\n${text}`, "utf8")]);
+      const jobsDir = writeLog(root, "report1", file);
+      const view = readJob(jobsDir, "report1");
+      if (!view) throw new Error("missing report job");
+      expect(view.truncated).toBe(true);
+      expect(view.tail).toContain("Lead's final message — subject");
+      const log = parsed(view);
+      expect(log.conclusions).toEqual([]);
+      expect(log.blocks.map((block) => block.kind)).toEqual(["text"]);
+      const shown = JSON.stringify(log.blocks);
+      expect(shown).toContain(tidy);
+      expect(shown).toContain(skipped);
+      expect(shown).toContain("第一段");
+      expect(shown).toContain("第三段");
+
+      const withVerification = printed({
+        ...baseSummary(),
+        endReason: "done",
+        outcome: "completed",
+        outcomeNote: undefined,
+        verification: ["checked the suite", tidy, skipped].join("\n"),
+        resultBranch: { branch: "real", head: "h", base: "b", files: 1 },
+        doneMessage: { subject: "subject", body: "report stays text" },
+      });
+      const verifyFile = Buffer.concat([Buffer.alloc(20_001, 0x79), Buffer.from(`\n${withVerification}`, "utf8")]);
+      writeLog(root, "verify1", verifyFile);
+      const verifyView = readJob(jobsDir, "verify1");
+      if (!verifyView) throw new Error("missing verification job");
+      expect(verifyView.tail).toContain("Verification (");
+      expect(verifyView.tail).toContain("Lead's final message — subject");
+      const verifyLog = parsed(verifyView);
+      expect(verifyLog.conclusions).toEqual([]);
+      expect(verifyLog.blocks.map((block) => block.kind)).toEqual(["text"]);
+      const verifyShown = JSON.stringify(verifyLog.blocks);
+      expect(verifyShown).toContain(tidy);
+      expect(verifyShown).toContain(skipped);
+      expect(verifyShown).toContain("The work is on branch real");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("formatElapsed", () => {

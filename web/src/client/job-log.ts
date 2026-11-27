@@ -132,7 +132,7 @@ export function formatElapsed(ms: number): string {
 
 /**
  * Turn a job's stdout/stderr tail into sections a person can read.
- * A truncated tail does not lift conclusions. Only a line that is entirely an error JSON object is folded.
+ * A truncated tail does not lift conclusions. Report and verification boundaries still hold. Only a line that is entirely an error JSON object is folded.
  * Nothing is discarded: merged and lifted lines stay on the result, and the page also keeps the raw tail.
  */
 export function parseJobLog(text: string, opts?: ParseOptions): JobLog {
@@ -155,37 +155,35 @@ export function parseJobLog(text: string, opts?: ParseOptions): JobLog {
     const line = lines[i];
     if (line === undefined) continue;
 
-    if (!truncated) {
-      if (REPORT_RE.test(line.text) && (phase !== "verification" || prevBlank)) phase = "report";
-      if (phase === "report") {
+    if (REPORT_RE.test(line.text) && (phase !== "verification" || prevBlank)) phase = "report";
+    if (phase === "report") {
+      separated = absorb(bucket(round, blocks), { kind: "text", at: line.at, text: line.text }, separated);
+      prevBlank = line.text === "";
+      continue;
+    }
+    if (phase === "verification") {
+      if (line.text !== "" && prevBlank && officialAfterVerification(line.text)) phase = "footer";
+      else {
         separated = absorb(bucket(round, blocks), { kind: "text", at: line.at, text: line.text }, separated);
         prevBlank = line.text === "";
         continue;
       }
-      if (phase === "verification") {
-        if (line.text !== "" && prevBlank && officialAfterVerification(line.text)) phase = "footer";
-        else {
-          separated = absorb(bucket(round, blocks), { kind: "text", at: line.at, text: line.text }, separated);
-          prevBlank = line.text === "";
-          continue;
-        }
-      }
-      if (phase === "footer" && VERIFICATION_RE.test(line.text)) {
-        phase = "verification";
-        separated = absorb(bucket(round, blocks), { kind: "text", at: line.at, text: line.text }, separated);
-        prevBlank = false;
+    }
+    if (phase === "footer" && VERIFICATION_RE.test(line.text)) {
+      phase = "verification";
+      separated = absorb(bucket(round, blocks), { kind: "text", at: line.at, text: line.text }, separated);
+      prevBlank = false;
+      continue;
+    }
+    if (phase === "log" && ENDED_RE.test(line.text)) phase = "footer";
+    if (!truncated && phase === "footer") {
+      const lifted = liftFooter(lines, i);
+      if (lifted) {
+        conclusions.push(lifted.conclusion);
+        separated = true;
+        prevBlank = lines[lifted.next - 1]?.text === "";
+        i = lifted.next - 1;
         continue;
-      }
-      if (phase === "log" && ENDED_RE.test(line.text)) phase = "footer";
-      if (phase === "footer") {
-        const lifted = liftFooter(lines, i);
-        if (lifted) {
-          conclusions.push(lifted.conclusion);
-          separated = true;
-          prevBlank = lines[lifted.next - 1]?.text === "";
-          i = lifted.next - 1;
-          continue;
-        }
       }
     }
 
