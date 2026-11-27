@@ -1,0 +1,309 @@
+import { useState, type ReactNode } from "react";
+import type { JobDetail } from "./api";
+import { cn } from "./cn";
+import { exitInfo } from "./exit-info";
+import { jobLabel } from "./job-label";
+import { disclosureId, formatElapsed, parseJobLog, toggleDisclosure, type Block, type BranchConclusion, type Conclusion, type EndedConclusion, type ErrorBlock, type NextConclusion, type RoundBlock, type SkippedBlock, type TextBlock, type TidiedBlock, type TidyingBlock } from "./job-log";
+
+const OUTCOME: Record<string, string> = {
+  completed: "完成",
+  partial: "部分完成",
+  blocked: "受阻",
+  failed: "失敗",
+  waiting: "等待回答",
+  cancelled: "已取消",
+};
+
+const END_REASON: Record<string, string> = {
+  done: "完成回報",
+  lead_failed: "負責人失敗",
+  agent_failed: "成員失敗",
+  waiting: "等待回答",
+  cancelled: "已取消",
+  idle: "沒有後續",
+  max_rounds: "達到輪數上限",
+};
+
+const STATE = { running: "執行中", lost: "已結束（結束碼不明）" } as const;
+
+type Tone = "signal" | "warn" | "failed";
+
+function statusOf(job: JobDetail): { text: string; tone: Tone } {
+  if (job.state === "running") return { text: STATE.running, tone: "signal" };
+  if (job.state === "lost") return { text: STATE.lost, tone: "warn" };
+  const info = exitInfo(job.exit ?? null, false);
+  return { text: info.text, tone: info.tone === "ok" ? "signal" : info.tone === "warn" ? "warn" : "failed" };
+}
+
+function clock(iso: string): string {
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? iso : t.toLocaleString();
+}
+
+function elapsedOf(job: JobDetail): { label: string; text: string } | undefined {
+  const started = new Date(job.started_at).getTime();
+  if (Number.isNaN(started)) return undefined;
+  if (job.state === "running") return { label: "已進行", text: formatElapsed(Date.now() - started) };
+  if (!job.ended_at) return undefined;
+  const ended = new Date(job.ended_at).getTime();
+  if (Number.isNaN(ended)) return undefined;
+  return { label: "耗時", text: formatElapsed(ended - started) };
+}
+
+const toneClass: Record<Tone, string> = { signal: "text-signal", warn: "text-warn", failed: "text-failed" };
+
+const pre = "max-w-full overflow-auto whitespace-pre-wrap break-all font-mono text-xs";
+const summaryBtn = "min-h-11 cursor-pointer rounded-sm py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal";
+const wrap = "min-w-0 wrap-break-word";
+
+type OpenToggle = (id: string, next: boolean) => void;
+
+export function JobOutput({ job, stale, raw, onRaw }: { job: JobDetail; stale: boolean; raw: boolean; onRaw: (raw: boolean) => void }) {
+  const label = jobLabel(job.argv);
+  const status = statusOf(job);
+  const elapsed = elapsedOf(job);
+  const log = parseJobLog(job.tail, { truncated: job.truncated === true, lineStart: job.lineStart === true, byteStart: job.byteStart, gaps: job.gaps });
+  const empty = job.tail === "" && log.partial === undefined;
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const onOpen: OpenToggle = (id, next) => setOpenIds((prev) => toggleDisclosure(prev, id, next));
+
+  return (
+    <section aria-label="任務詳情" className="min-w-0 max-w-full rounded-lg border border-line bg-wall p-3">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+        <dt className="text-ink/60">狀態</dt>
+        <dd className={toneClass[status.tone]}>{status.text}</dd>
+        {label.project && (
+          <>
+            <dt className="text-ink/60">專案</dt>
+            <dd className={cn(wrap, "font-mono")}>{label.project}</dd>
+          </>
+        )}
+        {label.target && (
+          <>
+            <dt className="text-ink/60">目標</dt>
+            <dd className={cn(wrap, "font-medium")}>{label.target}</dd>
+          </>
+        )}
+        <dt className="text-ink/60">開始</dt>
+        <dd>
+          <time dateTime={job.started_at}>{clock(job.started_at)}</time>
+        </dd>
+        {job.ended_at && (
+          <>
+            <dt className="text-ink/60">結束</dt>
+            <dd>
+              <time dateTime={job.ended_at}>{clock(job.ended_at)}</time>
+            </dd>
+          </>
+        )}
+        {elapsed && (
+          <>
+            <dt className="text-ink/60">{elapsed.label}</dt>
+            <dd>{elapsed.text}</dd>
+          </>
+        )}
+      </dl>
+      <details className="mt-2">
+        <summary className={cn(summaryBtn, "text-sm text-ink/70")}>完整指令</summary>
+        <pre className={cn(pre, "mt-1 max-h-40 rounded-md border border-line bg-paper p-2")}>{job.argv.join(" ")}</pre>
+      </details>
+      {stale && <p className="mt-2 text-sm text-warn">更新失敗，稍後重試</p>}
+      <div role="group" aria-label="輸出格式" className="mt-3 flex flex-wrap gap-2">
+        <button type="button" aria-pressed={!raw} className={cn("min-h-11 rounded-full border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal", !raw ? "border-ink/40 bg-paper" : "border-line")} onClick={() => onRaw(false)}>
+          整理後的輸出
+        </button>
+        <button type="button" aria-pressed={raw} className={cn("min-h-11 rounded-full border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal", raw ? "border-ink/40 bg-paper" : "border-line")} onClick={() => onRaw(true)}>
+          原始輸出
+        </button>
+      </div>
+      {log.truncated && <p className="mt-3 text-sm text-warn">輸出超過尾端上限，這裡只顯示最後的部分。</p>}
+      {raw ? (
+        <pre className={cn(pre, "mt-3 max-h-[60dvh] rounded-lg border border-line bg-paper p-3")}>{job.tail || "（還沒有輸出）"}</pre>
+      ) : empty ? (
+        <p className="mt-3 text-sm">（還沒有輸出）</p>
+      ) : (
+        <div className="mt-3 flex max-h-[60dvh] min-w-0 flex-col gap-3 overflow-auto">
+          {log.partial !== undefined && log.partialAt !== undefined && (
+            <LogDetails id={disclosureId(log.partialAt)} open={openIds.has(disclosureId(log.partialAt))} onOpen={onOpen} summary="開頭被截斷的半行" summaryClass="text-sm text-ink/70" className="rounded-lg border border-line bg-paper px-3">
+              <pre className={cn(pre, "mb-2 max-h-40")}>{log.partial}</pre>
+            </LogDetails>
+          )}
+          {log.conclusions.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-lg border border-line bg-paper p-3">
+              {log.conclusions.map((item, index) => (
+                <ConclusionView key={`${item.kind}-${index}`} item={item} />
+              ))}
+            </div>
+          )}
+          {log.blocks.map((block) => (
+            <BlockView key={disclosureId(block.at)} block={block} openIds={openIds} onOpen={onOpen} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ConclusionView({ item }: { item: Conclusion }) {
+  if (item.kind === "ended") return <EndedView item={item} />;
+  if (item.kind === "next") return <NextView item={item} />;
+  return <BranchView item={item} />;
+}
+
+function EndedView({ item }: { item: EndedConclusion }) {
+  const outcome = OUTCOME[item.outcome] ?? item.outcome;
+  const reason = END_REASON[item.endReason] ?? item.endReason;
+  return (
+    <div className="text-sm">
+      <p>
+        結束：{outcome}（{reason}），{item.rounds} 輪
+      </p>
+      <p className="mt-1 break-all text-xs text-ink/70">紀錄：{item.logs}</p>
+      {item.note && <p className={cn(wrap, "mt-1 text-ink/80")}>{item.note}</p>}
+    </div>
+  );
+}
+
+function NextView({ item }: { item: NextConclusion }) {
+  return (
+    <div>
+      <h3 className="text-sm font-medium">下一步</h3>
+      <ul className="mt-1 flex flex-col gap-1">
+        {item.lines.map((line, index) => (
+          <li key={index} className="break-all font-mono text-xs">
+            {line}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function BranchView({ item }: { item: BranchConclusion }) {
+  return (
+    <div className="text-sm">
+      <p className={wrap}>
+        結果在分支 <span className="break-all font-mono">{item.branch}</span>（{item.files} 個檔案），工作目錄沒有被改動。
+      </p>
+      {item.bringIn && <p className="mt-1 break-all font-mono text-xs">帶進來：{item.bringIn}</p>}
+      {item.patch && <p className="mt-1 break-all font-mono text-xs">或套用補丁：{item.patch}</p>}
+    </div>
+  );
+}
+
+function BlockView({ block, openIds, onOpen }: { block: Block; openIds: ReadonlySet<string>; onOpen: OpenToggle }) {
+  if (block.kind === "round") return <RoundView block={block} openIds={openIds} onOpen={onOpen} />;
+  if (block.kind === "error") return <ErrorView block={block} open={openIds.has(disclosureId(block.at))} onOpen={onOpen} />;
+  if (block.kind === "text") return <TextView block={block} />;
+  if (block.kind === "skipped") return <SkippedView block={block} open={openIds.has(disclosureId(block.at))} onOpen={onOpen} />;
+  if (block.kind === "tidied") return <TidiedView block={block} open={openIds.has(disclosureId(block.at))} onOpen={onOpen} />;
+  if (block.kind === "tidying") return <TidyingView block={block} open={openIds.has(disclosureId(block.at))} onOpen={onOpen} />;
+  return <p className={cn(wrap, "text-sm")}>{block.text}</p>;
+}
+
+function RoundView({ block, openIds, onOpen }: { block: RoundBlock; openIds: ReadonlySet<string>; onOpen: OpenToggle }) {
+  const who = block.model ? `${block.runtime}/${block.model}` : block.runtime;
+  const bits = [`第 ${block.n}${block.max ? `/${block.max}` : ""} 輪`, block.agent, who];
+  if (block.tier) bits.push(`層級 ${block.tier}`);
+  if (block.retry) bits.push(`重試 ${block.retry}`);
+  return (
+    <section className="min-w-0 rounded-lg border border-line bg-paper p-3">
+      <h3 className={cn(wrap, "text-sm font-medium")}>{bits.join(" · ")}</h3>
+      {block.body.length > 0 && (
+        <div className="mt-2 flex min-w-0 flex-col gap-2">
+          {block.body.map((leaf) => (leaf.kind === "error" ? <ErrorView key={disclosureId(leaf.at)} block={leaf} open={openIds.has(disclosureId(leaf.at))} onOpen={onOpen} /> : <TextView key={disclosureId(leaf.at)} block={leaf} />))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ErrorView({ block, open, onOpen }: { block: ErrorBlock; open: boolean; onOpen: OpenToggle }) {
+  const id = disclosureId(block.at);
+  return (
+    <div className="min-w-0 rounded-md border border-failed/40 bg-failed-soft px-3 py-2">
+      <p className={cn(wrap, "text-sm text-failed")}>
+        {block.message}
+        {block.count > 1 ? `（連續 ${block.count} 次）` : ""}
+      </p>
+      <LogDetails id={id} open={open} onOpen={onOpen} summary="原始片段" summaryClass="text-xs text-ink/60">
+        <pre className={cn(pre, "mb-2 max-h-40")}>{block.raw}</pre>
+      </LogDetails>
+    </div>
+  );
+}
+
+function TextView({ block }: { block: TextBlock }) {
+  return <pre className={pre}>{block.text}</pre>;
+}
+
+function TidyingView({ block, open, onOpen }: { block: TidyingBlock; open: boolean; onOpen: OpenToggle }) {
+  return (
+    <LogDetails id={disclosureId(block.at)} open={open} onOpen={onOpen} summary={`整理記憶（${block.lines.length}）`} summaryClass="text-sm" className="rounded-lg border border-line bg-paper px-3">
+      <pre className={cn(pre, "mb-2 max-h-40")}>{block.lines.join("\n")}</pre>
+    </LogDetails>
+  );
+}
+
+function SkippedView({ block, open, onOpen }: { block: SkippedBlock; open: boolean; onOpen: OpenToggle }) {
+  return (
+    <LogDetails id={disclosureId(block.at)} open={open} onOpen={onOpen} summary={`略過 ${block.count} 個`} summaryClass="text-sm" className="min-w-0 rounded-lg border border-line bg-paper px-3">
+      <ul className="mb-2 flex min-w-0 flex-col gap-1 text-sm">
+        {block.items.map((item, index) => (
+          <li key={`${item.agent}-${item.layer}-${index}`} className={wrap}>
+            {item.agent}（{item.layer}）：{item.reason}
+          </li>
+        ))}
+      </ul>
+    </LogDetails>
+  );
+}
+
+function TidiedView({ block, open, onOpen }: { block: TidiedBlock; open: boolean; onOpen: OpenToggle }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-line bg-paper px-3 py-2 text-sm">
+      <p className={wrap}>
+        {block.agent}（{block.layer}）已整理
+      </p>
+      <LogDetails id={disclosureId(block.at)} open={open} onOpen={onOpen} summary="封存路徑與還原指令" summaryClass="text-ink/70">
+        <dl className="mb-2 space-y-1 break-all font-mono text-xs">
+          <div>
+            <dt className="text-ink/60">封存</dt>
+            <dd>{block.archive}</dd>
+          </div>
+          {block.records && (
+            <div>
+              <dt className="text-ink/60">紀錄封存</dt>
+              <dd>{block.records}</dd>
+            </div>
+          )}
+          {block.proposals && (
+            <div>
+              <dt className="text-ink/60">提案封存</dt>
+              <dd>{block.proposals}</dd>
+            </div>
+          )}
+          <div>
+            <dt className="text-ink/60">還原</dt>
+            <dd>{block.undo}</dd>
+          </div>
+        </dl>
+      </LogDetails>
+    </div>
+  );
+}
+
+function LogDetails({ id, open, onOpen, summary, summaryClass, className, children }: { id: string; open: boolean; onOpen: OpenToggle; summary: ReactNode; summaryClass?: string; className?: string; children: ReactNode }) {
+  return (
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => {
+        if (event.currentTarget.open !== open) onOpen(id, event.currentTarget.open);
+      }}
+    >
+      <summary className={cn(summaryBtn, summaryClass)}>{summary}</summary>
+      {children}
+    </details>
+  );
+}

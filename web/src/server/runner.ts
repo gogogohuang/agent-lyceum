@@ -145,15 +145,18 @@ export function listJobs(jobsDir: string, limit = 50): JobView[] {
   return jobs.sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, limit);
 }
 
-export function readJob(jobsDir: string, id: string): (JobView & { tail: string }) | undefined {
+export type Utf8Gap = { at: number; source: number };
+
+export function readJob(jobsDir: string, id: string): (JobView & { tail: string; truncated: boolean; lineStart: boolean; byteStart: number; gaps: Utf8Gap[] }) | undefined {
   if (!ID_RE.test(id)) return undefined;
   const dir = path.join(jobsDir, id);
   const found = view(dir);
   if (!found) return undefined;
-  return { ...found, tail: tailOf(path.join(dir, "out.log")) };
+  const tail = tailOf(path.join(dir, "out.log"));
+  return { ...found, tail: tail.text, truncated: tail.truncated, lineStart: tail.lineStart, byteStart: tail.byteStart, gaps: tail.gaps };
 }
 
-function tailOf(file: string): string {
+function tailOf(file: string): { text: string; truncated: boolean; lineStart: boolean; byteStart: number; gaps: Utf8Gap[] } {
   try {
     const size = fs.statSync(file).size;
     const start = Math.max(0, size - TAIL_BYTES);
@@ -161,11 +164,92 @@ function tailOf(file: string): string {
     try {
       const buf = Buffer.alloc(size - start);
       fs.readSync(fd, buf, 0, buf.length, start);
-      return buf.toString("utf8");
+      let lineStart = true;
+      if (start > 0) {
+        const prev = Buffer.alloc(1);
+        const n = fs.readSync(fd, prev, 0, 1, start - 1);
+        lineStart = n === 1 && prev[0] === 0x0a;
+      }
+      const text = buf.toString("utf8");
+      return { text, truncated: start > 0, lineStart, byteStart: start, gaps: utf8Gaps(buf) };
     } finally {
       fs.closeSync(fd);
     }
   } catch {
-    return "";
+    return { text: "", truncated: false, lineStart: true, byteStart: 0, gaps: [] };
   }
+}
+
+/** File bytes each U+FFFD replaced, when that run is not U+FFFD's own 3-byte encoding. One pass over the raw bytes. */
+function utf8Gaps(buf: Buffer): Utf8Gap[] {
+  const gaps: Utf8Gap[] = [];
+  let at = 0;
+  let point = 0;
+  let seen = 0;
+  let needed = 0;
+  let lower = 0x80;
+  let upper = 0xbf;
+  const emit = (code: number, source: number): void => {
+    if (code === 0xfffd && source !== 3) gaps.push({ at, source });
+    at += code > 0xffff ? 2 : 1;
+  };
+  const reset = (): void => {
+    point = 0;
+    seen = 0;
+    needed = 0;
+    lower = 0x80;
+    upper = 0xbf;
+  };
+  for (let i = 0; i < buf.length; i++) {
+    const byte = buf[i];
+    if (byte === undefined) break;
+    if (needed !== 0) {
+      if (byte >= lower && byte <= upper) {
+        lower = 0x80;
+        upper = 0xbf;
+        point = (point << 6) | (byte & 0x3f);
+        seen += 1;
+        if (seen === needed) {
+          const code = point;
+          const source = seen;
+          reset();
+          emit(code, source);
+        }
+        continue;
+      }
+      const source = seen;
+      reset();
+      emit(0xfffd, source);
+      i -= 1;
+      continue;
+    }
+    if (byte <= 0x7f) {
+      emit(byte, 1);
+      continue;
+    }
+    const lead = utf8Lead(byte);
+    if (lead === undefined) {
+      emit(0xfffd, 1);
+      continue;
+    }
+    point = lead.point;
+    seen = 1;
+    needed = lead.needed;
+    lower = lead.lower;
+    upper = lead.upper;
+  }
+  if (needed !== 0) emit(0xfffd, seen);
+  return gaps;
+}
+
+function utf8Lead(byte: number): { point: number; needed: number; lower: number; upper: number } | undefined {
+  if (byte >= 0xc2 && byte <= 0xdf) return { point: byte & 0x1f, needed: 2, lower: 0x80, upper: 0xbf };
+  if (byte === 0xe0) return { point: byte & 0x0f, needed: 3, lower: 0xa0, upper: 0xbf };
+  if (byte >= 0xe1 && byte <= 0xec) return { point: byte & 0x0f, needed: 3, lower: 0x80, upper: 0xbf };
+  if (byte === 0xed) return { point: byte & 0x0f, needed: 3, lower: 0x80, upper: 0x9f };
+  if (byte >= 0xee && byte <= 0xef) return { point: byte & 0x0f, needed: 3, lower: 0x80, upper: 0xbf };
+  if (byte === 0xf0) return { point: byte & 0x07, needed: 4, lower: 0x90, upper: 0xbf };
+  if (byte >= 0xf1 && byte <= 0xf3) return { point: byte & 0x07, needed: 4, lower: 0x80, upper: 0xbf };
+  if (byte === 0xf4) return { point: byte & 0x07, needed: 4, lower: 0x80, upper: 0x8f };
+  return undefined;
 }

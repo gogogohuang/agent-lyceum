@@ -135,4 +135,166 @@ describe("startJob", () => {
     expect(listJobs(jobsDir).map((j) => j.id)).toEqual(["b2", "c3", "a1"]);
     expect(listJobs(jobsDir, 2).map((j) => j.id)).toEqual(["b2", "c3"]);
   });
+  it("marks a log past the tail window as truncated and returns the last bytes", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "long1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "long1", "job.json"), JSON.stringify({ id: "long1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "long1", "out.log"), `HEAD-PARTIAL${"x".repeat(20_000)}`);
+    const view = readJob(jobsDir, "long1");
+    expect(view?.truncated).toBe(true);
+    expect(view?.tail.startsWith("HEAD")).toBe(false);
+    expect(view?.tail.endsWith("x")).toBe(true);
+    expect(Buffer.byteLength(view?.tail ?? "")).toBe(20_000);
+  });
+  it("a log of exactly the tail window is not truncated", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "cap1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "cap1", "job.json"), JSON.stringify({ id: "cap1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "cap1", "out.log"), "y".repeat(20_000));
+    const view = readJob(jobsDir, "cap1");
+    expect(view?.truncated).toBe(false);
+    expect(view?.tail).toBe("y".repeat(20_000));
+  });
+  it("a short log is not truncated", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "short1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "short1", "job.json"), JSON.stringify({ id: "short1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    fs.writeFileSync(path.join(jobsDir, "short1", "out.log"), "hi\n");
+    const view = readJob(jobsDir, "short1");
+    expect(view?.truncated).toBe(false);
+    expect(view?.lineStart).toBe(true);
+    expect(view?.byteStart).toBe(0);
+    expect(view?.gaps).toEqual([]);
+    expect(view?.tail).toBe("hi\n");
+  });
+
+  it("marks a cut that lands just after a newline, and leaves the tail bytes identical to the baseline window", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "edge1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "edge1", "job.json"), JSON.stringify({ id: "edge1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    const round = Buffer.from("[round 2/4] waking qa (codex)\ndiagnostic\n", "utf8");
+    const body = Buffer.concat([round, Buffer.alloc(20_000 - round.length, 0x78)]);
+    const file = Buffer.concat([Buffer.from("preamble\n", "utf8"), body]);
+    fs.writeFileSync(path.join(jobsDir, "edge1", "out.log"), file);
+    const view = readJob(jobsDir, "edge1");
+    expect(view?.truncated).toBe(true);
+    expect(view?.lineStart).toBe(true);
+    expect(view?.tail).toBe(file.subarray(file.length - 20_000).toString("utf8"));
+    expect(view?.tail.startsWith("[round 2/4]")).toBe(true);
+    expect(view?.byteStart).toBe(file.length - 20_000);
+    expect(view?.gaps).toEqual([]);
+  });
+
+  it("keeps the baseline decoding when the cut splits a multibyte character", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    fs.mkdirSync(path.join(jobsDir, "utf1"), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, "utf1", "job.json"), JSON.stringify({ id: "utf1", command: "run", argv: [], cwd: dir, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+    const you = Buffer.from("你", "utf8");
+    const rest = Buffer.from("\n[round 1/2] waking qa (claude)\n", "utf8");
+    const window = Buffer.concat([you.subarray(2), rest, Buffer.alloc(20_000 - 1 - rest.length, 0x78)]);
+    const file = Buffer.concat([Buffer.from("pre", "utf8"), you.subarray(0, 2), window]);
+    fs.writeFileSync(path.join(jobsDir, "utf1", "out.log"), file);
+    const view = readJob(jobsDir, "utf1");
+    const baseline = file.subarray(file.length - 20_000).toString("utf8");
+    expect(view?.tail).toBe(baseline);
+    expect(view?.tail.startsWith("\uFFFD\n")).toBe(true);
+    expect(view?.lineStart).toBe(false);
+    expect(view?.truncated).toBe(true);
+    expect(view?.byteStart).toBe(file.length - 20_000);
+    expect(Buffer.byteLength(view?.tail ?? "")).not.toBe(20_000);
+    expect(view?.gaps).toEqual([{ at: 0, source: 1 }]);
+  });
+
+  it("reports the same replacement positions as toString, including a cut through a character", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    const check = (id: string, body: Buffer, gaps: { at: number; source: number }[]) => {
+      writeOut(jobsDir, dir, id, body);
+      const view = readJob(jobsDir, id);
+      if (!view) throw new Error(`missing ${id}`);
+      const window = body.subarray(Math.max(0, body.length - 20_000));
+      expect(view.tail).toBe(window.toString("utf8"));
+      expect(view.gaps).toEqual(gaps);
+      expect(view.gaps).toEqual(gapsMatchingUtf8(window));
+    };
+    check("lit", Buffer.from("\uFFFD".repeat(24)), []);
+    check("cont", Buffer.alloc(6, 0x80), [0, 1, 2, 3, 4, 5].map((at) => ({ at, source: 1 })));
+    check("broken", Buffer.from([0xe4, 0xbd, 0x41]), [{ at: 0, source: 2 }]);
+    check("eof2", Buffer.from([0xe4, 0xbd]), [{ at: 0, source: 2 }]);
+    check("eof4", Buffer.from([0xf0, 0x9f, 0x98]), []);
+    check("over2", Buffer.from([0xc0, 0x80, 0xc1, 0xbf]), [0, 1, 2, 3].map((at) => ({ at, source: 1 })));
+    check("over3", Buffer.from([0xe0, 0x80, 0x80]), [0, 1, 2].map((at) => ({ at, source: 1 })));
+    check("over4", Buffer.from([0xf0, 0x80, 0x80, 0x80]), [0, 1, 2, 3].map((at) => ({ at, source: 1 })));
+    check("surrogate", Buffer.from([0xed, 0xa0, 0x80]), [0, 1, 2].map((at) => ({ at, source: 1 })));
+    check("range", Buffer.from([0xf4, 0x90, 0x80, 0x80, 0xf5, 0xff]), [0, 1, 2, 3, 4, 5].map((at) => ({ at, source: 1 })));
+    const emoji = Buffer.concat([Buffer.from("😀"), Buffer.from([0x80])]);
+    check("emoji", emoji, [{ at: 2, source: 1 }]);
+    const endCut = Buffer.alloc(20_000, 0x61);
+    endCut[19_998] = 0xe4;
+    endCut[19_999] = 0xbd;
+    check("endcut", endCut, [{ at: 19_998, source: 2 }]);
+    const you = Buffer.from("你", "utf8");
+    const mid = Buffer.concat([you.subarray(0, 1), Buffer.concat([you.subarray(1), Buffer.alloc(19_998, 0x62)])]);
+    check("midcut", mid, [{ at: 0, source: 1 }, { at: 1, source: 1 }]);
+    check("seeded", bytesFromSeed(0x41740006, 180), gapsMatchingUtf8(bytesFromSeed(0x41740006, 180)));
+  });
+
+  it("scans a dense replacement tail in one pass", () => {
+    const jobsDir = path.join(dir, "web-jobs");
+    const literal = Buffer.from("\uFFFD".repeat(6666));
+    const hostile = Buffer.alloc(20_000, 0x80);
+    writeOut(jobsDir, dir, "dense", literal);
+    writeOut(jobsDir, dir, "bytes", hostile);
+    const started = performance.now();
+    const dense = readJob(jobsDir, "dense");
+    const bytes = readJob(jobsDir, "bytes");
+    const elapsed = performance.now() - started;
+    expect(dense?.tail).toBe("\uFFFD".repeat(6666));
+    expect(dense?.gaps).toEqual([]);
+    expect(bytes?.tail).toBe("\uFFFD".repeat(20_000));
+    expect(bytes?.gaps).toHaveLength(20_000);
+    expect(bytes?.gaps[0]).toEqual({ at: 0, source: 1 });
+    expect(bytes?.gaps[19_999]).toEqual({ at: 19_999, source: 1 });
+    expect(elapsed).toBeLessThan(200);
+  });
 });
+
+function writeOut(jobsDir: string, cwd: string, id: string, body: Buffer): void {
+  fs.mkdirSync(path.join(jobsDir, id), { recursive: true });
+  fs.writeFileSync(path.join(jobsDir, id, "job.json"), JSON.stringify({ id, command: "run", argv: [], cwd, started_at: "2026-11-10T00:00:00.000Z", pid: 0 }));
+  fs.writeFileSync(path.join(jobsDir, id, "out.log"), body);
+}
+
+/** Largest prefix whose `toString("utf8")` equals the text through each U+FFFD. The slow oracle the single pass must match. */
+function gapsMatchingUtf8(buf: Buffer): { at: number; source: number }[] {
+  const text = buf.toString("utf8");
+  const gaps: { at: number; source: number }[] = [];
+  let b = 0;
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i);
+    if (cp === undefined) break;
+    const width = cp > 0xffff ? 2 : 1;
+    if (cp === 0xfffd) {
+      const expectText = text.slice(0, i + width);
+      let best = 0;
+      for (let k = 1; b + k <= buf.length; k++) {
+        if (buf.subarray(0, b + k).toString("utf8") === expectText) best = k;
+        else if (best > 0) break;
+      }
+      if (best === 0) break;
+      if (best !== Buffer.byteLength(text.slice(i, i + width))) gaps.push({ at: i, source: best });
+      b += best;
+    } else b += Buffer.byteLength(text.slice(i, i + width));
+    i += width;
+  }
+  return gaps;
+}
+
+function bytesFromSeed(seed: number, len: number): Buffer {
+  const buf = Buffer.alloc(len);
+  let state = seed >>> 0;
+  for (let i = 0; i < len; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    buf[i] = state & 0xff;
+  }
+  return buf;
+}
