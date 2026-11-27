@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { writePolicy } from "../src/policy.js";
-import { collectAgentChanges, commitWorkspace, dirtyPaths, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, snapshotBase, snapshotHead } from "../src/worktree.js";
+import { agentGit, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, finishLeadBranch, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, snapshotBase, snapshotHead } from "../src/worktree.js";
 import { git, initGitRepo, makeConcurrent, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
 import type { RunState } from "../src/run-store.js";
 
@@ -315,5 +315,26 @@ describe("concurrent runs: base and lead workspace", () => {
       expect(recutLeadWorkspace(p, "run-1", "lead", lead, rb.head).recut).toBe(false);
       expect(fs.existsSync(lead.root)).toBe(true);
     });
+  });
+});
+
+describe("discardWorkspaceEdits", () => {
+  it("returns the worktree to the recorded commit and drops later commits and untracked files", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const p = env.project();
+    const ref = snapshotBase(p, "run-1", 1);
+    const ws = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
+    write(path.join(ws.dir, "kept.txt"), "kept\n");
+    commitWorkspace(ws, "kept");
+    const head = agentGit(ws, ["rev-parse", "HEAD"]);
+    write(path.join(ws.dir, "during.txt"), "during\n");
+    commitWorkspace(ws, "during");
+    write(path.join(ws.dir, "untracked.txt"), "loose\n");
+    discardWorkspaceEdits(ws, head);
+    expect(agentGit(ws, ["rev-parse", "HEAD"])).toBe(head);
+    expect(fs.existsSync(path.join(ws.dir, "during.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(ws.dir, "untracked.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(ws.dir, "kept.txt"), "utf8")).toBe("kept\n");
   });
 });

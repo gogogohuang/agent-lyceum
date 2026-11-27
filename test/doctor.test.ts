@@ -454,7 +454,7 @@ describe("diagnoseProject verify suggestion", () => {
   it("keeps the existing warn and no suggestion when verify is set", async () => {
     env = makeEnv();
     write(path.join(env.project().dir, "package.json"), JSON.stringify({ scripts: { test: "x" } }));
-    const project = { ...env.project(), verify: { max_rejections: 2, commands: [{ name: "t", run: "npm test", timeout_sec: 600 }] } };
+    const project = { ...env.project(), verify: { max_rejections: 2, bind_task: false, commands: [{ name: "t", run: "npm test", timeout_sec: 600 }] } };
     const { bin } = fakeBin(env.root);
     const checks = (await diagnoseProject(project, { env: envWith(bin, "full") })).checks.filter((c) => c.subject === "verify");
     expect(checks).toHaveLength(1);

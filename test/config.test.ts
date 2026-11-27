@@ -344,3 +344,46 @@ describe("dispatcher.max_instances (spec 23.4)", () => {
     }
   });
 });
+
+describe("verify.bind_task", () => {
+  it("keeps verify settings when bind_task is true and commands are empty", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => `${t}\nverify:\n  bind_task: true\n  commands: []\n`);
+    const project = env.project();
+    expect(project.verify?.bind_task).toBe(true);
+    expect(project.verify?.commands).toEqual([]);
+  });
+});
+
+describe("dispatcher.max_awake", () => {
+  const withKey = (v: string) => (t: string) => t.replace("dispatcher:\n", `dispatcher:\n  max_awake: ${v}\n`);
+
+  it("is optional: a project.yaml without it loads as before and doctor --resolved does not list it", () => {
+    env = makeEnv();
+    const r = resolveProjectWithSources(env.home, "demo");
+    expect(r.project.dispatcher).not.toHaveProperty("max_awake");
+    expect(Object.keys(r.sources).filter((k) => k.includes("max_awake"))).toEqual([]);
+    expect(Object.keys(flattenResolved(r.project)).filter((k) => k.includes("max_awake"))).toEqual([]);
+  });
+
+  it("accepts 8 and 16 and reports the key with its file when written", () => {
+    for (const v of ["8", "16"]) {
+      env = makeEnv();
+      env.editProjectYaml(withKey(v));
+      const r = resolveProjectWithSources(env.home, "demo");
+      expect(r.project.dispatcher.max_awake).toBe(Number(v));
+      expect(r.sources["dispatcher.max_awake"]).toEqual({ file: path.join(env.home, "projects/demo/project.yaml"), key: "dispatcher.max_awake" });
+      expect(flattenResolved(r.project)["dispatcher.max_awake"]).toBe(Number(v));
+      env.cleanup();
+    }
+  });
+
+  it("rejects 0 and 17, naming dispatcher.max_awake", () => {
+    for (const v of ["0", "17"]) {
+      env = makeEnv();
+      env.editProjectYaml(withKey(v));
+      expect(() => env.project(), v).toThrow(/dispatcher\.max_awake/);
+      env.cleanup();
+    }
+  });
+});

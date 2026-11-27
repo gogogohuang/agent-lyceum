@@ -6,7 +6,7 @@ import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
 import { tidyAdvice } from "./memory-tidy.js";
-import { listRecords, RECORD_KINDS } from "./records.js";
+import { lessonGuardFindings, listRecords, RECORD_KINDS } from "./records.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
 import { checkDecisions, listProposals, oldestPending, pendingProposals } from "./proposals.js";
 import { runInvocation } from "./process-runner.js";
@@ -220,16 +220,16 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     );
   }
 
-  if (project.verify) {
+  if (project.verify?.bind_task && project.verify.commands.length === 0) {
+    checks.push({ level: "error", subject: "verify", message: "verify.bind_task is true but verify.commands is empty, so a completed done cannot be bound to anything." });
+  } else if (project.verify && project.verify.commands.length > 0) {
     const cmds = project.verify.commands.map((c) => `${c.name}: ${c.run} (timeout ${c.timeout_sec}s)`).join("; ");
     checks.push({
       level: "warn",
       subject: "verify",
       message: `Before it accepts a lead's \`completed\` done, the dispatcher runs ${project.verify.commands.length} verify command(s), up to ${project.verify.max_rejections} rejection(s): ${cmds}. They run OUTSIDE the agents' sandbox with your permissions and execute code the agents wrote, in the lead's worktree, or directly in ${project.dir} when runs do not use worktrees. Only you can change them (project.yaml).`,
     });
-  }
-
-  else {
+  } else if (!project.verify) {
     const suggestion = suggestVerify(project.dir);
     if (suggestion) checks.push({ level: "info", subject: "verify", message: suggestion });
   }
@@ -258,6 +258,9 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
       if (r.invalid) checks.push({ level: "warn", subject: "records", message: `${r.file}: ${r.invalid}` });
       for (const s of r.supersedes) if (!ids.has(s)) checks.push({ level: "warn", subject: "records", message: `${r.file}: supersedes "${s}", but no ${kind} entry has that id.` });
     }
+  }
+  for (const f of lessonGuardFindings(listRecords(project, "lessons"), project.verify?.commands.length ?? 0)) {
+    checks.push({ level: f.level, subject: "records", message: f.message });
   }
 
   // Spec 30: proposals waiting for the lead, and decisions or files that are not in the right format.

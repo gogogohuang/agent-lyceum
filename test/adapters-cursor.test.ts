@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildInvocation } from "../src/adapters/index.js";
 import { buildCursorInvocation, classifyCursorError, writeCursorCliConfig } from "../src/adapters/cursor.js";
 import type { WakeInput } from "../src/adapters/types.js";
-import { outboxDir, writePolicy } from "../src/policy.js";
+import { outboxDir, readOnlyPolicy, repoDirFor, writePolicy } from "../src/policy.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -77,6 +77,18 @@ describe("cursor adapter", () => {
     const od = buildCursorInvocation(o).args;
     const odirs = od.flatMap((a, i) => (a === "--add-dir" ? [od[i + 1]!] : []));
     expect(odirs).toEqual(["/a/dir", "/a", "/b"]);
+  });
+
+  it("adds readDirs and keeps the repo out of --workspace when a policy is set", () => {
+    env = makeEnv();
+    const project = env.project();
+    const agent = project.agents["fe-member"]!;
+    const repo = repoDirFor(project, agent.name);
+    const inv = buildCursorInvocation(wake(env, "fe-member", { policy: readOnlyPolicy(project, agent) }));
+    const dirs = inv.args.flatMap((a, i) => (a === "--add-dir" ? [inv.args[i + 1]!] : []));
+    expect(dirs).toContain(repo);
+    const at = inv.args.indexOf("--workspace");
+    expect(inv.args[at + 1]).not.toBe(repo);
   });
 
   it("rejects a prompt too long for argv before creating anything", () => {

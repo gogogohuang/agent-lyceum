@@ -4,12 +4,13 @@ import path from "node:path";
 import YAML from "yaml";
 import type { ResolvedProject } from "./config.js";
 import { duplicateNoticeKey, shouldNotifyDuplicate } from "./duplicate-notices.js";
-import { formatWarning, missingSections, parseSteps, type Step } from "./format.js";
+import { acceptanceIssues, formatWarning, missingSections, parseSteps, sectionText, type Step } from "./format.js";
 import { atomicWrite, readRegularFileNoFollow } from "./fs-util.js";
 import { countFormatRejection, formatRejectionKey, formatRejections, MAX_FORMAT_REJECTIONS } from "./format-rejections.js";
 import { type InstanceCap, parallelFlag, roleOfName } from "./instances.js";
 import type { Tier } from "./schema.js";
 import { effectiveTier, tierFlag } from "./tiers.js";
+import { effectiveReadOnly, extraSections, playbookFlag, readOnlyFlag, type Playbook } from "./playbook.js";
 import { isVerdict, type Verdict } from "./attribution.js";
 import { deterministicId, fault, RouteJournal, sourceIdOf } from "./message-store.js";
 import { inboxDir, outboxDir, sharedDir } from "./policy.js";
@@ -35,6 +36,10 @@ export interface MessageMeta {
   run_id?: string;
   /** The lead-chosen difficulty tier, validated by the dispatcher at delivery (spec 24.5.3). Absent = the ceiling. */
   tier?: Tier;
+  /** The lead-chosen playbook of a task. Written only when it took effect. */
+  playbook?: Playbook;
+  /** The task runs read-only. Written only as `true`: an `investigate` playbook or an explicit `read_only: true`. */
+  read_only?: true;
 }
 
 export interface Message {
@@ -108,6 +113,10 @@ export interface DeliverInput {
   reply_to?: string;
   /** Written to the mail only when set (spec 24.5.3), so mail without it is unchanged. */
   tier?: Tier;
+  /** Written to the mail only when set; a task from the lead that named a valid playbook. */
+  playbook?: Playbook;
+  /** Written to the mail only as `true`. */
+  read_only?: true;
 }
 
 /** Deliver a message into `to`'s inbox (dispatcher-side; senders other than agents allowed). */
@@ -124,6 +133,8 @@ export function deliver(project: ResolvedProject, input: DeliverInput & { id?: s
     created: input.created ?? new Date().toISOString(),
     ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
     ...(input.tier ? { tier: input.tier } : {}),
+    ...(input.playbook ? { playbook: input.playbook } : {}),
+    ...(input.read_only ? { read_only: true as const } : {}),
   };
   const file = path.join(inboxDir(project, input.to), input.fileName ?? `${stamp()}-${input.from}-${id}.md`);
   atomicWrite(file, serialize(meta, input.body));
@@ -193,6 +204,8 @@ function deliveredMeta(project: ResolvedProject, input: DeliverInput, planned: {
     created: planned.created,
     ...(project.run?.layout === "run" ? { run_id: project.run.id } : {}),
     ...(input.tier ? { tier: input.tier } : {}),
+    ...(input.playbook ? { playbook: input.playbook } : {}),
+    ...(input.read_only ? { read_only: true as const } : {}),
   };
 }
 
@@ -252,7 +265,7 @@ export interface RouteResult {
   delivered: { from: string; to: string; id: string; file: string; type: MessageType; subject: string; /** A reply's `verdict:` (a review result). */ verdict?: Verdict }[];
   rejected: { from: string; file: string; reason: string }[];
   /** Mail that was delivered but lacks required sections (see format.ts). */
-  warnings: { from: string; id: string; subject: string; missing: string[] }[];
+  warnings: { from: string; id: string; subject: string; missing: string[]; /** `acceptanceIssues` sentences; kept apart from the heading names in `missing`. */ acceptance?: string[] }[];
   /** The lead's `done`. Its file stays in the outbox until the caller has stored the result and calls `finishDone`. */
   done?: { from: string; subject: string; body: string; file: string; meta: Record<string, unknown> };
   /** Questions for the user. Like `done`, the file stays in the outbox until the caller has stored the questions. */
@@ -261,6 +274,10 @@ export interface RouteResult {
   steps?: Step[];
   /** `tier` fields delivered without effect (spec 24.5.2); the caller logs `tier_ignored` and sends the notes. */
   tierIgnored: { from: string; id: string; to: string; subject: string; type: string; reason: "not-lead" | "not-a-task" | "no-tiers" }[];
+  /** `playbook` fields delivered without effect; same shape as `tierIgnored`. */
+  playbookIgnored: { from: string; id: string; to: string; subject: string; type: string; reason: "not-lead" | "not-a-task" }[];
+  /** `read_only` fields delivered without effect; same shape as `tierIgnored`. */
+  readOnlyIgnored: { from: string; id: string; to: string; subject: string; type: string; reason: "not-lead" | "not-a-task" }[];
 }
 
 /** Move a handled `done` file out of the outbox (to `read/`). */
@@ -288,7 +305,7 @@ function sameText(body: string): string {
  * An earlier mail from `from` to `to` with the same type, the same reply target and the same text (unread or already read):
  * sending it again changes nothing and is how two agents end up in a loop. Texts too short to mean anything are never duplicates.
  */
-function earlierDuplicate(project: ResolvedProject, from: string, to: string, type: string, replyTo: string | undefined, body: string, held = false, tier: Tier = "high"): Message | undefined {
+function earlierDuplicate(project: ResolvedProject, from: string, to: string, type: string, replyTo: string | undefined, body: string, held = false, tier: Tier = "high", playbook?: Playbook, readOnly = false): Message | undefined {
   const text = sameText(body);
   if (text.length < 20) return undefined;
   const dir = inboxDir(project, to);
@@ -301,7 +318,7 @@ function earlierDuplicate(project: ResolvedProject, from: string, to: string, ty
       if (!e.isFile() || !e.name.endsWith(".md") || e.name.startsWith(".")) continue;
       try {
         const m = readMessage(path.join(d, e.name));
-        if (m.meta.from === from && m.meta.type === type && (m.meta.reply_to ?? "") === (replyTo ?? "") && sameText(m.body) === text && effectiveTier(m.meta) === tier) return m;
+        if (m.meta.from === from && m.meta.type === type && (m.meta.reply_to ?? "") === (replyTo ?? "") && sameText(m.body) === text && effectiveTier(m.meta) === tier && m.meta.playbook === playbook && (m.meta.read_only === true) === readOnly) return m;
       } catch {
         /* an unreadable file is not a duplicate of anything */
       }
@@ -324,7 +341,7 @@ export interface InstanceRouting {
 
 /** Validate each agent's outbox and move accepted mail into recipients' inboxes. Safe to run again after a crash. */
 export function routeOutboxes(project: ResolvedProject, routing?: InstanceRouting): RouteResult {
-  const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [], tierIgnored: [] };
+  const res: RouteResult = { delivered: [], rejected: [], warnings: [], asks: [], tierIgnored: [], playbookIgnored: [], readOnlyIgnored: [] };
   const journal = project.run ? new RouteJournal(project.run.dir) : undefined;
   for (const sender of Object.values(project.agents)) {
     const dir = outboxDir(project, sender.name);
@@ -470,13 +487,41 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         return f === "low" || f === "mid" || f === "high" ? f : undefined;
       };
 
-      const missing = missingSections(type, parsed.body);
-      if (missing.length && project.run?.layout === "run") {
-        const key = formatRejectionKey(sender.name, type, subject);
-        if (formatRejections(project.run.dir, key) < MAX_FORMAT_REJECTIONS) {
-          const n = countFormatRejection(project.run.dir, key);
+      // `playbook` and `read_only` are the lead's, on a task. Only a value that took effect reaches the mail.
+      const pf = playbookFlag({ value: d.playbook, senderIsLead: sender.name === project.lead, type });
+      if (pf === "invalid") {
+        reject(`playbook must be investigate, fix, feature or refactor, not ${JSON.stringify(d.playbook)}. Write it on a new task, or leave the line out.`);
+        continue;
+      }
+      const rf = readOnlyFlag({ value: d.read_only, senderIsLead: sender.name === project.lead, type });
+      if (rf === "invalid") {
+        reject(`read_only must be true or false (YAML boolean), not ${JSON.stringify(d.read_only)}.`);
+        continue;
+      }
+      const playbook: Playbook | undefined = typeof pf === "string" && pf !== "absent" ? pf : undefined;
+      const readOnly = effectiveReadOnly(playbook, rf);
+
+      const baseMissing = missingSections(type, parsed.body);
+      const shapeMissing = extraSections(playbook).filter((s) => sectionText(parsed.body, s) === undefined);
+      const missing = [...baseMissing, ...shapeMissing];
+      const acceptance = type === "task" ? acceptanceIssues(parsed.body) : [];
+      if ((missing.length || acceptance.length) && project.run?.layout === "run") {
+        const base = formatRejectionKey(sender.name, type, subject);
+        const runDir = project.run.dir;
+        // Each reason has its own count; only a reason that is still under the cap holds the mail back (and uses up one try).
+        const reasons = [
+          { present: baseMissing.length > 0, key: base },
+          { present: shapeMissing.length > 0, key: `${base}:shape` },
+          { present: acceptance.length > 0, key: `${base}:acceptance` },
+        ].filter((r) => r.present);
+        if (reasons.some((r) => formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS)) {
+          const n = Math.max(...reasons.filter((r) => formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS).map((r) => countFormatRejection(runDir, r.key)));
+          const parts = [
+            ...(missing.length ? [`this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`] : []),
+            ...acceptance.map((s) => `${s}.`),
+          ];
           reject(
-            `this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}. Add them (write \`None\` where a section is empty) and send it again. (Attempt ${n} of ${MAX_FORMAT_REJECTIONS}; after that it is delivered with a warning.)`,
+            `${parts.join(" ")} Fix them and send it again (an empty section is written \`None\`, except \`## Acceptance criteria\`, which needs a \`command\`, a file name or a test name; \`None\` in backticks is rejected too). (Attempt ${n} of ${MAX_FORMAT_REJECTIONS}; after that it is delivered with a warning.)`,
           );
           continue;
         }
@@ -487,7 +532,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
       const repeats = new Map<string, Message>();
       for (const to of targets) {
         if (journal?.get(source, to)) continue;
-        const earlier = earlierDuplicate(project, sender.name, to, type, replyTo, parsed.body, !!routing?.held(roleOf(to)), tierOf(to) ?? "high");
+        const earlier = earlierDuplicate(project, sender.name, to, type, replyTo, parsed.body, !!routing?.held(roleOf(to)), tierOf(to) ?? "high", playbook, readOnly);
         if (earlier) repeats.set(to, earlier);
       }
       const repeatNote = (): string =>
@@ -518,7 +563,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           });
         res.rejected.push({ from: sender.name, file, reason: `duplicate: ${repeatNote()}` });
       }
-      const body = missing.length ? `${formatWarning(type, missing)}\n\n${parsed.body}` : parsed.body;
+      const body = missing.length || acceptance.length ? `${formatWarning(type, missing, acceptance)}\n\n${parsed.body}` : parsed.body;
       if (sender.name === project.lead) {
         const st = parseSteps(parsed.body);
         if (st.length) res.steps = st;
@@ -529,6 +574,8 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         const role = roleOf(to);
         const tf = tiers.get(to);
         if (typeof tf === "object" && !journal?.get(source, to)) res.tierIgnored.push({ from: sender.name, id: deterministicId(source, to), to, subject, type, reason: tf.ignored });
+        if (typeof pf === "object" && !journal?.get(source, to)) res.playbookIgnored.push({ from: sender.name, id: deterministicId(source, to), to, subject, type, reason: pf.ignored });
+        if (typeof rf === "object" && !journal?.get(source, to)) res.readOnlyIgnored.push({ from: sender.name, id: deterministicId(source, to), to, subject, type, reason: rf.ignored });
         if (typeof flag === "object" && !journal?.get(source, to)) routing?.ignored(flag.ignored, { from: sender.name, id: deterministicId(source, to), to, subject });
         // The first valid parallel task makes the role's instances durable before a single file of this mail exists.
         if (routing && flag === "on" && !routing.held(role)) routing.enable(role);
@@ -537,7 +584,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           project,
           journal,
           source,
-          { from: sender.name, to, type, subject, body, thread, reply_to: replyTo, ...(tierOf(to) ? { tier: tierOf(to) } : {}) },
+          { from: sender.name, to, type, subject, body, thread, reply_to: replyTo, ...(tierOf(to) ? { tier: tierOf(to) } : {}), ...(playbook ? { playbook } : {}), ...(readOnly ? { read_only: true as const } : {}) },
           {
             ...(held ? { held: true } : {}),
             ...(held && flag === "on" ? { parallel: true } : {}),
@@ -546,7 +593,7 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
         );
         if (!fresh) continue;
         res.delivered.push({ from: sender.name, to, id: msg.meta.id, file: msg.file, type, subject, ...(verdict ? { verdict } : {}) });
-        if (missing.length) res.warnings.push({ from: sender.name, id: msg.meta.id, subject, missing });
+        if (missing.length || acceptance.length) res.warnings.push({ from: sender.name, id: msg.meta.id, subject, missing, ...(acceptance.length ? { acceptance } : {}) });
       }
       fault("route:source-done");
       fs.mkdirSync(path.join(dir, "sent"), { recursive: true });

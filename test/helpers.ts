@@ -39,7 +39,7 @@ export const FULL_DONE = "## Result\nShipped.\n\n## Files\n- src/x.ts\n\n## Veri
 export const REPLY_BODY = "## Changes\nNone\n## Verification\nNone\n## Open items\nNone\n## Risks\nNone";
 
 /** A `task` body that carries every required heading. */
-export const TASK_BODY = "## Goal\nx\n## Acceptance criteria\nNone\n## Scope\nNone\n## Upstream\nNone";
+export const TASK_BODY = "## Goal\nx\n## Acceptance criteria\n- `npm test`\n## Scope\nNone\n## Upstream\nNone";
 
 /** `text` followed by the headings a `task` or `reply` must carry, so the mail is not sent back. */
 export function withSections(type: string, text: string): string {

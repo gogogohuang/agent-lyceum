@@ -15,7 +15,7 @@ body of first job
 ## Goal
 x
 ## Acceptance criteria
-None
+- `npm test`
 ## Scope
 None
 ## Upstream
@@ -38,7 +38,7 @@ body of retry job
 ## Goal
 x
 ## Acceptance criteria
-None
+- `npm test`
 ## Scope
 None
 ## Upstream

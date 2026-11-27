@@ -36,7 +36,7 @@ A lead's `done` mail must carry `outcome: completed|partial|blocked|failed` in i
 ### Zero-config concurrency
 
 - **Old keys:** `owns`, `dispatcher.max_parallel`, `dispatcher.max_concurrent_runs` and `dispatcher.workspace_mode` are removed, and so is `--ignore-limit`. Old keys still load but are ignored with a warning: `<file>: ignoring removed setting(s) <keys>. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.` Delete those lines.
-- **Git repo with a commit (default `files` ref storage):** every run works in its own worktree and ends on its own branch (`agent-lyceum/<run>/…`); members with pending mail wake in parallel, with no cap and never alongside the lead; any number of runs can be active. The result is not written into your working tree: use `git merge <branch>` or `open_pr`. The run starts from `HEAD` and does not see your uncommitted edits.
+- **Git repo with a commit (default `files` ref storage):** every run works in its own worktree and ends on its own branch (`agent-lyceum/<run>/…`); members with pending mail wake in parallel, at most `dispatcher.max_awake` in one round (default 8) and never alongside the lead; any number of runs can be active. The result is not written into your working tree: use `git merge <branch>` or `open_pr`. The run starts from `HEAD` and does not see your uncommitted edits.
 - **Non-git folder, repo with no commit, repo using reftable:** the run works directly in the folder, one agent at a time, with an info line instead of an error; only one such run can be active.
 - **Conflicts:** if two agents change the same file, the later one's change is refused, its branch is kept and the lead is told. Changes that do not fit together across different files are not detected.
 - **Before upgrading:** stop runs started by the old version.
@@ -105,7 +105,7 @@ lead 的 `done` 信 frontmatter 必須有 `outcome: completed|partial|blocked|fa
 ### 零設定並行
 
 - **舊鍵：** `owns`、`dispatcher.max_parallel`、`dispatcher.max_concurrent_runs`、`dispatcher.workspace_mode` 已移除，`--ignore-limit` 也已移除。舊鍵仍可載入，但會被忽略並警告：`<file>: ignoring removed setting(s) <keys>. Concurrency needs no configuration now: in a git repo with a commit every run and every agent gets its own worktree. Delete these lines.` 請刪掉這幾行。
-- **有 commit 的 git repo（預設 `files` ref 儲存）：** 每個 run 在自己的 worktree 工作，結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒、沒有上限、絕不與 lead 同時；同時可有任意多個 run。結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`。run 從 `HEAD` 起跑，看不到你未提交的修改。
+- **有 commit 的 git repo（預設 `files` ref 儲存）：** 每個 run 在自己的 worktree 工作，結束在自己的 branch（`agent-lyceum/<run>/…`）；有待處理信件的成員會平行喚醒、一輪最多 `dispatcher.max_awake` 人（預設 8）、絕不與 lead 同時；同時可有任意多個 run。結果不會寫進你的工作目錄，請用 `git merge <branch>` 或 `open_pr`。run 從 `HEAD` 起跑，看不到你未提交的修改。
 - **非 git 資料夾、沒有 commit 的 repo、使用 reftable 的 repo：** run 直接在該資料夾工作、一次一個 agent，並以一行 info 取代錯誤；同時只能有一個這樣的 run。
 - **衝突：** 兩個 agent 改了同一個檔案時，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。不同檔案之間彼此不相容的修改不會被偵測到。
 - **升級前：** 先停掉舊版的 run。

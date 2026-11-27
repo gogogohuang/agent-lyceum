@@ -197,6 +197,10 @@ export interface ClaimRecord {
   files: string[];
   status: ClaimStatus;
   created: string;
+  /** Set when the wake must not edit the repo. Absent on older claims, which are not read-only. */
+  read_only?: true;
+  /** The worktree's HEAD when the read-only wake started. Reset target if the wake edited anything. */
+  head?: string;
 }
 
 const claimFile = (runDir: string, id: string) => path.join(mailDir(runDir), "claims", `${id}.json`);
@@ -207,6 +211,30 @@ function saveClaim(runDir: string, c: ClaimRecord): void {
 
 export function loadClaim(runDir: string, id: string): ClaimRecord {
   return JSON.parse(fs.readFileSync(claimFile(runDir, id), "utf8")) as ClaimRecord;
+}
+
+/** Mark a claim read-only. `head` is the worktree sha to return to; shared mode has none. */
+export function setClaimReadOnly(runDir: string, claimId: string, head?: string): void {
+  const c = loadClaim(runDir, claimId);
+  saveClaim(runDir, { ...c, read_only: true, ...(head ? { head } : {}) });
+}
+
+/** The latest other claim for `agent`, read from disk. The in-memory map only holds the claim being woken. */
+export function previousClaim(runDir: string, agent: string, exceptId: string): ClaimRecord | undefined {
+  const dir = path.join(mailDir(runDir), "claims");
+  if (!fs.existsSync(dir)) return undefined;
+  let best: ClaimRecord | undefined;
+  for (const name of fs.readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+    let c: ClaimRecord;
+    try {
+      c = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as ClaimRecord;
+    } catch {
+      continue;
+    }
+    if (c.agent !== agent || c.id === exceptId) continue;
+    if (!best || c.created > best.created) best = c;
+  }
+  return best;
 }
 
 /** Record that `agent` is about to handle these messages. They stay unread until `commitClaim`. */

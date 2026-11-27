@@ -92,7 +92,7 @@ describe("dispatcher", () => {
       const send = (to: string, type: string, subject: string, body: string) =>
         write(path.join(out, `${Math.random()}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${body}\n`);
       if (i.agent.name === "lead" && !i.userPrompt.includes("from: fe-member"))
-        send("fe-member", "task", "implement login", `## Goal\nBuild the login form\n\n## Acceptance criteria\nNone\n\n## Scope\nNone\n\n## Upstream\nNone\n\n## Steps\n- [x] design\n- [ ] build\n`);
+        send("fe-member", "task", "implement login", `## Goal\nBuild the login form\n\n## Acceptance criteria\n- \`npm test\`\n\n## Scope\nNone\n\n## Upstream\nNone\n\n## Steps\n- [x] design\n- [ ] build\n`);
       else if (i.agent.name === "fe-member") send("lead", "reply", "login implemented", "## Changes\n- added login.ts\n\n## Verification\nNone\n\n## Open items\nNone\n\n## Risks\nNone\n");
       else send("lead", "done", "all good", `${FULL_DONE}\n## Steps\n- [x] design\n- [x] build\n`);
       return OK;
@@ -100,7 +100,7 @@ describe("dispatcher", () => {
     const state = JSON.parse(fs.readFileSync(path.join(s.runDir, "state.json"), "utf8"));
     expect(state.wakes[0].sent).toEqual([{ to: "fe-member", type: "task", subject: "implement login" }]);
     expect(state.wakes[1].handling[0].brief).toBe("Build the login form");
-    expect(state.wakes[1].handling[0].digest).toEqual([{ label: "目標", lines: ["Build the login form"] }]);
+    expect(state.wakes[1].handling[0].digest).toEqual([{ label: "目標", lines: ["Build the login form"] }, { label: "驗收", lines: ["npm test"] }]);
     expect(state.wakes[1].sent[0].to).toBe("lead");
     expect(state.wakes[2].handling[0].brief).toBe("added login.ts");
     expect(state.wakes[2].handling[0].digest).toEqual([{ label: "變更", lines: ["added login.ts"] }]);

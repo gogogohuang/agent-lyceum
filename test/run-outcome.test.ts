@@ -25,6 +25,12 @@ describe("resolveDoneOutcome", () => {
     expect(r.note).toBe("Not completed: work of fe (branch agent-lyceum/r/fe), qa (branch agent-lyceum/r/qa) was never brought into the repo; see /r/fe.md, /r/qa.md.");
   });
 
+  it("a spent gate downgrades completed to partial", () => {
+    const r = resolveDoneOutcome({ outcome: "completed", missing: [], warnings: [] }, 2, [], undefined, { note: "No cross-runtime pass." });
+    expect(r.outcome).toBe("partial");
+    expect(r.note).toContain("No cross-runtime pass.");
+  });
+
   it("keeps partial and blocked reports as they are, even with unintegrated work", () => {
     expect(resolveDoneOutcome({ outcome: "partial", missing: [] }, 0, [{ agent: "fe", branch: "b", report: "r" }]).outcome).toBe("partial");
     expect(resolveDoneOutcome({ outcome: "blocked", missing: [] }, 0, []).outcome).toBe("blocked");

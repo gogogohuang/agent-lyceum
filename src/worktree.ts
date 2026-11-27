@@ -198,6 +198,19 @@ const gitlinks = (out: string): string[] =>
     .filter((e) => e.startsWith("160000 "))
     .map((e) => e.slice(e.indexOf("\t") + 1));
 
+/** True when the worktree has any uncommitted or untracked path. Uses pinned git, never `dirtyPaths`. */
+export function workspaceDirty(ws: AgentWorkspace): boolean {
+  assertNoNestedRepos(ws);
+  return agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"]) !== "";
+}
+
+/** Put the worktree back at `head` (the sha recorded on the claim) and drop untracked files. Never call this on `project.dir`. */
+export function discardWorkspaceEdits(ws: AgentWorkspace, head: string): void {
+  assertNoNestedRepos(ws);
+  agentGit(ws, ["reset", "--hard", head]);
+  agentGit(ws, ["clean", "-fd"]);
+}
+
 /**
  * Refuse a worktree that holds a git repository of its own. `status`, `add -A` and `commit` can visit a nested repository and run
  * git there with that repository's config — which the agent wrote. Run before any command that walks the working tree.

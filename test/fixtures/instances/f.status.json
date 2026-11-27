@@ -114,6 +114,12 @@
                 "lines": [
                   "x"
                 ]
+              },
+              {
+                "label": "驗收",
+                "lines": [
+                  "npm test"
+                ]
               }
             ]
           }
@@ -187,6 +193,12 @@
                 "label": "目標",
                 "lines": [
                   "x"
+                ]
+              },
+              {
+                "label": "驗收",
+                "lines": [
+                  "npm test"
                 ]
               }
             ]

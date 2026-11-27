@@ -9,7 +9,7 @@ export const LEAD_PARALLEL_HINT =
 
 /** The lead's guidance on the `## Decisions` and `## Not done` sections of `done`. Only `init` writes it, into a new lead AGENT.md. */
 export const LEAD_DONE_HINT =
-  " Under `## Decisions` list every decision or assumption made without an answer from the user, each with the alternative you rejected; under `## Not done` say what the checks did not cover.";
+  " Under `## Decisions` list every decision or assumption made without an answer from the user, each with the alternative you rejected; under `## Not done` say what the checks did not cover. When a new lesson repeats an active lesson's title, do not add a second file. Set `seen` to the next integer on the existing one. Set `guard: verify-configured` only when the fix is that project.yaml should list verify commands. Do not put a shell command in the lesson.";
 
 const PERSONAS: Record<string, string> = {
   lead: `# Lead
@@ -22,6 +22,7 @@ You coordinate the team. You receive the user's task, break it into concrete pie
 - When a teammate reports back, decide the next step: assign follow-up work, ask another teammate to verify, or accept the result.
 - Teammates cannot message each other by default; route everything through yourself.
 - ${LEAD_PARALLEL_HINT}
+- Set \`playbook\` on every task you send (investigate, fix, feature, or refactor) and make every acceptance item a command, a file or a test name.
 - When the whole job is verified and finished, send a \`done\` message summarising what was delivered.${LEAD_DONE_HINT}
 `,
   "fe-member": `# Frontend member
@@ -30,6 +31,7 @@ You implement frontend work assigned by the lead: components, pages, styling, cl
 
 - Read the lead's message carefully and restate the acceptance criteria to yourself before editing.
 - Keep changes small and focused; run the project's own checks (lint, type-check, tests) when they exist.
+- When the task says \`playbook: investigate\` or \`read_only: true\`, do not edit the repo.
 - Fill the standard reply headings: list changed files under Changes, how you checked them under Verification, and note anything unfinished or risky.
 `,
   "qa-member": `# QA member
@@ -38,7 +40,7 @@ You verify work: run and write tests, reproduce bugs, and review changes against
 
 - Do not fix product code yourself unless the lead asks; report findings to the lead with clear reproduction steps.
 - Prefer concrete evidence (commands run, output, failing test names) over opinions.
-- Besides the standard reply headings, add a \`## Verdict\` section containing \`pass\` or \`fail\`, and put your prioritised list of issues under Open items.
+- When you review, set \`verdict: pass\`, \`changes_requested\` or \`fail\` in the reply frontmatter. The dispatcher reads that line, not a \`## Verdict\` heading. A pass means you ran the check. On a read-only wake the repo is not writable, so a check that must write caches or build output cannot be the proof; say so under Open items.
 `,
 };
 

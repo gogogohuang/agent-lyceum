@@ -18,8 +18,12 @@ export function missingSections(type: MessageType, body: string): string[] {
   return required.filter((s) => !headings.has(s.toLowerCase()));
 }
 
-export function formatWarning(type: MessageType, missing: string[]): string {
-  return `[agent-lyceum] Format warning: this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`;
+/** `missing` names headings only; `acceptance` carries `acceptanceIssues` sentences, which follow the heading list on their own. */
+export function formatWarning(type: MessageType, missing: string[], acceptance: string[] = []): string {
+  const parts: string[] = [];
+  if (missing.length) parts.push(`this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`);
+  for (const s of acceptance) parts.push(`${s}.`);
+  return `[agent-lyceum] Format warning: ${parts.join(" ")}`;
 }
 
 export interface Step {
@@ -83,6 +87,30 @@ export function sectionText(body: string, name: string): string | undefined {
   const start = head.index! + head[0].length;
   const end = heads[i + 1]?.index ?? body.length;
   return body.slice(start, end).trim();
+}
+
+const ACCEPTANCE_PLACEHOLDERS = new Set(["none", "as stated", "as stated in the goal", "同上", "如目標", "待補", "tbd", "todo"]);
+
+function isPlaceholder(item: string): boolean {
+  const t = item
+    .replace(/^(?:[-*]|\d+\.)[ \t]+/, "")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return ACCEPTANCE_PLACEHOLDERS.has(t);
+}
+
+/** Problems with `## Acceptance criteria`: no item names a `command`, a file or a test. No such heading gives [] (`missingSections` owns that). */
+export function acceptanceIssues(body: string): string[] {
+  const text = sectionText(body, "Acceptance criteria");
+  if (text === undefined) return [];
+  const items = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  const checkable = items.filter((l) => !isPlaceholder(l) && (/`[^`]+`/.test(l) || /\S+\.[A-Za-z0-9]+/.test(l)));
+  return checkable.length ? [] : ["Acceptance criteria has no checkable item (a `command`, a file or a test name)"];
 }
 
 /** Outcomes a lead may declare in `done`; `cancelled` is only ever the dispatcher's. */

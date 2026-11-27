@@ -16,7 +16,7 @@ const CANCELLED: WakeResult = { ok: false, text: "", exitCode: null, timedOut: f
 const mail = (project: Parameters<typeof outboxDir>[0], from: string, to: string, type: string, subject: string) =>
   write(
     path.join(outboxDir(project, from), `${subject.replace(/\W+/g, "-")}.md`),
-    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : "## Goal\nx\n\n## Acceptance criteria\nx\n\n## Scope\nx\n\n## Upstream\nNone\n"}\n`,
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : "## Goal\nx\n\n## Acceptance criteria\n- \`npm test\`\n\n## Scope\nx\n\n## Upstream\nNone\n"}\n`,
   );
 
 function setup() {

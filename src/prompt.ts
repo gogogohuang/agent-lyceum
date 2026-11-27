@@ -37,13 +37,25 @@ function memoryBlock(agent: ResolvedAgent, dir: string): string[] {
   return out;
 }
 
+/** How the lead labels a task, and how a member reads that label. Placed before the message-format rules, and therefore before the lead's wake-economy rules. */
+export const PLAYBOOK_SECTION = [
+  "## Playbooks",
+  "On a new task you send, set `playbook` to one of: investigate, fix, feature, refactor. Leave it out only when none of these fits.",
+  "- `investigate`: read only. Do not change product code. The dispatcher runs that wake without a writable repo. The reply puts the answer under Open items and `None` under Changes.",
+  "- `fix`: the acceptance criteria names the check that fails before the fix and passes after.",
+  "- `feature`: add a `## Shape` heading that names the data type or module boundary before any edit.",
+  "- `refactor`: behavior stays the same. The acceptance criteria names the check that already passes and must still pass.",
+  "`playbook: investigate` is read-only even without `read_only: true`. You may also set `read_only: true` on a task that must not edit the repo. A teammate cannot set either field.",
+  "A review task, including asking QA to check someone else's work, is `read_only: true`. In a shared-folder run that is what keeps the reviewer from being treated as an author.",
+] as const;
+
 /** Lead-only rules that keep the number of wake-ups down; placed after the progress-tracking block. */
 export const WAKE_ECONOMY_SECTION = [
   "## Keeping wake-ups few",
   "Every wake-up re-reads your whole context (prompt, memory, mail), so the number of wake-ups, yours and your teammates', is the main cost of a run.",
   "- Send all work that is independent of each other in the same wake-up (for example the implementation and the matching docs), each task naming its reviewer, instead of one task per wake-up.",
   "- When a reply arrives while other work you sent is still out and the reply needs nothing from you yet, send no mail: note it in your task memory and end the wake-up. Decide the next step once, when the rest is back; replies waiting together are handed to you in one wake-up.",
-  "- Skip the QA layer (the verification role and its reviewer) for a small fix: a change of a few lines that has a reproduction test which failed before and passes after, and an approving code review. Send QA for large changes, changes across modules, and changes to user-visible behaviour.",
+  "- When a teammate uses a different runtime from the people who wrote the change, a `completed` done is sent back until one of those teammates has replied with `verdict: pass` in this segment. Your own pass does not count. A review task is `read_only: true`. A small fix still needs that reply when such a teammate exists. When every teammate shares your runtime, no such reply is required. If every teammate on another runtime also wrote code, nobody can give that pass, and a `completed` done still comes back. If you are the only one on another runtime, your own pass still does not count, and a `completed` done still comes back.",
   "- Use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before you send `done`. In other rounds prefer teammates on cheaper models; read-only search work suits the cheapest one.",
 ];
 
@@ -349,8 +361,10 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       : "Each wake-up handles one message, except that consecutive `reply`/`failure` messages on the same thread may be handed to you together: handle them together. Do the work it asks, then send the replies that are needed, then stop.",
     "Mail that repeats an earlier mail of yours to the same agent (same type, same text) is not sent again; you are told, and should wait for the answer or ask for something different instead of resending.",
     "",
+    ...PLAYBOOK_SECTION,
+    "",
     "## Message format",
-    "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
+    "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say, except `## Acceptance criteria`: that section needs a `command` in backticks, a file name or a test name, and writing `None` is sent back).",
     "A `task` or `reply` missing a heading is sent back to you (at most twice per sender + type + subject); after that it is delivered with a warning flagged to the recipient.",
     "",
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,

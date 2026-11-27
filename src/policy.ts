@@ -255,6 +255,28 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   };
 }
 
+/**
+ * A read-only wake. `invokeWithSandboxChecks` skips `sandboxRefusal` when `input.policy` is set, so this must not
+ * copy `sandbox.write` (nor the git dir, records, proposals, or `can_edit_agent_md` files) into the writable set.
+ * The repo stays readable via `readDirs`.
+ */
+export function readOnlyPolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
+  const normal = writePolicy(project, agent);
+  const ownDir = projectAgentDir(project, agent.name);
+  const grantOwnDir = ownAgentDirAllowed(project, agent);
+  const allowDirs = [
+    ...memoryDirs(agent),
+    ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
+    ...(grantOwnDir ? [ownDir] : []),
+  ];
+  return {
+    allowDirs,
+    allowFiles: [],
+    readDirs: [...new Set([repoDirFor(project, agent.name), ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d))])],
+    deny: normal.deny,
+  };
+}
+
 let sandboxProbe: boolean | undefined;
 export function osSandboxAvailable(): boolean {
   if (sandboxProbe !== undefined) return sandboxProbe;

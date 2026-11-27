@@ -16,9 +16,7 @@ import { FULL_DONE, git, initGitRepo, makeEnv, withSections, write, type TestEnv
 
 vi.setConfig({ testTimeout: 30_000 }); // real git runs; the default 5 s is too tight under a loaded full suite
 
-// Spec 23.15 / decision 6: a run in which the lead never sets `parallel` must produce the same bytes as before the feature.
-// The fixtures under test/fixtures/instances were generated at HEAD (before any feature code) and must keep passing unchanged;
-// the lead's system prompt is the one file that spec 23.12 (D-13) allows to gain a fixed suffix.
+// Fixtures under test/fixtures/instances are regenerated when the playbook text or the checkable acceptance line changes.
 // Regenerate only on purpose: `UPDATE_INSTANCES_FIXTURES=1 npx vitest run test/instances-compat.test.ts`.
 
 const FIXTURES = path.join(__dirname, "fixtures", "instances");
@@ -174,6 +172,12 @@ function checkAll(out: Record<string, string>, opts: { skipLeadPrompt?: boolean;
     if (opts.skipLeadPrompt && LEAD_PROMPT.test(name)) continue;
     // T-C2-1: in worktree mode with the default limit, the lead's wake-up prompt is the HEAD prompt plus the parallel section, nothing else.
     if (opts.leadSuffix && /\.wake\.lead-\d+\.system\.txt$/.test(name)) {
+      const suffix = `\n\n${PARALLEL_SECTION(4)}`;
+      if (process.env.UPDATE_INSTANCES_FIXTURES) {
+        expect(text.endsWith(suffix), `${name} should end with the parallel section before it is stored`).toBe(true);
+        if (text.endsWith(suffix)) fixture(name, text.slice(0, -suffix.length));
+        continue;
+      }
       expect(fs.existsSync(path.join(FIXTURES, name)), `missing fixture ${name}`).toBe(true);
       expect(text, name).toBe(`${fs.readFileSync(path.join(FIXTURES, name), "utf8")}\n\n${PARALLEL_SECTION(4)}`);
       continue;
