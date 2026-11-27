@@ -197,7 +197,10 @@ describe("planWorkspace", () => {
 
     describe("the ssh command of a fetch", () => {
       const saved = { ssh: process.env.GIT_SSH_COMMAND, global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM };
-      const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+      const restore = (k: string, v: string | undefined): void => {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      };
       afterEach(() => {
         restore("GIT_SSH_COMMAND", saved.ssh);
         restore("GIT_CONFIG_GLOBAL", saved.global);
@@ -205,7 +208,10 @@ describe("planWorkspace", () => {
       });
       const fetchEnv = (): NodeJS.ProcessEnv => {
         let seen: NodeJS.ProcessEnv = {};
-        resolveRemoteBase(env.repo, (_cwd, _args, e) => ((seen = e), { ok: false }));
+        resolveRemoteBase(env.repo, (_cwd, _args, e) => {
+          seen = e;
+          return { ok: false };
+        });
         return seen;
       };
       const repoWithOrigin = () => {
