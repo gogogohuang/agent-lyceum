@@ -73,6 +73,10 @@ export interface OpenPrInput {
   run: CommandRunner;
   /** The run already has a pull request for this branch: while it is still open only the branch is pushed; otherwise (merged, closed) a new one is opened. */
   existingUrl?: string;
+  /** The branch the pull request targets. Without it the repo's default branch is looked up. */
+  base?: string;
+  /** Git arguments that go in front of `push` (the pins that keep git from running anything an agent planted). */
+  pinnedGit?: string[];
 }
 
 const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() ?? "no output";
@@ -80,18 +84,27 @@ const firstLine = (s: string) => s.split(/\r?\n/).find((l) => l.trim())?.trim() 
 /** POSIX single-quote: safe to paste into a shell whatever the string holds. */
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** Push the branch and open a pull request against the default branch. Never throws; says how to finish by hand when a step fails. */
+/** The commands that finish the job by hand. `base` is left out when it is not known, so gh picks the repo's default branch. */
+export function manualPrCommands(i: { cwd: string; branch: string; base?: string; title: string; bodyFile: string }): string[] {
+  return [
+    `git -C ${sh(i.cwd)} push -u origin ${sh(i.branch)}`,
+    `gh pr create --head ${sh(i.branch)}${i.base ? ` --base ${sh(i.base)}` : ""} --title ${sh(i.title)} --body-file ${sh(path.resolve(i.bodyFile))}`,
+  ];
+}
+
+/** Push the branch and open a pull request against `base` (the default branch when none is given). Never throws; says how to finish by hand when a step fails. */
 export function openPullRequest(i: OpenPrInput): OpenPrResult {
+  const pushArgs = [...(i.pinnedGit ?? []), "push", "-u", "origin", i.branch];
   if (i.existingUrl) {
     // A squash merge leaves the branch looking unmerged, so ask GitHub. When the lookup itself fails, assume the PR is still open.
     const view = i.run("gh", ["pr", "view", i.existingUrl, "--json", "state", "-q", ".state"], i.cwd);
     if (!view.ok || view.out.trim() === "OPEN") {
-      const push = i.run("git", ["push", "-u", "origin", i.branch], i.cwd);
+      const push = i.run("git", pushArgs, i.cwd);
       if (push.ok) return { status: "opened", url: i.existingUrl, updated: true };
       return { status: "failed", step: "push", reason: firstLine(push.out), manual: [`git -C ${sh(i.cwd)} push -u origin ${sh(i.branch)}`] };
     }
   }
-  const base = defaultBase(i.cwd, i.run);
+  const base = i.base ?? defaultBase(i.cwd, i.run);
   try {
     atomicWrite(i.bodyFile, i.body);
   } catch (e) {
@@ -101,7 +114,7 @@ export function openPullRequest(i: OpenPrInput): OpenPrResult {
   const manualPush = `git -C ${sh(i.cwd)} push -u origin ${sh(i.branch)}`;
   const manualCreate = `gh pr create --head ${sh(i.branch)} --base ${sh(base)} --title ${sh(i.title)} --body-file ${sh(path.resolve(i.bodyFile))}`;
 
-  const push = i.run("git", ["push", "-u", "origin", i.branch], i.cwd);
+  const push = i.run("git", pushArgs, i.cwd);
   if (!push.ok) return { status: "failed", step: "push", reason: firstLine(push.out), manual: [manualPush, manualCreate] };
 
   const created = i.run("gh", createArgs, i.cwd);

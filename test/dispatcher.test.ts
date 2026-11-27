@@ -6,10 +6,10 @@ import type { Invoker, WakeInput, WakeResult } from "../src/adapters/index.js";
 import { runTeam, type RunSummary } from "../src/dispatcher.js";
 import { MAX_KEEP_BYTES, ProtectedGuard } from "../src/guard.js";
 import { acquireProjectLock } from "../src/project-lock.js";
-import { bindRunProject } from "../src/run-store.js";
+import { bindRunProject, loadRunState } from "../src/run-store.js";
 import { inboxDir, outboxDir } from "../src/policy.js";
 import { prepareTask, readTaskFile, TASK_FILE_MAX, TASK_INLINE_MAX } from "../src/task.js";
-import { FULL_DONE, withSections, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, withSections, git, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -604,3 +604,27 @@ describe("a team of two", () => {
   });
 });
 
+
+describe("a new run offered the project checkout", () => {
+  const done: Invoker = async (i) => {
+    mail(i, "lead", "all good", "done");
+    return OK;
+  };
+  function withRemoteBase(): void {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const remote = path.join(env.root, "remote.git");
+    git(env.root, "init", "-q", "--bare", remote);
+    git(env.repo, "remote", "add", "origin", remote);
+    git(env.repo, "push", "-q", "origin", "main");
+    git(env.repo, "fetch", "-q", "origin");
+    git(env.repo, "remote", "set-head", "origin", "main");
+  }
+
+  it("gets its own worktree when it was not handed a plan", async () => {
+    withRemoteBase();
+    const s = await run(done);
+    expect(s.endReason).toBe("done");
+    expect(loadRunState(s.runDir).lead_workspace).toBe(true);
+  });
+});

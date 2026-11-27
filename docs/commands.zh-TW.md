@@ -47,7 +47,7 @@
 - `--assume-defaults` 沒有作用；
 - 名字不是專案成員時會拒絕並列出成員；名字只存在於 global 資料庫時，會提示改用 [call](#call)。
 
-在有 commit 的 git repo 裡，run（包括單獨的 `--agent`）從 `HEAD` 起跑、在自己的 worktree 工作，結束時留下一個待合併的 branch（`git merge <branch>` 或 `open_pr`）；其他情況直接在該資料夾工作、一次一個 agent。見 [一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
+在有 commit 的 git repo 裡，run（包括單獨的 `--agent`）預設從 remote 的預設分支開出 `agent-lyceum/<run-id>/<lead>`，你留在專案資料夾。目錄不乾淨、`HEAD` 不是那個分支的 commit、`HEAD` 已在 `agent-lyceum/*`，或已有 checkout run 佔著資料夾時，lead 改走 worktree，基準仍是那顆 commit；沒有 remote 基準則從你本地的 `HEAD` 開 worktree。run 結束後 `HEAD` 留在任務分支，`resume` 時你必須還在 `task_branch` 上。run 結束時留下一個待合併的 branch（`git merge <branch>` 或 `open_pr`）。兩個專案共用一個 repo 沒有跨專案鎖。其他情況直接在該資料夾工作、一次一個 agent。見 [一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task) 的「同時執行多個 task」。
 
 如果 lead 的 done 要求開 PR（`open_pr: true`），且 run 在自己的 branch 上完成，run 會開 PR；見 [一次執行如何運作](how-it-works.zh-TW.md#開-pr) 的「開 PR」。
 
@@ -90,6 +90,7 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 - 沒指定 run 時，候選是已完成的 run，由新到舊：剛好一個就用它，沒有就報錯，有多個就列出（在終端機會出現編號選單，可輸入編號或名稱；非互動環境則報錯並列出候選）。
 - 只有一個參數時，只有在它不可能是 run 參照（含空白，或含 run 名稱不能用的字元）才會被當成追加要求；否則找不到的單一參數就是「找不到 run」。單一個詞的追加要求要寫成 `resume <run> "<text>"` 或用 `--task-file`。
 - 追加要求存成 `runs/<run-id>/followups/<n>.md`；每份 `done` 報告保留為 `done-<n>.md`，`result.md` 是最新一份。輪數上限從重開時起算（`rounds` 持續累加；上限是重開當下的輪數加 `max_rounds`）。每段重開的 done 規範提醒重新計算；未解決的 blocked integration 會保留。
+- 在專案資料夾、於任務分支上工作的 run，只有在你仍在 `task_branch` 上時才能接續或重開；否則 `resume` 會拒絕，也不會替你切換。
 - lead 有 worktree 時：若 lead 的 branch 已合併進你的 `HEAD`，且 worktree 乾淨、自 run 結束後沒被動過，worktree 與 branch（同名）會從目前的 `HEAD` 重新切出並印一行說明；否則沿用原本的。已記錄 PR 且沒有重切時，新的 `open_pr: true` 只會 push（「pull request updated」），而且只在該 PR 仍開啟時（若已被合併，含 squash merge，或已關閉，就改開新的）；重切後，已記錄的 `pr_url` 會被清掉（留在 run 的 notes），要求時再開新的 PR。agent-lyceum 從不合併。
 
 見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
@@ -170,6 +171,8 @@ agent 設有 `fallback` 備援鏈（見[備援模型](configuration.zh-TW.md#備
 **從舊版升級：** 在 Linux 上，鎖現在以 `proc:<ticks>`（讀自 `/proc`）記錄持有者的啟動時間，舊版寫的是 `ps` 的文字，兩者無法比對，所以舊版寫下的鎖只用 pid 判斷：若該 pid 後來被不相干的程序重用，過期的鎖不會自動回收，需要 `clear --lock --force`。舊版的專案層級 `lock.json` 仍然有效：其程序還活著時，算作一個執行中的 run。
 
 併發 run 的 lead branch 在合併進 `HEAD` 之前，視為不在 repo 裡的成果。
+
+在專案資料夾工作過的 run：`HEAD` 正停在任務分支時 `clear` 會拒絕（不會替你切換；先切到別的 branch 再 clear）。任務分支的尖端還沒進目前的 `HEAD` 時不刪該 branch，會保留並說明原因。
 
 ## doctor
 

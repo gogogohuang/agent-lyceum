@@ -13,8 +13,8 @@ import { reviewProposals } from "./proposals-review.js";
 import { RESULT_FILE, runTeam, type RunSummary } from "./dispatcher.js";
 import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes, runtimesUsed } from "./doctor.js";
-import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
-import { planWorkspace } from "./worktree.js";
+import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockForPlan, lockHolderAlive, type ProjectLease } from "./project-lock.js";
+import { assertCheckoutResumable, borrowsCheckout, checkoutBlockedNow, currentCheckoutRef, planWorkspace, type WorkspacePlan } from "./worktree.js";
 import { loadRunState, newRunId, outcomeOf, pickRunName, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { printRun } from "./run-print.js";
 import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
@@ -162,6 +162,23 @@ function takeLock(pr: ResolvedProject, runId: string, opts: { checkout?: boolean
   }
 }
 
+/** Lock for a new run. One that means to borrow the project checkout falls back to a worktree when the checkout is busy or no longer fit; the reason goes to stderr. */
+function takeNewRunLock(pr: ResolvedProject, runId: string, intended: WorkspacePlan): { lease: ProjectLease; plan: WorkspacePlan } {
+  if (!borrowsCheckout(intended)) return { lease: takeLock(pr, runId, { checkout: !intended.leadWorktree, reason: intended.reason }), plan: intended };
+  try {
+    const r = lockForPlan(
+      intended,
+      (checkout) => acquireProjectLock(pr.paths.root, runId, { checkout, dir: pr.dir, reason: "it borrows the project checkout" }),
+      () => checkoutBlockedNow(pr.dir, intended) === undefined,
+      () => checkoutBlockedNow(pr.dir, intended) ?? "it is in use by another run", // goes on the plan; the session logs it once its state exists
+    );
+    if (r.plan.lockFallback !== undefined) console.error(`The project checkout cannot be borrowed (${r.plan.lockFallback}); this run works in its own worktree.`);
+    return r;
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+}
+
 /**
  * Ctrl-C (or SIGTERM) stops the run cleanly: the first signal cancels it (agents are killed, unread mail is kept,
  * the lock is released, exit code 130); a second one quits at once.
@@ -222,6 +239,8 @@ async function continueRun(pr: ResolvedProject, dir: string, runId: string, foll
     if (state.lead_workspace !== planned.lead_workspace || state.workspace_mode !== planned.workspace_mode) {
       throw new Error(`Run ${runId} changed while it was starting (where it works was ${planned.lead_workspace ? "its own worktree" : planned.workspace_mode ?? "unset"}, now ${state.lead_workspace ? "its own worktree" : state.workspace_mode ?? "unset"}); try again.`);
     }
+    // Under the lock, so the starter that may still hold it is never raced: an unsent start is taken back here, a started run must still be on its branch.
+    if (state.workspace_mode === "checkout") assertCheckoutResumable(pr.dir, dir, state);
     console.log(`Project ${pr.name} — repo ${pr.dir}`);
     if (followup) console.log(`Reopening run ${runLabel(state)} (follow-up ${(state.reopened?.length ?? 0) + 1}): ${firstLine(followup.text)}`);
     else console.log(`Resuming run ${runLabel(state)} (${state.end_reason ?? "interrupted"}) at round ${roundsLabel(state.rounds, roundLimit(state, pr.dispatcher.max_rounds))}: ${state.task_summary}`);
@@ -324,8 +343,12 @@ program
 
       const runId = newRunId();
       const runDir = path.join(pr.paths.runs, runId);
-      const plan = planWorkspace(pr);
-      const lease = takeLock(pr, runId, { checkout: !plan.leadWorktree, reason: plan.reason });
+      const locked = takeNewRunLock(pr, runId, planWorkspace(pr));
+      const { lease } = locked;
+      let { plan } = locked;
+      // The lock is held and the checkout is still the lead's to borrow: it works on its own branch there. `--agent`: that member is the lead of its run.
+      const startCheckout = borrowsCheckout(plan);
+      if (startCheckout) plan = { ...plan, taskBranch: `agent-lyceum/${runId}/${opts.agent ?? pr.lead}`, checkoutFrom: currentCheckoutRef(pr.dir) };
       let summary: RunSummary;
       const cancel = cancelOnSignals();
       try {
@@ -334,7 +357,7 @@ program
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
         if (prepared.source === "file") for (const w of lintTaskContent(prepared.content)) console.error(`warning: task file ${w}`);
         const name = chosenName ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
-        summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, tidy: opts.tidy, signal: cancel.signal });
+        summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, tidy: opts.tidy, startCheckout, signal: cancel.signal });
       } finally {
         cancel.dispose();
         lease.release();
@@ -518,7 +541,10 @@ program
       const showPlan = (plan: ReturnType<typeof planRunCleanup>) => {
         console.log(`Run ${label}${plan.summary.slice(full.length)}`);
         for (const i of plan.items) console.log(`  ${opts.dryRun ? "would delete" : "delete      "}  ${i.label}`);
-        for (const k of plan.keep) console.log(`  kept          worktree of ${k.agent}: ${k.path} (branch ${k.branch})${k.files.length ? `, holding ${k.files.join(", ")}` : ""}`);
+        for (const k of plan.keep) {
+          if (k.reason) console.log(`  kept          branch ${k.branch}: ${k.reason}`);
+          else console.log(`  kept          worktree of ${k.agent}: ${k.path} (branch ${k.branch})${k.files.length ? `, holding ${k.files.join(", ")}` : ""}`);
+        }
       };
       const refuse = (plan: ReturnType<typeof planRunCleanup>): never => {
         for (const r of plan.refusals) console.error(`REFUSED  ${r}`);

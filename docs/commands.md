@@ -47,7 +47,7 @@ With `--agent`:
 - `--assume-defaults` has no effect;
 - a name that is not a member is refused with the member list; a name that only exists in the global library is pointed to [call](#call).
 
-In a git repo with a commit the run (solo `--agent` runs too) starts from `HEAD` in its own worktree and ends with a branch to merge (`git merge <branch>` or `open_pr`); elsewhere it works directly in the folder, one agent at a time. See "Several runs at once" in [How a run works](how-it-works.md#several-runs-at-once).
+In a git repo with a commit the run (solo `--agent` runs too) by default branches from the remote's default branch as `agent-lyceum/<run-id>/<lead>` and you stay in the project folder. The lead uses a worktree instead when the tree is dirty, `HEAD` is not that branch's commit, `HEAD` is already on `agent-lyceum/*`, or another checkout run holds the folder; the base is still that commit, and with no remote base the worktree starts from your local `HEAD`. After the run, `HEAD` stays on the task branch, and a `resume` needs you to still be on `task_branch`. A run ends with a branch to merge (`git merge <branch>` or `open_pr`). Two projects that share one repo do not share a lock. Elsewhere it works directly in the folder, one agent at a time. See "Several runs at once" in [How a run works](how-it-works.md#several-runs-at-once).
 
 If the lead's done asks for a pull request (`open_pr: true`) and the run completes on its own branch, the run opens it; see "Opening a pull request" in [How a run works](how-it-works.md#opening-a-pull-request).
 
@@ -90,6 +90,7 @@ Options:
 - Without a run, the candidates are the finished runs, newest first: exactly one is used, none is an error, and several are listed (in a terminal a numbered picker takes a number or a name; without a terminal the command fails and lists them).
 - A lone argument is follow-up text only when it cannot be a run reference (it contains whitespace or a character a run name cannot contain); otherwise an unknown lone argument is "run not found". A one-word follow-up needs `resume <run> "<text>"` or `--task-file`.
 - The follow-up is saved as `runs/<run-id>/followups/<n>.md`; each `done` report is kept as `done-<n>.md` and `result.md` is the latest. The round limit counts from the reopen (`rounds` keeps accumulating; the limit is the rounds at reopen plus `max_rounds`). Each reopened segment gets fresh done-contract reminders; unresolved blocked integrations are kept.
+- A run that works in the project folder on its task branch can only be resumed or reopened while you are still on `task_branch`; otherwise `resume` refuses, and it does not switch for you.
 - With a lead worktree: if the lead branch was already merged into your `HEAD` and the worktree is clean and untouched since the run ended, the worktree and branch (same name) are re-cut from the current `HEAD` and a line says so; otherwise the same ones continue. With a recorded pull request and no re-cut, a new `open_pr: true` only pushes ("pull request updated") while that pull request is still open (if it was merged, a squash merge included, or closed, a new one is opened); after a re-cut the recorded `pr_url` is cleared (kept in the run's notes) and a new pull request is opened when asked. agent-lyceum never merges.
 
 See "Continuing a finished run" in [How a run works](how-it-works.md#continuing-a-finished-run).
@@ -170,6 +171,8 @@ With `--force`:
 **Upgrading from an older version:** on Linux a lock records the holder's start time as `proc:<ticks>` (read from `/proc`), where older versions wrote the `ps` text. The two cannot be compared, so a lock written by an older version is judged by its pid alone: if that pid has since been reused by an unrelated process, the stale lock is not reclaimed automatically and you need `clear --lock --force`. An older version's project-wide `lock.json` is still honoured: while its process is alive it counts as one active run.
 
 A concurrent run's lead branch counts as work that is not in the repo until it is merged into `HEAD`.
+
+For a run that worked in the project folder, `clear` is refused while `HEAD` is the task branch (it does not switch for you; switch to another branch, then clear again). The branch is not deleted when its tip is not yet in the current `HEAD`; it is kept and `clear` says why.
 
 ## doctor
 

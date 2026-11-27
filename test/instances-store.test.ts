@@ -13,8 +13,8 @@ let env: TestEnv;
 afterEach(() => env?.cleanup());
 
 describe("state schema (23.6)", () => {
-  it("a new run is written as v2; this version reads up to v3", () => {
-    expect(STATE_SCHEMA_VERSION).toBe(3);
+  it("a new run is written as v2; this version reads up to v4 (checkout runs)", () => {
+    expect(STATE_SCHEMA_VERSION).toBe(4);
     expect(newRunState({ run_id: "r" }).schema_version).toBe(2);
   });
 

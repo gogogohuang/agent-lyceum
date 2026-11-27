@@ -44,7 +44,7 @@ agents:
 
 `doctor` 會像其他 runtime 一樣 probe `agent`。Resume 傳入已存的 `session_id`；Cursor 的 session 可能以設定目錄（每次 run 的 `workDir`）為範圍，跨 run 的 resume 尚未驗證。sandbox 與 `allow_web` 行為見[寫入範圍](write-scope.zh-TW.md)。
 
-並行不需要設定：在有 commit 的 git repo 裡，每個 run 與每個 agent 都有自己的 worktree；否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
+並行不需要設定：在有 commit 的 git repo 裡，run 預設從 remote 的預設分支開出 `agent-lyceum/<run-id>/<lead>`，你留在專案資料夾，每個成員在自己的 worktree。目錄不乾淨、`HEAD` 不是那個分支的 commit、`HEAD` 已在 `agent-lyceum/*`，或已有 checkout run 佔著資料夾時，lead 改走 worktree，基準仍是那顆 commit；沒有 remote 基準則從你本地的 `HEAD` 開 worktree。run 結束後 `HEAD` 留在任務分支，`resume` 時你必須還在 `task_branch` 上。兩個專案共用一個 repo 沒有跨專案鎖。否則 run 直接在該資料夾工作、一次一個 agent。見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)。
 
 ## 平行實例
 

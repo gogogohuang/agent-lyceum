@@ -12,9 +12,11 @@ import type { ReviewRecord, WorkerRef } from "./attribution.js";
 
 export const STATE_FILE = "state.json";
 /** The newest state format this version reads. */
-export const STATE_SCHEMA_VERSION = 3;
-/** What a new run is written as: v3 only appears when the first parallel task opens instances (spec 23.6). */
+export const STATE_SCHEMA_VERSION = 4;
+/** What a new run is written as: v3 only appears when the first parallel task opens instances (spec 23.6); v4 only on a run that works in the project checkout on its own branch. */
 export const NEW_RUN_SCHEMA_VERSION = 2;
+/** What a run that works in the project checkout on its own branch is written as; opening instances never lowers it. */
+export const CHECKOUT_SCHEMA_VERSION = STATE_SCHEMA_VERSION;
 
 /** Refuse a state newer than `supported`, before anything is written (the failure an older binary gives a v3 run). */
 export function assertSupportedVersion(version: number | undefined, supported: number, file: string): void {
@@ -147,7 +149,17 @@ export interface RunState {
   /** Recovery remarks (interrupted attempts whose side effects may have happened). */
   notes?: string[];
   /** "worktree": non-lead agents work in their own git worktrees. */
-  workspace_mode?: "shared" | "worktree";
+  workspace_mode?: "shared" | "worktree" | "checkout";
+  /** Checkout runs (schema 4): the branch the lead works on, fixed when the run started; never recomputed from the lead's current name. */
+  task_branch?: string;
+  /** Checkout runs: the remote ref (`origin/main`) the run was cut from, the commit it pointed at, and the `origin` URL then. */
+  base_ref?: string;
+  base_sha?: string;
+  origin_url?: string;
+  /** Checkout runs (schema 4): written by whoever starts the run; this session only keeps it. */
+  checkout_from?: string;
+  /** Checkout runs: the task mail reached the lead's inbox. A checkout run without it is never resumed (nothing says what was sent). */
+  task_sent?: true;
   /** Set when the run was started with `run --agent <name>`: that member works alone (a resumed run keeps it). */
   solo_agent?: string;
   /** Agents whose finished work could not be brought into the repo yet; their work is kept on their branch. */
@@ -278,6 +290,12 @@ const WireState = z
     tidy: z.boolean().optional(),
     reopened: z.array(z.object({ at: z.string() })).optional(),
     round_floor: nonNeg.optional(),
+    task_branch: z.string().optional(),
+    base_ref: z.string().optional(),
+    base_sha: z.string().optional(),
+    origin_url: z.string().optional(),
+    checkout_from: z.string().optional(),
+    task_sent: z.literal(true).optional(),
     instances: z.object({ roles: z.record(z.string(), z.array(z.string()).min(1)) }).optional(),
   })
   .passthrough();

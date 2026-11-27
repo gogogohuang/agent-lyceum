@@ -3,7 +3,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { WakeInput, WakeResult } from "../src/adapters/index.js";
 import { defaultBase, openPullRequest, PR_FOOTER, prBody, prTitle, realRunner, type CommandRunner } from "../src/open-pr.js";
+import { outboxDir } from "../src/policy.js";
+import { RunSession } from "../src/run-session.js";
+import { loadRunState } from "../src/run-store.js";
+import { prepareTask } from "../src/task.js";
+import { PINNED_CONFIG, type WorkspacePlan } from "../src/worktree.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, write, type TestEnv } from "./helpers.js";
+
+let env: TestEnv;
+const envs: TestEnv[] = [];
+const OK: WakeResult = { ok: true, text: "", exitCode: 0, timedOut: false };
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -12,6 +23,7 @@ const tmp = () => {
   return d;
 };
 afterEach(() => {
+  for (const e of envs.splice(0)) e.cleanup();
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -165,6 +177,172 @@ describe("openPullRequest", () => {
       `git -C '${cwd}' push -u origin 'agent-lyceum/run-1/lead'`,
       `gh pr create --head 'agent-lyceum/run-1/lead' --base 'main' --title 'fix $HOME and \`x\` and it'\\''s "quoted"' --body-file '${path.resolve(bodyFile)}'`,
     ]);
+  });
+});
+
+describe("pinned push and explicit base", () => {
+  /** Records every call; answers push and gh pr create, and fails anything else so a stray lookup shows. */
+  const recorder = () => {
+    const calls: Call[] = [];
+    const run: CommandRunner = (cmd, args, cwd) => {
+      calls.push({ cmd, args, cwd });
+      if (cmd === "git" && args.includes("push")) return { ok: true, out: "" };
+      if (cmd === "gh" && args[0] === "pr") return { ok: true, out: "https://github.com/o/r/pull/5\n" };
+      return { ok: false, out: "unexpected" };
+    };
+    return { run, calls };
+  };
+  const input = (over: Partial<Parameters<typeof openPullRequest>[0]>) => ({
+    cwd: tmp(), branch: "b", title: "T", body: "B", bodyFile: path.join(tmp(), "pr-body.md"), ...over,
+  }) as Parameters<typeof openPullRequest>[0];
+
+  it("uses base for --base and never asks git or gh for the default branch", () => {
+    const f = recorder();
+    const r = openPullRequest(input({ run: f.run, base: "develop" }));
+    expect(r).toEqual({ status: "opened", url: "https://github.com/o/r/pull/5" });
+    const create = f.calls.find((c) => c.cmd === "gh" && c.args[0] === "pr")!;
+    expect(create.args[create.args.indexOf("--base") + 1]).toBe("develop");
+    expect(f.calls.some((c) => c.args.includes("symbolic-ref") || c.args.includes("view"))).toBe(false);
+  });
+
+  it("puts pinnedGit in front of the push argv (new PR and push-only update)", () => {
+    const f = recorder();
+    openPullRequest(input({ run: f.run, base: "main", pinnedGit: PINNED_CONFIG }));
+    const push = f.calls.find((c) => c.cmd === "git")!;
+    expect(push.args).toEqual([...PINNED_CONFIG, "push", "-u", "origin", "b"]);
+    expect(push.args).toContain("core.hooksPath=/dev/null");
+
+    const g = recorder();
+    const run: CommandRunner = (cmd, args, cwd) => (cmd === "gh" && args[1] === "view" ? { ok: true, out: "OPEN" } : g.run(cmd, args, cwd));
+    const r = openPullRequest(input({ run, pinnedGit: PINNED_CONFIG, existingUrl: "https://x/pull/3" }));
+    expect(r).toMatchObject({ status: "opened", updated: true });
+    expect(g.calls.find((c) => c.cmd === "git")!.args.slice(0, PINNED_CONFIG.length)).toEqual(PINNED_CONFIG);
+  });
+
+  it("without base it still asks for the default branch, and without pinnedGit the push argv is unchanged", () => {
+    const f = fake({ "git symbolic-ref --short": { ok: true, out: "origin/trunk" }, "git push -u": { ok: true, out: "" }, "gh pr create": { ok: true, out: "https://x/pull/1" } });
+    openPullRequest(input({ run: f.run }));
+    expect(f.calls.map((c) => `${c.cmd} ${c.args[0]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+    expect(f.calls[2]!.args).toContain("trunk");
+  });
+});
+
+describe("opening a pull request from a run (pinned push)", () => {
+  const sha = () => git(env.repo, "rev-parse", "HEAD");
+  const REMOTE = "git@example.com:o/r.git";
+  const mailDone = (i: WakeInput) =>
+    write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${FULL_DONE}\n`);
+
+  /** Answers `git remote get-url --push origin` with `pushUrl` (or the repo's real one), everything else like a healthy push and gh. */
+  function runner(opts: { pushUrl?: string; real?: boolean } = {}) {
+    const calls: Call[] = [];
+    const run: CommandRunner = (cmd, args, cwd) => {
+      calls.push({ cmd, args, cwd });
+      if (cmd === "git" && args[0] === "remote") return opts.real ? { ok: true, out: git(cwd, ...args) } : { ok: true, out: opts.pushUrl ?? REMOTE };
+      if (cmd === "git" && args.includes("push")) return { ok: true, out: "" };
+      if (cmd === "git" && args[0] === "symbolic-ref") return { ok: true, out: "origin/trunk" };
+      if (cmd === "gh" && args[0] === "pr") return { ok: true, out: "https://github.com/o/r/pull/9\n" };
+      return { ok: false, out: `unexpected: ${cmd} ${args.join(" ")}` };
+    };
+    const names = () => calls.map((c) => `${c.cmd} ${c.args.includes("push") ? "push" : c.args[0]}`);
+    return { run, calls, names };
+  }
+
+  const checkout = (plan: Partial<WorkspacePlan> = {}) => {
+    env = makeEnv();
+    envs.push(env);
+    initGitRepo(env.repo);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "build the thing", cwd: env.root, runDir });
+    const full: WorkspacePlan = { mode: "worktree", leadWorktree: false, taskBranch: "agent-lyceum/run-1/lead", baseRef: "origin/main", baseSha: sha(), checkoutFrom: "main", originUrl: REMOTE, ...plan };
+    return { project, runDir, task, go: (pr: CommandRunner, change = true) =>
+      new RunSession({ project, plan: full, task, runDir, startCheckout: true, log: () => {}, pr, verifyTiming: { killGraceMs: 100, settleWaitMs: 100 },
+        invoker: async (i) => { if (change) write(path.join(env.repo, "src/web/new.txt"), "n\n"); mailDone(i); return OK; } }).run() };
+  };
+
+  it("a checkout run pushes its task branch (no lead worktree) pinned, against the base_ref without origin/", async () => {
+    const { go } = checkout();
+    const r = runner();
+    const s = await go(r.run);
+    expect(s.pr).toEqual({ status: "opened", url: "https://github.com/o/r/pull/9" });
+    expect(r.names()).toEqual(["git remote", "git push", "gh pr"]);
+    const push = r.calls.find((c) => c.args.includes("push"))!;
+    expect(push.args).toEqual([...PINNED_CONFIG, "push", "-u", "origin", "agent-lyceum/run-1/lead"]);
+    expect(push.args).toContain("core.hooksPath=/dev/null");
+    expect(push.cwd).toBe(git(env.repo, "rev-parse", "--show-toplevel"));
+    const create = r.calls.find((c) => c.cmd === "gh")!;
+    expect(create.args[create.args.indexOf("--base") + 1]).toBe("main");
+    expect(r.calls[0]!.args).toEqual(["remote", "get-url", "--push", "origin"]);
+  });
+
+  it("does not push when the push URL differs from the recorded origin_url, and prints manual commands", async () => {
+    const { go, runDir } = checkout();
+    const r = runner({ pushUrl: "git@evil.example:o/r.git" });
+    const s = await go(r.run);
+    expect(s.pr).toMatchObject({ status: "skipped" });
+    expect(r.names()).toEqual(["git remote"]);
+    const notes = loadRunState(runDir).notes?.join("\n") ?? "";
+    expect(notes).toContain("git -C");
+    expect(notes).toContain("push -u origin");
+    expect(notes).toContain("gh pr create");
+  });
+
+  it("does not push when remote.origin.url matches but the push URL differs", async () => {
+    const { go } = checkout({ originUrl: "https://example.com/o/r.git" });
+    git(env.repo, "remote", "add", "origin", "https://example.com/o/r.git");
+    git(env.repo, "config", "remote.origin.pushurl", "https://other.example/o/r.git");
+    const r = runner({ real: true });
+    const s = await go(r.run);
+    expect(s.pr).toMatchObject({ status: "skipped" });
+    expect(r.names()).toEqual(["git remote"]);
+  });
+
+  it("does not push a checkout run whose origin_url was never recorded", async () => {
+    const { go } = checkout({ originUrl: undefined });
+    const r = runner();
+    const s = await go(r.run);
+    expect(s.pr).toMatchObject({ status: "skipped" });
+    expect(r.calls.some((c) => c.args.includes("push"))).toBe(false);
+  });
+
+  it("a checkout run with no file changes is skipped without any command", async () => {
+    const { go } = checkout();
+    const r = runner();
+    const s = await go(r.run, false);
+    expect(s.pr).toMatchObject({ status: "skipped", reason: expect.stringMatching(/no file changes/) });
+    expect(r.calls).toEqual([]);
+  });
+
+  it("a worktree run with a base_ref uses the same URL check and base; a mismatch does not push", async () => {
+    const mk = (pushUrl: string) => {
+      const c = checkout();
+      const r = runner({ pushUrl });
+      return { r, go: () => new RunSession({ project: c.project, plan: { mode: "worktree", leadWorktree: true, baseRef: "origin/release", baseSha: sha(), originUrl: REMOTE }, task: c.task, runDir: c.runDir, log: () => {}, pr: r.run, verifyTiming: { killGraceMs: 100, settleWaitMs: 100 },
+        invoker: async (i) => { write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n"); mailDone(i); return OK; } }).run() };
+    };
+    const ok = mk(REMOTE);
+    expect((await ok.go()).pr).toMatchObject({ status: "opened" });
+    expect(ok.r.names()).toEqual(["git remote", "git push", "gh pr"]);
+    expect(ok.r.calls.find((c) => c.cmd === "gh")!.args).toContain("release");
+    const bad = mk("git@evil.example:o/r.git");
+    expect((await bad.go()).pr).toMatchObject({ status: "skipped" });
+    expect(bad.r.calls.some((c) => c.args.includes("push"))).toBe(false);
+  });
+
+  it("a worktree run with no base_ref keeps the default base and does no URL check", async () => {
+    env = makeEnv();
+    envs.push(env);
+    initGitRepo(env.repo);
+    makeConcurrent(env, 2);
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const r = runner();
+    const s = await new RunSession({ project, plan: { mode: "worktree", leadWorktree: true }, task: prepareTask({ text: "x", cwd: env.root, runDir }), runDir, log: () => {}, pr: r.run, verifyTiming: { killGraceMs: 100, settleWaitMs: 100 },
+      invoker: async (i) => { write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n"); mailDone(i); return OK; } }).run();
+    expect(s.pr).toMatchObject({ status: "opened" });
+    expect(r.names()).toEqual(["git symbolic-ref", "git push", "gh pr"]);
+    expect(r.calls.find((c) => c.cmd === "gh")!.args).toContain("trunk");
   });
 });
 
