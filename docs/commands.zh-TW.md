@@ -226,7 +226,7 @@ agents.fe-member.model_tiers = ["haiku","sonnet","opus"]                        
 
 **用法:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <時間戳> -p name --agent a [--layer project|global]`
 
-讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。從網頁在某個任務上按「整理記憶」並確定後，那個任務會標成「已 tidy」，操作按鈕會停用；預覽與還原不會標記。
+讓 agent 整理自己的長期記憶：合併重複的條目、改寫過時的內容、淘汰不再需要的。**只有你自己執行它才會整理**：run 結束、記憶變大、repo 有變化都不會觸發；`status` 與 `doctor` 最多只會建議。從網頁在某個任務上按「整理記憶」並確定後，那個任務會標上 tidy。只有徽章是「已 tidy」時操作按鈕會停用，刪除這次任務仍然可以按。預覽與還原不會標記。
 
 選項：
 

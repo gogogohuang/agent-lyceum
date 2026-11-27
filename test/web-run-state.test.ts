@@ -77,10 +77,24 @@ describe("tidyBadge", () => {
 });
 
 describe("isRunControlLocked", () => {
-  it("shuts every control once a run is marked tidy", () => {
-    expect(isRunControlLocked(undefined)).toBe(false);
-    expect(isRunControlLocked({ name: "LT-1-api" })).toBe(false);
-    expect(isRunControlLocked({ tidy: true, name: "x" })).toBe(true);
-    expect(isRunControlLocked({ name: "LT-29363-api-tidy" })).toBe(true);
+  it("locks controls only after tidy actually finished, and never locks 刪除", () => {
+    const done = { tidy: true, state: "ended", outcome: "completed", end_reason: "done" };
+    expect(tidyBadge(done)?.text).toBe("已 tidy");
+    expect(isRunControlLocked(done)).toBe(true);
+    expect(isRunControlLocked(done, "clear")).toBe(false);
+
+    const open = [
+      undefined,
+      { name: "LT-1-api" },
+      { tidy: true, name: "x" },
+      { name: "LT-29363-api-tidy", state: "ended" },
+      { tidy: true, state: "ended", outcome: "cancelled", end_reason: "idle" },
+      { tidy: true, state: "ended", outcome: "failed" },
+      { tidy: true, state: "running", live: true },
+    ];
+    for (const run of open) {
+      expect(isRunControlLocked(run)).toBe(false);
+      expect(isRunControlLocked(run, "clear")).toBe(false);
+    }
   });
 });
