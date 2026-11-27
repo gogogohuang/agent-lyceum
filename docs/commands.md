@@ -226,7 +226,7 @@ When it ends it prints how to look around (`status`, `git log --stat` in the san
 
 **Usage:** `tidy [-p name] [--agent a] [--layer project|global] [--dry-run]` · `tidy --undo <timestamp> -p name --agent a [--layer project|global]`
 
-Have agents tidy their own long-term memory: merge entries that say the same thing, rewrite stale ones, and retire what is obsolete. **It only ever runs when you run it**: a run ending, a large memory or changes in the repo never start a tidy; `status` and `doctor` at most suggest one. Confirming 「整理記憶」 on a task in the web console marks that task 「已 tidy」 and disables its controls; a preview or an undo does not.
+Have agents tidy their own long-term memory: merge entries that say the same thing, rewrite stale ones, and retire what is obsolete. **It only ever runs when you run it**: a run ending, a large memory or changes in the repo never start a tidy; `status` and `doctor` at most suggest one. Confirming 「整理記憶」 on a task in the web console marks that task tidy. Only a task badged 「已 tidy」 has its controls disabled, and 「刪除這次任務」 stays available. A preview or an undo does not mark it.
 
 Options:
 

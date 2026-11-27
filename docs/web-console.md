@@ -17,7 +17,7 @@ Run every agent-lyceum command from the `status --web` page. Local use only; see
 | `clear --lock --force` | **工具** (`#!tools`) |
 | `status` | The page itself; reports of a run: **查看報告** (see [Viewing reports](#viewing-reports)) |
 
-Confirming **整理記憶** on a task marks that task 「已 tidy」. The same tag is on a new task started with the tidy checkbox, and on a run whose name contains `tidy`. While such a task is selected, the action buttons on this page and **總結進度** stay disabled. Under **任務輸出**, a real `tidy` (not a preview and not an undo) shows 「已 tidy」 too.
+Confirming **整理記憶** on a task marks that task 「已 tidy」. The same tag is on a new task started with the tidy checkbox, and on a run whose name contains `tidy`. While a task badged 「已 tidy」 is selected, the action buttons on this page and **總結進度** stay disabled, except **刪除這次任務**. Under **任務輸出**, a real `tidy` (not a preview and not an undo) shows 「已 tidy」 too.
 
 Commands that can run for a long time (`run`, `resume`, `call`, `tidy`, `demo`) start as background jobs and keep running if you close the page or stop `status --web`. Each job has a directory `<home>/web-jobs/<id>/` with `out.log` and, once it ends, `exit.json`. Their output is under **任務輸出** (`#!jobs`). `tidy --dry-run` and `tidy --undo`, and `demo --setup-only`, are short and return their output directly.
 

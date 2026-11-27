@@ -31,7 +31,10 @@ export function tidyBadge(run: Pick<Run, "name" | "tidy" | "state" | "live" | "o
   return { text: "tidy 未完成", tone: "warn" };
 }
 
-/** A tidy run is closed: the console must not start or change anything from its buttons. */
-export function isRunControlLocked(run: Pick<Run, "name" | "tidy"> | undefined): boolean {
-  return isTidyRun(run);
+export type RunControl = "clear";
+
+/** Only 「已 tidy」 closes the console. 刪除這次任務 stays available. */
+export function isRunControlLocked(run: Pick<Run, "name" | "tidy" | "state" | "live" | "outcome" | "end_reason"> | undefined, control?: RunControl): boolean {
+  if (control === "clear") return false;
+  return tidyBadge(run)?.text === "已 tidy";
 }
