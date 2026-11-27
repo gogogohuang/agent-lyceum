@@ -44,7 +44,7 @@ agents:
 
 `doctor` probes `agent` like the other runtimes. Resume passes the stored `session_id`; Cursor sessions may be scoped to the config dir (the per-run `workDir`), so resuming across runs is unverified. See [Write scope](write-scope.md) for sandbox and `allow_web` behavior.
 
-Concurrency needs no configuration: in a git repo with a commit every run and every agent gets its own worktree; otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
+Concurrency needs no configuration: in a git repo with a commit a run by default branches from the remote's default branch as `agent-lyceum/<run-id>/<lead>` and you stay in the project folder, with each member in its own worktree. The lead uses a worktree instead when the tree is dirty, `HEAD` is not that branch's commit, `HEAD` is already on `agent-lyceum/*`, or another checkout run holds the folder; the base is still that commit, and with no remote base the worktree starts from your local `HEAD`. After the run, `HEAD` stays on the task branch, and a `resume` needs you to still be on `task_branch`. Two projects that share one repo do not share a lock. Otherwise the run works directly in the folder, one agent at a time. See [How a run works](how-it-works.md#several-runs-at-once).
 
 ## Parallel instances
 

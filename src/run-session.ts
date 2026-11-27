@@ -27,14 +27,13 @@ import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, 
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { trailers, withTrailers, type WorkerRef } from "./attribution.js";
-import { agentGit, assertWorktreeRunnable, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, existingAgentWorkspace, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, snapshotBase, snapshotHead, toplevel, workspaceDirty, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
-import { workingTreeHash } from "./worktree.js";
-import { bindRunProject, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
+import { agentGit, assertWorktreeRunnable, beginCheckoutRun, checkoutHeadProblem, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, existingAgentWorkspace, finishCheckoutBranch, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, remoteBaseNote, rollbackCheckoutStart, snapshotBase, snapshotCommit, snapshotHead, toplevel, workspaceDirty, workingTreeHash, PINNED_CONFIG, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
+import { bindRunProject, CHECKOUT_SCHEMA_VERSION, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
 import { must } from "./assert.js";
 import { modelForTier, wakeTier } from "./tiers.js";
-import { openPullRequest, prBody, prTitle, realRunner, type CommandRunner, type PrOutcome } from "./open-pr.js";
+import { manualPrCommands, openPullRequest, prBody, prTitle, realRunner, type CommandRunner, type PrOutcome } from "./open-pr.js";
 
 export { newRunId };
 export type { ActiveWake, EndReason, RunState, SentTopic, WakeRecord, WakeTopic } from "./run-store.js";
@@ -151,6 +150,11 @@ export interface RunOptions {
   resume?: RunState;
   /** Where the run's agents work, decided by `planWorkspace` before the run's lock was taken; the session never recomputes it. */
   plan: WorkspacePlan;
+  /**
+   * A new checkout run (`plan.taskBranch`) that has not cut its branch yet. The state is saved first (without `task_sent`), then the
+   * project checkout is switched to the task branch, then the task is delivered; a failure in between is taken back. The caller holds the run lock.
+   */
+  startCheckout?: boolean;
   /** Reopen a done run: this text becomes a new task for the lead. Only with `resume` of a run that ended `done`. */
   followup?: { text: string };
   runDir: string;
@@ -288,10 +292,18 @@ export class RunSession {
     const { plan } = opts;
     const concurrent = plan.leadWorktree;
     const wsMode = plan.mode;
+    // A checkout run whose task never reached the lead cannot say what it did or did not do on its branch: refuse before anything is written
+    // (`end_reason` included). The branch named is the one recorded in the state, never one derived from the lead's current name.
+    if (resume?.workspace_mode === "checkout" && resume.task_sent !== true) {
+      throw new Error(`Run ${runId} works in the project checkout (task_branch ${resume.task_branch ?? "not recorded"}), but its state has no task_sent: the task was never recorded as delivered to ${project.lead}, so the run cannot be resumed.`);
+    }
+    const checkout = plan.taskBranch !== undefined || resume?.workspace_mode === "checkout";
+    const stateMode = checkout ? "checkout" : wsMode;
     if (resume && wsMode === "worktree") assertWorktreeRunnable(project);
     // Concurrent runs: the lead works in its own worktree cut from HEAD, so no other run (and not you) shares its files.
     let leadSpace: AgentWorkspace | undefined;
     let recut = false;
+    if (!resume && plan.fetchFailed) say("  git fetch origin failed or timed out; using the remote refs already in the repo");
     if (concurrent && resume) {
       leadSpace = existingAgentWorkspace(project, runId, project.lead);
       if (!leadSpace) throw new Error(`Run ${runId} has no worktree for ${project.lead} (was it cleared?), so it cannot be resumed.`);
@@ -310,19 +322,24 @@ export class RunSession {
     const log = createRunLog(path.join(runDir, "log.jsonl"), cfg.log_max_bytes);
     if (concurrent && !resume) {
       // Before the task is delivered or any state written, so a failure here leaves no half-started run.
-      leadSpace = prepareAgentWorkspace(project, runId, project.lead, snapshotHead(project, runId));
+      // With a remote base the lead starts from it, not from whatever the local HEAD is.
+      leadSpace = prepareAgentWorkspace(project, runId, project.lead, plan.baseSha !== undefined ? snapshotCommit(project, runId, plan.baseSha) : snapshotHead(project, runId));
       const uncommitted = dirtyPaths(project.dir).length;
-      say(`  starting from HEAD ${leadSpace.base.slice(0, 8)}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
+      const from = plan.baseSha !== undefined ? `${plan.baseRef ?? "the remote base"} ${leadSpace.base.slice(0, 8)}` : `HEAD ${leadSpace.base.slice(0, 8)}`;
+      say(`  starting from ${from}${uncommitted ? ` (your ${uncommitted} uncommitted file(s) are not part of this run)` : ""}; ${project.lead} works on branch ${leadSpace.branch}`);
+      const note = plan.baseSha !== undefined ? remoteBaseNote(project, plan.baseSha, plan.baseRef) : undefined;
+      if (note) say(`  ${note}`);
       log("lead-workspace", { base: leadSpace.base, branch: leadSpace.branch, dir: leadSpace.dir, uncommitted });
     }
 
     if (!resume && plan.mode === "shared" && plan.reason) {
       say(`  agents take turns in ${project.dir} (no separate git worktrees: ${plan.reason}); commit to a git repo to run them in parallel`);
     }
+    if (!resume && plan.mode === "worktree" && concurrent && plan.reason) say(`  ${project.lead} works in its own git worktree (${plan.reason})`);
 
     let state: RunState;
     if (resume) {
-      state = { ...resume, max_rounds: roundLimit(resume, cfg.max_rounds), pid: process.pid, ended_at: undefined, end_reason: undefined, failure: undefined, workspace_mode: wsMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
+      state = { ...resume, max_rounds: roundLimit(resume, cfg.max_rounds), pid: process.pid, ended_at: undefined, end_reason: undefined, failure: undefined, workspace_mode: stateMode, outcome: undefined, outcome_note: undefined, verification: undefined, active: {}, wakes: [...resume.wakes] };
       // A wake that was running when the process died never finished; keep it in the history as interrupted.
       for (const [agent, a] of Object.entries(resume.active ?? {})) {
         state.wakes.push({
@@ -366,10 +383,17 @@ export class RunSession {
         pid: process.pid,
         task_summary: t.subject,
         mail_layout: layout,
-        workspace_mode: wsMode,
+        workspace_mode: stateMode,
         solo_agent: soloName,
         lead_workspace: concurrent ? true : undefined,
+        ...(plan.taskBranch !== undefined
+          ? { task_branch: plan.taskBranch, base_ref: plan.baseRef, base_sha: plan.baseSha, origin_url: plan.originUrl, ...(plan.checkoutFrom !== undefined ? { checkout_from: plan.checkoutFrom } : {}) }
+          : plan.baseSha !== undefined
+            ? { base_ref: plan.baseRef, base_sha: plan.baseSha, ...(plan.originUrl !== undefined ? { origin_url: plan.originUrl } : {}) }
+            : {}),
       });
+      // Only a checkout run is written as v4 (it must not be started by a binary that does not know its branch); the others stay as they were.
+      if (plan.taskBranch !== undefined) state.schema_version = CHECKOUT_SCHEMA_VERSION;
       const seed = parseSteps(task!.content, false);
       if (seed.length) state.steps = seed;
     }
@@ -403,11 +427,38 @@ export class RunSession {
       }
     } else {
       const t = taskMessageBody(task!);
-      guard.saveSnapshot(path.join(runDir, "snapshots"));
-      deliver(project, { from: "user", to: project.lead, type: "task", subject: t.subject, body: t.body });
+      const cutting = checkout && opts.startCheckout === true;
+      if (cutting) {
+        // The state names the branch before git creates it, so a start that dies in between can be told from one that never began.
+        saveState();
+        beginCheckoutRun(project.dir, runDir, state);
+      }
+      try {
+        guard.saveSnapshot(path.join(runDir, "snapshots"));
+        deliver(project, { from: "user", to: project.lead, type: "task", subject: t.subject, body: t.body });
+      } catch (e) {
+        if (cutting) {
+          try {
+            rollbackCheckoutStart(project.dir, runDir, state);
+          } catch (back) {
+            throw new Error(`${(e as Error).message}\nThe start could not be taken back: ${(back as Error).message}`);
+          }
+        }
+        throw e;
+      }
+      // Only now: a checkout run is resumable only when its task is known to be in the lead's inbox.
+      if (checkout) state.task_sent = true;
       log("start", { task_source: task!.source, bytes: task!.bytes, inline: task!.inline });
+      if (plan.taskBranch !== undefined) {
+        const ref = plan.baseRef ?? "the remote base";
+        const sha = (plan.baseSha ?? "").slice(0, 8);
+        say(`  starting from ${ref} ${sha}; ${project.lead} works in the project folder ${project.dir} on branch ${plan.taskBranch}`);
+        log("checkout-start", { ref: plan.baseRef, sha: plan.baseSha, branch: plan.taskBranch, dir: project.dir });
+      }
     }
     saveState();
+    // The state exists now: the reason a run meant for the project checkout works in a worktree instead goes in its log.
+    if (!resume && plan.lockFallback !== undefined) log("workspace-fallback", { reason: plan.lockFallback });
     this.leadSpace = leadSpace;
 
     this.opts = opts;
@@ -539,7 +590,7 @@ export class RunSession {
       held: (role) => !!state.instances?.roles[role],
       enable: (role) => {
         // Durable before any file of the mail that opens the role's instances exists; a crash after this replays into `pending/`.
-        state.schema_version = 3;
+        if (state.schema_version !== CHECKOUT_SCHEMA_VERSION) state.schema_version = 3;
         state.instances = { roles: { ...(state.instances?.roles ?? {}), [role]: [role] } };
         this.saveState();
         fault("instances:enabled");
@@ -1041,6 +1092,17 @@ export class RunSession {
     return { agent: agent.name, ...(model ? { model } : {}) };
   }
 
+  /** A checkout run's task branch (the lead works in the project checkout, not in a worktree of its own), else undefined. Always the recorded one. */
+  private checkoutBranch(): string | undefined {
+    return this.leadSpace === undefined && this.opts.plan.leadWorktree === false ? this.state.task_branch : undefined;
+  }
+
+  /** Why the project checkout is no longer on a checkout run's task branch, or undefined (also for runs that do not work in the checkout). */
+  private checkoutMoved(): string | undefined {
+    const branch = this.checkoutBranch();
+    return branch === undefined ? undefined : checkoutHeadProblem(this.project.dir, branch);
+  }
+
   private integrateMember(agent: ResolvedAgent, ws: AgentWorkspace, key: string): void {
     const { say, project, log, state } = this;
     let changes: ChangeSet | undefined;
@@ -1048,6 +1110,9 @@ export class RunSession {
     try {
       const who = this.workerRef(agent);
       changes = collectAgentChanges(ws, withTrailers(`agent-lyceum: changes by ${agent.name}`, undefined, trailers({ implementers: [who], runId: this.runId })));
+      // A checkout run writes into the project checkout: nothing is applied once HEAD is not the task branch (it is the same refusal path as any blocked integration).
+      const moved = this.checkoutMoved();
+      if (moved) throw new Error(`${moved} Nothing was applied: ${agent.name}'s work is kept on its own branch.`);
       r = integrateAgentChanges(project, changes, this.leadSpace);
     } catch (e) {
       // e.g. a worktree whose git files were tampered with: nothing is applied, and the lead is told like for any blocked integration
@@ -1446,7 +1511,10 @@ export class RunSession {
    */
   private finishLead(endReason: EndReason): ResultBranch | undefined {
     const { say, log, state, runDir, runId, project } = this;
-    if (!this.leadSpace || endReason === "waiting") return undefined;
+    const checkoutBranch = this.checkoutBranch();
+    if ((!this.leadSpace && checkoutBranch === undefined) || endReason === "waiting") return undefined;
+    // Where the lead's work is and what it is called, for the notes: the recorded task branch for a checkout run.
+    const where = this.leadSpace ? { branch: this.leadSpace.branch, dir: this.leadSpace.root } : { branch: must(checkoutBranch, "task branch"), dir: project.dir };
     try {
       const lead = project.agents[project.lead];
       const message = withTrailers(
@@ -1454,13 +1522,19 @@ export class RunSession {
         state.task_summary,
         trailers({ implementers: state.implementers, lead: lead ? this.workerRef(lead) : undefined, reviews: state.reviews, runId }),
       );
-      const rb = finishLeadBranch(this.leadSpace, message, path.join(runDir, "lead.patch"));
+      const patch = path.join(runDir, "lead.patch");
+      const rb = this.leadSpace ? finishLeadBranch(this.leadSpace, message, patch) : finishCheckoutBranch(project.dir, where.branch, must(state.base_sha, "base_sha"), message, patch);
+      if (!rb) {
+        // Nothing was committed: HEAD is not the task branch, so a commit would land on whatever it names now.
+        this.note(`The work was not committed: ${checkoutHeadProblem(project.dir, where.branch) ?? `the project checkout is not on ${where.branch}`} It is still in ${where.dir}; no result branch is recorded.`);
+        return undefined;
+      }
       state.result_branch = rb;
       log("lead-branch", { ...rb });
       say(rb.files ? `  work is on branch ${rb.branch} (${rb.files} file(s)); bring it into your repo with: git merge ${rb.branch}` : `  ${rb.branch}: no file changes`);
       return rb;
     } catch (e) {
-      this.note(`Could not commit the work on ${this.leadSpace.branch}: ${(e as Error).message.split("\n")[0]}. It is still in ${this.leadSpace.root}.`);
+      this.note(`Could not commit the work on ${where.branch}: ${(e as Error).message.split("\n")[0]}. It is still in ${where.dir}.`);
       return undefined;
     }
   }
@@ -1477,18 +1551,51 @@ export class RunSession {
       return { status: "skipped", reason };
     };
     if (endReason !== "done" || outcome !== "completed") return skip(`the run did not end completed (${endReason}, outcome ${outcome}).`);
-    if (!this.leadSpace) return skip(`this run works directly in ${this.project.dir} (not a git repo with a commit), so there is no branch to push.`);
-    if (!rb) return skip(`the work could not be committed on ${this.leadSpace.branch}.`);
+    const checkout = state.workspace_mode === "checkout";
+    const branchName = this.leadSpace?.branch ?? state.task_branch;
+    if (!rb) {
+      if (!this.leadSpace && !checkout) return skip(`this run works directly in ${this.project.dir} (not a git repo with a commit), so there is no branch to push.`);
+      return skip(`the work could not be committed on ${branchName ?? "the task branch"}.`);
+    }
     if (!rb.files) return skip(`${rb.branch} has no file changes.`);
 
     const existingUrl = state.pr_url;
+    // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
+    const cwd = toplevel(project.dir);
+    const base = state.base_ref?.replace(/^origin\//, "");
+    const bodyFile = path.join(runDir, "pr-body.md");
+    const title = prTitle(state.task_summary);
+    const body = prBody(this.doneMessage?.body ?? "");
+    // Where the push goes is what the run recorded when it started. A remote someone changed since (config, pushurl, an agent's write) is not pushed to.
+    if (checkout || state.base_ref !== undefined || state.origin_url !== undefined) {
+      const recorded = state.origin_url;
+      const now = this.prRunner("git", ["remote", "get-url", "--push", "origin"], cwd);
+      const problem = !recorded
+        ? "the push URL of origin was not recorded when the run started"
+        : !now.ok || !now.out.trim()
+          ? "the push URL of origin can no longer be read"
+          : now.out.trim() !== recorded
+            ? `the push URL of origin is now ${now.out.trim()}, but the run recorded ${recorded}`
+            : undefined;
+      if (problem) {
+        let written = "";
+        try {
+          atomicWrite(bodyFile, body);
+        } catch {
+          written = " (the description could not be written to the run directory)";
+        }
+        const manual = manualPrCommands({ cwd, branch: rb.branch, base, title, bodyFile });
+        return skip(`${problem}, so ${rb.branch} was not pushed. If the remote is right, finish by hand${written}:\n${manual.map((m) => `  ${m}`).join("\n")}`);
+      }
+    }
     const result = openPullRequest({
-      // Never the lead's worktree: the agent can write it (and its git pointers), and git would run what it planted there.
-      cwd: toplevel(project.dir),
+      cwd,
       branch: rb.branch,
-      title: prTitle(state.task_summary),
-      body: prBody(this.doneMessage?.body ?? ""),
-      bodyFile: path.join(runDir, "pr-body.md"),
+      title,
+      body,
+      bodyFile,
+      base,
+      pinnedGit: PINNED_CONFIG,
       run: this.prRunner,
       existingUrl,
     });
@@ -1503,7 +1610,6 @@ export class RunSession {
     }
     return result;
   }
-
 
   /** Checks named in the task that are not verify commands. Undefined when binding is off or everything matches. */
   private bindMismatch(): string | undefined {
@@ -1609,6 +1715,13 @@ export class RunSession {
       this.batchSpaces = {};
       const members = batch.filter((a) => a.name !== project.lead);
       if (wsMode === "worktree" && members.length) {
+        // A checkout run snapshots the project checkout: not once HEAD is off the task branch (the members would start from, and the lead's work be taken for, another branch).
+        const moved = this.checkoutMoved();
+        if (moved) {
+          this.note(`${moved} The members were not woken and nothing was committed.`);
+          this.endReason = "lead_failed";
+          break;
+        }
         state.snapshots = (state.snapshots ?? 0) + 1;
         this.saveState();
         let ref: string;

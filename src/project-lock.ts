@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWrite } from "./fs-util.js";
+import { toLeadWorktree, type WorkspacePlan } from "./worktree.js";
 
 /** The project-wide lock of older versions. Still read (it counts as one active run) and cleared; never written. */
 export const LOCK_FILE = "lock.json";
@@ -267,11 +268,21 @@ function heldError(info: LockInfo): Error {
   );
 }
 
+/** Another run holds the project checkout. A caller that can work in a worktree instead catches this (and nothing else) to do so. */
+export class CheckoutBusyError extends Error {
+  readonly holder: LockInfo;
+  constructor(holder: LockInfo, dir: string, reason: string) {
+    super(
+      `Run ${holder.run_id} (pid ${holder.pid}) is working directly in ${dir}, and this run would too (${reason}), so only one can be active. ` +
+        `Wait for it to end or stop it; in a git repo with a commit, runs work in their own worktrees and can run side by side.`,
+    );
+    this.name = "CheckoutBusyError";
+    this.holder = holder;
+  }
+}
+
 function checkoutBusyError(holder: LockInfo, dir: string, reason: string): Error {
-  return new Error(
-    `Run ${holder.run_id} (pid ${holder.pid}) is working directly in ${dir}, and this run would too (${reason}), so only one can be active. ` +
-      `Wait for it to end or stop it; in a git repo with a commit, runs work in their own worktrees and can run side by side.`,
-  );
+  return new CheckoutBusyError(holder, dir, reason);
 }
 
 function exclusiveError(holder: LockInfo): Error {
@@ -419,6 +430,26 @@ export function acquireProjectLock(root: string, runId: string, opts: LockOption
     },
     release,
   };
+}
+
+/**
+ * Take the lock for a new run that intends to borrow the project checkout. If the checkout is held by another run, or (once we hold
+ * it) `recheck` says it is no longer fit to borrow, take a worktree lock instead and return the plan with the lead in its own worktree.
+ * Any other error from `acquire` is the caller's. `why`, when given, is asked after the fallback was decided; its answer is
+ * `lockFallback` on the returned plan, so the run can log it. Nothing is written here.
+ */
+export function lockForPlan(intended: WorkspacePlan, acquire: (checkout: boolean) => ProjectLease, recheck: () => boolean, why?: () => string): { lease: ProjectLease; plan: WorkspacePlan } {
+  const fallback = (): WorkspacePlan => ({ ...toLeadWorktree(intended), ...(why ? { lockFallback: why() } : {}) });
+  let lease: ProjectLease;
+  try {
+    lease = acquire(true);
+  } catch (e) {
+    if (!(e instanceof CheckoutBusyError)) throw e;
+    return { lease: acquire(false), plan: fallback() };
+  }
+  if (recheck()) return { lease, plan: intended };
+  lease.release();
+  return { lease: acquire(false), plan: fallback() };
 }
 
 /**

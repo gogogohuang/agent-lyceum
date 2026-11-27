@@ -100,12 +100,12 @@ export function clock(ms: number): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export type LaneBar = { x: number; width: number; ok: boolean; live: boolean; title: string };
+export type LaneBar = { x: number; width: number; ok: boolean; live: boolean; title: string; lines: string[] };
 export type Lane = { agent: string; bars: LaneBar[] };
 
 export function timeline(run: Run | undefined, agents: Agent[], now: number): { start: number; end: number; lanes: Lane[] } | null {
   if (!run) return null;
-  const points: { agent: string; start: number; end: number; ok: boolean; live: boolean; title: string }[] = [];
+  const points: { agent: string; start: number; end: number; ok: boolean; live: boolean; title: string; lines: string[] }[] = [];
   for (const wake of run.wakes) {
     const start = Date.parse(wake.at);
     if (!Number.isFinite(start)) continue;
@@ -117,19 +117,22 @@ export function timeline(run: Run | undefined, agents: Agent[], now: number): { 
       ok: wake.ok,
       live: false,
       title: wakeTitle(wake),
+      lines: wakeLines(wake),
     });
   }
   if (run.state === "running") {
     for (const [agent, active] of Object.entries(run.active)) {
       const start = Date.parse(active.since);
       if (!Number.isFinite(start)) continue;
+      const title = `${agent} 第 ${active.round ?? "?"} 輪，進行中 ${elapsed(active.since, now)}`;
       points.push({
         agent,
         start,
         end: Math.max(now, start),
         ok: true,
         live: true,
-        title: `${agent} 第 ${active.round ?? "?"} 輪，進行中 ${elapsed(active.since, now)}`,
+        title,
+        lines: [title],
       });
     }
   }
@@ -151,6 +154,7 @@ export function timeline(run: Run | undefined, agents: Agent[], now: number): { 
           ok: p.ok,
           live: p.live,
           title: p.title,
+          lines: p.lines,
         })),
     }))
     .filter((lane) => lane.bars.length > 0);
@@ -158,10 +162,15 @@ export function timeline(run: Run | undefined, agents: Agent[], now: number): { 
 }
 
 function wakeTitle(wake: Wake): string {
-  const tokens = wake.output_tokens ? `，${tokenText(wake.output_tokens)} token` : "";
-  const model = wake.model ? `，${wake.runtime ?? ""}/${wake.model}` : "";
-  const error = wake.error ? `，${wake.error}` : "";
-  return `${wake.agent} 第 ${wake.round} 輪，${wake.ok ? "成功" : "失敗"}，${Math.round(wake.duration_ms / 1000)}s${tokens}${model}${error}`;
+  return wakeLines(wake).join("，");
+}
+
+function wakeLines(wake: Wake): string[] {
+  const lines = [`${wake.agent} 第 ${wake.round} 輪，${wake.ok ? "成功" : "失敗"}，${Math.round(wake.duration_ms / 1000)}s`];
+  if (wake.output_tokens) lines.push(`${tokenText(wake.output_tokens)} token`);
+  if (wake.model) lines.push([wake.runtime, wake.model].filter(Boolean).join("/"));
+  if (wake.error) lines.push(wake.error);
+  return lines;
 }
 
 export type RecentMail = { from: string; to: string; type: string; subject: string };

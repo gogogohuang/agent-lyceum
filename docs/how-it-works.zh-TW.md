@@ -8,7 +8,7 @@
    每封 `task` 和 `reply` 的內文應包含固定的 `##` 標題（會注入每個 agent 的 prompt）：`task` → `Goal`、`Acceptance criteria`、`Scope`、`Upstream`；`reply` → `Changes`、`Verification`、`Open items`、`Risks`（沒內容就寫 `None`；`done` 免檢）。缺標題的 `task` 或 `reply` 會退回給寄件人，並以 `failure` 信列出缺少的標題；同一 run 內同一寄件人、type 與主旨最多退回兩次，之後仍會送達，但開頭會加上警告說明，run log 也會記一筆 `format-warning`。舊版配置的 run 一律直接送達並附警告。
 5. 結束條件：lead 寄出 `type: done`、所有信箱都空了，或（有設上限時）喚醒次數達到 `max_rounds`；預設 `0` 代表不限輪數。`done` 的 frontmatter 必須有 `outcome: completed|partial|blocked|failed`，內文要有 `## Result`、`## Files`、`## Verification`、`## Decisions`（任務沒指定而自行做的選擇與所依賴的假設，沒有就寫 `None`）、`## Not done`（`## Decisions` 和 `## Files`、`## Verification` 一樣，只有 `completed` 才必填）；`completed` 還要求 `## Steps` 全部勾選。`completed` 的 `## Spot-check`、`## Quiz` 只是建議：缺少時照收，並在 `result.md` 最上方加一行格式警告。不符合的 `done` 會退回給 lead（最多兩次，之後以 `partial` 收下）。除非你設定 `verify`，否則 agent-lyceum 不會檢查 lead 回報的內容是否屬實；見[驗證 completed 的 done](#驗證-completed-的-done)。喚醒失敗最多重試 `retry` 次（預設 2，即最多呼叫 3 次）；仍然失敗就停止整個 run（成員失敗為 `agent_failed`，lead 失敗為 `lead_failed`），不會少了它繼續跑：它正在處理的那封信維持未讀，結束訊息會告訴你怎麼查原因與怎麼繼續（修正後 `agent-lyceum resume <run>`，或用 `clear` 放棄）。新的一封信即使 `resume: true` 也從新 session 開始：上一封信的 session 會清掉，prompt 只有這封信。同一次喚醒裡的 retry 只載回這次嘗試之前存下的 session（若有），prompt 會重送這封信並附上 Retry 提示，以及失敗嘗試留在 outbox、尚未投遞的草稿。同一封未完成信件的 redo（之後的喚醒，含 `resume`）只在 session 是為這封信存下時才載回，prompt 會重送這封信並附上 Redo 提示，以及失敗嘗試留在 outbox、尚未投遞的草稿：只給同一個 agent、標為未驗證、最多 4 KB、不會被投遞。redo 的 prompt 也會要求 agent 先讀自己的 task memory。Claude 的 `--resume` 會搭配 `--fork-session`，只有這次嘗試成功才把 fork 的 id 存下來。這些都是 prompt 要求，模型是否照做尚未用真實 runtime 驗證。同一個寄件人寄給同一個收件人、type、reply_to 與內文（忽略空白差異）都相同的信不會再被投遞，並通知寄件人，避免兩個 agent 對著同一封信繞圈。
 
-有待處理信件的成員會平行喚醒，一輪最多 `dispatcher.max_awake` 人（整數 1–16，預設 8；還沒被喚醒的人留到下一輪），且絕不與 lead 同時執行。直接在資料夾工作的 run 仍一次只醒一個人。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
+有待處理信件的成員會平行喚醒，一輪最多 `dispatcher.max_awake` 人（整數 1–16，預設 8；還沒被喚醒的人留到下一輪），且絕不與 lead 同時執行。lead 借用專案資料夾時也是這個上限。沒有 worktree 的 run 仍一次只醒一個人。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
 
 lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`investigate` 是唯讀，寫了 `read_only: true` 的 task 也是（請人檢查別人的成果，包含請 QA，都是唯讀）。`feature` 還要有 `## Shape`。只有 lead 的 `task` 會採用這兩個欄位；其他人的 `playbook` 或 `read_only` 會去掉欄位後送達，並依原因各記一次。值不是這四種，或 `read_only` 不是布林，整封信退回。`## Acceptance criteria` 的每一項要是反引號裡的指令、檔名或測試名稱。整行只有 `None`、`` `None` ``、`as stated` 或 `同上` 會被退回。缺 `## Shape` 或驗收寫得無法檢查，會退回兩次，之後改為附警告送達。唯讀喚醒只能寫自己的記憶、outbox 與自己的 agent 目錄。repo 可讀。git 目錄與 `sandbox.write` 不可寫。worktree 模式會把成員的 checkout 回到這次喚醒開始時記下的那一筆 commit：這次新做的 commit 與未提交檔案都會清掉。喚醒前已經在、且上一筆 claim 不是唯讀時，那些改動會先提交再留下。當機後重跑也會清掉唯讀 claim 留下的 worktree。直接在資料夾工作的 run 不會還原你的目錄。Cursor，以及沒有 OS sandbox 的 Claude Code 或 Codex，無法強制這條政策；run log 會記 `read-only-unenforced`。
 
@@ -16,21 +16,24 @@ lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`inves
 
 ## 同時執行多個 task
 
-並行不需要任何設定，同一專案可同時有任意多個 run，只要每個 run 都有自己的 worktree。新的 run（包括單獨的 `run --agent <name>`）怎麼做取決於資料夾：
+並行不需要任何設定，同一專案可同時有任意多個 run，只要其中最多一個借用專案資料夾，其餘都有自己的 worktree。新的 run（包括單獨的 `run --agent <name>`）怎麼做取決於資料夾：
 
-- **有 commit 的 git repo（預設 `files` ref 儲存）：** **每個** run 都在自己的 git worktree 工作：lead 在 `projects/<name>/worktrees/<run-id>/<lead>`、branch 為 `agent-lyceum/<run-id>/<lead>`，每個成員的 worktree 從 lead 的內容分出。run 從你 repo 的 `HEAD` 起跑，所以允許你有未提交的修改，但這些修改**不會**在其中（啟動訊息會寫出有幾個檔案）。你的工作目錄、index 與 HEAD 一律不會被動到，結果也**不會**寫進你的工作目錄：請用 `git merge <branch>` 或 `open_pr` 取得。
+- **有 commit 的 git repo（預設 `files` ref 儲存），預設情況：** run 從 remote 的預設分支（`origin/HEAD`，沒有則 `origin/main`，再沒有則 `origin/master`；會先 fetch `origin`，fetch 失敗不算錯誤，改用 repo 裡已有的 remote ref）開出 `agent-lyceum/<run-id>/<lead>`，你留在專案資料夾。lead 就在該資料夾的這個 branch 上工作，每個成員在從它分出的 worktree 工作，成員完成的成果會整合回該資料夾。run 在狀態中把這個 branch 記為 `task_branch`。
+- **有 commit 的 git repo，lead 改用 worktree：** 資料夾有未提交的修改、`HEAD` 不是那顆 remote commit、`HEAD` 已經在某個 `agent-lyceum/*` branch 上，或已有另一個 checkout run 佔著該資料夾時，lead 改在 `projects/<name>/worktrees/<run-id>/<lead>` 工作、branch 仍為 `agent-lyceum/<run-id>/<lead>`，每個成員的 worktree 從 lead 的內容分出。基準仍是那顆 remote commit。沒有 remote 基準（沒有 `origin`，或 `origin/HEAD`、`origin/main`、`origin/master` 都不存在）時，worktree 從你本地的 `HEAD` 開。允許你有未提交的修改，但這些修改**不會**在其中（啟動訊息會寫出有幾個檔案）。你的工作目錄、index 與 HEAD 一律不會被動到，結果也**不會**寫進你的工作目錄：請用 `git merge <branch>` 或 `open_pr` 取得。
 - **非 git 資料夾、沒有 commit 的 repo，或使用 reftable 的 repo：** run 直接在該資料夾工作、一次只跑一個 agent，並以一行 info 說明原因，而不是報錯。同時只能有一個這樣的 run；再開第二個會被拒絕，並列出擋住的 run。有自己 worktree 的 run 可與它並存。
 - **衝突：** 同一個 run 的兩個 agent 改了同一個檔案時，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。不同檔案之間彼此不相容的修改不會被偵測到。
 
-- **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），lead 的成果會一次提交在它的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。停下來向你提問（`waiting`）的 run 還沒結束：不會提交、也不會印 merge 提示；成果留在 lead 的 worktree，`resume` 會在同一個 worktree 繼續。
-- **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`）。`resume` 沿用 run 啟動時的方式。舊版啟動、沒有這個欄位的 run：若是平行 run，接續時 lead 在資料夾、成員在 worktree、全部平行；否則直接在該資料夾工作。
+- **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），lead 的成果會一次提交在它的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。停下來向你提問（`waiting`）的 run 還沒結束：不會提交、也不會印 merge 提示；成果留在 lead 的 worktree（或專案資料夾），`resume` 會在同一個地方繼續。
+- **在專案資料夾執行的 run 結束後：** `HEAD` 停在任務分支，不會替你切回去。`resume` 要求你仍在 `task_branch` 上：否則會拒絕並說明要切到哪個 branch，也不會替你切換，更不會把 run 改成 worktree run。
+- **鎖：** 每個專案有各自的 run 鎖。兩個專案共用同一個 repo 時沒有跨專案鎖，所以彼此看不到對方的 run 佔著資料夾。
+- **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`），或是在專案資料夾的某個 branch 上工作（`task_branch`）。`resume` 沿用 run 啟動時的方式。舊版啟動、沒有這個欄位的 run：若是平行 run，接續時 lead 在資料夾、成員在 worktree、全部平行；否則直接在該資料夾工作。
 - **`tidy`：** `tidy` 與 `tidy --undo` 需要獨占專案：有任何 run 在執行時會拒絕，執行期間也不能啟動任何 run。
-- **`clear`：** lead 的 branch 尚未合併時，`clear <run-id>` 會拒絕（用 `--keep-worktrees` 可保留它）。當機 run 留下的鎖用 `clear --lock [run-id] [-p name] --force` 移除；有多把鎖時要指定是哪個 run。
+- **`clear`：** lead 的 branch 尚未合併時，`clear <run-id>` 會拒絕（用 `--keep-worktrees` 可保留它）。在專案資料夾執行的 run：`HEAD` 正停在任務分支時 `clear` 會拒絕，任務分支的尖端還沒進目前的 `HEAD` 時不刪該 branch。當機 run 留下的鎖用 `clear --lock [run-id] [-p name] --force` 移除；有多把鎖時要指定是哪個 run。
 
 已知限制：
 
-- worktree 的一輪最多喚醒 `dispatcher.max_awake` 個成員（預設 8）。直接在資料夾工作的 run 仍一次只醒一個人。多個 run 仍可同時進行。
-- `can_edit_agent_md: true` 的 lead 修改的是它自己 worktree 裡的 `CLAUDE.md`／`AGENTS.md`；這些修改要等你合併它的 branch 才會進到你的 repo。
+- worktree 的一輪（包含 lead 借用專案資料夾的那種）最多喚醒 `dispatcher.max_awake` 個成員（預設 8）。沒有 worktree 的 run 仍一次只醒一個人。
+- `can_edit_agent_md: true` 的 lead 在它工作的地方修改 `CLAUDE.md`／`AGENTS.md`：run 借用專案資料夾時，改的是資料夾裡任務分支上的檔案；否則改的是它自己 worktree 裡的檔案。兩種情況都寫在這次 run 的分支上，要等你把該分支合併進預設分支，才會出現在預設分支上。
 - `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留。若該批喚醒期間同專案另一個 run 仍存活，且該批沒有任何 agent 可編輯該檔案，guard 不會還原這項變更（無法歸屬），改記 `protected-change-unattributed`；見[寫入範圍](write-scope.zh-TW.md)。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 
@@ -68,7 +71,7 @@ lead 可以讓一位成員同時處理幾個互不相依的 task：該成員會�
 
 當你的 task 要求開 PR 時，lead 會在它的 `done` 報告的 frontmatter 加上 `open_pr: true`。如果 run 之後以 `completed` 結束，且 lead 的 branch 有變更，就由 agent-lyceum（不是 agent）把 `agent-lyceum/<run-id>/<lead>` 推到 `origin`，並對 repo 的預設分支執行 `gh pr create`，以 lead 的報告作為描述（結尾為 `🤖 Opened by agent-lyceum`）。run 的結果會印出 PR 網址，`state.json` 也會把它記為 `pr_url`。只有 lead 能提出要求：其他人都不能送出 `done`，也沒有任何 agent 的沙箱被放寬——`git push` 與 `gh` 在沙箱外以你自己的憑證執行。
 
-- 它需要 lead 的 branch，所以只有在 run 有自己的 worktree 時（有 commit 的 git repo）才有作用。否則這個要求會被回報並略過。
+- 它需要 lead 的 branch，所以只有在 run 有自己的 worktree，或在專案資料夾有任務分支時（有 commit 的 git repo）才有作用。否則這個要求會被回報並略過。
 - 無法照辦的要求（run 沒有完成、沒有變更、沒有 `gh`、沒有 `origin`、push 或 `gh` 失敗）絕不會改變 run 的結果。run 會說明沒有開的原因並保留 branch；push 或 `gh pr create` 失敗時，還會印出可手動完成的指令。
 - 開 PR 會把 lead 的 branch 與報告發布到 `origin`。因此，提出要求（`open_pr: true`）的 agent 能把它在沙箱內讀得到的任何東西送上遠端，所以只有在可以接受這件事時，才在 task 裡要求開 PR。push 與 `gh pr create` 從你的主 repo 執行，絕不在 agent 的 worktree 裡執行，因為 agent 能寫入那個目錄。
 - agent-lyceum 從不合併，也不等待 CI 或審查。在有 commit 的 git repo 裡，`doctor` 會告訴你有沒有 `gh` 與 `origin`（不會檢查 `gh` 是否已登入）。

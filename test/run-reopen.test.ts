@@ -289,11 +289,16 @@ describe("reopening a concurrent run", () => {
     expect(git(env.repo, "log", "--format=%s", `${summary.resultBranch!.head}..${BRANCH}`)).toMatch(/lead's work/);
   });
 
+  const stripPins = (args: string[]) => {
+    const a = [...args];
+    while (a[0] === "-c") a.splice(0, 2);
+    return a;
+  };
   const reopenWithPr = async (merged: boolean, again = true, prState = "OPEN") => {
     const calls: string[][] = [];
     let created = 0;
     const ok: CommandRunner = (cmd, args) => {
-      calls.push([cmd, ...args]);
+      calls.push([cmd, ...stripPins(args)]); // git runs pinned (-c k=v ...) in front of push
       if (cmd === "gh" && args[1] === "view") return { ok: true, out: `${prState}\n` };
       return cmd === "gh" ? { ok: true, out: `https://x/pull/${++created + 2}\n` } : { ok: true, out: args[0] === "symbolic-ref" ? "origin/main" : "" };
     };
