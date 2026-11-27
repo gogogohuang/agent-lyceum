@@ -50,7 +50,7 @@ Runs that never use `parallel: true` keep the same files and state as before, ex
 
 ## Continuing a finished run
 
-Every run has a **name**: made from the first line of the task (lowercase letters, digits and `-`, at most 30 characters; `task` if nothing usable is left; `-2`, `-3` on repeats), or chosen with `run --name <name>` (same characters and length; refused if the name is already used). `resume`, `clear` and `status --task-id` accept the full run id, the name, or a unique prefix of either; an ambiguous prefix lists the candidates and exits `1`, and an empty one is refused. `status` shows the name next to the id.
+Every run has a **name**: made from the first nonblank line of the task (lowercase letters, digits and `-`, at most 30 characters; `task` if nothing usable is left; `-2`, `-3` on repeats), or chosen with `run --name <name>` (same characters and length; see [run](commands.md#run) for how name collisions are handled). `resume`, `clear` and `status --task-id` accept the full run id, the name, or a unique prefix of either; an ambiguous prefix lists the candidates and exits `1`, and an empty one is refused. `status` shows the name next to the id.
 
 A finished (`done`) run can be reopened with a follow-up request: `agent-lyceum resume [run] "<follow-up>"` (or `--task-file f`). The lead gets the text as a new `task`, and the run goes on with the same run dir, task memory, sessions and lead worktree.
 

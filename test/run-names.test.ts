@@ -1,6 +1,6 @@
 // test/run-names.test.ts
 import { describe, expect, it } from "vitest";
-import { newRunState, resolveRun, roundLimit, slugify, uniqueName, type RunRef } from "../src/run-store.js";
+import { newRunState, pickRunName, resolveRun, roundLimit, slugify, uniqueName, type RunRef } from "../src/run-store.js";
 
 const ref = (run_id: string, name?: string): RunRef => ({ dir: `/r/${run_id}`, state: newRunState({ run_id, name }) });
 
@@ -47,6 +47,96 @@ describe("resolveRun", () => {
   it("reports ambiguous prefixes and unknown names", () => {
     expect(resolveRun(runs, "2026101")).toMatchObject({ ok: false, reason: "ambiguous" });
     expect(resolveRun(runs, "nope")).toMatchObject({ ok: false, reason: "none" });
+  });
+});
+
+describe("pickRunName", () => {
+  const exists = (name: string) => `A run named "${name}" already exists in project demo.`;
+  const holder = (over: Partial<{ name: string; tidy?: boolean; outcome?: string; end_reason?: string; state?: string; live: boolean; run_id: string }> = {}) => ({
+    name: "x",
+    tidy: true,
+    outcome: "failed",
+    live: false,
+    run_id: "r1",
+    ...over,
+  });
+
+  it("keeps a free name", () => {
+    expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: [], holders: [] })).toEqual({ ok: true, name: "x" });
+    expect(pickRunName({ name: "x", tidy: false, project: "demo", taken: ["other"], holders: [] })).toEqual({ ok: true, name: "x" });
+  });
+
+  it("renames when an unfinished tidy run holds the name, and steps past x-2", () => {
+    const once = pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders: [holder()] });
+    expect(once).toEqual({ ok: true, name: "x-2", note: `note: "x" is held by an unfinished tidy run (failed, r1); this run is named "x-2".` });
+    const twice = pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x", "x-2"], holders: [holder(), holder({ name: "x-2", run_id: "r2" })] });
+    expect(twice).toEqual({ ok: true, name: "x-3", note: `note: "x" is held by an unfinished tidy run (failed, r1); this run is named "x-3".` });
+  });
+
+  it("renames a name-only legacy tidy holder that never completed", () => {
+    const picked = pickRunName({
+      name: "legacy-tidy",
+      tidy: true,
+      project: "demo",
+      taken: ["legacy-tidy"],
+      holders: [holder({ name: "legacy-tidy", tidy: undefined, outcome: undefined, state: "interrupted", run_id: "old" })],
+    });
+    expect(picked).toEqual({
+      ok: true,
+      name: "legacy-tidy-2",
+      note: `note: "legacy-tidy" is held by an unfinished tidy run (interrupted, old); this run is named "legacy-tidy-2".`,
+    });
+  });
+
+  it("refuses every other collision with the existing message", () => {
+    const unfinished = [holder()];
+    expect(pickRunName({ name: "x", tidy: false, project: "demo", taken: ["x"], holders: unfinished })).toEqual({ ok: false, error: exists("x") });
+    expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders: [holder({ tidy: false, name: "x" })] })).toEqual({ ok: false, error: exists("x") });
+    expect(pickRunName({ name: "plain", tidy: true, project: "demo", taken: ["plain"], holders: [holder({ name: "plain", tidy: undefined })] })).toEqual({ ok: false, error: exists("plain") });
+    expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders: [holder({ outcome: "completed", end_reason: "done" })] })).toEqual({ ok: false, error: exists("x") });
+    expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders: [holder({ live: true })] })).toEqual({ ok: false, error: exists("x") });
+  });
+
+  it("refuses when any exact holder is finished, not tidy, or live, whichever comes first", () => {
+    const failed = holder({ run_id: "fail1" });
+    const finished = holder({ outcome: "completed", end_reason: "done", run_id: "done1" });
+    const plain = holder({ tidy: false, run_id: "plain1" });
+    const live = holder({ live: true, run_id: "live1" });
+    for (const blockers of [finished, plain, live]) {
+      for (const holders of [
+        [failed, blockers],
+        [blockers, failed],
+      ]) {
+        expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders })).toEqual({ ok: false, error: exists("x") });
+      }
+    }
+  });
+
+  it("renames when every exact holder is an unfinished tidy run, naming the first holder", () => {
+    const two = pickRunName({
+      name: "x",
+      tidy: true,
+      project: "demo",
+      taken: ["x"],
+      holders: [holder({ run_id: "newer" }), holder({ run_id: "older", outcome: "partial" })],
+    });
+    expect(two).toEqual({ ok: true, name: "x-2", note: `note: "x" is held by an unfinished tidy run (failed, newer); this run is named "x-2".` });
+    const stepped = pickRunName({
+      name: "x",
+      tidy: true,
+      project: "demo",
+      taken: ["x", "x-2"],
+      holders: [holder({ run_id: "newer" }), holder({ run_id: "older" })],
+    });
+    expect(stepped).toEqual({ ok: true, name: "x-3", note: `note: "x" is held by an unfinished tidy run (failed, newer); this run is named "x-3".` });
+  });
+
+  it("treats completed without end_reason done as unfinished", () => {
+    expect(pickRunName({ name: "x", tidy: true, project: "demo", taken: ["x"], holders: [holder({ outcome: "completed", run_id: "r1" })] })).toEqual({
+      ok: true,
+      name: "x-2",
+      note: `note: "x" is held by an unfinished tidy run (completed, r1); this run is named "x-2".`,
+    });
   });
 });
 

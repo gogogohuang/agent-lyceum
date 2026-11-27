@@ -15,7 +15,7 @@ import { executeRunCleanup, planRunCleanup } from "./run-cleanup.js";
 import { diagnoseProject, formatDoctor, preflightRuntimes, runtimesUsed } from "./doctor.js";
 import { acquireProjectLock, forceUnlock, inspectRunLock, listRunLocks, listUnreadableRunLocks, LOCK_FILE, lockHolderAlive, type ProjectLease } from "./project-lock.js";
 import { planWorkspace } from "./worktree.js";
-import { loadRunState, newRunId, outcomeOf, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
+import { loadRunState, newRunId, outcomeOf, pickRunName, resolveRun, roundLimit, roundsLabel, runLabel, slugify, uniqueName, type RunRef } from "./run-store.js";
 import { printRun } from "./run-print.js";
 import { exitCodeForOutcome, RUNTIMES, type Runtime } from "./schema.js";
 import { absPath, assertName, NAME_RE, projectPaths, resolveHome } from "./paths.js";
@@ -278,7 +278,7 @@ program
   .option("--task-file <path>", "read the task from a file")
   .option("--agent <name>", "run only this member of the project, alone: it cannot mail teammates or ask you, and its own `done` ends the run")
   .option("--name <name>", "name for this run (default: made from the task)")
-  .option("--tidy", "mark this run as a commit tidy (the web console tags it and disables its controls)")
+  .option("--tidy", "mark this run as a commit tidy (the web badge follows the run result and the console disables its controls; with --name, a name held by an unfinished tidy run gets the next free suffix, e.g. X-2)")
   .option("--assume-defaults", "when the run stops to ask, use the suggested answer for every question that has one")
   .action(async (task: string | undefined, opts: { project?: string; taskFile?: string; agent?: string; name?: string; tidy?: boolean; assumeDefaults?: boolean }) => {
     try {
@@ -296,10 +296,30 @@ program
       }
       await preflight(checked);
 
-      const taken = listRuns(pr, Infinity).flatMap((r) => (r.state.name ? [r.state.name] : []));
+      const runs = listRuns(pr, Infinity);
+      const taken = runs.flatMap((r) => (r.state.name ? [r.state.name] : []));
+      let chosenName: string | undefined;
       if (opts.name !== undefined) {
-        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opts.name) || opts.name.length > 30) fail(`Invalid run name "${opts.name}": use lowercase letters, digits and "-", at most 30 characters.`);
-        if (taken.includes(opts.name)) fail(`A run named "${opts.name}" already exists in project ${pr.name}.`);
+        const requested = opts.name;
+        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(requested) || requested.length > 30) fail(`Invalid run name "${requested}": use lowercase letters, digits and "-", at most 30 characters.`);
+        const nameTaken = taken.includes(requested);
+        const picked = pickRunName({
+          name: requested,
+          tidy: opts.tidy === true,
+          project: pr.name,
+          taken,
+          holders: nameTaken
+            ? runs.flatMap((r) => {
+                const name = r.state.name;
+                if (typeof name !== "string" || name !== requested) return [];
+                const live = runIsAlive(r.state, pr) && !r.state.end_reason;
+                return [{ name, tidy: r.state.tidy, outcome: r.state.outcome, end_reason: r.state.end_reason, state: r.state.end_reason ?? (live ? "running" : "interrupted"), live, run_id: r.state.run_id }];
+              })
+            : [],
+        });
+        if (!picked.ok) fail(picked.error);
+        if (picked.note) console.error(picked.note);
+        chosenName = picked.name;
       }
 
       const runId = newRunId();
@@ -313,7 +333,7 @@ program
         console.log(`Project ${pr.name} — repo ${pr.dir}${opts.agent ? ` — solo: ${opts.agent}` : ""}`);
         console.log(`Task: ${prepared.source === "file" ? `file ${prepared.sourcePath}` : "text"} (${prepared.bytes} bytes${prepared.inline ? "" : ", passed by reference"})`);
         if (prepared.source === "file") for (const w of lintTaskContent(prepared.content)) console.error(`warning: task file ${w}`);
-        const name = opts.name ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
+        const name = chosenName ?? uniqueName(slugify(taskMessageBody(prepared).subject), taken);
         summary = await runTeam({ project: pr, name, plan, task: prepared, runDir, soloAgent: opts.agent, tidy: opts.tidy, signal: cancel.signal });
       } finally {
         cancel.dispose();

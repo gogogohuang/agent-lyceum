@@ -10,7 +10,7 @@ export type CommandResult =
   | { kind: "stale" }
   | { kind: "error"; message: string };
 
-export type JobSummary = { id: string; command: string; argv: string[]; cwd: string; started_at: string; pid: number; state: "running" | "ended" | "lost"; exit?: number | null; ended_at?: string };
+export type JobSummary = { id: string; command: string; argv: string[]; cwd: string; started_at: string; pid: number; state: "running" | "ended" | "lost"; exit?: number | null; signal?: string | null; ended_at?: string };
 export type JobDetail = JobSummary & { tail: string; truncated?: boolean; lineStart?: boolean; byteStart?: number; gaps?: Utf8Gap[] };
 export type AskQuestion = { id: string; text: string; asker: string; options?: string[]; suggested?: { value: string; reason?: string }; answer?: string; delivered: boolean };
 export type AskView = { status: "pending" | "answered"; questions: AskQuestion[] };

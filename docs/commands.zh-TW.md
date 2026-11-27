@@ -31,8 +31,10 @@
 
 - `"task"`：任務文字。與 `--task-file` 擇一，不能同時給。
 - `--task-file f`：從檔案讀取任務。可參考[任務檔範本](task-template.zh-TW.md)：範圍、驗收條件、不可動的範圍、驗證指令、是否小修改。
-- `--name n`：為 run 命名（預設由 task 第一行產生）。小寫字母、數字與 `-`，最多 30 字元；名稱已被使用會拒絕。見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
-- `--tidy`：標記這個 run 是 commit tidy。web console 會顯示「已 tidy」，並停用這個任務的操作按鈕（新任務、續跑、回答、刪除、報告、整理記憶、檢查設定、總結進度）。沒帶此旗標但名稱含 `tidy` 的 run 也一樣。
+- `--name n`：為 run 命名（預設由 task 第一個非空白行產生）。使用小寫英數，可用單一連字號分隔各組，最多 30 字元。只有在加上 `--tidy`，且每個同名 run 都是已停止、未同時具備 outcome `completed` 與 `end_reason` `done` 的 tidy run 時，才會加上數字後綴。其餘撞名情況會拒絕。後綴是下一個空的 `-2`、`-3`……，必要時縮短基底以維持在 30 字元以內。stderr 印一行，寫出實際採用的名稱。見 [一次執行如何運作](how-it-works.zh-TW.md#接續已完成的-run) 的「接續已完成的 run」。
+- `--tidy`：標記這個 run 是 commit tidy。web console 的 run 標題與 run 清單依 run 本身標記，並停用這個任務的操作按鈕（新任務、續跑、回答、刪除、報告、整理記憶、檢查設定、總結進度）。Jobs 頁的 job 依該 job 的 state 與 exit code 標記，不看 run。名稱被占用時，依上方 `--name` 的規則。沒帶此旗標但名稱含 `tidy` 的 run 也一樣標記。
+  - 帶有 `--tidy` 或名稱含 `tidy` 的 run 依序套用以下規則。run 正在執行且 dispatcher 仍在執行時顯示「tidy 進行中」。outcome 為 `failed`，或 `end_reason` 為 `lead_failed` 或 `agent_failed` 時顯示「tidy 失敗」。outcome 為 `completed` 且 `end_reason` 為 `done` 時顯示「已 tidy」。其餘情況顯示「tidy 未完成」，包括部分完成、受阻、取消、等待、中斷、用完輪數，以及落入此情況且沒有儲存 outcome 的舊 run。
+  - Job：執行中為「tidy 進行中」；以 exit 0 結束為「已 tidy」；以 exit 2、3 或 130 結束、被 signal 終止（沒有 exit code），或 job 遺失，為「tidy 未完成」；其餘結束，包括 exit 1、啟動錯誤與未知 exit code，為「tidy 失敗」（啟動錯誤可以在沒有 run 時顯示）。以 `--tidy` 啟動、`--name` 參數含 `tidy`，或指令是 `tidy` 且不是 `--dry-run` 或 `--undo`，該 job 即為 tidy。
 - `-p name`：專案（預設由目前目錄推斷）。
 - `--assume-defaults`：題目有建議值時直接採用，不暫停。沒有建議值的題目仍然暫停。
 - `--agent a`：任務只交給專案裡的這一個成員，其他人都不會被喚醒。見下方。小任務用它可以省下大量喚醒；是否適用請看 [什麼時候不需要整個團隊](configuration.zh-TW.md#什麼時候不需要整個團隊) 的四個問題，其中提到本專案通常需要跨 runtime review，所以預設仍是整個團隊。

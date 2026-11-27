@@ -3,7 +3,8 @@ import { getJob, getJobs, holdSelected, retainJobs, type JobDetail, type JobSumm
 import { cn } from "./cn";
 import { exitInfo } from "./exit-info";
 import { JobOutput } from "./JobOutput";
-import { jobLabel } from "./job-label";
+import { jobLabel, jobTidyBadge } from "./job-label";
+import { TidyBadge } from "./TidyBadge";
 import { LoadingBlock, LoadingStatus } from "./Loading";
 import { startPoll } from "./poll";
 
@@ -85,6 +86,7 @@ export function JobsPage() {
           {rows.map((j) => {
             const info = j.state === "ended" ? exitInfo(j.exit ?? null, false) : undefined;
             const label = jobLabel(j.argv);
+            const tidy = jobTidyBadge(j);
             const open = picked === j.id;
             return (
               <li key={j.id} className="min-w-0">
@@ -98,7 +100,7 @@ export function JobsPage() {
                   <span className="font-mono">{j.command}</span>
                   {label.project && <span className="font-mono text-ink/70">{label.project}</span>}
                   {label.target && <span className="min-w-0 max-w-full truncate font-medium">{label.target}</span>}
-                  {label.tidy && <span className="rounded-full border border-line px-2 py-0.5 text-xs text-ink/70">已 tidy</span>}
+                  {tidy && <TidyBadge info={tidy} />}
                   <span className="text-ink/60">{new Date(j.started_at).toLocaleString()}</span>
                   <span className={cn(j.state === "running" ? "text-signal" : info?.tone === "ok" ? "text-signal" : info?.tone === "warn" ? "text-warn" : j.state === "lost" ? "text-warn" : "text-failed")}>
                     {j.state === "ended" && info ? info.text : STATE[j.state]}
