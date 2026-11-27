@@ -30,3 +30,8 @@ export function tidyBadge(run: Pick<Run, "name" | "tidy" | "state" | "live" | "o
   if (run.outcome === "completed" && run.end_reason === "done") return { text: "已 tidy", tone: "ok" };
   return { text: "tidy 未完成", tone: "warn" };
 }
+
+/** A tidy run is closed: the console must not start or change anything from its buttons. */
+export function isRunControlLocked(run: Pick<Run, "name" | "tidy"> | undefined): boolean {
+  return isTidyRun(run);
+}

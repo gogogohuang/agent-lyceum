@@ -17,6 +17,8 @@
 | `clear --lock --force` | **工具**（`#!tools`） |
 | `status` | 頁面本身；任務的報告：**查看報告**（見[查看報告](#查看報告)） |
 
+在某個任務上按**整理記憶**並確定後，那個任務會標成「已 tidy」。「已 tidy」也出現在新任務勾了「標記為 tidy」的 run，以及名稱含 `tidy` 的 run。選中這種任務時，這一頁的操作按鈕與**總結進度**都不能按。任務輸出裡，真正的 `tidy`（不是預覽、也不是還原）同樣顯示「已 tidy」。
+
 可能跑很久的指令（`run`、`resume`、`call`、`tidy`、`demo`）以背景工作啟動，關掉頁面或停掉 `status --web` 後仍會繼續。每個工作有自己的資料夾 `<home>/web-jobs/<id>/`，裡面有 `out.log`，結束後還有 `exit.json`。輸出在**任務輸出**（`#!jobs`）。`tidy --dry-run`、`tidy --undo` 與 `demo --setup-only` 很快結束，輸出直接回傳。
 
 ## 查看報告

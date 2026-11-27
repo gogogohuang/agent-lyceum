@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isIdleRun, isTidyRun, tidyBadge, TIDY_TONE_CLASS } from "../web/src/client/run-state";
+import { isIdleRun, isRunControlLocked, isTidyRun, tidyBadge, TIDY_TONE_CLASS } from "../web/src/client/run-state";
 
 describe("isIdleRun", () => {
   it("covers the cases", () => {
@@ -73,5 +73,14 @@ describe("tidyBadge", () => {
     expect(TIDY_TONE_CLASS.fail).toBe("text-failed");
     expect(TIDY_TONE_CLASS.progress).not.toBe(TIDY_TONE_CLASS.ok);
     expect(new Set([TIDY_TONE_CLASS.ok, TIDY_TONE_CLASS.warn, TIDY_TONE_CLASS.fail]).size).toBe(3);
+  });
+});
+
+describe("isRunControlLocked", () => {
+  it("shuts every control once a run is marked tidy", () => {
+    expect(isRunControlLocked(undefined)).toBe(false);
+    expect(isRunControlLocked({ name: "LT-1-api" })).toBe(false);
+    expect(isRunControlLocked({ tidy: true, name: "x" })).toBe(true);
+    expect(isRunControlLocked({ name: "LT-29363-api-tidy" })).toBe(true);
   });
 });

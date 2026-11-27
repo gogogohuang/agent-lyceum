@@ -194,7 +194,7 @@ export interface RunState {
   step_base?: Step[];
   /** Readable name; lets `resume`, `clear` and `status` find the run without its id. Absent on runs from older versions. */
   name?: string;
-  /** Set by `run --tidy`: this run only tidies existing commits. The web console marks such runs. */
+  /** Set by `run --tidy`: this run only tidies existing commits. The web console marks it and disables its controls. */
   tidy?: boolean;
   /** One entry per time a finished run was reopened with a follow-up. */
   reopened?: { at: string }[];

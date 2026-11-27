@@ -15,12 +15,13 @@ export function jobLabel(argv: string[]): JobLabel {
     return i >= 0 ? flags[i + 1] : undefined;
   };
   const project = after("-p");
-  const tidy = flags.includes("--tidy") || /tidy/i.test(after("--name") ?? "");
   const cmd = argv[0];
+  const tidy = flags.includes("--tidy") || /tidy/i.test(after("--name") ?? "") || (cmd === "tidy" && !flags.includes("--dry-run") && !flags.includes("--undo"));
   let target: string | undefined;
   if (cmd === "run") target = after("--name") ?? excerpt(rest[0]);
   else if (cmd === "resume") target = rest[0];
   else if (cmd === "call") target = [flags[1], excerpt(rest[0])].filter(Boolean).join("：") || undefined;
+  else if (cmd === "tidy") target = after("--agent") ?? "全部";
   return { project, target, tidy };
 }
 

@@ -23,6 +23,8 @@ export type ConsoleDeps = {
   listDecisions: () => DecisionGroup[];
   readDecision: (project: string, id: string) => (DecisionItem & { markdown: string }) | undefined;
   saveAnswers: (project: string, runId: string, answers: Record<string, string>, assumeDefaults: boolean) => { complete: boolean; problems: string[] };
+  /** Set after a real memory tidy is accepted, so the selected run shows 「已 tidy」. */
+  markRunTidy?: (project: string, runId: string) => boolean;
   shortTimeoutMs?: number;
 };
 
@@ -116,9 +118,15 @@ async function runCommand(req: IncomingMessage, res: ServerResponse, deps: Conso
   }
   if (def.mode(b) === "short") {
     const result = await runShort(deps.cli, deps.home, argv, { cwd, timeoutMs: deps.shortTimeoutMs ?? 120_000 });
-    return send(res, 200, { mode: "short", ...result });
+    // `clear` only keeps decisions; whether to tidy them into project memory is the user's call (a dry run or a failed clear never tidies).
+    let tidyJobId: string | undefined;
+    if (id === "clear" && b.tidy === true && b.dryRun !== true && result.exit === 0) {
+      tidyJobId = startJob(deps.cli, deps.home, path.join(deps.home, "web-jobs"), "tidy", ["tidy", "-p", String(b.project)], cwd).id;
+    }
+    return send(res, 200, { mode: "short", ...result, ...(tidyJobId ? { tidyJobId } : {}) });
   }
   const job = startJob(deps.cli, deps.home, path.join(deps.home, "web-jobs"), id, argv, cwd);
+  if (id === "tidy" && typeof b.run === "string" && b.run.trim()) deps.markRunTidy?.(String(b.project), b.run.trim());
   send(res, 202, { mode: "detached", jobId: job.id, pid: job.pid });
 }
 

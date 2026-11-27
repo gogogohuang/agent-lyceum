@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getJobs, retainJobs } from "../web/src/client/api";
 import { jobLabel, jobTidyBadge } from "../web/src/client/job-label";
 
 describe("jobLabel", () => {
@@ -16,8 +17,34 @@ describe("jobLabel", () => {
     expect(jobLabel(["resume", "-p", "biz", "--", "run-1", "more"])).toEqual({ project: "biz", target: "run-1", tidy: false });
     expect(jobLabel(["call", "bot", "--dir", "/d", "--", "hi"])).toEqual({ project: undefined, target: "bot：hi", tidy: false });
   });
-  it("other commands: nothing", () => {
-    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: undefined, tidy: false });
+  it("a memory tidy carries the tag; a preview or an undo does not", () => {
+    expect(jobLabel(["tidy", "-p", "biz"])).toEqual({ project: "biz", target: "全部", tidy: true });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--layer", "project"])).toMatchObject({ tidy: true, target: "lead" });
+    expect(jobLabel(["tidy", "-p", "biz", "--dry-run"])).toMatchObject({ tidy: false, target: "全部" });
+    expect(jobLabel(["tidy", "-p", "biz", "--agent", "lead", "--undo", "20261110T010203Z"])).toMatchObject({ tidy: false, target: "lead" });
+  });
+});
+
+describe("getJobs", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports a failed list request as null and an empty list as an empty array", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 500 })));
+    expect(await getJobs()).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("down"))));
+    expect(await getJobs()).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ jobs: [] }), { status: 200 })));
+    expect(await getJobs()).toEqual([]);
+  });
+});
+
+describe("retainJobs", () => {
+  it("keeps the previous list when a poll fails, and replaces it when the poll succeeds", () => {
+    const prev = [{ id: "a" }];
+    expect(retainJobs(prev, null)).toBe(prev);
+    expect(retainJobs(undefined, null)).toBeUndefined();
+    expect(retainJobs(prev, [])).toEqual([]);
+    expect(retainJobs(prev, [{ id: "b" }])).toEqual([{ id: "b" }]);
   });
   it("a --name containing tidy counts, even without --tidy", () => {
     expect(jobLabel(["run", "-p", "biz", "--name", "lt-1-tidy", "--", "do it"])).toEqual({ project: "biz", target: "lt-1-tidy", tidy: true });
