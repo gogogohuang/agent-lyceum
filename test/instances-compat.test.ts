@@ -16,7 +16,7 @@ import { FULL_DONE, git, initGitRepo, makeEnv, withSections, write, type TestEnv
 
 vi.setConfig({ testTimeout: 30_000 }); // real git runs; the default 5 s is too tight under a loaded full suite
 
-// Fixtures under test/fixtures/instances are regenerated when the playbook text or the checkable acceptance line changes.
+// Fixtures under test/fixtures/instances are regenerated when the lead prompt, the playbook text, or the checkable acceptance line changes.
 // Regenerate only on purpose: `UPDATE_INSTANCES_FIXTURES=1 npx vitest run test/instances-compat.test.ts`.
 
 const FIXTURES = path.join(__dirname, "fixtures", "instances");

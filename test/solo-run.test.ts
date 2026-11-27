@@ -77,6 +77,17 @@ describe("runTeam with soloAgent", () => {
     expect(s.endReason).toBe("done");
   });
 
+  it("lets the solo agent write: its wake has no coordinate policy", async () => {
+    const { project, runDir, task } = setup();
+    const invoker: Invoker = async (i) => {
+      expect(i.policy).toBeUndefined();
+      mail(i.project, "lead", "lead", "done", "all done");
+      return OK;
+    };
+    const s = await runTeam({ project, task, runDir, soloAgent: "lead", invoker, log: () => {} });
+    expect(s.endReason).toBe("done");
+  });
+
   it("never wakes anyone else, even when the solo agent tries to mail the lead", async () => {
     const { project, runDir, task } = setup();
     const woken: string[] = [];

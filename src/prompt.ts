@@ -153,8 +153,11 @@ function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string
       : `- The shared team context is in \`${commonPath}\` (read-only). Project records are ${records} Both are read-only.`,
     ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
+    ...(isLead ? ["- You do not edit product code. Send that work to a teammate. You still write mail, records, and handoff notes."] : []),
     ...(agent.canEditAgentMd
-      ? ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
+      ? isLead
+        ? ["- You may edit `AGENT.md` files that live outside the repository. You do not edit the repository's `CLAUDE.md`/`AGENTS.md`; send that to a teammate."]
+        : ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
       : ["- Never edit another agent's AGENT.md, a global `AGENT.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`."]),
     "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).",
   ];
@@ -318,9 +321,11 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   const lines: string[] = [];
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-lyceum)", "");
   lines.push(
-    agent.instance && agent.instance.k >= 2
-      ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
-      : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    isLead
+      ? `You are **${agent.name}**, the lead of the team "${project.name}". You do not edit product code. You read the repository \`${repoDirFor(project, agent.name)}\` and send the change to a teammate.`
+      : agent.instance && agent.instance.k >= 2
+        ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
+        : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
     ...(agent.instance?.k === 1
       ? [
           `Other instances of you${(() => {
@@ -331,7 +336,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       : []),
     ...(project.workspaces?.[agent.name]
       ? [
-          `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
+          isLead
+            ? `That directory is the run's checkout (branch \`${project.workspaces[agent.name]?.branch}\`). Edits you make there are removed when this wake ends. Do not commit, push, switch branches or touch any other checkout.`
+            : `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
         ]
       : []),
     `The team lead is **${project.lead}**${isLead ? " (that is you)" : ""}. Teammates: ${mates.join(", ") || "(none)"}.`,

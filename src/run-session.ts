@@ -21,7 +21,7 @@ import { crossRuntimeBlock } from "./review-gate.js";
 import { unboundCommands } from "./task-bind.js";
 import { capBatch, DEFAULT_MAX_AWAKE } from "./wake-cap.js";
 import { wakeIsReadOnly } from "./playbook.js";
-import { inboxDir, osSandboxAvailable, outboxDir, proposalsDir, readOnlyPolicy, sharedIndex } from "./policy.js";
+import { coordinatePolicy, inboxDir, osSandboxAvailable, outboxDir, proposalsDir, readOnlyPolicy, sharedIndex } from "./policy.js";
 import { buildSystemPrompt, buildUserPrompt, pickMessages } from "./prompt.js";
 import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, type PriorAttempt } from "./redo.js";
 import { atomicWrite, readFileCapped } from "./fs-util.js";
@@ -563,17 +563,22 @@ export class RunSession {
       edited = workspaceDirty(ws) || agentGit(ws, ["rev-parse", "HEAD"]) !== claim.head;
       discardWorkspaceEdits(ws, claim.head);
     } catch (e) {
-      this.refuseMember(agent, (e as Error).message);
+      const message = (e as Error).message;
+      if (agent.name === project.lead) this.note(`Could not remove ${agent.name}'s edits: ${message.split("\n")[0]}`);
+      else this.refuseMember(agent, message);
       return;
     }
     if (!edited) return;
     log("read-only-reverted", { agent: agent.name, head: claim.head });
+    const leadWake = agent.name === project.lead;
     deliver(project, {
       from: "dispatcher",
       to: project.lead,
       type: "failure",
-      subject: `Read-only wake edited ${agent.name}`,
-      body: `The read-only wake of ${agent.name} changed its checkout. Those commits and untracked files were removed. The commit recorded when the wake started is still there. The mail it sent was still delivered.`,
+      subject: leadWake ? "Lead wake edited the repository" : `Read-only wake edited ${agent.name}`,
+      body: leadWake
+        ? "Your wake changed the repository. Those commits and untracked files were removed. The commit recorded when the wake started is still there. Send the code change to a teammate. The mail you sent was still delivered."
+        : `The read-only wake of ${agent.name} changed its checkout. Those commits and untracked files were removed. The commit recorded when the wake started is still there. The mail it sent was still delivered.`,
     });
   }
 
@@ -800,7 +805,8 @@ export class RunSession {
     const workDir = path.join(runDir, "agents", agent.name);
     const spaces = this.leadSpace ? { ...this.batchSpaces, [project.lead]: this.leadSpace } : this.batchSpaces;
     const aproject = Object.keys(spaces).length ? { ...project, workspaces: spaces } : project;
-    const readOnly = agent.name !== project.lead && wakeIsReadOnly(unread.map((m) => ({ type: m.meta.type, playbook: m.meta.playbook, read_only: m.meta.read_only })));
+    const coordinate = agent.name === project.lead && !project.solo;
+    const readOnly = coordinate || (agent.name !== project.lead && wakeIsReadOnly(unread.map((m) => ({ type: m.meta.type, playbook: m.meta.playbook, read_only: m.meta.read_only }))));
     const base = {
       project: aproject,
       agent,
@@ -809,22 +815,31 @@ export class RunSession {
       systemPrompt: buildSystemPrompt(aproject, agent),
       userPrompt: buildUserPrompt(project, agent, queue, unread.length, (state.reopened?.length ?? 0) > 0, this.userTask()),
       timeoutSec: cfg.wake_timeout_sec,
-      policy: readOnly ? readOnlyPolicy(aproject, agent) : undefined,
+      policy: coordinate ? coordinatePolicy(aproject, agent) : readOnly ? readOnlyPolicy(aproject, agent) : undefined,
     };
     const ws = spaces[agent.name];
     if (readOnly) {
       try {
-        if (ws && workspaceDirty(ws)) {
+        if (coordinate && ws && workspaceDirty(ws)) {
+          // Member changes are applied onto this checkout and left uncommitted. Commit them before recording the
+          // wake's head, or the reset at the end of this wake would delete them.
+          commitWorkspace(ws, "agent-lyceum: keep integrated edits before the lead wakes");
+        } else if (ws && workspaceDirty(ws)) {
           const prev = previousClaim(runDir, agent.name, claim.id);
           if (prev && prev.read_only !== true) commitWorkspace(ws, "agent-lyceum: keep edits from before a read-only wake");
         }
         if (ws) setClaimReadOnly(runDir, claim.id, agentGit(ws, ["rev-parse", "HEAD"]));
         else setClaimReadOnly(runDir, claim.id);
       } catch (e) {
-        abandonClaim(runDir, claim.id);
-        claims.delete(agent.name);
-        this.refuseMember(agent, (e as Error).message);
-        return { ok: false, error: (e as Error).message };
+        const message = (e as Error).message;
+        if (agent.name === project.lead) {
+          this.note(`Could not record ${agent.name}'s checkout before the wake: ${message.split("\n")[0]}`);
+        } else {
+          abandonClaim(runDir, claim.id);
+          claims.delete(agent.name);
+          this.refuseMember(agent, message);
+          return { ok: false, error: message };
+        }
       }
     }
     // Without a fallback chain (one candidate) the loop, its output and its records are exactly those of plain retries (spec 20.2 decision 11).
@@ -1145,7 +1160,7 @@ export class RunSession {
         body:
           `${agent.name} finished, but its changes could not be brought into the repo, and nothing was applied.\n\n${r.reason}\n\n` +
           `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
-          `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. ` +
+          `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up). You do not edit the repository yourself. ` +
           (instanced ? `New tasks are not given to ${agent.name} while this work is not in the repo. To redo or adjust it, reply to this message (or to ${agent.name}'s last mail): only replies reach ${agent.name} now. ` : "") +
           `Do not report the job \`completed\` while this work is missing from the repo.`,
       },
@@ -1169,7 +1184,7 @@ export class RunSession {
         to: project.lead,
         type: "failure",
         subject: `${agent.name} cannot be woken: its worktree was refused`,
-        body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nDo its work yourself or give it to another agent; do not wait for ${agent.name}.`,
+        body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nGive the work to another teammate. You do not edit the repository yourself; do not wait for ${agent.name}.`,
       },
       this.state.instances?.roles[roleOfName(project.agents, agent.name)] ? { about: agent.name } : {},
     );
@@ -1204,9 +1219,10 @@ export class RunSession {
     // Crash seam: every wake of the batch is finished and marked output_ready; nothing of it is integrated or routed yet.
     fault("wake:ready");
     batch.forEach((a, i) => {
-      const ws = this.batchSpaces[a.name];
       const id = claims.get(a.name)?.id;
       const stored = id ? loadClaim(runDir, id) : undefined;
+      // The lead's checkout is the run branch. Only a coordinate wake may be reset, and only back to the commit recorded for that wake.
+      const ws = this.batchSpaces[a.name] ?? (a.name === project.lead && stored?.read_only === true ? this.leadSpace : undefined);
       if (stored?.read_only === true) {
         this.revertReadOnly(a, ws, stored);
         return;
@@ -1639,12 +1655,14 @@ export class RunSession {
       const dropReadOnly = (c: ClaimRecord): boolean => {
         if (c.read_only !== true || !c.head) return false;
         const agent = project.agents[c.agent];
-        const ws = agent && agent.name !== project.lead ? existingAgentWorkspace(project, runId, agent.name) : undefined;
+        const ws = !agent ? undefined : agent.name === project.lead ? (this.leadSpace ?? existingAgentWorkspace(project, runId, agent.name)) : existingAgentWorkspace(project, runId, agent.name);
         if (!agent || !ws) return true;
         try {
           discardWorkspaceEdits(ws, c.head);
         } catch (e) {
-          this.refuseMember(agent, (e as Error).message);
+          const message = (e as Error).message;
+          if (agent.name === project.lead) this.note(`Could not remove ${agent.name}'s edits: ${message.split("\n")[0]}`);
+          else this.refuseMember(agent, message);
         }
         return true;
       };

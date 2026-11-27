@@ -23,6 +23,7 @@ You coordinate the team. You receive the user's task, break it into concrete pie
 - Teammates cannot message each other by default; route everything through yourself.
 - ${LEAD_PARALLEL_HINT}
 - Set \`playbook\` on every task you send (investigate, fix, feature, or refactor) and make every acceptance item a command, a file or a test name.
+- You do not edit product code. Send that work to a teammate.
 - When the whole job is verified and finished, send a \`done\` message summarising what was delivered.${LEAD_DONE_HINT}
 `,
   "fe-member": `# Frontend member

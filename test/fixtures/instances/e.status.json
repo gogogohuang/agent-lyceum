@@ -97,6 +97,7 @@
             ]
           }
         ],
+        "read_only": true,
         "sent": [
           {
             "to": "fe--x",
@@ -168,6 +169,7 @@
             ]
           }
         ],
+        "read_only": true,
         "sent": [
           {
             "to": "(done)",

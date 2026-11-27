@@ -1096,10 +1096,13 @@ export interface ResultBranch {
 
 /** Commit the lead's checkout on its branch (once, at the end of a run) and write what changed as a patch. Never touches your repo's working tree. */
 export function finishLeadBranch(ws: AgentWorkspace, message: string, patchFile: string): ResultBranch {
-  const { head } = commitWorkspace(ws, message);
-  const files = head === ws.base ? [] : agentGit(ws, ["diff", "--name-only", ws.base, head]).split("\n").filter(Boolean);
-  if (files.length) fs.writeFileSync(patchFile, agentGit(ws, ["diff", "--binary", "--full-index", ws.base, head]) + "\n");
-  return { branch: ws.branch, head, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
+  const { head, committed } = commitWorkspace(ws, message);
+  // Member integrations are committed before a team lead wakes, so the tree can already be clean while the branch is ahead of its base. The closing commit still carries the run's message.
+  if (!committed && head !== ws.base) agentGit(ws, ["commit", "-q", "--no-verify", "--allow-empty", "-m", message], IDENTITY);
+  const tip = agentGit(ws, ["rev-parse", "HEAD"]);
+  const files = tip === ws.base ? [] : agentGit(ws, ["diff", "--name-only", ws.base, tip]).split("\n").filter(Boolean);
+  if (files.length) fs.writeFileSync(patchFile, agentGit(ws, ["diff", "--binary", "--full-index", ws.base, tip]) + "\n");
+  return { branch: ws.branch, head: tip, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
 }
 
 /** What a checkout run's task branch is now, for `clear`: its tip (undefined when the branch is gone), whether HEAD names it, and whether the tip is in HEAD. */

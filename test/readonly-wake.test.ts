@@ -72,6 +72,39 @@ describe("read-only wakes", () => {
     expect(fs.existsSync(path.join(leadWs.dir, "during.txt"))).toBe(false);
   });
 
+  it("drops product code the team lead writes and keeps the member's file", async () => {
+    const { project, runDir, task } = start();
+    let lead = 0;
+    const summary = await runTeam({
+      project,
+      task,
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        if (i.agent.name === "lead") {
+          lead += 1;
+          expect(i.policy).toBeDefined();
+          expect(i.workspace).toBeDefined();
+          expect(i.policy!.allowDirs).not.toContain(i.workspace!.dir);
+          expect(i.systemPrompt).toContain("You do not edit product code.");
+          if (lead === 1) {
+            write(path.join(i.workspace!.dir, "lead-edit.txt"), "nope\n");
+            send(i, "fe-member", "task", "write it");
+          } else if (lead > 2) send(i, "lead", "done", "bye");
+        } else {
+          write(path.join(i.workspace!.dir, "kept.txt"), "kept\n");
+          send(i, "lead", "reply", "done");
+        }
+        return OK;
+      },
+    });
+    expect(summary.outcome).toBe("completed");
+    const again = env.project();
+    const leadWs = existingAgentWorkspace(again, "run-1", "lead")!;
+    expect(fs.existsSync(path.join(leadWs.dir, "lead-edit.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(leadWs.dir, "kept.txt"), "utf8")).toBe("kept\n");
+  });
+
   it("discards a read-only commit when the wake fails, before the claim is abandoned", async () => {
     const { project, runDir, task } = start();
     const summary = await runTeam({

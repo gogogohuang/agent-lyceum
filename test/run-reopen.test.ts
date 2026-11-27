@@ -243,8 +243,13 @@ describe("reopening a concurrent run", () => {
       runDir,
       log: () => {},
       invoker: async (i) => {
-        write(path.join(i.workspace!.dir, file), "one\n");
-        send(i, i.agent.name, "done", "first result", FULL_DONE.replace("Shipped.", "first result"));
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, file), "one\n");
+          send(i, "lead", "reply", "finished");
+          return OK;
+        }
+        if (!fs.existsSync(path.join(i.workspace!.dir, file))) send(i, "fe-member", "task", "job");
+        else send(i, i.agent.name, "done", "first result", FULL_DONE.replace("Shipped.", "first result"));
         return OK;
       },
     });
@@ -261,8 +266,13 @@ describe("reopening a concurrent run", () => {
     const lines: string[] = [];
     const s = await reopen(project, runDir, async (i) => {
       base = i.workspace!.base;
-      write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
-      send(i, i.agent.name, "done", "second result");
+      if (i.agent.name !== "lead") {
+        write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
+        send(i, "lead", "reply", "added");
+        return OK;
+      }
+      if (!fs.existsSync(path.join(i.workspace!.dir, "src/web/two.txt"))) send(i, "fe-member", "task", "next");
+      else send(i, i.agent.name, "done", "second result");
       return OK;
     }, undefined, (l) => lines.push(l));
     expect(base).toBe(head);
@@ -274,13 +284,16 @@ describe("reopening a concurrent run", () => {
 
   it("before the branch is merged, the same worktree and branch carry on", async () => {
     const { project, runDir, summary } = await concurrentFirst("src/web/one.txt");
-    let dir = "";
     let base = "";
     const s = await reopen(project, runDir, async (i) => {
-      dir = i.workspace!.dir;
-      base = i.workspace!.base;
-      write(path.join(dir, "src/web/two.txt"), "two\n");
-      send(i, i.agent.name, "done", "second result");
+      if (i.agent.name === "lead") base = i.workspace!.base;
+      if (i.agent.name !== "lead") {
+        write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
+        send(i, "lead", "reply", "added");
+        return OK;
+      }
+      if (!fs.existsSync(path.join(i.workspace!.dir, "src/web/two.txt"))) send(i, "fe-member", "task", "next");
+      else send(i, i.agent.name, "done", "second result");
       return OK;
     });
     expect(base).toBe(summary.resultBranch!.base);
@@ -316,8 +329,13 @@ describe("reopening a concurrent run", () => {
       log: () => {},
       pr: ok,
       invoker: async (i) => {
-        write(path.join(i.workspace!.dir, "src/web/one.txt"), "one\n");
-        ask(i, FULL_DONE);
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "src/web/one.txt"), "one\n");
+          send(i, "lead", "reply", "added");
+          return OK;
+        }
+        if (!fs.existsSync(path.join(i.workspace!.dir, "src/web/one.txt"))) send(i, "fe-member", "task", "build");
+        else ask(i, FULL_DONE);
         return OK;
       },
     });
@@ -327,8 +345,13 @@ describe("reopening a concurrent run", () => {
     calls.length = 0;
     const lines: string[] = [];
     const s = await reopen(project, runDir, async (i) => {
-      write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
-      ask(i, FULL_DONE, again);
+      if (i.agent.name !== "lead") {
+        write(path.join(i.workspace!.dir, "src/web/two.txt"), "two\n");
+        send(i, "lead", "reply", "second");
+        return OK;
+      }
+      if (!fs.existsSync(path.join(i.workspace!.dir, "src/web/two.txt"))) send(i, "fe-member", "task", "next");
+      else ask(i, FULL_DONE, again);
       return OK;
     }, ok, (l) => lines.push(l));
     return { s, calls, lines, runDir, project, ok };
@@ -370,12 +393,17 @@ describe("reopening a concurrent run", () => {
     calls.length = 0;
     const lines: string[] = [];
     const s = await reopen(project, runDir, async (i) => {
-      write(path.join(i.workspace!.dir, "src/web/three.txt"), "three\n");
-      write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${FULL_DONE}\n`);
+      if (i.agent.name !== "lead") {
+        write(path.join(i.workspace!.dir, "src/web/three.txt"), "three\n");
+        send(i, "lead", "reply", "added more");
+        return OK;
+      }
+      if (!fs.existsSync(path.join(i.workspace!.dir, "src/web/three.txt"))) send(i, "fe-member", "task", "third");
+      else write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${FULL_DONE}\n`);
       return OK;
     }, ok, (l) => lines.push(l));
     expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(["git symbolic-ref", "git push", "gh pr"]);
     expect(s.pr).toEqual({ status: "opened", url: "https://x/pull/4" });
     expect(lines.join("\n")).not.toContain("pull request updated");
-  });
+  }, 20_000);
 });

@@ -23,7 +23,7 @@ lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`inves
 - **非 git 資料夾、沒有 commit 的 repo，或使用 reftable 的 repo：** run 直接在該資料夾工作、一次只跑一個 agent，並以一行 info 說明原因，而不是報錯。同時只能有一個這樣的 run；再開第二個會被拒絕，並列出擋住的 run。有自己 worktree 的 run 可與它並存。
 - **衝突：** 同一個 run 的兩個 agent 改了同一個檔案時，後到者的變更會被拒絕、它的 branch 保留，並通知 lead。不同檔案之間彼此不相容的修改不會被偵測到。
 
-- **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），lead 的成果會一次提交在它的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。停下來向你提問（`waiting`）的 run 還沒結束：不會提交、也不會印 merge 提示；成果留在 lead 的 worktree（或專案資料夾），`resume` 會在同一個地方繼續。
+- **結束：** run 結束時（done、cancelled、failed、idle 或達到輪數上限），成果會提交在 lead 的 branch 上，並寫成 `runs/<run-id>/lead.patch`，run 會印出 `git merge <branch>`。團隊 lead 的 worktree 上，隊友的修改會在 lead 每次醒來前提交，這次喚醒結束時的重設才不會把它們刪掉；結尾那筆提交帶著這次 run 的訊息。停下來向你提問（`waiting`）的 run 還沒結束：不會印 merge 提示，`resume` 會在同一個地方繼續。已經在該 branch 上的隊友修改會留著。
 - **在專案資料夾執行的 run 結束後：** `HEAD` 停在任務分支，不會替你切回去。`resume` 要求你仍在 `task_branch` 上：否則會拒絕並說明要切到哪個 branch，也不會替你切換，更不會把 run 改成 worktree run。
 - **鎖：** 每個專案有各自的 run 鎖。兩個專案共用同一個 repo 時沒有跨專案鎖，所以彼此看不到對方的 run 佔著資料夾。
 - **啟動時決定：** run 會在狀態中記錄 lead 是否在 worktree 工作（`lead_workspace`），或是在專案資料夾的某個 branch 上工作（`task_branch`）。`resume` 沿用 run 啟動時的方式。舊版啟動、沒有這個欄位的 run：若是平行 run，接續時 lead 在資料夾、成員在 worktree、全部平行；否則直接在該資料夾工作。
@@ -33,7 +33,7 @@ lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`inves
 已知限制：
 
 - worktree 的一輪（包含 lead 借用專案資料夾的那種）最多喚醒 `dispatcher.max_awake` 個成員（預設 8）。沒有 worktree 的 run 仍一次只醒一個人。
-- `can_edit_agent_md: true` 的 lead 在它工作的地方修改 `CLAUDE.md`／`AGENTS.md`：run 借用專案資料夾時，改的是資料夾裡任務分支上的檔案；否則改的是它自己 worktree 裡的檔案。兩種情況都寫在這次 run 的分支上，要等你把該分支合併進預設分支，才會出現在預設分支上。
+- 團隊 run 的 lead 不改 repo，包含 `CLAUDE.md` 與 `AGENTS.md`。它的喚醒可以寫信、紀錄、`COMMON.md`、交接筆記，以及 repo 以外的 `AGENT.md`。它在自己的 worktree 裡做的修改，會在這次喚醒結束時清掉。借用專案資料夾的 run 不會重設那個資料夾。`run --agent` 與 `call` 仍會改 repo。
 - `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留。若該批喚醒期間同專案另一個 run 仍存活，且該批沒有任何 agent 可編輯該檔案，guard 不會還原這項變更（無法歸屬），改記 `protected-change-unattributed`；見[寫入範圍](write-scope.zh-TW.md)。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 

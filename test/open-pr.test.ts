@@ -10,7 +10,7 @@ import { RunSession } from "../src/run-session.js";
 import { loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
 import { PINNED_CONFIG, type WorkspacePlan } from "../src/worktree.js";
-import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeConcurrent, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 const envs: TestEnv[] = [];
@@ -232,6 +232,20 @@ describe("opening a pull request from a run (pinned push)", () => {
   const REMOTE = "git@example.com:o/r.git";
   const mailDone = (i: WakeInput) =>
     write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: ${i.agent.name}\ntype: done\nsubject: bye\noutcome: completed\nopen_pr: true\n---\n\n${FULL_DONE}\n`);
+  /** The team lead cannot leave a product file behind, so a member writes it and the lead reports done after that file is on the branch. */
+  const memberChangeThenDone = (): ((i: WakeInput) => Promise<WakeResult>) => {
+    let lead = 0;
+    return async (i) => {
+      if (i.agent.name !== "lead") {
+        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+        write(path.join(outboxDir(i.project, i.agent.name), `${Math.random()}.md`), `---\nto: lead\ntype: reply\nsubject: finished\n---\n\n${withSections("reply", "finished")}\n`);
+        return OK;
+      }
+      if (++lead === 1) write(path.join(outboxDir(i.project, "lead"), `${Math.random()}.md`), `---\nto: fe-member\ntype: task\nsubject: job\n---\n\n${withSections("task", "job")}\n`);
+      else mailDone(i);
+      return OK;
+    };
+  };
 
   /** Answers `git remote get-url --push origin` with `pushUrl` (or the repo's real one), everything else like a healthy push and gh. */
   function runner(opts: { pushUrl?: string; real?: boolean } = {}) {
@@ -319,7 +333,7 @@ describe("opening a pull request from a run (pinned push)", () => {
       const c = checkout();
       const r = runner({ pushUrl });
       return { r, go: () => new RunSession({ project: c.project, plan: { mode: "worktree", leadWorktree: true, baseRef: "origin/release", baseSha: sha(), originUrl: REMOTE }, task: c.task, runDir: c.runDir, log: () => {}, pr: r.run, verifyTiming: { killGraceMs: 100, settleWaitMs: 100 },
-        invoker: async (i) => { write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n"); mailDone(i); return OK; } }).run() };
+        invoker: memberChangeThenDone() }).run() };
     };
     const ok = mk(REMOTE);
     expect((await ok.go()).pr).toMatchObject({ status: "opened" });
@@ -339,7 +353,7 @@ describe("opening a pull request from a run (pinned push)", () => {
     const runDir = path.join(project.paths.runs, "run-1");
     const r = runner();
     const s = await new RunSession({ project, plan: { mode: "worktree", leadWorktree: true }, task: prepareTask({ text: "x", cwd: env.root, runDir }), runDir, log: () => {}, pr: r.run, verifyTiming: { killGraceMs: 100, settleWaitMs: 100 },
-      invoker: async (i) => { write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n"); mailDone(i); return OK; } }).run();
+      invoker: memberChangeThenDone() }).run();
     expect(s.pr).toMatchObject({ status: "opened" });
     expect(r.names()).toEqual(["git symbolic-ref", "git push", "gh pr"]);
     expect(r.calls.find((c) => c.cmd === "gh")!.args).toContain("trunk");

@@ -649,10 +649,8 @@ describe("a refusal between batches", () => {
       if (i.agent.name === "lead") {
         leadCalls++;
         if (leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
-        else if (leadCalls === 2) {
-          write(path.join(i.workspace!.dir, "src/web/more.txt"), "more\n"); // a new snapshot: the member's worktree gets reused
-          mail(i.project, "lead", "fe-member", "again", "task");
-        } else {
+        else if (leadCalls === 2) mail(i.project, "lead", "fe-member", "again", "task");
+        else {
           leadMail = i.userPrompt;
           mail(i.project, "lead", "lead", "bye", "done");
         }

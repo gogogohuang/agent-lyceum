@@ -49,6 +49,7 @@
           ]
         }
       ],
+      "read_only": true,
       "sent": [
         {
           "to": "fe-member",
@@ -120,6 +121,7 @@
           ]
         }
       ],
+      "read_only": true,
       "sent": [
         {
           "to": "(done)",

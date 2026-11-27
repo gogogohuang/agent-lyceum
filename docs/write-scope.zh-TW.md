@@ -1,13 +1,14 @@
 # 寫入範圍
 
-預設規則（repo 內其餘部分不受限制）：
+預設規則（成員與 `run --agent` 對 repo 內其餘部分不受限制。團隊 run 的 lead 不寫 repo）：
 
 | 目標 | 規則 |
 |---|---|
 | 自己的記憶資料夾、自己的 `outbox/` | 可寫入 |
 | 自己的 `agents/<自己>/`，含在那裡建立的專案 `AGENT.md` | 該成員可寫。這個檔在下一次執行會成為這個專案的人設，並取代全域那份。全域檔仍唯讀 |
 | `shared/common/`（`COMMON.md`、`records/`） | lead 可寫；其他 agent 唯讀 |
-| 別人的 `AGENT.md`、全域 `AGENT.md`、repo 的 `CLAUDE.md`/`AGENTS.md` | 唯讀；lead（`can_edit_agent_md`）可編輯 |
+| 別人的 `AGENT.md`、全域 `AGENT.md` | 唯讀；lead（`can_edit_agent_md`）可編輯 repo 以外的檔案 |
+| repo 的 `CLAUDE.md`／`AGENTS.md` | 團隊 run 的 lead 不寫這些檔。`run --agent` 仍會改 repo |
 | run 的交接筆記 `task-memory/<run-id>/_shared/` | lead 可寫；其他 agent 唯讀 |
 | 其他 agent 的記憶／inbox／outbox、`runs/`、設定檔 | 不可寫入 |
 

@@ -260,6 +260,42 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
  * copy `sandbox.write` (nor the git dir, records, proposals, or `can_edit_agent_md` files) into the writable set.
  * The repo stays readable via `readDirs`.
  */
+/** A path is the repo root or a file inside it. Missing files still resolve. */
+function insideRepo(repo: string, target: string): boolean {
+  const root = canonicalPath(repo);
+  const file = canonicalPath(target);
+  return file === root || file.startsWith(root + path.sep);
+}
+
+/**
+ * A team lead's wake. The lead coordinates: mail, records, handoff notes, and `AGENT.md` files outside the repo stay writable.
+ * The repo stays in `readDirs`. `sandbox.write`, the git dir, and in-repo instruction files are not writable: Codex widens an
+ * allow-file to its parent directory, so a repo `CLAUDE.md` would open the whole tree. `run --agent` does not use this policy.
+ */
+export function coordinatePolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
+  const normal = writePolicy(project, agent);
+  const repo = repoDirFor(project, agent.name);
+  const outside = (p: string) => !insideRepo(repo, p);
+  const ownDir = projectAgentDir(project, agent.name);
+  const grantOwnDir = ownAgentDirAllowed(project, agent);
+  const isLead = agent.name === project.lead && !project.solo;
+  const shared = sharedDir(project);
+  const allowDirs = [
+    ...memoryDirs(agent),
+    ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
+    ...(grantOwnDir ? [ownDir] : []),
+    ...(isLead ? [recordsDir(project)] : []),
+    ...(isLead || mayPropose(project) ? [proposalsDir(project)] : []),
+    ...(shared && agent.name === project.lead ? [shared] : []),
+  ].filter(outside);
+  return {
+    allowDirs,
+    allowFiles: normal.allowFiles.filter(outside),
+    readDirs: [...new Set([repo, ...normal.readDirs, ...normal.allowDirs.filter((d) => !allowDirs.includes(d))])],
+    deny: normal.deny,
+  };
+}
+
 export function readOnlyPolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const normal = writePolicy(project, agent);
   const ownDir = projectAgentDir(project, agent.name);
