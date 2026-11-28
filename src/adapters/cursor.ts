@@ -80,6 +80,8 @@ export function writeCursorCliConfig(workDir: string, input: WakeInput): string 
   const pol = input.policy ?? writePolicy(project, agent);
   const allow: string[] = [...pol.allowDirs.map((d) => `Write(${d}/**)`), ...pol.allowFiles.map((f) => `Write(${f})`)];
   const deny = pol.deny.flatMap(denyRules);
+  // A read-only wake can see the repo (`--add-dir`) and must not Write it. Shell under `--force` can still write; those files stay out of the lead's branch.
+  if (input.policy) for (const d of pol.readDirs) deny.push(`Write(${d}/**)`);
   if (agent.allowWeb === "fetch" && !input.policy) allow.push("WebFetch(*)");
   else deny.push("WebFetch(*)");
 
@@ -135,7 +137,7 @@ export function buildCursorInvocation(raw: WakeInput): Invocation {
   const common = projectCommonDir(project);
   const withholdCommon = !input.policy && !projectCommonDirAllowed(project, agent);
   const fileDirs = pol.allowFiles.map((f) => path.dirname(f)).filter((d) => !withholdCommon || (d !== common && !d.startsWith(common + path.sep)));
-  const addDirs = [...new Set([...pol.allowDirs, ...fileDirs].filter((d) => !(d === repo || d.startsWith(repo + path.sep))))];
+  const addDirs = [...new Set([...pol.allowDirs, ...fileDirs, ...(input.policy ? pol.readDirs : [])].filter((d) => !(d === repo || d.startsWith(repo + path.sep))))];
 
   const args = ["-p", "--force", "--trust", "--sandbox", "enabled", "--workspace", repo];
   // Placed before other flags so a variadic --add-dir can never swallow the positional prompt.

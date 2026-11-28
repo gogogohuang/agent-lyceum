@@ -73,6 +73,8 @@ export interface WakeRecord {
   kind?: ErrorKind;
   /** The tier this wake ran at (spec 24): set only when every mail it handled carried a valid one. */
   tier?: Tier;
+  /** The wake was not allowed to edit the repo. */
+  read_only?: true;
 }
 
 /** A model given up on during a wake with a fallback chain, for `failure.tried`. */

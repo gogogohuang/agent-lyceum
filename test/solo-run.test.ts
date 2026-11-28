@@ -16,7 +16,7 @@ const CANCELLED: WakeResult = { ok: false, text: "", exitCode: null, timedOut: f
 const mail = (project: Parameters<typeof outboxDir>[0], from: string, to: string, type: string, subject: string) =>
   write(
     path.join(outboxDir(project, from), `${subject.replace(/\W+/g, "-")}.md`),
-    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : "## Goal\nx\n\n## Acceptance criteria\nx\n\n## Scope\nx\n\n## Upstream\nNone\n"}\n`,
+    `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n${type === "done" ? "outcome: completed\n" : ""}---\n\n${type === "done" ? FULL_DONE : "## Goal\nx\n\n## Acceptance criteria\n- \`npm test\`\n\n## Scope\nx\n\n## Upstream\nNone\n"}\n`,
   );
 
 function setup() {
@@ -74,6 +74,17 @@ describe("runTeam with soloAgent", () => {
     const s = await runTeam({ project, task, runDir, soloAgent: "lead", invoker, log: () => {} });
     expect(woken).toEqual(["lead"]);
     expect(agentSeen).toMatchObject({ canMessage: [], canAskUser: false, canEditAgentMd: false });
+    expect(s.endReason).toBe("done");
+  });
+
+  it("lets the solo agent write: its wake has no coordinate policy", async () => {
+    const { project, runDir, task } = setup();
+    const invoker: Invoker = async (i) => {
+      expect(i.policy).toBeUndefined();
+      mail(i.project, "lead", "lead", "done", "all done");
+      return OK;
+    };
+    const s = await runTeam({ project, task, runDir, soloAgent: "lead", invoker, log: () => {} });
     expect(s.endReason).toBe("done");
   });
 

@@ -198,6 +198,72 @@ const gitlinks = (out: string): string[] =>
     .filter((e) => e.startsWith("160000 "))
     .map((e) => e.slice(e.indexOf("\t") + 1));
 
+/** True when the worktree has any uncommitted or untracked path. Uses pinned git, never `dirtyPaths`. */
+export function workspaceDirty(ws: AgentWorkspace): boolean {
+  assertNoNestedRepos(ws);
+  return agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"]) !== "";
+}
+
+/** Put the worktree back at `head` (the sha recorded on the claim) and drop untracked files. Never call this on `project.dir`. */
+export function discardWorkspaceEdits(ws: AgentWorkspace, head: string): void {
+  assertNoNestedRepos(ws);
+  agentGit(ws, ["reset", "--hard", head]);
+  agentGit(ws, ["clean", "-fd"]);
+}
+
+/** HEAD and dirty paths of the user's checkout, before a read-only wake that has no worktree. Undefined when `dir` is not a git repo. */
+export function snapshotCheckout(dir: string): { head: string; dirty: string[] } | undefined {
+  if (!isGitRepo(dir)) return undefined;
+  const head = tryGit(dir, ["rev-parse", "HEAD"]);
+  if (!head) return undefined;
+  return { head, dirty: dirtyPaths(dir) };
+}
+
+/**
+ * What changed in a checkout that has no worktree of its own since `snap`. Does not change the checkout:
+ * a borrowed folder is shared with the user, so a new path or a moved HEAD is only reported.
+ * A path that was already dirty is not listed again.
+ */
+export function borrowedEdits(dir: string, snap: { head: string; dirty: string[] }): { headMoved: boolean; paths: string[] } {
+  if (!isGitRepo(dir)) return { headMoved: false, paths: [] };
+  const before = new Set(snap.dirty);
+  const headNow = tryGit(dir, ["rev-parse", "HEAD"]);
+  return { headMoved: Boolean(headNow && headNow !== snap.head), paths: dirtyPaths(dir).filter((p) => !before.has(p)) };
+}
+
+/** Dirty paths in an agent worktree, using pinned git. */
+export function workspaceStatusPaths(ws: AgentWorkspace): string[] {
+  assertNoNestedRepos(ws);
+  return parseStatus(agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"]));
+}
+
+/**
+ * Undo a read-only wake in an agent worktree. Earlier dirty paths stay, and the tree is not `reset --hard`
+ * or cleaned wholesale. Returns the paths that were put back. Never call this on `project.dir`.
+ */
+export function restoreWorkspaceEdits(ws: AgentWorkspace, snap: { head: string; dirty: string[] }): string[] {
+  assertNoNestedRepos(ws);
+  const before = new Set(snap.dirty);
+  const headNow = agentGit(ws, ["rev-parse", "HEAD"]);
+  if (headNow !== snap.head) agentGit(ws, ["reset", "--mixed", snap.head]);
+  const touched = parseStatus(agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"])).filter((p) => !before.has(p));
+  return restoreTouched(touched, {
+    lsFiles: () => agentGit(ws, ["ls-files", "-z"]),
+    checkout: (paths) => agentGit(ws, ["checkout", "--", ...paths]),
+    clean: (paths) => agentGit(ws, ["clean", "-fd", "--", ...paths]),
+  });
+}
+
+function restoreTouched(touched: string[], git: { lsFiles: () => string; checkout: (paths: string[]) => void; clean: (paths: string[]) => void }): string[] {
+  if (!touched.length) return [];
+  const tracked = new Set(zList(git.lsFiles()));
+  const restore = touched.filter((p) => tracked.has(p));
+  const extra = touched.filter((p) => !tracked.has(p));
+  if (restore.length) git.checkout(restore);
+  if (extra.length) git.clean(extra);
+  return touched;
+}
+
 /**
  * Refuse a worktree that holds a git repository of its own. `status`, `add -A` and `commit` can visit a nested repository and run
  * git there with that repository's config — which the agent wrote. Run before any command that walks the working tree.
@@ -1083,10 +1149,13 @@ export interface ResultBranch {
 
 /** Commit the lead's checkout on its branch (once, at the end of a run) and write what changed as a patch. Never touches your repo's working tree. */
 export function finishLeadBranch(ws: AgentWorkspace, message: string, patchFile: string): ResultBranch {
-  const { head } = commitWorkspace(ws, message);
-  const files = head === ws.base ? [] : agentGit(ws, ["diff", "--name-only", ws.base, head]).split("\n").filter(Boolean);
-  if (files.length) fs.writeFileSync(patchFile, agentGit(ws, ["diff", "--binary", "--full-index", ws.base, head]) + "\n");
-  return { branch: ws.branch, head, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
+  const { head, committed } = commitWorkspace(ws, message);
+  // Member integrations are committed before a team lead wakes, so the tree can already be clean while the branch is ahead of its base. The closing commit still carries the run's message.
+  if (!committed && head !== ws.base) agentGit(ws, ["commit", "-q", "--no-verify", "--allow-empty", "-m", message], IDENTITY);
+  const tip = agentGit(ws, ["rev-parse", "HEAD"]);
+  const files = tip === ws.base ? [] : agentGit(ws, ["diff", "--name-only", ws.base, tip]).split("\n").filter(Boolean);
+  if (files.length) fs.writeFileSync(patchFile, agentGit(ws, ["diff", "--binary", "--full-index", ws.base, tip]) + "\n");
+  return { branch: ws.branch, head: tip, base: ws.base, files: files.length, patch: files.length ? patchFile : undefined };
 }
 
 /** What a checkout run's task branch is now, for `clear`: its tip (undefined when the branch is gone), whether HEAD names it, and whether the tip is in HEAD. */

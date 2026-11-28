@@ -57,6 +57,7 @@ dispatcher:
 ```
 
 - `max_instances` 是一位成員在一個 run 裡最多可有的實例數，值為 `1`–`8` 的整數；其他值會載入失敗並指出 `dispatcher.max_instances`。除非你明寫，`doctor --resolved` 不會顯示它。（規格 23.4、23.13）
+- `max_awake` 是 worktree 模式一輪最多同時喚醒幾個成員（不含 lead），值為 `1`–`16` 的整數；其他值會載入失敗並指出 `dispatcher.max_awake`。沒寫時是 8。除非你明寫，`doctor --resolved` 不會顯示它。lead 仍單獨醒。直接在資料夾工作的 run 仍一次只醒一個人。還有信的人留到下一輪。
 - 不論怎麼設定，下列情況有效上限都是 1：run 不在 worktree 模式（見[一次執行如何運作](how-it-works.zh-TW.md#同時執行多個-task)）、lead、solo run、使用舊版 mailbox 配置的 run、以及名稱不能當 branch 名稱的成員。下列兩種情況則是調低上限而非設為 1：設定中有 agent 取了實例會得到的名字（見「名稱」），以及在特定 run 中某個實例可能寫入成員的共用記憶（見下）。實例從 2 起依序檢查，上限停在第一個衝突實例之前（上限 `k-1`）。（`src/instances.ts` 的 `instanceCap`）
 - **混用版本：** 舊版 binary 會以「Unrecognized key」拒絕含 `dispatcher.max_instances` 的 `project.yaml`（和任何新鍵一樣），也看不到用過實例的 run（state `schema_version: 3`）；見[升級](upgrading-run-v2.md#parallel-instances-run-state-v3)。若會在版本之間切換，請不要寫這個鍵（預設是 4）。（23.4、23.10）
 - **記憶路徑：** 成員的 `memory.global`／`memory.project` 不可在 run 資料資料夾（`task-memory/`、`runs/`、`worktrees/`、repo 的 git dir）之內或包含它們，因為該成員的其他實例會在那裡寫入。只有在某個 run 裡共用記憶確實與該實例的可寫路徑（其 worktree、git dir 或 run 資料夾）重疊時，上限才會降低：這是逐 run、逐實例判斷，有衝突的實例不會被開啟（上限 `k-1`）。`doctor` 的檢查範圍較廣，其警告僅供參考：確定衝突（記憶包含某個資料夾）的措辭是「runs one task at a time」，記憶位在其中一個資料夾之內則是「may prevent extra instances for some runs」。已有實例的 run，若其中某實例現在會有寫入共用記憶的能力，`resume` 會拒絕。`doctor` 還有其他關於實例的訊息（主體都是 `instances`）：你明寫 `max_instances` 大於 1、但這裡的 run 在 checkout 內輪流執行時給警告；成員名稱不是有效 branch 名稱時給 info；Codex 且沒有 OS sandbox 的成員，給 info（若你明寫了 `max_instances` 則是警告），說明只有成員本身會寫它的記憶，其他實例只是被告知不要寫。（`src/instance-containment.ts`、`src/instances.ts`、`src/doctor-instances.ts`）
@@ -233,7 +234,9 @@ verify:
     - { name: test,      run: "npm test", timeout_sec: 900 }
 ```
 
-- **預設關閉：** 沒有 `verify`，或 `commands: []`，即為關閉；至少一條指令才啟用。沒設的專案什麼都不會執行，也不會有任何改變。
+- **預設關閉：** 沒有 `verify`，或 `commands: []` 且沒有 `bind_task: true`，即為關閉；至少一條指令才啟用。沒設的專案什麼都不會執行，也不會有任何改變。
+- **`bind_task`：** 預設關。打開後，任務 `## Verification` 裡點名的每一項檢查都必須已經是某條 `commands[].run`。算得上的寫法只有兩種：整條 bullet 就是一對反引號包住的指令，或 fenced code block 裡的非空行（開頭一行是三個反引號，或三個反引號加語言名，例如 bash）。句子裡夾著的反引號不算。對不上不退信，也不計入 `done` 的退回次數，也不改變結果：run 一開始記一筆 note。dispatcher 不執行任務文字裡的指令。`bind_task: true` 且 `commands` 是空的仍會留下這組設定（才能回報對不上），`doctor` 會報錯，且不印「即將在 sandbox 外跑 N 條指令」的警告。`commands` 不是空的時，那段警告仍在。
+- **`cross_runtime`：** 預設開。設成 `false` 時，`completed` 不需要跨 runtime 的 `verdict: pass`。沒寫這個鍵時閘門仍開。沒有 lead 以外的人能給這則 pass 時，閘門也開著，但不擋下。
 - **`max_rejections`：** 整數 0–5，預設 2。驗證失敗時把 `done` 退回 lead 的次數；用完後以 `partial` 收下。`0` 表示直接以 `partial` 收下。次數可能提早結束：若 `done` 的失敗與上一次被退回的完全相同，且 lead 的 worktree 沒有變動，就不再退回、不消耗次數，直接以 `partial` 收下（見[怎麼運作](how-it-works.zh-TW.md#驗證-completed-的-done)）。（spec 28）
 - **`commands[].name`：** 小寫字母、數字、`-`，清單內不可重複。用於 log 檔名與訊息。
 - **`commands[].run`：** 單一字串，用 `sh -c` 執行（僅 macOS／Linux）。

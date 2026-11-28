@@ -44,7 +44,7 @@ describe("a run from start to clear", () => {
   it("run -> member works in a worktree -> Ctrl-C -> resume -> its files reach the repo -> done; status; clear --dry-run -> clear", async () => {
     const t = setup({
       calls: [
-        { agent: "lead", mail: [{ to: "fe-member", type: "task", subject: "build it", body: "## Goal\nbuild\n\n## Acceptance criteria\nworks\n\n## Scope\nsrc/web\n\n## Upstream\nNone\n" }] },
+        { agent: "lead", mail: [{ to: "fe-member", type: "task", subject: "build it", body: "## Goal\nbuild\n\n## Acceptance criteria\n- `npm test`\n\n## Scope\nsrc/web\n\n## Upstream\nNone\n" }] },
         { agent: "fe-member", sleep: true, writes: { "src/web/feature.txt": "built\n" } }, // killed by Ctrl-C mid-wake
         { agent: "fe-member", writes: { "src/web/feature.txt": "built properly\n" }, mail: [{ to: "lead", subject: "built" }] },
         { agent: "lead", mail: [{ to: "lead", type: "done", subject: "shipped", outcome: "completed" }] },

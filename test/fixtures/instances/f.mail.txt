@@ -15,7 +15,7 @@ body of first job
 ## Goal
 x
 ## Acceptance criteria
-None
+- `npm test`
 ## Scope
 None
 ## Upstream
@@ -38,7 +38,7 @@ body of retry job
 ## Goal
 x
 ## Acceptance criteria
-None
+- `npm test`
 ## Scope
 None
 ## Upstream
@@ -75,7 +75,7 @@ fe-member finished, but its changes could not be brought into the repo, and noth
 src/web/a.txt changed since the snapshot the agent started from (the file in the repo now differs from both the agent's start and its result), so none of its changes were applied.
 
 Its work is kept: branch `agent-lyceum/run-1/fe-member`, worktree `<ROOT>/home/projects/demo/worktrees/run-1/fe-member`, report `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md`, patch `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.patch`.
-You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. Do not report the job `completed` while this work is missing from the repo.
+You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up). You do not edit the repository yourself. A one-line fix is `run --agent <name>` of the agent who writes it. Do not report the job `completed` while this work is missing from the repo.
 
 === mail/inbox/lead/read/<STAMP>-fe-member-<ID5>.md
 ---
@@ -117,7 +117,7 @@ fe-member finished, but its changes could not be brought into the repo, and noth
 src/web/a.txt changed since the snapshot the agent started from (the file in the repo now differs from both the agent's start and its result), so none of its changes were applied.
 
 Its work is kept: branch `agent-lyceum/run-1/fe-member`, worktree `<ROOT>/home/projects/demo/worktrees/run-1/fe-member`, report `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.md`, patch `<ROOT>/home/projects/demo/runs/run-1/integration/fe-member-<STAMP>.patch`.
-You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up), or apply the patch yourself. Do not report the job `completed` while this work is missing from the repo.
+You can send fe-member a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up). You do not edit the repository yourself. A one-line fix is `run --agent <name>` of the agent who writes it. Do not report the job `completed` while this work is missing from the repo.
 
 === mail/inbox/lead/read/<STAMP>-fe-member-<ID7>.md
 ---

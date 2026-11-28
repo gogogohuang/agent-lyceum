@@ -25,6 +25,10 @@ export interface ProjectRecord {
   supersedes: string[];
   title: string;
   body: string;
+  /** How many times this lesson has come up. Absent when the file does not say. */
+  seen?: number;
+  /** The only guard a lesson may ask the doctor to check. */
+  guard?: "verify-configured";
   /** Why the entry could not be read as a record; set entries still count as active so nothing silently disappears. */
   invalid?: string;
 }
@@ -60,6 +64,16 @@ function parseEntry(kind: RecordKind, file: string): ProjectRecord {
     else problems.push("supersedes must be a list of ids");
   }
   if (f.run !== undefined && typeof f.run !== "string") problems.push("run must be a string");
+  let seen: number | undefined;
+  if (f.seen !== undefined) {
+    if (typeof f.seen === "number" && Number.isInteger(f.seen) && f.seen >= 1) seen = f.seen;
+    else problems.push("seen must be a positive integer");
+  }
+  let guard: "verify-configured" | undefined;
+  if (f.guard !== undefined) {
+    if (f.guard === "verify-configured") guard = "verify-configured";
+    else problems.push("guard must be verify-configured");
+  }
   if (problems.length) return { ...fallback, body, invalid: problems.join("; ") };
   return {
     kind,
@@ -71,7 +85,39 @@ function parseEntry(kind: RecordKind, file: string): ProjectRecord {
     supersedes,
     title: (f.title as string).trim(),
     body,
+    ...(seen !== undefined ? { seen } : {}),
+    ...(guard ? { guard } : {}),
   };
+}
+
+function lessonTitle(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Doctor findings for lessons that keep coming back. Superseded lessons are skipped. Nothing here runs a shell. */
+export function lessonGuardFindings(lessons: readonly ProjectRecord[], verifyCommandCount: number): { level: "warn" | "error"; file: string; message: string }[] {
+  const active = effectiveActive([...lessons]).filter((r) => r.kind === "lessons" && !r.invalid);
+  const found: { level: "warn" | "error"; file: string; message: string }[] = [];
+  for (const r of active) {
+    if (r.seen !== undefined && r.seen >= 2 && r.guard === undefined) {
+      found.push({ level: "warn", file: r.file, message: `${r.title}: seen ${r.seen} times with no guard. Set guard: verify-configured or mark it superseded.` });
+    }
+    if (r.seen !== undefined && r.seen >= 2 && r.guard === "verify-configured" && verifyCommandCount === 0) {
+      found.push({ level: "error", file: r.file, message: `${r.title}: seen ${r.seen} times and asks for verify.commands, but verify.commands is empty.` });
+    }
+  }
+  const byTitle = new Map<string, ProjectRecord[]>();
+  for (const r of active) {
+    const key = lessonTitle(r.title);
+    const list = byTitle.get(key) ?? [];
+    list.push(r);
+    byTitle.set(key, list);
+  }
+  for (const group of byTitle.values()) {
+    if (group.length < 2) continue;
+    for (const r of group) found.push({ level: "warn", file: r.file, message: `duplicate lesson title "${r.title}".` });
+  }
+  return found;
 }
 
 /** Every `*.md` entry of one kind, sorted by id. Entries that cannot be parsed are listed with `invalid` set; a missing folder is an empty list. */

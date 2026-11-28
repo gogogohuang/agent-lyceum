@@ -37,13 +37,25 @@ function memoryBlock(agent: ResolvedAgent, dir: string): string[] {
   return out;
 }
 
+/** How the lead labels a task, and how a member reads that label. Placed before the message-format rules, and therefore before the lead's wake-economy rules. */
+export const PLAYBOOK_SECTION = [
+  "## Playbooks",
+  "On a new task you send, set `playbook` to one of: investigate, fix, feature, refactor. Leave it out only when none of these fits.",
+  "- `investigate`: read only. Do not change product code. The dispatcher runs that wake without a writable repo. The reply puts the answer under Open items and `None` under Changes.",
+  "- `fix`: the acceptance criteria names the check that fails before the fix and passes after.",
+  "- `feature`: add a `## Shape` heading that names the data type or module boundary before any edit.",
+  "- `refactor`: behavior stays the same. The acceptance criteria names the check that already passes and must still pass.",
+  "`playbook: investigate` is read-only even without `read_only: true`. You may also set `read_only: true` on a task that must not edit the repo. A teammate cannot set either field.",
+  "A review task, including asking QA to check someone else's work, is `read_only: true`. In a shared-folder run that is what keeps the reviewer from being treated as an author.",
+] as const;
+
 /** Lead-only rules that keep the number of wake-ups down; placed after the progress-tracking block. */
 export const WAKE_ECONOMY_SECTION = [
   "## Keeping wake-ups few",
   "Every wake-up re-reads your whole context (prompt, memory, mail), so the number of wake-ups, yours and your teammates', is the main cost of a run.",
   "- Send all work that is independent of each other in the same wake-up (for example the implementation and the matching docs), each task naming its reviewer, instead of one task per wake-up.",
   "- When a reply arrives while other work you sent is still out and the reply needs nothing from you yet, send no mail: note it in your task memory and end the wake-up. Decide the next step once, when the rest is back; replies waiting together are handed to you in one wake-up.",
-  "- Skip the QA layer (the verification role and its reviewer) for a small fix: a change of a few lines that has a reproduction test which failed before and passes after, and an approving code review. Send QA for large changes, changes across modules, and changes to user-visible behaviour.",
+  "- When a teammate uses a different runtime from the people who wrote the change, a `completed` done is sent back until one of those teammates has replied with `verdict: pass` in this segment. Your own pass does not count. A review task is `read_only: true`. A small fix still needs that reply when such a teammate exists. When every teammate shares your runtime, no such reply is required. When nobody else can give that pass, the done is accepted without it. `verify.cross_runtime: false` turns the gate off.",
   "- Use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before you send `done`. In other rounds prefer teammates on cheaper models; read-only search work suits the cheapest one.",
 ];
 
@@ -141,8 +153,11 @@ function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string
       : `- The shared team context is in \`${commonPath}\` (read-only). Project records are ${records} Both are read-only.`,
     ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
+    ...(isLead ? ["- You do not edit product code. Send that work to a teammate. A one-line fix is `run --agent <name>` of the agent who writes it. You still write mail, records, and handoff notes."] : []),
     ...(agent.canEditAgentMd
-      ? ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
+      ? isLead
+        ? ["- You may edit `AGENT.md` files that live outside the repository. You do not edit the repository's `CLAUDE.md`/`AGENTS.md`."]
+        : ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
       : ["- Never edit another agent's AGENT.md, a global `AGENT.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`."]),
     "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).",
   ];
@@ -306,9 +321,11 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   const lines: string[] = [];
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-lyceum)", "");
   lines.push(
-    agent.instance && agent.instance.k >= 2
-      ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
-      : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
+    isLead
+      ? `You are **${agent.name}**, the lead of the team "${project.name}". You do not edit product code. You read the repository \`${repoDirFor(project, agent.name)}\` and send the change to a teammate. A one-line fix is \`run --agent <name>\` of the agent who writes it.`
+      : agent.instance && agent.instance.k >= 2
+        ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
+        : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
     ...(agent.instance?.k === 1
       ? [
           `Other instances of you${(() => {
@@ -319,7 +336,9 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       : []),
     ...(project.workspaces?.[agent.name]
       ? [
-          `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
+          isLead
+            ? `That directory is the run's checkout (branch \`${project.workspaces[agent.name]?.branch}\`). Edits you make there are removed when this wake ends. Do not commit, push, switch branches or touch any other checkout. A one-line fix is \`run --agent <name>\` of the agent who writes it.`
+            : `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
         ]
       : []),
     `The team lead is **${project.lead}**${isLead ? " (that is you)" : ""}. Teammates: ${mates.join(", ") || "(none)"}.`,
@@ -349,8 +368,10 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
       : "Each wake-up handles one message, except that consecutive `reply`/`failure` messages on the same thread may be handed to you together: handle them together. Do the work it asks, then send the replies that are needed, then stop.",
     "Mail that repeats an earlier mail of yours to the same agent (same type, same text) is not sent again; you are told, and should wait for the answer or ask for something different instead of resending.",
     "",
+    ...PLAYBOOK_SECTION,
+    "",
     "## Message format",
-    "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say).",
+    "The body of every `task` and `reply` must contain these `##` headings, exactly as written (write `None` under a heading if there is nothing to say, except `## Acceptance criteria`: that section needs a `command` in backticks, a file name or a test name, and writing `None` is sent back).",
     "A `task` or `reply` missing a heading is sent back to you (at most twice per sender + type + subject); after that it is delivered with a warning flagged to the recipient.",
     "",
     `- \`task\`: ${REQUIRED_SECTIONS.task!.map((h) => `\`## ${h}\``).join(", ")} (Upstream = id of the mail this task derives from, or \`None\`).`,

@@ -16,6 +16,8 @@ export function resolveDoneOutcome(
   unintegrated: UnintegratedWork[],
   /** Spec 27/28: a verify command failed and no rejections were left, or the same failure repeated on an unchanged workspace; `note` says which and how. */
   verifyFailure?: { note: string },
+  /** A completed report that still fails a gate after the rejection budget is spent. */
+  gateFailure?: { note: string },
 ): { outcome: RunOutcome; note?: string; verification?: string } {
   const ok = contract.missing.length === 0;
   let outcome: RunOutcome = ok ? (contract.outcome ?? "partial") : "partial";
@@ -28,6 +30,10 @@ export function resolveDoneOutcome(
     // blocked (work never reached the repo) is the worse verdict and stays; the note names both
     if (outcome === "completed") outcome = "partial";
     note = note ? `${note} ${verifyFailure.note}` : verifyFailure.note;
+  }
+  if (gateFailure) {
+    if (outcome === "completed") outcome = "partial";
+    note = note ? `${note} ${gateFailure.note}` : gateFailure.note;
   }
   return { outcome, note, verification: contract.verification };
 }

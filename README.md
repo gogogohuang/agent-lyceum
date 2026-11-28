@@ -82,6 +82,8 @@ Older versions refuse a `team.yaml` or `project.yaml` that contains `model_tiers
 
 Likewise, older versions refuse a `project.yaml` that contains `verify` ("Unrecognized key"). Remove the `verify` block before using an older binary. Run state is unaffected. See [Verify](docs/configuration.md#verify). (Spec 27.4)
 
+Older versions also refuse a `project.yaml` that contains `dispatcher.max_awake`, `verify.bind_task` or `verify.cross_runtime` ("Unrecognized key"). Remove those keys before using an older binary. Omitting `verify.cross_runtime` leaves the gate on, so an existing file does not need the key. Current mail parsing ignores unknown frontmatter keys, so `playbook` and `read_only` on a letter do not by themselves make an older binary fail. Do not leave unread mail that carries those keys if the older parser you are going back to rejects unknown keys. Do not leave a run that still has an unfinished read-only wake: an older `recover()` integrates a claim that reached `output_ready`, and edits from that wake would enter the repo.
+
 ## Topics
 
 | Topic | Read |

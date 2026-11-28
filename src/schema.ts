@@ -125,6 +125,8 @@ export const DispatcherPartial = z
     fallback_cooldown_sec: z.number().int().min(0).optional(),
     /** Most instances of one role at a time (spec 23); 1 turns parallel tasks off. Unset = `DEFAULT_MAX_INSTANCES`. */
     max_instances: z.number().int().min(1).max(8).optional(),
+    /** Most non-lead agents woken in one worktree round. Unset = `DEFAULT_MAX_AWAKE`. */
+    max_awake: z.number().int().min(1).max(16).optional(),
   })
   .strict();
 
@@ -163,6 +165,10 @@ export const VerifyCommandPartial = z
 export const VerifyPartial = z
   .object({
     max_rejections: z.number().int().min(0).max(5).optional(),
+    /** When true, a completed done notes checks named in the task that are not already a verify command. It does not change the outcome. */
+    bind_task: z.boolean().optional(),
+    /** When false, a completed done does not need a cross-runtime `verdict: pass`. Default true. */
+    cross_runtime: z.boolean().optional(),
     commands: z.array(VerifyCommandPartial).default([]),
   })
   .strict()
@@ -176,6 +182,10 @@ export const VerifyPartial = z
 
 export interface VerifySettings {
   max_rejections: number;
+  /** Compare the task's Verification section to `commands`. Default false. A mismatch is a note; it does not change the outcome. */
+  bind_task: boolean;
+  /** A completed done needs a cross-runtime pass when this is true. Default true. */
+  cross_runtime: boolean;
   commands: { name: string; run: string; timeout_sec: number }[];
 }
 export const VERIFY_DEFAULTS = { max_rejections: 2, timeout_sec: 600 } as const;
@@ -202,6 +212,8 @@ export interface DispatcherSettings {
   fallback_cooldown_sec: number;
   /** Most instances of one role at a time. Not in `DISPATCHER_DEFAULTS`, so `doctor --resolved` lists it only when written; the default lives in `instances.ts`. */
   max_instances?: number;
+  /** Most non-lead agents woken in one worktree round. Not in `DISPATCHER_DEFAULTS`; the default lives in `wake-cap.ts`. */
+  max_awake?: number;
 }
 
 export const DISPATCHER_DEFAULTS: DispatcherSettings = {

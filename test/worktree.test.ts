@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { writePolicy } from "../src/policy.js";
-import { assertCheckoutResumable, checkoutLeadBranch, collectAgentChanges, commitWorkspace, dirtyPaths, finishCheckoutBranch, finishLeadBranch, PINNED_CONFIG, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, resolveRemoteBase, snapshotBase, snapshotHead, type GitRunner, type WorkspacePlan } from "../src/worktree.js";
+import { agentGit, assertCheckoutResumable, checkoutLeadBranch, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, finishCheckoutBranch, finishLeadBranch, PINNED_CONFIG, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, resolveRemoteBase, borrowedEdits, restoreWorkspaceEdits, snapshotBase, snapshotCheckout, snapshotHead, workspaceStatusPaths, type GitRunner, type WorkspacePlan } from "../src/worktree.js";
 import { RunSession } from "../src/run-session.js";
 import { prepareTask } from "../src/task.js";
 import { git, initGitRepo, makeConcurrent, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
@@ -905,5 +905,66 @@ describe("finishCheckoutBranch", () => {
     expect(() => finishCheckoutBranch(env.repo, BRANCH, sha, "m", patch)).toThrow(/nested git repository at nested/);
     expect(git(env.repo, "rev-parse", BRANCH)).toBe(sha);
     expect(git(env.repo, "diff", "--cached", "--name-only")).toBe("");
+  });
+});
+
+describe("discardWorkspaceEdits", () => {
+  it("returns the worktree to the recorded commit and drops later commits and untracked files", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const p = env.project();
+    const ref = snapshotBase(p, "run-1", 1);
+    const ws = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
+    write(path.join(ws.dir, "kept.txt"), "kept\n");
+    commitWorkspace(ws, "kept");
+    const head = agentGit(ws, ["rev-parse", "HEAD"]);
+    write(path.join(ws.dir, "during.txt"), "during\n");
+    commitWorkspace(ws, "during");
+    write(path.join(ws.dir, "untracked.txt"), "loose\n");
+    discardWorkspaceEdits(ws, head);
+    expect(agentGit(ws, ["rev-parse", "HEAD"])).toBe(head);
+    expect(fs.existsSync(path.join(ws.dir, "during.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(ws.dir, "untracked.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(ws.dir, "kept.txt"), "utf8")).toBe("kept\n");
+  });
+});
+
+describe("borrowedEdits", () => {
+  it("reports a moved HEAD and new paths, and does not change the checkout", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    write(path.join(env.repo, "already.txt"), "user\n");
+    const snap = snapshotCheckout(env.repo);
+    expect(snap).toBeDefined();
+    write(path.join(env.repo, "during.txt"), "agent\n");
+    write(path.join(env.repo, "tracked.txt"), "new\n");
+    git(env.repo, "add", "tracked.txt");
+    git(env.repo, "commit", "-m", "agent");
+    const head = git(env.repo, "rev-parse", "HEAD");
+    expect(borrowedEdits(env.repo, snap!)).toEqual({ headMoved: true, paths: ["during.txt"] });
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(head);
+    expect(fs.readFileSync(path.join(env.repo, "during.txt"), "utf8")).toBe("agent\n");
+    expect(fs.readFileSync(path.join(env.repo, "tracked.txt"), "utf8")).toBe("new\n");
+    expect(fs.readFileSync(path.join(env.repo, "already.txt"), "utf8")).toBe("user\n");
+  });
+});
+
+describe("restoreWorkspaceEdits", () => {
+  it("puts back only paths the wake changed, and leaves a file that was already untracked", () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    const p = env.project();
+    const ref = snapshotBase(p, "run-1", 1);
+    const ws = prepareAgentWorkspace(p, "run-1", "fe-member", ref);
+    write(path.join(ws.dir, "already.txt"), "user\n");
+    const snap = { head: agentGit(ws, ["rev-parse", "HEAD"]), dirty: workspaceStatusPaths(ws) };
+    write(path.join(ws.dir, "during.txt"), "agent\n");
+    write(path.join(ws.dir, "tracked.txt"), "new\n");
+    commitWorkspace(ws, "during");
+    restoreWorkspaceEdits(ws, snap);
+    expect(fs.existsSync(path.join(ws.dir, "during.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(ws.dir, "tracked.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(ws.dir, "already.txt"), "utf8")).toBe("user\n");
+    expect(agentGit(ws, ["rev-parse", "HEAD"])).toBe(snap.head);
   });
 });

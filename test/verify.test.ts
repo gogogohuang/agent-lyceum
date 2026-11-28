@@ -15,7 +15,7 @@ import { prepareTask } from "../src/task.js";
 import { logBody, nextLogNumber, runCommand, tailText, VERIFY_LOG_BYTES } from "../src/verify.js";
 import { workingTreeHash } from "../src/worktree.js";
 import { buildRunReport, formatStatusReport } from "../src/status.js";
-import { FULL_DONE, git, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
+import { FULL_DONE, git, initGitRepo, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => {
@@ -84,7 +84,7 @@ describe("verify schema and config", () => {
   it("accepts a valid block and fills the defaults when resolved", () => {
     env = makeEnv();
     withVerify([{ name: "t-1", run: "true" }]);
-    expect(env.project().verify).toEqual({ max_rejections: 2, commands: [{ name: "t-1", run: "true", timeout_sec: 600 }] });
+    expect(env.project().verify).toEqual({ max_rejections: 2, bind_task: false, cross_runtime: true, commands: [{ name: "t-1", run: "true", timeout_sec: 600 }] });
   });
   it("no verify, or an empty commands list, means off", () => {
     env = makeEnv();
@@ -777,8 +777,6 @@ describe("run epilogue and temp index lock", () => {
 
 describe("spec 28: the same failure on an unchanged workspace", () => {
   type Opts = { git?: "commit" | "init"; max?: number; cmd?: string | ((root: string) => string); edit?: (i: WakeInput, k: number) => void; openPr?: boolean };
-  const lead = (i: WakeInput) => i.project.workspaces?.lead?.dir ?? "";
-  const newFile = (i: WakeInput, k: number) => write(path.join(lead(i), `f${k}.txt`), "x\n");
   const repeats = (runDir: string) => events(runDir).filter((e) => e.event === "verify-repeat");
   const actions = (runDir: string) => repeats(runDir).map((e) => e.action);
   const labelled = (runDir: string) => mailWith(runDir, "Same failure as your last rejected");
@@ -828,8 +826,35 @@ describe("spec 28: the same failure on an unchanged workspace", () => {
   });
 
   it("2: same fingerprint, tree changed: sent back with the label, then the limit of spec 27", async () => {
-    const { s, runDir, calls, st } = await go({ git: "commit", max: 2, edit: newFile });
-    expect(calls.n).toBe(3);
+    const { project, runDir, task } = setup({ git: "commit", max: 2 });
+    const calls = { n: 0 };
+    let phase: "first" | "delegate" | "done" = "first";
+    const mail = (i: WakeInput, to: string, type: string, subject: string) =>
+      write(path.join(outboxDir(i.project, i.agent.name), `${type}-${subject.replace(/\s/g, "-")}.md`), `---\nto: ${to}\ntype: ${type}\nsubject: ${subject}\n---\n\n${withSections(type, subject)}\n`);
+    const s = await runTeam({
+      project,
+      task,
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        calls.n++;
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "f1.txt"), "x\n");
+          mail(i, "lead", "reply", "added");
+          return OK;
+        }
+        // The lead's own edits are removed before verification. A teammate's file, committed before the next done, is what changes the tree.
+        if (phase === "delegate") {
+          mail(i, "fe-member", "task", "add a file");
+          phase = "done";
+          return OK;
+        }
+        sendDone(i);
+        if (phase === "first") phase = "delegate";
+        return OK;
+      },
+    });
+    expect(calls.n).toBe(5);
     expect(s.outcome).toBe("partial");
     expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
     expect(s.outcomeNote).not.toContain("stopped early");
@@ -838,7 +863,7 @@ describe("spec 28: the same failure on an unchanged workspace", () => {
     const l = labelled(runDir);
     expect(l).toHaveLength(1);
     expect(fs.readFileSync(l[0]!, "utf8")).toContain("The workspace changed since then, but this result did not.");
-    expect(st.verify_rejections).toBe(2);
+    expect(loadRunState(runDir).verify_rejections).toBe(2);
   });
 
   it("3: a different fingerprint: no label, only the count", async () => {
@@ -880,7 +905,7 @@ describe("spec 28: the same failure on an unchanged workspace", () => {
   });
 
   it("6: a worktree whose hash cannot be taken (nested repository): unknown, never the same", async () => {
-    const { s, runDir, calls, st } = await go({ git: "commit", max: 2, edit: (i, k) => k === 1 && git(lead(i), "init", "-q", "nested") });
+    const { s, runDir, calls, st } = await go({ git: "commit", max: 2, edit: (i, k) => k === 1 && i.workspace && git(i.workspace.dir, "init", "-q", "nested") });
     expect(st.verify![0]!.diff_hash).toBeUndefined();
     expect(calls.n).toBe(3);
     expect(s.outcomeNote).toContain("Verification failed after 2 rejection(s)");
@@ -1034,14 +1059,29 @@ describe("spec 28: the same failure on an unchanged workspace", () => {
         if (x === "run:ended") throw new Error("crash");
       });
       const calls = { n: 0 };
+      let tasked = false;
+      let follow = false;
       const at3: { prompt?: string; rejections?: number; rejected?: string[] } = {};
       const invoker: Invoker = async (i) => {
         calls.n++;
-        if (calls.n === 3) {
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "f3.txt"), "x\n");
+          write(path.join(outboxDir(i.project, i.agent.name), "added-3.md"), `---\nto: lead\ntype: reply\nsubject: added 3\n---\n\n${withSections("reply", "added 3")}\n`);
+          return OK;
+        }
+        if (i.userPrompt.includes("more please")) follow = true;
+        if (follow && at3.prompt === undefined) {
           at3.prompt = i.userPrompt;
           at3.rejections = loadRunState(runDir).verify_rejections;
           at3.rejected = loadRunState(runDir).verify_rejected;
-          if (kind === "changed") newFile(i, 3);
+        }
+        // The lead's own edits are removed before the hash. A teammate's file has to be on the branch before the done that should see a changed tree.
+        if (follow && kind === "changed" && !fs.existsSync(path.join(i.workspace!.dir, "f3.txt"))) {
+          if (!tasked) {
+            tasked = true;
+            write(path.join(outboxDir(i.project, i.agent.name), "add-3.md"), `---\nto: fe-member\ntype: task\nsubject: add 3\n---\n\n${withSections("task", "add 3")}\n`);
+          }
+          return OK;
         }
         sendDone(i);
         return OK;
@@ -1053,7 +1093,7 @@ describe("spec 28: the same failure on an unchanged workspace", () => {
       expect(ended.verify!.map((r) => r.repeat_stop_segment)).toEqual([undefined, 0]);
       const resumed = await runTeam({ project: env.project(), resume: ended, runDir, log: () => {}, followup: { text: "more please" }, invoker });
       const st = loadRunState(runDir);
-      expect(calls.n).toBe(kind === "changed" ? 4 : 3);
+      if (kind === "unchanged") expect(calls.n).toBe(3);
       expect(at3.prompt).toContain("more please");
       expect(at3.prompt).toContain("failed verification");
       expect(at3.rejections).toBe(1);

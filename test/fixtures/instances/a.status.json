@@ -87,6 +87,7 @@
             ]
           }
         ],
+        "read_only": true,
         "sent": [
           {
             "to": "fe-member",
@@ -117,6 +118,12 @@
                 "label": "目標",
                 "lines": [
                   "x"
+                ]
+              },
+              {
+                "label": "驗收",
+                "lines": [
+                  "npm test"
                 ]
               }
             ]
@@ -152,6 +159,7 @@
             ]
           }
         ],
+        "read_only": true,
         "sent": [
           {
             "to": "(done)",

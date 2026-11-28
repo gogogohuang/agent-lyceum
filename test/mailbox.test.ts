@@ -290,6 +290,157 @@ describe("format rejection in a run", () => {
   });
 });
 
+describe("playbook, read_only and acceptance routing", () => {
+  const GOOD_TASK = "## Goal\nx\n## Acceptance criteria\n- `npm test`\n## Scope\nNone\n## Upstream\nNone";
+  const WEAK_FEATURE = "## Goal\nx\n## Acceptance criteria\n- as stated in the goal\n## Scope\nNone\n## Upstream\nNone";
+  const runProject = (layout: "run" | "legacy") => {
+    env = makeEnv();
+    const base = env.project();
+    const p = bindRunProject(base, path.join(base.paths.runs, "run-a"), layout);
+    ensureProjectDirs(p);
+    return p;
+  };
+
+  it("delivers a lead's investigate task with playbook and read_only in the frontmatter", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "t.md", "to: fe-member\ntype: task\nsubject: look\nplaybook: investigate", GOOD_TASK);
+    const r = routeOutboxes(p);
+    expect(r.rejected).toEqual([]);
+    expect(r.playbookIgnored).toEqual([]);
+    const [m] = listUnread(p, "fe-member");
+    expect(m?.meta.playbook).toBe("investigate");
+    expect(m?.meta.read_only).toBe(true);
+  });
+
+  it("rejects an unknown playbook", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "t.md", "to: fe-member\ntype: task\nsubject: look\nplaybook: bug", GOOD_TASK);
+    const r = routeOutboxes(p);
+    expect(r.delivered).toHaveLength(0);
+    expect(r.rejected[0]?.reason).toContain("investigate, fix, feature or refactor");
+  });
+
+  it("rejects a read_only that is not a boolean", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "t.md", "to: fe-member\ntype: task\nsubject: look\nread_only: maybe", GOOD_TASK);
+    const r = routeOutboxes(p);
+    expect(r.delivered).toHaveLength(0);
+    expect(r.rejected[0]?.reason).toContain("read_only must be true or false");
+  });
+
+  it("writes read_only: true for an explicit flag, and nothing for false", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "a.md", "to: fe-member\ntype: task\nsubject: ro\nread_only: true", GOOD_TASK);
+    send(p, "lead", "b.md", "to: qa-member\ntype: task\nsubject: rw\nread_only: false", GOOD_TASK);
+    routeOutboxes(p);
+    expect(listUnread(p, "fe-member")[0]?.meta).toMatchObject({ read_only: true });
+    expect(listUnread(p, "fe-member")[0]?.meta.playbook).toBeUndefined();
+    const rw = listUnread(p, "qa-member")[0]?.meta;
+    expect(rw).toBeDefined();
+    expect("read_only" in (rw ?? {})).toBe(false);
+  });
+
+  it("ignores a member's playbook and read_only, and records why", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "fe-member", "t.md", "to: lead\ntype: task\nsubject: sub\nplaybook: fix\nread_only: true", GOOD_TASK);
+    const r = routeOutboxes(p);
+    const meta = listUnread(p, "lead")[0]?.meta;
+    expect(meta).toBeDefined();
+    expect("playbook" in (meta ?? {})).toBe(false);
+    expect("read_only" in (meta ?? {})).toBe(false);
+    expect(r.playbookIgnored[0]?.reason).toBe("not-lead");
+    expect(r.readOnlyIgnored[0]?.reason).toBe("not-lead");
+  });
+
+  it("ignores playbook on a reply from the lead (not-a-task)", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "r.md", "to: fe-member\ntype: reply\nsubject: ok\nplaybook: fix", REPLY_BODY);
+    const r = routeOutboxes(p);
+    expect(r.playbookIgnored[0]?.reason).toBe("not-a-task");
+    expect(listUnread(p, "fe-member")[0]?.meta.playbook).toBeUndefined();
+  });
+
+  it("does not treat the same text with a different playbook as a duplicate", () => {
+    env = makeEnv();
+    const p = env.project();
+    ensureProjectDirs(p);
+    send(p, "lead", "a.md", "to: fe-member\ntype: task\nsubject: one\nplaybook: fix", GOOD_TASK);
+    routeOutboxes(p);
+    send(p, "lead", "b.md", "to: fe-member\ntype: task\nsubject: two\nplaybook: refactor", GOOD_TASK);
+    const r = routeOutboxes(p);
+    expect(r.rejected).toEqual([]);
+    expect(r.delivered).toHaveLength(1);
+    send(p, "lead", "c.md", "to: fe-member\ntype: task\nsubject: three\nplaybook: refactor", GOOD_TASK);
+    expect(routeOutboxes(p).rejected[0]?.reason).toMatch(/duplicate/);
+  });
+
+  it("keeps sending a feature task without Shape or a real acceptance back", () => {
+    const p = runProject("run");
+    for (let i = 1; i <= 3; i++) {
+      send(p, "lead", `f${i}.md`, "to: fe-member\ntype: task\nsubject: Feature\nplaybook: feature", WEAK_FEATURE);
+      const res = routeOutboxes(p);
+      expect(res.delivered).toHaveLength(0);
+      expect(res.rejected[0]?.reason).toContain("Shape");
+      expect(res.rejected[0]?.reason).toContain("no checkable item");
+      expect(res.rejected[0]?.reason).toContain("is not delivered");
+    }
+    expect(listUnread(p, "fe-member")).toHaveLength(0);
+  });
+
+  it("counts the two reasons separately", () => {
+    const p = runProject("run");
+    // Two weak-acceptance rejections use up the acceptance count only.
+    for (let i = 1; i <= 2; i++) {
+      send(p, "lead", `w${i}.md`, "to: fe-member\ntype: task\nsubject: Mixed", WEAK_FEATURE);
+      expect(routeOutboxes(p).delivered).toHaveLength(0);
+    }
+    // The same task now also lacks Shape: that reason still has attempts left.
+    send(p, "lead", "w3.md", "to: fe-member\ntype: task\nsubject: Mixed\nplaybook: feature", WEAK_FEATURE);
+    const res = routeOutboxes(p);
+    expect(res.delivered).toHaveLength(0);
+    expect(res.rejected[0]?.reason).toContain("Shape");
+    expect(res.rejected[0]?.reason).toContain("no checkable item"); // every reason is listed, even one whose tries are used up
+    // Shape and the weak acceptance stay held back. They are not delivered after two tries.
+    send(p, "lead", "w4.md", "to: fe-member\ntype: task\nsubject: Mixed\nplaybook: feature", WEAK_FEATURE);
+    expect(routeOutboxes(p).delivered).toHaveLength(0);
+    send(p, "lead", "w5.md", "to: fe-member\ntype: task\nsubject: Mixed\nplaybook: feature", WEAK_FEATURE);
+    expect(routeOutboxes(p).delivered).toHaveLength(0);
+  });
+
+  it("delivers at once with a warning in the legacy layout", () => {
+    const p = runProject("legacy");
+    send(p, "lead", "f.md", "to: fe-member\ntype: task\nsubject: Feature\nplaybook: feature", WEAK_FEATURE);
+    const res = routeOutboxes(p);
+    expect(res.rejected).toHaveLength(0);
+    expect(res.delivered).toHaveLength(1);
+    const [m] = listUnread(p, "fe-member");
+    expect(m?.body).toMatch(/^\[agent-lyceum\] Format warning:/);
+    expect(m?.body).toContain("## Shape");
+    expect(fs.readdirSync(path.join(outboxDir(p, "lead"), "rejected"))).toEqual([]);
+  });
+
+  it("does not demand Shape from a non-feature task", () => {
+    const p = runProject("run");
+    send(p, "lead", "t.md", "to: fe-member\ntype: task\nsubject: Fix\nplaybook: fix", GOOD_TASK);
+    const res = routeOutboxes(p);
+    expect(res.rejected).toEqual([]);
+    expect(res.delivered).toHaveLength(1);
+    expect(res.warnings).toEqual([]);
+  });
+});
+
 describe("message format check", () => {
   it("matches headings case-insensitively at any level", () => {
     expect(missingSections("reply", "# changes\n### Verification:\n## OPEN ITEMS ##\n## Risks")).toEqual([]);

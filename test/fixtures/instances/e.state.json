@@ -49,6 +49,7 @@
           ]
         }
       ],
+      "read_only": true,
       "sent": [
         {
           "to": "fe--x",
@@ -79,6 +80,12 @@
               "label": "目標",
               "lines": [
                 "x"
+              ]
+            },
+            {
+              "label": "驗收",
+              "lines": [
+                "npm test"
               ]
             }
           ]
@@ -114,6 +121,7 @@
           ]
         }
       ],
+      "read_only": true,
       "sent": [
         {
           "to": "(done)",
@@ -131,7 +139,8 @@
   "blocked_integrations": [],
   "implementers": [
     {
-      "agent": "fe--x"
+      "agent": "fe--x",
+      "at": "<ISO>"
     }
   ],
   "end_reason": "done",

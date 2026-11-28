@@ -176,12 +176,15 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
     }
   }
 
-  const verify: VerifySettings | undefined = p.verify?.commands.length
-    ? {
-        max_rejections: p.verify.max_rejections ?? VERIFY_DEFAULTS.max_rejections,
-        commands: p.verify.commands.map((c) => ({ name: c.name, run: c.run, timeout_sec: c.timeout_sec ?? VERIFY_DEFAULTS.timeout_sec })),
-      }
-    : undefined;
+  const verify: VerifySettings | undefined =
+    p.verify && (p.verify.commands.length > 0 || p.verify.bind_task === true || p.verify.cross_runtime === false)
+      ? {
+          max_rejections: p.verify.max_rejections ?? VERIFY_DEFAULTS.max_rejections,
+          bind_task: p.verify.bind_task === true,
+          cross_runtime: p.verify.cross_runtime !== false,
+          commands: p.verify.commands.map((c) => ({ name: c.name, run: c.run, timeout_sec: c.timeout_sec ?? VERIFY_DEFAULTS.timeout_sec })),
+        }
+      : undefined;
 
   const agents: Record<string, ResolvedAgent> = {};
   for (const agentName of Object.keys(p.agents)) {
@@ -459,6 +462,7 @@ export function resolveProjectWithSources(home: string, name: string): { project
     sources[`dispatcher.${k}`] = raw.dispatcher[k] !== undefined ? { file: projectFile, key: `dispatcher.${k}` } : { default: true };
   }
   if (raw.dispatcher.max_instances !== undefined) sources["dispatcher.max_instances"] = { file: projectFile, key: "dispatcher.max_instances" };
+  if (raw.dispatcher.max_awake !== undefined) sources["dispatcher.max_awake"] = { file: projectFile, key: "dispatcher.max_awake" };
   for (const rt of RUNTIMES) {
     const from = project.modelTiersFrom[rt];
     if (from) sources[`model_tiers.${rt}`] = { file: from === "project" ? projectFile : globalFile, key: `model_tiers.${rt}` };

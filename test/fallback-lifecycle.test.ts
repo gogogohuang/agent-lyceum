@@ -552,7 +552,7 @@ describe("no fallback configured (spec 20.2 decision 11)", () => {
     expect(Object.keys(raw.failure)).toEqual(["agent", "error", "attempts"]);
     expect(raw.sessions).toEqual({ lead: "s1" });
     expect(raw.wakes.map((w: object) => Object.keys(w))).toEqual([
-      ["round", "agent", "at", "duration_ms", "ok", "handling", "sent"],
+      ["round", "agent", "at", "duration_ms", "ok", "handling", "read_only", "sent"],
       ["round", "agent", "at", "duration_ms", "ok", "handling", "error"],
       ["round", "agent", "at", "duration_ms", "ok", "handling", "error"],
       ["round", "agent", "at", "duration_ms", "ok", "handling", "error"],

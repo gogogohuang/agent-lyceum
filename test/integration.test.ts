@@ -240,10 +240,8 @@ describe("dispatcher integration", () => {
         leadDir = i.workspace!.dir;
         expect(i.workspace!.branch).toBe("agent-lyceum/run-1/lead");
         expect(fs.readFileSync(path.join(leadDir, "src/web/a.txt"), "utf8")).toBe("a\n");
-        if (++leadCalls === 1) {
-          write(path.join(leadDir, "tests/lead-note.txt"), "lead\n");
-          mail(i.project, "lead", "fe-member", "job", "task");
-        } else {
+        if (++leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else {
           expect(fs.readFileSync(path.join(leadDir, "src/web/feature.txt"), "utf8")).toBe("member built\n"); // brought into the lead's worktree
           mail(i.project, "lead", "lead", "bye", "done");
         }
@@ -254,7 +252,7 @@ describe("dispatcher integration", () => {
       return OK;
     });
     expect(summary.outcome).toBe("completed");
-    expect(summary.resultBranch).toMatchObject({ branch: "agent-lyceum/run-1/lead", files: 2 });
+    expect(summary.resultBranch).toMatchObject({ branch: "agent-lyceum/run-1/lead", files: 1 });
     expect(loadRunState(runDir).result_branch?.head).toBe(summary.resultBranch!.head);
     expect(fs.readFileSync(path.join(runDir, "lead.patch"), "utf8")).toContain("src/web/feature.txt");
     // the repo: HEAD, working tree and index are as they were
@@ -263,7 +261,6 @@ describe("dispatcher integration", () => {
     expect(fs.existsSync(path.join(env.repo, "src/web/feature.txt"))).toBe(false);
     // the branch carries the work
     expect(git(env.repo, "show", "agent-lyceum/run-1/lead:src/web/feature.txt")).toBe("member built");
-    expect(git(env.repo, "show", "agent-lyceum/run-1/lead:tests/lead-note.txt")).toBe("lead");
   });
 
   it("a concurrent run guards the lead worktree's CLAUDE.md and leaves yours alone", async () => {
@@ -349,9 +346,14 @@ describe("dispatcher integration", () => {
         runDir,
         log: () => {},
         invoker: async (i) => {
-          write(path.join(i.workspace!.dir, `src/web/${id}.txt`), `${id}\n`);
-          expect(fs.readdirSync(path.join(i.workspace!.dir, "src/web")).filter((f) => f.endsWith(".txt") && f !== "a.txt")).toEqual([`${id}.txt`]);
-          mail(i.project, "lead", "lead", "bye", "done");
+          if (i.agent.name === "lead") {
+            if (i.userPrompt.includes("finished")) mail(i.project, "lead", "lead", "bye", "done");
+            else mail(i.project, "lead", "fe-member", "job", "task");
+          } else {
+            write(path.join(i.workspace!.dir, `src/web/${id}.txt`), `${id}\n`);
+            expect(fs.readdirSync(path.join(i.workspace!.dir, "src/web")).filter((f) => f.endsWith(".txt") && f !== "a.txt")).toEqual([`${id}.txt`]);
+            mail(i.project, i.agent.name, "lead", "finished");
+          }
           return OK;
         },
       });
@@ -368,18 +370,24 @@ describe("dispatcher integration", () => {
     initGitRepo(env.repo);
     makeConcurrent(env, 2);
     let leadDir = "";
+    let leadCalls = 0;
     const { summary, runDir } = await start(async (i) => {
-      leadDir = i.workspace!.dir;
-      write(path.join(leadDir, "src/web/draft.txt"), "draft\n");
-      ask(i.project);
+      if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
+        if (++leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else ask(i.project);
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/draft.txt"), "draft\n");
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
       return OK;
     });
     expect(summary.endReason).toBe("waiting");
     expect(summary.resultBranch).toBeUndefined();
     expect(loadRunState(runDir).result_branch).toBeUndefined();
-    expect(git(env.repo, "log", "-1", "--format=%s", "agent-lyceum/run-1/lead")).toBe("init"); // no commit yet
+    expect(git(env.repo, "log", "-1", "--format=%s", "agent-lyceum/run-1/lead")).toBe("agent-lyceum: keep integrated edits before the lead wakes");
     expect(fs.existsSync(path.join(runDir, "lead.patch"))).toBe(false);
-    expect(fs.readFileSync(path.join(leadDir, "src/web/draft.txt"), "utf8")).toBe("draft\n"); // the work waits in the worktree
+    expect(fs.readFileSync(path.join(leadDir, "src/web/draft.txt"), "utf8")).toBe("draft\n"); // the member's file is committed before the lead asks
 
     answer(runDir);
     let resumedDir = "";
@@ -421,20 +429,32 @@ describe("dispatcher integration", () => {
     initGitRepo(env.repo);
     makeConcurrent(env, 2);
     let leadDir = "";
+    let leadCalls = 0;
     const { runDir } = await start(async (i) => {
-      leadDir = i.workspace!.dir;
-      write(path.join(leadDir, "src/web/draft.txt"), "draft\n");
-      ask(i.project);
+      if (i.agent.name === "lead") {
+        leadDir = i.workspace!.dir;
+        if (++leadCalls === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else ask(i.project);
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/draft.txt"), "draft\n");
+        mail(i.project, i.agent.name, "lead", "finished");
+      }
       return OK;
     });
     expect(loadRunState(runDir).lead_workspace).toBe(true);
     env.editProjectYaml((t) => t.replace("max_concurrent_runs: 2", "max_concurrent_runs: 1"));
     answer(runDir);
     let resumedDir: string | undefined;
+    let resumed = 0;
     const s = await resumeRun(runDir, async (i) => {
-      resumedDir = i.workspace?.dir;
-      write(path.join(i.workspace!.dir, "src/web/more.txt"), "more\n");
-      mail(i.project, "lead", "lead", "bye", "done");
+      if (i.agent.name === "lead") {
+        resumedDir = i.workspace?.dir;
+        if (++resumed === 1) mail(i.project, "lead", "fe-member", "again", "task");
+        else mail(i.project, "lead", "lead", "bye", "done");
+      } else {
+        write(path.join(i.workspace!.dir, "src/web/more.txt"), "more\n");
+        mail(i.project, i.agent.name, "lead", "added");
+      }
       return OK;
     });
     expect(resumedDir).toBe(leadDir);
@@ -459,10 +479,15 @@ describe("dispatcher integration", () => {
     fs.writeFileSync(stateFile, JSON.stringify(old));
     answer(runDir);
     let workspace: unknown = "unset";
+    let n = 0;
     const s = await resumeRun(runDir, async (i) => {
       workspace = i.workspace;
-      write(path.join(env.repo, "src/web/shared.txt"), "in the repo\n");
-      mail(i.project, "lead", "lead", "bye", "done");
+      n += 1;
+      if (i.agent.name === "lead" && n === 1) mail(i.project, "lead", "fe-member", "job", "task");
+      else if (i.agent.name !== "lead") {
+        write(path.join(env.repo, "src/web/shared.txt"), "in the repo\n");
+        mail(i.project, i.agent.name, "lead", "finished");
+      } else mail(i.project, "lead", "lead", "bye", "done");
       return OK;
     });
     expect(workspace).toBeUndefined();
@@ -669,10 +694,16 @@ describe("dispatcher integration", () => {
       concurrentRepo();
       const pr = fakePr();
       let leadRoot = "";
+      let lead = 0;
       const { summary, runDir } = await start(async (i) => {
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+          mail(i.project, i.agent.name, "lead", "finished");
+          return OK;
+        }
         leadRoot = i.workspace!.root;
-        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
-        leadDone(i, "open_pr: true\n");
+        if (++lead === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else leadDone(i, "open_pr: true\n");
         return OK;
       }, { pr: pr.run });
       expect(summary.outcome).toBe("completed");
@@ -697,10 +728,16 @@ describe("dispatcher integration", () => {
         if (cmd === "git" && stripPins(args)[0] === "push") seen = JSON.parse(fs.readFileSync(path.join(runDirSeen, "state.json"), "utf8"));
         return pr.run(cmd, args, cwd);
       };
+      let lead = 0;
       const { summary, runDir } = await start(async (i) => {
         runDirSeen = path.join(env.project().paths.runs, "run-1");
-        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
-        leadDone(i, "open_pr: true\n");
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+          mail(i.project, i.agent.name, "lead", "finished");
+          return OK;
+        }
+        if (++lead === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else leadDone(i, "open_pr: true\n");
         return OK;
       }, { pr: run });
       expect(seen).toMatchObject({ end_reason: "done", outcome: "completed" });
@@ -804,9 +841,15 @@ describe("dispatcher integration", () => {
     it("keeps the outcome and the branch when the push fails, and prints how to finish by hand", async () => {
       concurrentRepo();
       const pr = fakePr({ "git push": { ok: false, out: "remote: denied" } });
+      let lead = 0;
       const { summary, runDir } = await start(async (i) => {
-        write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
-        leadDone(i, "open_pr: true\n");
+        if (i.agent.name !== "lead") {
+          write(path.join(i.workspace!.dir, "src/web/new.txt"), "n\n");
+          mail(i.project, i.agent.name, "lead", "finished");
+          return OK;
+        }
+        if (++lead === 1) mail(i.project, "lead", "fe-member", "job", "task");
+        else leadDone(i, "open_pr: true\n");
         return OK;
       }, { pr: pr.run });
       expect(summary.outcome).toBe("completed");
