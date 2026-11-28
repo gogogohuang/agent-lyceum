@@ -479,10 +479,15 @@ describe("dispatcher integration", () => {
     fs.writeFileSync(stateFile, JSON.stringify(old));
     answer(runDir);
     let workspace: unknown = "unset";
+    let n = 0;
     const s = await resumeRun(runDir, async (i) => {
       workspace = i.workspace;
-      write(path.join(env.repo, "src/web/shared.txt"), "in the repo\n");
-      mail(i.project, "lead", "lead", "bye", "done");
+      n += 1;
+      if (i.agent.name === "lead" && n === 1) mail(i.project, "lead", "fe-member", "job", "task");
+      else if (i.agent.name !== "lead") {
+        write(path.join(env.repo, "src/web/shared.txt"), "in the repo\n");
+        mail(i.project, i.agent.name, "lead", "finished");
+      } else mail(i.project, "lead", "lead", "bye", "done");
       return OK;
     });
     expect(workspace).toBeUndefined();

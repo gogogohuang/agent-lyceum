@@ -139,7 +139,8 @@
   "blocked_integrations": [],
   "implementers": [
     {
-      "agent": "fe--x"
+      "agent": "fe--x",
+      "at": "<ISO>"
     }
   ],
   "end_reason": "done",

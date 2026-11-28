@@ -255,11 +255,6 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
   };
 }
 
-/**
- * A read-only wake. `invokeWithSandboxChecks` skips `sandboxRefusal` when `input.policy` is set, so this must not
- * copy `sandbox.write` (nor the git dir, records, proposals, or `can_edit_agent_md` files) into the writable set.
- * The repo stays readable via `readDirs`.
- */
 /** A path is the repo root or a file inside it. Missing files still resolve. */
 function insideRepo(repo: string, target: string): boolean {
   const root = canonicalPath(repo);
@@ -296,6 +291,11 @@ export function coordinatePolicy(project: ResolvedProject, agent: ResolvedAgent)
   };
 }
 
+/**
+ * A read-only wake. `invokeWithSandboxChecks` skips `sandboxRefusal` when `input.policy` is set, so this must not
+ * copy `sandbox.write` (nor the git dir, records, proposals, or `can_edit_agent_md` files) into the writable set.
+ * The repo stays readable via `readDirs`.
+ */
 export function readOnlyPolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const normal = writePolicy(project, agent);
   const ownDir = projectAgentDir(project, agent.name);

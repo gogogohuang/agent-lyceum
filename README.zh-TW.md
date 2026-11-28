@@ -82,7 +82,7 @@ agents:
 
 同樣地，舊版程式會拒絕載入含 `verify` 的 `project.yaml`（「Unrecognized key」）。改用舊版前，請先拿掉 `verify` 區塊。run 狀態不受影響。見[驗證](docs/configuration.zh-TW.md#驗證verify)。（spec 27.4）
 
-舊版也會拒絕載入含 `dispatcher.max_awake` 或 `verify.bind_task` 的 `project.yaml`（「Unrecognized key」）。改用舊版前拿掉這兩個鍵即可。現在的信件解析會忽略未知的 frontmatter 鍵，所以信上的 `playbook` 與 `read_only` 本身不會讓舊版失敗。若你要退回的那個舊版會因未知鍵拒絕信件，降版前不要留下帶這兩個鍵的未讀信。也不要留下還有未完成唯讀喚醒的 run：舊版 `recover()` 看到 `output_ready` 會照樣整合，那次喚醒裡的改動會進 repo。
+舊版也會拒絕載入含 `dispatcher.max_awake`、`verify.bind_task` 或 `verify.cross_runtime` 的 `project.yaml`（「Unrecognized key」）。改用舊版前拿掉這些鍵即可。沒寫 `verify.cross_runtime` 時閘門仍開，既有檔案不必加這個鍵。現在的信件解析會忽略未知的 frontmatter 鍵，所以信上的 `playbook` 與 `read_only` 本身不會讓舊版失敗。若你要退回的那個舊版會因未知鍵拒絕信件，降版前不要留下帶這兩個鍵的未讀信。也不要留下還有未完成唯讀喚醒的 run：舊版 `recover()` 看到 `output_ready` 會照樣整合，那次喚醒裡的改動會進 repo。
 
 ## 主題
 

@@ -101,7 +101,17 @@ function isPlaceholder(item: string): boolean {
   return ACCEPTANCE_PLACEHOLDERS.has(t);
 }
 
-/** Problems with `## Acceptance criteria`: no item names a `command`, a file or a test. No such heading gives [] (`missingSections` owns that). */
+/** A backtick command (it contains a space, a slash, or a file extension) or a path or test name. A lone word in backticks is not a check. */
+function isCheckable(item: string): boolean {
+  if (isPlaceholder(item)) return false;
+  const ticks = [...item.matchAll(/`([^`]+)`/g)].map((m) => m[1]!.trim()).filter((t) => t !== "" && !isPlaceholder(t));
+  const command = ticks.some((t) => /\s/.test(t) || /[\\/]/.test(t) || /\.[A-Za-z0-9]+$/.test(t));
+  const outside = item.replace(/`[^`]*`/g, " ");
+  const file = /\S+\.[A-Za-z0-9]+/.test(outside);
+  return command || file;
+}
+
+/** Problems with `## Acceptance criteria`: no item names a command, a file or a test. No such heading gives [] (`missingSections` owns that). */
 export function acceptanceIssues(body: string): string[] {
   const text = sectionText(body, "Acceptance criteria");
   if (text === undefined) return [];
@@ -109,7 +119,7 @@ export function acceptanceIssues(body: string): string[] {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l !== "" && !l.startsWith("#"));
-  const checkable = items.filter((l) => !isPlaceholder(l) && (/`[^`]+`/.test(l) || /\S+\.[A-Za-z0-9]+/.test(l)));
+  const checkable = items.filter((l) => isCheckable(l));
   return checkable.length ? [] : ["Acceptance criteria has no checkable item (a `command`, a file or a test name)"];
 }
 

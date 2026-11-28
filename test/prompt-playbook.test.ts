@@ -21,7 +21,9 @@ describe("playbook prompt", () => {
     env = makeEnv();
     const project = env.project();
     const lead = project.agents.lead!;
-    expect(buildSystemPrompt(project, lead)).toContain("You do not edit product code.");
+    const prompt = buildSystemPrompt(project, lead);
+    expect(prompt).toContain("You do not edit product code.");
+    expect(prompt).toContain("run --agent <name>");
     const solo = soloProject(project, "fe-member");
     expect(buildSoloSystemPrompt(solo, solo.agents["fe-member"]!)).not.toContain("You do not edit product code.");
   });

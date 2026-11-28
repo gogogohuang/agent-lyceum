@@ -514,14 +514,19 @@ export function routeOutboxes(project: ResolvedProject, routing?: InstanceRoutin
           { present: shapeMissing.length > 0, key: `${base}:shape` },
           { present: acceptance.length > 0, key: `${base}:acceptance` },
         ].filter((r) => r.present);
-        if (reasons.some((r) => formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS)) {
-          const n = Math.max(...reasons.filter((r) => formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS).map((r) => countFormatRejection(runDir, r.key)));
+        const persistent = shapeMissing.length > 0 || acceptance.length > 0;
+        if (persistent || reasons.some((r) => formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS)) {
+          const held = reasons.filter((r) => persistent || formatRejections(runDir, r.key) < MAX_FORMAT_REJECTIONS);
+          const n = Math.max(...held.map((r) => countFormatRejection(runDir, r.key)));
           const parts = [
             ...(missing.length ? [`this ${type} is missing required section(s): ${missing.map((s) => `\`## ${s}\``).join(", ")}.`] : []),
             ...acceptance.map((s) => `${s}.`),
           ];
+          const tail = persistent
+            ? `(Attempt ${n}. A missing \`## Shape\`, or an acceptance line that is not a command, a file or a test name, is not delivered.)`
+            : `(Attempt ${n} of ${MAX_FORMAT_REJECTIONS}; after that it is delivered with a warning.)`;
           reject(
-            `${parts.join(" ")} Fix them and send it again (an empty section is written \`None\`, except \`## Acceptance criteria\`, which needs a \`command\`, a file name or a test name; \`None\` in backticks is rejected too). (Attempt ${n} of ${MAX_FORMAT_REJECTIONS}; after that it is delivered with a warning.)`,
+            `${parts.join(" ")} Fix them and send it again (an empty section is written \`None\`, except \`## Acceptance criteria\`, which needs a command, a file name or a test name; a lone word in backticks is rejected too). ${tail}`,
           );
           continue;
         }

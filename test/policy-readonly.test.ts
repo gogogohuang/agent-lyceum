@@ -65,3 +65,4 @@ describe("coordinatePolicy", () => {
     fs.rmSync(scratch, { recursive: true, force: true });
   });
 });
+

@@ -1,6 +1,6 @@
 # Write scope
 
-Default rules (everything else in the repo is unrestricted for a member and for `run --agent`. A team lead does not write the repository):
+Default rules (everything else in the repo is unrestricted for a member and for `run --agent`. A team lead does not write the repository. A one-line fix is `run --agent <name>` of the agent who writes it):
 
 | Target | Rule |
 |---|---|

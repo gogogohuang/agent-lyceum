@@ -352,6 +352,15 @@ describe("verify.bind_task", () => {
     const project = env.project();
     expect(project.verify?.bind_task).toBe(true);
     expect(project.verify?.commands).toEqual([]);
+    expect(project.verify?.cross_runtime).toBe(true);
+  });
+
+  it("keeps verify settings when cross_runtime is false and commands are empty", () => {
+    env = makeEnv();
+    env.editProjectYaml((t) => `${t}\nverify:\n  cross_runtime: false\n  commands: []\n`);
+    const project = env.project();
+    expect(project.verify?.cross_runtime).toBe(false);
+    expect(project.verify?.commands).toEqual([]);
   });
 });
 

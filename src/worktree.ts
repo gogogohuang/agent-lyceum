@@ -211,6 +211,65 @@ export function discardWorkspaceEdits(ws: AgentWorkspace, head: string): void {
   agentGit(ws, ["clean", "-fd"]);
 }
 
+/** HEAD and dirty paths of the user's checkout, before a read-only wake that has no worktree. Undefined when `dir` is not a git repo. */
+export function snapshotCheckout(dir: string): { head: string; dirty: string[] } | undefined {
+  if (!isGitRepo(dir)) return undefined;
+  const head = tryGit(dir, ["rev-parse", "HEAD"]);
+  if (!head) return undefined;
+  return { head, dirty: dirtyPaths(dir) };
+}
+
+/**
+ * Undo edits a read-only wake made in the user's checkout. Paths that were already dirty stay.
+ * This does not `reset --hard` and does not `clean` the whole tree: a moved HEAD is put back with `reset --mixed`,
+ * then only the new paths are restored. Returns the paths that were put back.
+ */
+export function restoreBorrowedEdits(dir: string, snap: { head: string; dirty: string[] }): string[] {
+  if (!isGitRepo(dir)) return [];
+  const before = new Set(snap.dirty);
+  const headNow = tryGit(dir, ["rev-parse", "HEAD"]);
+  if (headNow && headNow !== snap.head) runGit(dir, ["reset", "--mixed", snap.head]);
+  const touched = dirtyPaths(dir).filter((p) => !before.has(p));
+  return restoreTouched(touched, {
+    lsFiles: () => tryGit(dir, ["ls-files", "-z"]) ?? "",
+    checkout: (paths) => runGit(dir, ["checkout", "--", ...paths]),
+    clean: (paths) => runGit(dir, ["clean", "-fd", "--", ...paths]),
+  });
+}
+
+/** Dirty paths in an agent worktree, using pinned git. */
+export function workspaceStatusPaths(ws: AgentWorkspace): string[] {
+  assertNoNestedRepos(ws);
+  return parseStatus(agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"]));
+}
+
+/**
+ * Undo a read-only wake in an agent worktree. Same rule as `restoreBorrowedEdits`: earlier dirty paths stay,
+ * and the tree is not `reset --hard` or cleaned wholesale. Returns the paths that were put back.
+ */
+export function restoreWorkspaceEdits(ws: AgentWorkspace, snap: { head: string; dirty: string[] }): string[] {
+  assertNoNestedRepos(ws);
+  const before = new Set(snap.dirty);
+  const headNow = agentGit(ws, ["rev-parse", "HEAD"]);
+  if (headNow !== snap.head) agentGit(ws, ["reset", "--mixed", snap.head]);
+  const touched = parseStatus(agentGit(ws, ["status", "--porcelain", "-z", "--untracked-files=all"])).filter((p) => !before.has(p));
+  return restoreTouched(touched, {
+    lsFiles: () => agentGit(ws, ["ls-files", "-z"]),
+    checkout: (paths) => agentGit(ws, ["checkout", "--", ...paths]),
+    clean: (paths) => agentGit(ws, ["clean", "-fd", "--", ...paths]),
+  });
+}
+
+function restoreTouched(touched: string[], git: { lsFiles: () => string; checkout: (paths: string[]) => void; clean: (paths: string[]) => void }): string[] {
+  if (!touched.length) return [];
+  const tracked = new Set(zList(git.lsFiles()));
+  const restore = touched.filter((p) => tracked.has(p));
+  const extra = touched.filter((p) => !tracked.has(p));
+  if (restore.length) git.checkout(restore);
+  if (extra.length) git.clean(extra);
+  return touched;
+}
+
 /**
  * Refuse a worktree that holds a git repository of its own. `status`, `add -A` and `commit` can visit a nested repository and run
  * git there with that repository's config — which the agent wrote. Run before any command that walks the working tree.

@@ -19,6 +19,8 @@ export interface ReviewRecord {
 export interface WorkerRef {
   agent: string;
   model?: string;
+  /** When the files were integrated. Absent on records written before this field existed. */
+  at?: string;
 }
 
 /** `name (model)`, or just `name` when the model is not known. Newlines are dropped so a value cannot start another trailer. */

@@ -386,25 +386,17 @@ describe("playbook, read_only and acceptance routing", () => {
     expect(routeOutboxes(p).rejected[0]?.reason).toMatch(/duplicate/);
   });
 
-  it("sends a feature task without Shape and a weak acceptance back twice, then delivers it with a warning", () => {
+  it("keeps sending a feature task without Shape or a real acceptance back", () => {
     const p = runProject("run");
-    for (let i = 1; i <= 2; i++) {
+    for (let i = 1; i <= 3; i++) {
       send(p, "lead", `f${i}.md`, "to: fe-member\ntype: task\nsubject: Feature\nplaybook: feature", WEAK_FEATURE);
       const res = routeOutboxes(p);
       expect(res.delivered).toHaveLength(0);
       expect(res.rejected[0]?.reason).toContain("Shape");
       expect(res.rejected[0]?.reason).toContain("no checkable item");
+      expect(res.rejected[0]?.reason).toContain("is not delivered");
     }
-    send(p, "lead", "f3.md", "to: fe-member\ntype: task\nsubject: Feature\nplaybook: feature", WEAK_FEATURE);
-    const res = routeOutboxes(p);
-    expect(res.delivered).toHaveLength(1);
-    expect(res.warnings[0]?.missing).toEqual(["Shape"]);
-    const [m] = listUnread(p, "fe-member");
-    expect(m?.body).toMatch(/^\[agent-lyceum\] Format warning:/);
-    expect(m?.body).toContain("## Shape");
-    expect(m?.body).toContain("no checkable item");
-    expect(m?.body).not.toContain("`## Acceptance criteria has no");
-    expect(m?.meta.playbook).toBe("feature");
+    expect(listUnread(p, "fe-member")).toHaveLength(0);
   });
 
   it("counts the two reasons separately", () => {
@@ -420,11 +412,11 @@ describe("playbook, read_only and acceptance routing", () => {
     expect(res.delivered).toHaveLength(0);
     expect(res.rejected[0]?.reason).toContain("Shape");
     expect(res.rejected[0]?.reason).toContain("no checkable item"); // every reason is listed, even one whose tries are used up
-    // Shape has now used one try, acceptance none more: one further send is held back only for Shape.
+    // Shape and the weak acceptance stay held back. They are not delivered after two tries.
     send(p, "lead", "w4.md", "to: fe-member\ntype: task\nsubject: Mixed\nplaybook: feature", WEAK_FEATURE);
     expect(routeOutboxes(p).delivered).toHaveLength(0);
     send(p, "lead", "w5.md", "to: fe-member\ntype: task\nsubject: Mixed\nplaybook: feature", WEAK_FEATURE);
-    expect(routeOutboxes(p).delivered).toHaveLength(1);
+    expect(routeOutboxes(p).delivered).toHaveLength(0);
   });
 
   it("delivers at once with a warning in the legacy layout", () => {

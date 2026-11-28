@@ -177,10 +177,11 @@ export function resolveProjectFrom(home: string, name: string, g: ReturnType<typ
   }
 
   const verify: VerifySettings | undefined =
-    p.verify && (p.verify.commands.length > 0 || p.verify.bind_task === true)
+    p.verify && (p.verify.commands.length > 0 || p.verify.bind_task === true || p.verify.cross_runtime === false)
       ? {
           max_rejections: p.verify.max_rejections ?? VERIFY_DEFAULTS.max_rejections,
           bind_task: p.verify.bind_task === true,
+          cross_runtime: p.verify.cross_runtime !== false,
           commands: p.verify.commands.map((c) => ({ name: c.name, run: c.run, timeout_sec: c.timeout_sec ?? VERIFY_DEFAULTS.timeout_sec })),
         }
       : undefined;

@@ -235,7 +235,8 @@ verify:
 ```
 
 - **預設關閉：** 沒有 `verify`，或 `commands: []` 且沒有 `bind_task: true`，即為關閉；至少一條指令才啟用。沒設的專案什麼都不會執行，也不會有任何改變。
-- **`bind_task`：** 預設關。打開後，任務 `## Verification` 裡點名的每一項檢查都必須已經是某條 `commands[].run`。算得上的寫法只有兩種：整條 bullet 就是一對反引號包住的指令，或 fenced code block 裡的非空行（開頭一行是三個反引號，或三個反引號加語言名，例如 bash）。句子裡夾著的反引號不算。對不上不退信，也不計入 `done` 的退回次數：run 一開始記一筆 note，`completed` 直接以 `partial` 收下。dispatcher 不執行任務文字裡的指令。`bind_task: true` 且 `commands` 是空的仍會留下這組設定（才能回報對不上），`doctor` 會報錯，且不印「即將在 sandbox 外跑 N 條指令」的警告。`commands` 不是空的時，那段警告仍在。
+- **`bind_task`：** 預設關。打開後，任務 `## Verification` 裡點名的每一項檢查都必須已經是某條 `commands[].run`。算得上的寫法只有兩種：整條 bullet 就是一對反引號包住的指令，或 fenced code block 裡的非空行（開頭一行是三個反引號，或三個反引號加語言名，例如 bash）。句子裡夾著的反引號不算。對不上不退信，也不計入 `done` 的退回次數，也不改變結果：run 一開始記一筆 note。dispatcher 不執行任務文字裡的指令。`bind_task: true` 且 `commands` 是空的仍會留下這組設定（才能回報對不上），`doctor` 會報錯，且不印「即將在 sandbox 外跑 N 條指令」的警告。`commands` 不是空的時，那段警告仍在。
+- **`cross_runtime`：** 預設開。設成 `false` 時，`completed` 不需要跨 runtime 的 `verdict: pass`。沒寫這個鍵時閘門仍開。沒有 lead 以外的人能給這則 pass 時，閘門也開著，但不擋下。
 - **`max_rejections`：** 整數 0–5，預設 2。驗證失敗時把 `done` 退回 lead 的次數；用完後以 `partial` 收下。`0` 表示直接以 `partial` 收下。次數可能提早結束：若 `done` 的失敗與上一次被退回的完全相同，且 lead 的 worktree 沒有變動，就不再退回、不消耗次數，直接以 `partial` 收下（見[怎麼運作](how-it-works.zh-TW.md#驗證-completed-的-done)）。（spec 28）
 - **`commands[].name`：** 小寫字母、數字、`-`，清單內不可重複。用於 log 檔名與訊息。
 - **`commands[].run`：** 單一字串，用 `sh -c` 執行（僅 macOS／Linux）。

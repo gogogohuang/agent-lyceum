@@ -84,7 +84,7 @@ describe("verify schema and config", () => {
   it("accepts a valid block and fills the defaults when resolved", () => {
     env = makeEnv();
     withVerify([{ name: "t-1", run: "true" }]);
-    expect(env.project().verify).toEqual({ max_rejections: 2, bind_task: false, commands: [{ name: "t-1", run: "true", timeout_sec: 600 }] });
+    expect(env.project().verify).toEqual({ max_rejections: 2, bind_task: false, cross_runtime: true, commands: [{ name: "t-1", run: "true", timeout_sec: 600 }] });
   });
   it("no verify, or an empty commands list, means off", () => {
     env = makeEnv();

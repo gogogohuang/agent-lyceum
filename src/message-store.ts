@@ -199,8 +199,10 @@ export interface ClaimRecord {
   created: string;
   /** Set when the wake must not edit the repo. Absent on older claims, which are not read-only. */
   read_only?: true;
-  /** The worktree's HEAD when the read-only wake started. Reset target if the wake edited anything. */
+  /** The checkout's HEAD when the read-only wake started. */
   head?: string;
+  /** Paths already dirty at the start. A read-only wake does not put these back. */
+  dirty?: string[];
 }
 
 const claimFile = (runDir: string, id: string) => path.join(mailDir(runDir), "claims", `${id}.json`);
@@ -213,10 +215,10 @@ export function loadClaim(runDir: string, id: string): ClaimRecord {
   return JSON.parse(fs.readFileSync(claimFile(runDir, id), "utf8")) as ClaimRecord;
 }
 
-/** Mark a claim read-only. `head` is the worktree sha to return to; shared mode has none. */
-export function setClaimReadOnly(runDir: string, claimId: string, head?: string): void {
+/** Mark a claim read-only. `head` and `dirty` are the checkout at the start; shared mode may have neither. */
+export function setClaimReadOnly(runDir: string, claimId: string, head?: string, dirty?: string[]): void {
   const c = loadClaim(runDir, claimId);
-  saveClaim(runDir, { ...c, read_only: true, ...(head ? { head } : {}) });
+  saveClaim(runDir, { ...c, read_only: true, ...(head ? { head } : {}), ...(dirty ? { dirty } : {}) });
 }
 
 /** The latest other claim for `agent`, read from disk. The in-memory map only holds the claim being woken. */

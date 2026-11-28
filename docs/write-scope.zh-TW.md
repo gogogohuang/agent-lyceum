@@ -1,6 +1,6 @@
 # 寫入範圍
 
-預設規則（成員與 `run --agent` 對 repo 內其餘部分不受限制。團隊 run 的 lead 不寫 repo）：
+預設規則（成員與 `run --agent` 對 repo 內其餘部分不受限制。團隊 run 的 lead 不寫 repo。一行小修正是 `run --agent <name>`，指定實際寫 code 的 agent）：
 
 | 目標 | 規則 |
 |---|---|

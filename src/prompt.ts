@@ -55,7 +55,7 @@ export const WAKE_ECONOMY_SECTION = [
   "Every wake-up re-reads your whole context (prompt, memory, mail), so the number of wake-ups, yours and your teammates', is the main cost of a run.",
   "- Send all work that is independent of each other in the same wake-up (for example the implementation and the matching docs), each task naming its reviewer, instead of one task per wake-up.",
   "- When a reply arrives while other work you sent is still out and the reply needs nothing from you yet, send no mail: note it in your task memory and end the wake-up. Decide the next step once, when the rest is back; replies waiting together are handed to you in one wake-up.",
-  "- When a teammate uses a different runtime from the people who wrote the change, a `completed` done is sent back until one of those teammates has replied with `verdict: pass` in this segment. Your own pass does not count. A review task is `read_only: true`. A small fix still needs that reply when such a teammate exists. When every teammate shares your runtime, no such reply is required. If every teammate on another runtime also wrote code, nobody can give that pass, and a `completed` done still comes back. If you are the only one on another runtime, your own pass still does not count, and a `completed` done still comes back.",
+  "- When a teammate uses a different runtime from the people who wrote the change, a `completed` done is sent back until one of those teammates has replied with `verdict: pass` in this segment. Your own pass does not count. A review task is `read_only: true`. A small fix still needs that reply when such a teammate exists. When every teammate shares your runtime, no such reply is required. When nobody else can give that pass, the done is accepted without it. `verify.cross_runtime: false` turns the gate off.",
   "- Use the most capable (most expensive) model only at three moments: before the plan is final, when the same error shows up a second time, and before you send `done`. In other rounds prefer teammates on cheaper models; read-only search work suits the cheapest one.",
 ];
 
@@ -153,10 +153,10 @@ function writeScopeRules(project: ResolvedProject, agent: ResolvedAgent): string
       : `- The shared team context is in \`${commonPath}\` (read-only). Project records are ${records} Both are read-only.`,
     ...(mayWriteOwn ? [`- You may write your project agent directory \`${ownDir}/\`. Creating \`AGENT.md\` there makes it this project's persona on the next run; the global persona file stays read-only.`] : []),
     ...(ownPersona ? [`- You may edit your project persona \`${agent.agentMd}\`.`] : []),
-    ...(isLead ? ["- You do not edit product code. Send that work to a teammate. You still write mail, records, and handoff notes."] : []),
+    ...(isLead ? ["- You do not edit product code. Send that work to a teammate. A one-line fix is `run --agent <name>` of the agent who writes it. You still write mail, records, and handoff notes."] : []),
     ...(agent.canEditAgentMd
       ? isLead
-        ? ["- You may edit `AGENT.md` files that live outside the repository. You do not edit the repository's `CLAUDE.md`/`AGENTS.md`; send that to a teammate."]
+        ? ["- You may edit `AGENT.md` files that live outside the repository. You do not edit the repository's `CLAUDE.md`/`AGENTS.md`."]
         : ["- You may edit every `AGENT.md` and the repository's `CLAUDE.md`/`AGENTS.md`; those changes are logged."]
       : ["- Never edit another agent's AGENT.md, a global `AGENT.md`, or the repository's own `CLAUDE.md`/`AGENTS.md`."]),
     "- Never touch another agent's memory, inbox or outbox, or the configuration files of agent-lyceum (`project.yaml`, `team.yaml`, `runs/`).",
@@ -322,7 +322,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   lines.push(readPersona(agent), "", "---", "", "# Team protocol (injected by agent-lyceum)", "");
   lines.push(
     isLead
-      ? `You are **${agent.name}**, the lead of the team "${project.name}". You do not edit product code. You read the repository \`${repoDirFor(project, agent.name)}\` and send the change to a teammate.`
+      ? `You are **${agent.name}**, the lead of the team "${project.name}". You do not edit product code. You read the repository \`${repoDirFor(project, agent.name)}\` and send the change to a teammate. A one-line fix is \`run --agent <name>\` of the agent who writes it.`
       : agent.instance && agent.instance.k >= 2
         ? `You are **${agent.name}**, instance ${agent.instance.k} of **${agent.instance.role}** in the team "${project.name}". Other instances of ${agent.instance.role} may be working on other tasks at the same time, each in its own worktree. You work in the repository \`${repoDirFor(project, agent.name)}\`.`
         : `You are **${agent.name}**, a member of the team "${project.name}". You work in the repository \`${repoDirFor(project, agent.name)}\`.`,
@@ -337,7 +337,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
     ...(project.workspaces?.[agent.name]
       ? [
           isLead
-            ? `That directory is the run's checkout (branch \`${project.workspaces[agent.name]?.branch}\`). Edits you make there are removed when this wake ends. Do not commit, push, switch branches or touch any other checkout.`
+            ? `That directory is the run's checkout (branch \`${project.workspaces[agent.name]?.branch}\`). Edits you make there are removed when this wake ends. Do not commit, push, switch branches or touch any other checkout. A one-line fix is \`run --agent <name>\` of the agent who writes it.`
             : `That directory is your own isolated git worktree (branch \`${project.workspaces?.[agent.name]?.branch}\`): teammates cannot see your changes while you work, and you cannot see theirs. Do not commit, push, switch branches or touch any other checkout; the dispatcher collects your changes from this directory after you finish.`,
         ]
       : []),

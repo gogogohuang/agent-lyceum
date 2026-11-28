@@ -35,7 +35,7 @@ const claims = (runDir: string) => {
 };
 
 describe("read-only wakes", () => {
-  it("keeps a writable commit and drops what a later investigate wake committed", async () => {
+  it("keeps a writable commit and puts back only what a later investigate wake changed", async () => {
     const { project, runDir, task } = start();
     let lead = 0;
     let member = 0;
@@ -87,6 +87,7 @@ describe("read-only wakes", () => {
           expect(i.workspace).toBeDefined();
           expect(i.policy!.allowDirs).not.toContain(i.workspace!.dir);
           expect(i.systemPrompt).toContain("You do not edit product code.");
+          expect(i.systemPrompt).toContain("run --agent <name>");
           if (lead === 1) {
             write(path.join(i.workspace!.dir, "lead-edit.txt"), "nope\n");
             send(i, "fe-member", "task", "write it");
@@ -105,7 +106,7 @@ describe("read-only wakes", () => {
     expect(fs.readFileSync(path.join(leadWs.dir, "kept.txt"), "utf8")).toBe("kept\n");
   });
 
-  it("discards a read-only commit when the wake fails, before the claim is abandoned", async () => {
+  it("puts back a read-only commit when the wake fails", async () => {
     const { project, runDir, task } = start();
     const summary = await runTeam({
       project,
@@ -130,7 +131,7 @@ describe("read-only wakes", () => {
     expect(claim?.read_only).toBe(true);
   });
 
-  it("drops a commit left behind when a read-only wake is resumed", async () => {
+  it("puts back a commit left behind when a read-only wake is resumed", async () => {
     const { project, runDir, task } = start();
     await runTeam({
       project,

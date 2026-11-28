@@ -6,6 +6,7 @@ import type { Invocation } from "./adapters/types.js";
 import type { ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
 import { tidyAdvice } from "./memory-tidy.js";
+import { teamRunFindings } from "./review-gate.js";
 import { lessonGuardFindings, listRecords, RECORD_KINDS } from "./records.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
 import { checkDecisions, listProposals, oldestPending, pendingProposals } from "./proposals.js";
@@ -270,6 +271,8 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
     if (pr.problems.length && (pr.status === undefined || pr.status === "proposed")) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: ${pr.problems.join("; ")}.` });
   }
   for (const d of checkDecisions(listProposals(project), project)) checks.push({ level: "warn", subject: "proposals", message: `${d.file}: ${d.problem}.` });
+
+  for (const f of teamRunFindings(project)) checks.push({ level: f.level, subject: "team", message: f.message });
 
   const runtimes = await probeProjectRuntimes(project, opts, true);
   checks.push(...judgeRuntimes(project, runtimes));

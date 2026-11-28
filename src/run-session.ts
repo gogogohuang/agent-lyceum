@@ -27,7 +27,7 @@ import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, 
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { trailers, withTrailers, type WorkerRef } from "./attribution.js";
-import { agentGit, assertWorktreeRunnable, beginCheckoutRun, checkoutHeadProblem, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, existingAgentWorkspace, finishCheckoutBranch, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, remoteBaseNote, rollbackCheckoutStart, snapshotBase, snapshotCommit, snapshotHead, toplevel, workspaceDirty, workingTreeHash, PINNED_CONFIG, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
+import { agentGit, assertWorktreeRunnable, beginCheckoutRun, checkoutHeadProblem, collectAgentChanges, commitWorkspace, dirtyPaths, existingAgentWorkspace, finishCheckoutBranch, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, remoteBaseNote, restoreBorrowedEdits, restoreWorkspaceEdits, rollbackCheckoutStart, snapshotBase, snapshotCheckout, snapshotCommit, snapshotHead, toplevel, workspaceDirty, workspaceStatusPaths, workingTreeHash, PINNED_CONFIG, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
 import { bindRunProject, CHECKOUT_SCHEMA_VERSION, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -214,8 +214,10 @@ export class RunSession {
   private readonly resume: RunState | undefined;
   /** The handoff index as this segment started; the lead is noted when it is the same at `done`. */
   private readonly sharedAtStart: string | undefined;
-  /** Set once at run start when `bind_task` names checks that are not in project.yaml. */
+  /** Set once at run start when `bind_task` names checks that are not in project.yaml. A note only; it does not change the outcome. */
   private bindNote: string | undefined;
+  /** Checkout at the start of a read-only wake. The claim stores the same pair so a resume can put paths back. */
+  private roSnaps = new Map<string, { head: string; dirty: string[] }>();
   private readonly invoke: Invoker;
   private readonly say: (line: string) => void;
   private readonly cfg: DispatcherSettings;
@@ -549,36 +551,38 @@ export class RunSession {
   }
 
   /**
-   * A read-only wake never joins the lead's branch. If the worktree moved, put it back and tell the lead.
-   * Cursor cannot enforce the policy, and Claude or Codex cannot when the OS sandbox is off: say so either way.
+   * A read-only wake never joins the lead's branch. Only paths that changed during the wake are put back.
+   * Paths that were already dirty stay. This is not `reset --hard` and not a clean of the whole tree.
+   * Cursor denies `Write` on the repo. Claude and Codex rely on the OS sandbox. When that cannot block the write, the paths are still put back.
    */
   private revertReadOnly(agent: ResolvedAgent, ws: AgentWorkspace | undefined, claim: ClaimRecord): void {
     const { project, log } = this;
-    if (agent.runtime === "cursor" || ((agent.runtime === "claude-code" || agent.runtime === "codex") && !osSandboxAvailable())) {
-      log("read-only-unenforced", { agent: agent.name, runtime: agent.runtime });
-    }
-    if (!ws || !claim.head) return;
-    let edited = false;
+    const sandboxOff = agent.runtime === "cursor" || ((agent.runtime === "claude-code" || agent.runtime === "codex") && !osSandboxAvailable());
+    if (sandboxOff) log("read-only-unenforced", { agent: agent.name, runtime: agent.runtime });
+    const snap = this.roSnaps.get(agent.name) ?? (claim.head ? { head: claim.head, dirty: claim.dirty ?? [] } : undefined);
+    this.roSnaps.delete(agent.name);
+    if (!snap) return;
+    let restored: string[] = [];
     try {
-      edited = workspaceDirty(ws) || agentGit(ws, ["rev-parse", "HEAD"]) !== claim.head;
-      discardWorkspaceEdits(ws, claim.head);
+      restored = ws ? restoreWorkspaceEdits(ws, snap) : restoreBorrowedEdits(project.dir, snap);
     } catch (e) {
-      const message = (e as Error).message;
-      if (agent.name === project.lead) this.note(`Could not remove ${agent.name}'s edits: ${message.split("\n")[0]}`);
+      const message = (e as Error).message.split("\n")[0] ?? (e as Error).message;
+      if (agent.name === project.lead) this.note(`Could not put ${agent.name}'s checkout back: ${message}`);
       else this.refuseMember(agent, message);
       return;
     }
-    if (!edited) return;
-    log("read-only-reverted", { agent: agent.name, head: claim.head });
-    const leadWake = agent.name === project.lead;
+    if (!restored.length) return;
+    log("read-only-restored", { agent: agent.name, files: restored, sandbox: sandboxOff ? "off" : "on" });
+    const leadWake = agent.name === project.lead && !project.solo;
+    const where = ws ? "checkout" : "project folder";
     deliver(project, {
       from: "dispatcher",
       to: project.lead,
       type: "failure",
       subject: leadWake ? "Lead wake edited the repository" : `Read-only wake edited ${agent.name}`,
       body: leadWake
-        ? "Your wake changed the repository. Those commits and untracked files were removed. The commit recorded when the wake started is still there. Send the code change to a teammate. The mail you sent was still delivered."
-        : `The read-only wake of ${agent.name} changed its checkout. Those commits and untracked files were removed. The commit recorded when the wake started is still there. The mail it sent was still delivered.`,
+        ? `Your wake changed the repository. Those paths were put back. Files that were already changed were left as they were. Send the code change to a teammate. A one-line fix is \`run --agent <name>\` of the agent who writes it. The mail you sent was still delivered.`
+        : `The read-only wake of ${agent.name} changed its ${where}. Those paths were put back${sandboxOff ? " (the sandbox did not block the write)" : ""}. Files that were already changed were left as they were. The mail it sent was still delivered.`,
     });
   }
 
@@ -822,17 +826,26 @@ export class RunSession {
       try {
         if (coordinate && ws && workspaceDirty(ws)) {
           // Member changes are applied onto this checkout and left uncommitted. Commit them before recording the
-          // wake's head, or the reset at the end of this wake would delete them.
+          // wake's head, or putting this wake's paths back would drop them.
           commitWorkspace(ws, "agent-lyceum: keep integrated edits before the lead wakes");
         } else if (ws && workspaceDirty(ws)) {
           const prev = previousClaim(runDir, agent.name, claim.id);
           if (prev && prev.read_only !== true) commitWorkspace(ws, "agent-lyceum: keep edits from before a read-only wake");
         }
-        if (ws) setClaimReadOnly(runDir, claim.id, agentGit(ws, ["rev-parse", "HEAD"]));
-        else setClaimReadOnly(runDir, claim.id);
+        if (ws) {
+          const snap = { head: agentGit(ws, ["rev-parse", "HEAD"]), dirty: workspaceStatusPaths(ws) };
+          this.roSnaps.set(agent.name, snap);
+          setClaimReadOnly(runDir, claim.id, snap.head, snap.dirty);
+        } else {
+          const snap = snapshotCheckout(project.dir);
+          if (snap) {
+            this.roSnaps.set(agent.name, snap);
+            setClaimReadOnly(runDir, claim.id, snap.head, snap.dirty);
+          } else setClaimReadOnly(runDir, claim.id);
+        }
       } catch (e) {
         const message = (e as Error).message;
-        if (agent.name === project.lead) {
+        if (coordinate) {
           this.note(`Could not record ${agent.name}'s checkout before the wake: ${message.split("\n")[0]}`);
         } else {
           abandonClaim(runDir, claim.id);
@@ -1035,17 +1048,9 @@ export class RunSession {
       markOutputReady(runDir, claim.id);
       return { ok: true };
     }
+    // Put back only what this read-only wake changed, including when the sandbox could not block the write.
+    if (readOnly) this.revertReadOnly(agent, ws, loadClaim(runDir, claim.id));
     // The input stays unread for the resume: the round limit, or a cancel (during a call or a backoff).
-    if (readOnly && ws) {
-      const stored = loadClaim(runDir, claim.id);
-      if (stored.head) {
-        try {
-          discardWorkspaceEdits(ws, stored.head);
-        } catch (e) {
-          this.refuseMember(agent, (e as Error).message);
-        }
-      }
-    }
     abandonClaim(runDir, claim.id);
     claims.delete(agent.name);
     if (outcome.stopped === "beforeAttempt" && !stoppedByCancel) return { ok: false, cancelled: true };
@@ -1104,7 +1109,7 @@ export class RunSession {
   /** The agent and the model it last ran on (a tier or fallback shows in `last_wake`), else its configured model. */
   private workerRef(agent: ResolvedAgent): WorkerRef {
     const model = this.state.last_wake[agent.name]?.model ?? agent.model;
-    return { agent: agent.name, ...(model ? { model } : {}) };
+    return { agent: agent.name, ...(model ? { model } : {}), at: new Date().toISOString() };
   }
 
   /** A checkout run's task branch (the lead works in the project checkout, not in a worktree of its own), else undefined. Always the recorded one. */
@@ -1160,7 +1165,7 @@ export class RunSession {
         body:
           `${agent.name} finished, but its changes could not be brought into the repo, and nothing was applied.\n\n${r.reason}\n\n` +
           `Its work is kept: branch \`${r.branch}\`, worktree \`${r.workspace}\`, report \`${r.report}\`, patch \`${r.patch}\`.\n` +
-          `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up). You do not edit the repository yourself. ` +
+          `You can send ${agent.name} a task to redo or adjust it (it continues in the same worktree and the integration is retried after its next wake-up). You do not edit the repository yourself. A one-line fix is \`run --agent <name>\` of the agent who writes it. ` +
           (instanced ? `New tasks are not given to ${agent.name} while this work is not in the repo. To redo or adjust it, reply to this message (or to ${agent.name}'s last mail): only replies reach ${agent.name} now. ` : "") +
           `Do not report the job \`completed\` while this work is missing from the repo.`,
       },
@@ -1184,7 +1189,7 @@ export class RunSession {
         to: project.lead,
         type: "failure",
         subject: `${agent.name} cannot be woken: its worktree was refused`,
-        body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nGive the work to another teammate. You do not edit the repository yourself; do not wait for ${agent.name}.`,
+        body: `${agent.name} has unread mail, but its worktree cannot be used, so it is not woken again in this run and its unread mail stays unread.\n\n${reason}\n\nGive the work to another teammate. You do not edit the repository yourself. A one-line fix is \`run --agent <name>\` of the agent who writes it. Do not wait for ${agent.name}.`,
       },
       this.state.instances?.roles[roleOfName(project.agents, agent.name)] ? { about: agent.name } : {},
     );
@@ -1276,8 +1281,7 @@ export class RunSession {
         route.done = undefined;
         contract = undefined;
       } else {
-        const notes = [why, this.bindNote].filter((n): n is string => !!n);
-        if (notes.length) gateFailure = { note: notes.join(" ") };
+        if (why) gateFailure = { note: why };
       }
     }
     // Spec 27: a completed done that met the contract is judged by the project's verify commands (the contract came first).
@@ -1633,7 +1637,7 @@ export class RunSession {
     if (!verify?.bind_task) return undefined;
     const missing = unboundCommands(this.userTask()?.text ?? "", verify.commands.map((c) => c.run));
     if (!missing.length) return undefined;
-    return `These checks are named in the task's Verification section but are not in project.yaml verify.commands, so they were not run: ${missing.join(", ")}. Add them to verify.commands yourself. The dispatcher does not run commands taken from the task.`;
+    return `These checks are named in the task's Verification section but are not in project.yaml verify.commands, so they were not run: ${missing.join(", ")}. The outcome is unchanged. Add them to verify.commands before the next run. The dispatcher does not run commands taken from the task.`;
   }
 
   /** On resume: sort out what the interrupted process left behind before anything is woken. */
@@ -1650,25 +1654,20 @@ export class RunSession {
     if (rec.abandoned.length || rec.finalized.length || rec.ready.length) {
       log("recover", { abandoned: rec.abandoned.map((c) => c.id), finalized: rec.finalized, ready: rec.ready.map((c) => c.id) });
     }
+    const undoReadOnly = (c: ClaimRecord) => {
+      if (c.read_only !== true || !c.head) return;
+      const agent = project.agents[c.agent];
+      if (!agent) return;
+      const own = agent.name === project.lead ? (this.leadSpace ?? existingAgentWorkspace(project, runId, project.lead)) : existingAgentWorkspace(project, runId, agent.name);
+      if (!own && wsMode === "worktree" && agent.name !== project.lead) return;
+      this.revertReadOnly(agent, own, c);
+    };
+    for (const c of rec.abandoned) undoReadOnly(c);
+    for (const c of rec.ready) undoReadOnly(c);
     // A member whose wake-up finished before the crash: bring its files in (repeating is harmless) before its mail is routed.
     if (wsMode === "worktree") {
-      const dropReadOnly = (c: ClaimRecord): boolean => {
-        if (c.read_only !== true || !c.head) return false;
-        const agent = project.agents[c.agent];
-        const ws = !agent ? undefined : agent.name === project.lead ? (this.leadSpace ?? existingAgentWorkspace(project, runId, agent.name)) : existingAgentWorkspace(project, runId, agent.name);
-        if (!agent || !ws) return true;
-        try {
-          discardWorkspaceEdits(ws, c.head);
-        } catch (e) {
-          const message = (e as Error).message;
-          if (agent.name === project.lead) this.note(`Could not remove ${agent.name}'s edits: ${message.split("\n")[0]}`);
-          else this.refuseMember(agent, message);
-        }
-        return true;
-      };
-      for (const c of rec.abandoned) dropReadOnly(c);
       for (const c of rec.ready) {
-        if (dropReadOnly(c)) continue;
+        if (c.read_only === true) continue;
         const agent = project.agents[c.agent];
         const ws = agent && agent.name !== project.lead ? existingAgentWorkspace(project, runId, agent.name) : undefined;
         if (agent && ws) this.integrateMember(agent, ws, c.id);
