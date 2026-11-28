@@ -14,13 +14,24 @@ export type WatchFrame = { schema_version: 1; report?: StatusReport; runs?: Reco
  */
 /**
  * Reports of finished runs, kept so a sweep does not rebuild them (about 300 ms each). An entry is reused while the
- * run's state.json is unchanged and it is younger than `FINISHED_TTL_MS`; the TTL picks up what lives outside that file
- * (unread mail, memory advice).
+ * run's state.json is unchanged and it is younger than `FINISHED_TTL_MS`. That TTL still covers what lives outside
+ * the file, such as unread mail. Advice is copied from the lines passed for this call, so it stays inside
+ * `ADVICE_TTL_MS` and the two TTLs do not stack.
  */
 export type FinishedCache = Map<string, { stamp: string; at: number; report: StatusReport }>;
 const FINISHED_TTL_MS = 5 * 60_000;
 /** Tidy advice is the same for every run of a project. Recompute it on this cadence, not on every beat. */
 const ADVICE_TTL_MS = 5 * 60_000;
+
+function withAdvice(report: StatusReport, advice: string[]): StatusReport {
+  const current = report.memory_advice ?? [];
+  if (current.length === advice.length && current.every((line, index) => line === advice[index])) return report;
+  if (advice.length === 0) {
+    const { memory_advice: _dropped, ...rest } = report;
+    return rest;
+  }
+  return { ...report, memory_advice: advice };
+}
 
 function stampOf(project: ResolvedProject, id: string): string {
   try {
@@ -46,7 +57,9 @@ export function buildWatchFrame(project: ResolvedProject, tracked: Set<string>, 
     const stamp = cache && finished.has(id) ? stampOf(project, id) : "";
     const hit = stamp ? cache?.get(id) : undefined;
     if (hit && hit.stamp === stamp && now - hit.at < FINISHED_TTL_MS) {
-      runs[id] = hit.report;
+      const report = withAdvice(hit.report, advice);
+      if (report !== hit.report) cache?.set(id, { stamp: hit.stamp, at: hit.at, report });
+      runs[id] = report;
       continue;
     }
     runs[id] = buildStatusReport(project, id, now, advice);

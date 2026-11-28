@@ -14,7 +14,7 @@ export interface WatchFactory {
   summarize?(input: { runtime: "claude" | "codex"; prompt: string }): Promise<string>;
 }
 
-export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (count: number) => void }) {
+export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (count: number, previous: number) => void }) {
   const watchers = new Map<string, ProjectWatch>();
   const latest = new Map<string, WatchFrame>();
   const listeners = new Set<(event: WebEvent) => void>();
@@ -107,8 +107,15 @@ export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (c
     refreshQuota,
     subscriberCount: () => listeners.size,
     quotaBusy: () => inflight > 0,
-    /** True when a successful read is still inside `maxAgeMs`. A missing or failed read is not fresh. */
-    quotaFresh: (maxAgeMs: number) => quota !== undefined && Date.now() - quotaAt < maxAgeMs,
+    /**
+     * Milliseconds until a successful read leaves the freshness window, capped at `maxAgeMs`.
+     * A missing or failed read has none left, so the next subscriber reads at once.
+     */
+    quotaRemaining: (maxAgeMs: number) => {
+      if (quota === undefined) return 0;
+      const left = maxAgeMs - (Date.now() - quotaAt);
+      return Math.min(maxAgeMs, Math.max(0, left));
+    },
     frame(name: string): WatchFrame | undefined {
       return latest.get(name);
     },
@@ -121,6 +128,7 @@ export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (c
     },
     snapshot: projectList,
     subscribe(listener: (event: WebEvent) => void): () => void {
+      const previous = listeners.size;
       listeners.add(listener);
       const projects = projectList();
       try {
@@ -129,10 +137,11 @@ export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (c
         listeners.delete(listener);
         return () => {};
       }
-      hooks?.onSubscribers?.(listeners.size);
+      hooks?.onSubscribers?.(listeners.size, previous);
       return () => {
+        const before = listeners.size;
         if (!listeners.delete(listener)) return;
-        hooks?.onSubscribers?.(listeners.size);
+        hooks?.onSubscribers?.(listeners.size, before);
       };
     },
   };

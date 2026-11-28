@@ -88,7 +88,7 @@ describe("startWebServer binds first", () => {
 
   it("a throwing quota reader does not stop the server: nothing asks until a page subscribes", async () => {
     vi.useFakeTimers();
-    const { listen } = fakeListen();
+    const { state, listen } = fakeListen();
     const close = vi.fn();
     const watch = vi.fn(() => ({ beat() {}, close }));
     const quota = vi.fn((): Promise<never[]> => {
@@ -96,6 +96,9 @@ describe("startWebServer binds first", () => {
     });
     const page = await startWebServer(opts({ listen, factory: { list: () => ["a"], watch, quota } }));
     expect(quota).not.toHaveBeenCalled();
+    const events = openEvents(state.handler as Handler);
+    expect(quota).toHaveBeenCalledTimes(1);
+    events.close();
     await page.close();
     expect(close).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
@@ -110,9 +113,10 @@ describe("startWebServer binds first", () => {
     });
     const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
     expect(quota).not.toHaveBeenCalled();
-    openEvents(state.handler as Handler);
+    const events = openEvents(state.handler as Handler);
     expect(seen).toBeDefined();
     expect(seen?.aborted).toBe(false);
+    events.close();
     await page.close();
     expect(seen?.aborted).toBe(true);
   });
@@ -289,5 +293,81 @@ describe("quota refresh follows subscribers", () => {
     expect(quota).toHaveBeenCalledTimes(2);
     events.close();
     await page.close();
+  });
+
+  it("reads when the cached quota expires, not a full interval after a late subscribe", async () => {
+    vi.useFakeTimers();
+    const { state, listen } = fakeListen();
+    const quota = vi.fn(async () => [{ runtime: "claude" as const, windows: [] }]);
+    const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
+    const handler = state.handler as Handler;
+    const first = openEvents(handler);
+    await vi.waitFor(() => expect(quota).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(0);
+    first.close();
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS - 1_000);
+    const second = openEvents(handler);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(quota).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS);
+    expect(quota).toHaveBeenCalledTimes(3);
+    second.close();
+    await page.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a disconnect that leaves a subscriber does not read or move the next beat", async () => {
+    vi.useFakeTimers();
+    const { state, listen } = fakeListen();
+    const quota = vi.fn(async () => {
+      throw new Error("quota boom");
+    });
+    const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
+    const handler = state.handler as Handler;
+    const kept = openEvents(handler);
+    const leaving = openEvents(handler);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(quota).toHaveBeenCalledTimes(1);
+    leaving.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS - 60_000 - 1_000);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(quota).toHaveBeenCalledTimes(2);
+    kept.close();
+    await page.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retries a failed read on the five-minute beat, and a manual refresh does not push that beat past five minutes", async () => {
+    vi.useFakeTimers();
+    const { state, listen } = fakeListen();
+    let fail = true;
+    const quota = vi.fn(async () => {
+      if (fail) throw new Error("quota boom");
+      return [{ runtime: "claude" as const, windows: [] }];
+    });
+    const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
+    const handler = state.handler as Handler;
+    const events = openEvents(handler);
+    await vi.waitFor(() => expect(quota).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(0);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(quota).toHaveBeenCalledTimes(1);
+    const post = request(handler, "POST", "/quota", { host: "127.0.0.1:8787" });
+    await post.done;
+    expect(post.out.status).toBe(200);
+    expect(quota).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS);
+    expect(quota.mock.calls.length).toBeGreaterThanOrEqual(3);
+    events.close();
+    await page.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

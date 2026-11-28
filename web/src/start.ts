@@ -38,8 +38,8 @@ const QUOTA_REFRESH_MS = 5 * 60_000;
 
 /** Binds first; the hub, the quota reads and the timers start only once the port is ours, and are undone if that fails. */
 export async function startWebServer(opts: StartWebOptions): Promise<{ url: string; close: () => Promise<void> }> {
-  let onSubscribers = (_count: number) => {};
-  const hub = createWebHub(opts.factory, { onSubscribers: (count) => onSubscribers(count) });
+  let onSubscribers = (_count: number, _previous: number) => {};
+  const hub = createWebHub(opts.factory, { onSubscribers: (count, previous) => onSubscribers(count, previous) });
   const startedAt = new Date().toISOString();
   let boundPort = opts.port;
   const token = randomBytes(24).toString("hex");
@@ -142,27 +142,48 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
   boundPort = typeof address === "object" && address ? address.port : opts.port;
 
   let heartbeat: NodeJS.Timeout | undefined;
-  let quotaBeat: NodeJS.Timeout | undefined;
-  const refreshAutomatic = (fromInterval: boolean) => {
+  let quotaTimer: NodeJS.Timeout | undefined;
+  const clearQuotaTimer = () => {
+    if (quotaTimer) clearTimeout(quotaTimer);
+    quotaTimer = undefined;
+  };
+  const readIfIdle = () => {
     if (hub.subscriberCount() === 0 || hub.quotaBusy()) return;
-    // A read that ends after the beat is armed is still inside the freshness window when the beat fires.
-    // The beat is the cadence, so only a new subscriber checks freshness.
-    if (!fromInterval && hub.quotaFresh(QUOTA_REFRESH_MS)) return;
     void hub.refreshQuota();
   };
-  onSubscribers = (count) => {
+  // The delay is the cadence. It does not ask again whether the cache is still fresh: a read that
+  // finishes after the timer was armed would otherwise skip the first beat.
+  const armQuota = (delayMs: number) => {
+    clearQuotaTimer();
+    quotaTimer = setTimeout(() => {
+      quotaTimer = undefined;
+      readIfIdle();
+      if (hub.subscriberCount() > 0) armQuota(QUOTA_REFRESH_MS);
+    }, delayMs);
+  };
+  onSubscribers = (count, previous) => {
     if (count === 0) {
-      clearInterval(quotaBeat);
-      quotaBeat = undefined;
+      clearQuotaTimer();
       return;
     }
-    refreshAutomatic(false);
-    if (!quotaBeat) quotaBeat = setInterval(() => refreshAutomatic(true), QUOTA_REFRESH_MS);
+    // A disconnect that still leaves a page must not read and must not move the timer.
+    if (count < previous) return;
+    const remaining = hub.quotaRemaining(QUOTA_REFRESH_MS);
+    if (!quotaTimer) {
+      if (remaining > 0) {
+        armQuota(remaining);
+        return;
+      }
+      readIfIdle();
+      armQuota(QUOTA_REFRESH_MS);
+      return;
+    }
+    if (remaining === 0) readIfIdle();
   };
   const close = () =>
     new Promise<void>((resolve, reject) => {
       clearInterval(heartbeat);
-      clearInterval(quotaBeat);
+      clearQuotaTimer();
       hub.close();
       for (const socket of sockets) socket.destroy();
       server.close((err) => {

@@ -77,6 +77,30 @@ describe("quota CLI arguments", () => {
     expect(report.error).toBeUndefined();
   });
 
+  it("does not fall back when claude rejects an option other than --safe-mode", async () => {
+    spawnMock.mockImplementation((_cmd: string, args: string[]) => (args[0] === "--safe-mode" ? closeWith("error: unexpected argument '/usage'\n", 1) : claudeOk()));
+    const report = await claudeQuota();
+    expect(spawnMock.mock.calls.map((call) => call[1])).toEqual([CLAUDE_NEW]);
+    expect(report.windows).toEqual([]);
+    expect(report.error).toContain("unexpected argument '/usage'");
+  });
+
+  it("does not fall back when codex rejects an argument other than --disable or plugins", async () => {
+    spawnMock.mockImplementation((_cmd: string, args: string[]) => (args.includes("--disable") ? closeWith("error: unexpected argument '--stdio' found\n", 1) : codexOk()));
+    const report = await codexQuota();
+    expect(spawnMock.mock.calls.map((call) => call[1])).toEqual([CODEX_NEW]);
+    expect(report.windows).toEqual([]);
+    expect(report.error).toContain("unexpected argument '--stdio'");
+  });
+
+  it("falls back when codex rejects the plugins argument by name", async () => {
+    spawnMock.mockImplementation((_cmd: string, args: string[]) => (args.includes("--disable") ? closeWith("error: unexpected argument 'plugins' found\n", 1) : codexOk()));
+    const report = await codexQuota();
+    expect(spawnMock.mock.calls.map((call) => call[1])).toEqual([CODEX_NEW, CODEX_OLD]);
+    expect(report.windows[0]).toMatchObject({ used_percent: 10 });
+    expect(report.error).toBeUndefined();
+  });
+
   it("does not fall back when claude fails for a reason other than the new option", async () => {
     spawnMock.mockImplementation(() => closeWith("Invalid API key\n", 1));
     const report = await claudeQuota();

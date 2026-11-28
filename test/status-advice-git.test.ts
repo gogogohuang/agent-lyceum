@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tidyAdvice, writeTidyState } from "../src/memory-tidy.js";
 import { buildStatusReport } from "../src/status.js";
-import { createStatusWatcher } from "../src/status-watch.js";
+import { buildWatchFrame, createStatusWatcher, type WatchFrame } from "../src/status-watch.js";
 import { git, initGitRepo, makeMemoryEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -149,5 +149,69 @@ describe("watcher advice", () => {
     } finally {
       watcher.close();
     }
+  });
+
+  it("shows advice refreshed at its own TTL on a finished report that is still cached", () => {
+    env = makeMemoryEnv();
+    const id = "20260101-000000";
+    const statePath = path.join(env.project().paths.runs, id, "state.json");
+    const body = { run_id: id, rounds: 4, max_rounds: 10, last_wake: {}, wakes: [], pid: process.pid };
+    write(statePath, JSON.stringify(body));
+    const memory = env.project().agents.lead?.memory.project;
+    if (!memory) throw new Error("lead project memory is not configured");
+    write(path.join(memory, "MEMORY.md"), "- [a](a.md)\n");
+    let now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const frames: WatchFrame[] = [];
+    const watcher = createStatusWatcher({
+      load: () => env.project(),
+      dir: (p) => p.paths.runs,
+      write: (line) => frames.push(JSON.parse(line) as WatchFrame),
+      debounceMs: 1_000,
+      allTasks: true,
+      watch: () => ({ close() {} }),
+    });
+    try {
+      watcher.beat();
+      expect(frames.at(-1)?.runs?.[id].memory_advice).toBeUndefined();
+      now += 4 * 60_000;
+      write(statePath, JSON.stringify({ ...body, end_reason: "done", outcome: "completed" }));
+      watcher.beat();
+      expect(frames.at(-1)?.runs?.[id].run?.state).toBe("ended");
+      expect(frames.at(-1)?.runs?.[id].memory_advice).toBeUndefined();
+      write(path.join(memory, "MEMORY.md"), "x".repeat(5_000));
+      now += 60_000 + 1;
+      watcher.beat();
+      expect(frames.at(-1)?.runs?.[id].memory_advice?.[0]).toContain("5000 bytes");
+      expect(frames.at(-1)?.runs?.[id].run?.rounds).toBe(4);
+    } finally {
+      watcher.close();
+    }
+  });
+});
+
+describe("buildWatchFrame finished advice", () => {
+  it("copies the current advice onto a cached finished report and keeps the built run", () => {
+    env = makeMemoryEnv();
+    const id = "20260101-000000";
+    write(
+      path.join(env.project().paths.runs, id, "state.json"),
+      JSON.stringify({ run_id: id, rounds: 4, max_rounds: 10, last_wake: {}, wakes: [], pid: process.pid, end_reason: "done", outcome: "completed" }),
+    );
+    const cache = new Map();
+    const now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const oldAdvice = ["lead: 50 commits since the last tidy"];
+    const first = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache, advice: oldAdvice });
+    expect(first.runs?.[id].memory_advice).toEqual(oldAdvice);
+    vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
+    const nextAdvice = ["lead: 80 commits since the last tidy"];
+    const second = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache, advice: nextAdvice });
+    expect(second.runs?.[id].memory_advice).toEqual(nextAdvice);
+    expect(second.runs?.[id].run).toBe(first.runs?.[id].run);
+    expect(second.report?.memory_advice).toEqual(nextAdvice);
+    const third = buildWatchFrame(env.project(), new Set(), { allTasks: true, cache, advice: [] });
+    expect(third.runs?.[id].memory_advice).toBeUndefined();
+    expect(third.runs?.[id].run).toBe(first.runs?.[id].run);
   });
 });

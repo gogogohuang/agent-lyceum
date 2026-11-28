@@ -71,11 +71,13 @@ function roundPercent(n: number): number {
 const CLAUDE_USAGE = ["-p", "--no-session-persistence", "--output-format", "text", "/usage"];
 const CODEX_LIMITS = ["app-server", "--stdio"];
 const CODEX_LIMITS_NO_PLUGINS = ["app-server", "--disable", "plugins", "--stdio"];
+const CLAUDE_ADDED_OPTIONS = ["--safe-mode"];
+const CODEX_ADDED_OPTIONS = ["--disable", "plugins"];
 
 export async function claudeQuota(signal?: AbortSignal): Promise<QuotaReport> {
   try {
     let text = await capture("claude", ["--safe-mode", ...CLAUDE_USAGE], 20_000, signal);
-    if (optionRejected(text)) text = await capture("claude", CLAUDE_USAGE, 20_000, signal);
+    if (optionRejected(text, CLAUDE_ADDED_OPTIONS)) text = await capture("claude", CLAUDE_USAGE, 20_000, signal);
     const windows = parseClaudeUsage(text.stdout);
     if (windows.length === 0) return { runtime: "claude", windows: [], error: firstLine(text.stderr) || firstLine(text.stdout) || "claude /usage 沒有回傳額度。" };
     return { runtime: "claude", windows };
@@ -380,8 +382,17 @@ class OptionRejected extends Error {
   }
 }
 
-function optionRejected(out: { stdout: string; stderr: string; code: number | null }): boolean {
-  return out.code !== 0 && out.code !== null && /unknown option|unexpected argument/i.test(`${out.stderr}\n${out.stdout}`);
+/** The rejection names one of the flags this version added. Any other unknown option stays a real failure. */
+function addedOptionRejected(text: string, added: readonly string[]): boolean {
+  for (const match of text.matchAll(/(?:unknown option|unexpected argument)\s+(['"]?)([^\s'"]+)\1/gi)) {
+    const name = match[2];
+    if (name && added.includes(name)) return true;
+  }
+  return false;
+}
+
+function optionRejected(out: { stdout: string; stderr: string; code: number | null }, added: readonly string[]): boolean {
+  return out.code !== 0 && out.code !== null && addedOptionRejected(`${out.stderr}\n${out.stdout}`, added);
 }
 
 function capture(cmd: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }> {
@@ -434,7 +445,7 @@ function readCodexLimits(signal: AbortSignal | undefined, args: string[]): Promi
     child.stderr.on("data", (chunk) => (stderr += String(chunk)));
     child.on("close", (code) => {
       const text = `${stderr}\n${buf}`;
-      if (code !== 0 && code !== null && /unknown option|unexpected argument/i.test(text)) finish(new OptionRejected(firstLine(text)));
+      if (code !== 0 && code !== null && addedOptionRejected(text, CODEX_ADDED_OPTIONS)) finish(new OptionRejected(firstLine(text)));
       else finish(new Error(firstLine(stderr) || firstLine(buf) || "codex 沒有回傳額度。"));
     });
     child.stdout.on("data", (chunk) => {
