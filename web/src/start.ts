@@ -33,9 +33,13 @@ const singleHeader = (v: string | string[] | undefined) => (Array.isArray(v) ? "
 
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 
+/** How often a page that is watching `/events` asks the account usage commands again. */
+const QUOTA_REFRESH_MS = 5 * 60_000;
+
 /** Binds first; the hub, the quota reads and the timers start only once the port is ours, and are undone if that fails. */
 export async function startWebServer(opts: StartWebOptions): Promise<{ url: string; close: () => Promise<void> }> {
-  const hub = createWebHub(opts.factory);
+  let onSubscribers = (_count: number) => {};
+  const hub = createWebHub(opts.factory, { onSubscribers: (count) => onSubscribers(count) });
   const startedAt = new Date().toISOString();
   let boundPort = opts.port;
   const token = randomBytes(24).toString("hex");
@@ -139,6 +143,19 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
 
   let heartbeat: NodeJS.Timeout | undefined;
   let quotaBeat: NodeJS.Timeout | undefined;
+  const refreshAutomatic = () => {
+    if (hub.subscriberCount() === 0 || hub.quotaBusy() || hub.quotaFresh(QUOTA_REFRESH_MS)) return;
+    void hub.refreshQuota();
+  };
+  onSubscribers = (count) => {
+    if (count === 0) {
+      clearInterval(quotaBeat);
+      quotaBeat = undefined;
+      return;
+    }
+    refreshAutomatic();
+    if (!quotaBeat) quotaBeat = setInterval(refreshAutomatic, QUOTA_REFRESH_MS);
+  };
   const close = () =>
     new Promise<void>((resolve, reject) => {
       clearInterval(heartbeat);
@@ -156,9 +173,7 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
   const url = `http://${shown}:${boundPort}/`;
   try {
     hub.start();
-    void hub.refreshQuota();
     heartbeat = setInterval(() => hub.beat(), opts.heartbeatMs ?? 5_000);
-    quotaBeat = setInterval(() => void hub.refreshQuota(), 60_000);
     if (opts.open) openBrowser(url);
   } catch (error) {
     await close().catch(() => {});

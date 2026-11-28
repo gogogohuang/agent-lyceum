@@ -14,12 +14,14 @@ export interface WatchFactory {
   summarize?(input: { runtime: "claude" | "codex"; prompt: string }): Promise<string>;
 }
 
-export function createWebHub(factory: WatchFactory) {
+export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (count: number) => void }) {
   const watchers = new Map<string, ProjectWatch>();
   const latest = new Map<string, WatchFrame>();
   const listeners = new Set<(event: WebEvent) => void>();
   let quota: QuotaReport[] | undefined;
+  let quotaAt = 0;
   let quotaToken = 0;
+  let inflight = 0;
   const quotaAbort = new AbortController();
 
   const emit = (event: WebEvent) => {
@@ -73,15 +75,21 @@ export function createWebHub(factory: WatchFactory) {
   const refreshQuota = (): Promise<QuotaReport[] | undefined> => {
     if (!factory.quota) return Promise.resolve(quota);
     const token = ++quotaToken;
-    return factory
-      .quota(quotaAbort.signal)
+    inflight += 1;
+    const read = factory.quota;
+    return Promise.resolve()
+      .then(() => read(quotaAbort.signal))
       .then((reports) => {
         if (token !== quotaToken) return quota;
         quota = reports;
+        quotaAt = Date.now();
         emit({ type: "quota", reports });
         return reports;
       })
-      .catch(() => quota);
+      .catch(() => quota)
+      .finally(() => {
+        inflight -= 1;
+      });
   };
 
   const projectList = (): { name: string; frame: WatchFrame }[] =>
@@ -91,6 +99,10 @@ export function createWebHub(factory: WatchFactory) {
     start: sync,
     beat: sync,
     refreshQuota,
+    subscriberCount: () => listeners.size,
+    quotaBusy: () => inflight > 0,
+    /** True when a successful read is still inside `maxAgeMs`. A missing or failed read is not fresh. */
+    quotaFresh: (maxAgeMs: number) => quota !== undefined && Date.now() - quotaAt < maxAgeMs,
     frame(name: string): WatchFrame | undefined {
       return latest.get(name);
     },
@@ -109,8 +121,13 @@ export function createWebHub(factory: WatchFactory) {
         listener({ type: "snapshot", projects, ...(quota ? { quota } : {}) });
       } catch {
         listeners.delete(listener);
+        return () => {};
       }
-      return () => listeners.delete(listener);
+      hooks?.onSubscribers?.(listeners.size);
+      return () => {
+        if (!listeners.delete(listener)) return;
+        hooks?.onSubscribers?.(listeners.size);
+      };
     },
   };
 }
