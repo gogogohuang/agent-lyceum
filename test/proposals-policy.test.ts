@@ -1,8 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { mayPropose, proposalsDir, recordsDir, writePolicy } from "../src/policy.js";
+import { ensureReviewerProposalDir, mayPropose, proposalsDir, readOnlyPolicy, recordsDir, writePolicy } from "../src/policy.js";
 import { soloProject } from "../src/solo.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, registerReviewer, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -46,5 +47,37 @@ describe("write policy for the proposals tree (spec 30)", () => {
     const p = soloProject(env.project(), "fe-member");
     const w = writePolicy(p, p.agents["fe-member"]!);
     expect(w.deny.some((d) => proposalsDir(p) === d || proposalsDir(p).startsWith(d + path.sep))).toBe(false);
+  });
+
+  it("lets a reviewer write proposals on a normal run, including a read-only wake, and still denies the records", () => {
+    env = makeEnv();
+    registerReviewer(env, "cli-reviewer");
+    const p = env.project();
+    const reviewer = p.agents["cli-reviewer"]!;
+    for (const pol of [writePolicy(p, reviewer), readOnlyPolicy(p, reviewer)]) {
+      expect(pol.allowDirs).toContain(proposalsDir(p));
+      expect(pol.allowDirs).not.toContain(recordsDir(p));
+      expect(pol.deny).toContain(recordsDir(p));
+    }
+    const member = p.agents["fe-member"]!;
+    expect(writePolicy(p, member).allowDirs).not.toContain(proposalsDir(p));
+    expect(readOnlyPolicy(p, member).allowDirs).not.toContain(proposalsDir(p));
+    expect(mayPropose(p)).toBe(false);
+  });
+});
+
+describe("ensureReviewerProposalDir", () => {
+  it("creates the proposals directory only for a normal run that has a reviewer", () => {
+    env = makeEnv();
+    const plain = env.project();
+    ensureReviewerProposalDir(plain);
+    expect(fs.existsSync(proposalsDir(plain))).toBe(false);
+    registerReviewer(env, "cli-reviewer");
+    const withReviewer = env.project();
+    ensureReviewerProposalDir(withReviewer);
+    expect(fs.statSync(proposalsDir(withReviewer)).isDirectory()).toBe(true);
+    fs.rmSync(proposalsDir(withReviewer), { recursive: true, force: true });
+    ensureReviewerProposalDir(soloProject(withReviewer, "cli-reviewer"));
+    expect(fs.existsSync(proposalsDir(withReviewer))).toBe(false);
   });
 });

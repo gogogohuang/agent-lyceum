@@ -5,7 +5,7 @@ import { buildSoloSystemPrompt, buildSystemPrompt, buildUserPrompt } from "../sr
 import { RECORDS_BUDGET } from "../src/records.js";
 import { bindRunProject } from "../src/run-store.js";
 import { soloProject } from "../src/solo.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { makeEnv, registerReviewer, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -102,5 +102,41 @@ describe("the lead's pending note (spec 30)", () => {
     const before = buildSystemPrompt(p, agent);
     put(p, "ab12cd34-a", prop("proposed", "2026-11-20", "A"));
     expect(buildSystemPrompt(p, agent)).toBe(before);
+  });
+});
+
+describe("a reviewer's proposal prompt (issue 177)", () => {
+  it("tells the reviewer the fixed file name and the finding rules, and says nothing to a member", () => {
+    env = makeEnv();
+    registerReviewer(env, "cli-reviewer");
+    const p = bindRunProject(env.project(), path.join(env.root, RUN), "run");
+    const text = buildSystemPrompt(p, p.agents["cli-reviewer"]!);
+    expect(text).toContain("## Proposals");
+    expect(text).toContain("`ab12cd34-cli-reviewer-<slug>.md`");
+    expect(text).toContain(`${proposalsDir(p)}/lessons/`);
+    expect(text).toMatch(/blocker or major/);
+    expect(text).toMatch(/Minor and nit/);
+    expect(text).toContain("`finding`");
+    expect(text).toContain(`\`run: ${RUN}\``);
+    expect(text).toContain("the file name you wrote in your outbox");
+    expect(text).toContain("`mail:` and `output:`");
+    expect(text).toMatch(/mark it as a guess/);
+    expect(text).toMatch(/Never set `status` to `accepted` or `rejected`/);
+    expect(buildSystemPrompt(p, p.agents["fe-member"]!)).not.toContain("## Proposals");
+    expect(buildSystemPrompt(p, p.agents[p.lead]!)).not.toContain("## Proposals");
+  });
+
+  it("adds the Evidence instruction only when a reviewer's proposal is waiting", () => {
+    env = makeEnv();
+    registerReviewer(env, "cli-reviewer");
+    const p = bindRunProject(env.project(), path.join(env.root, RUN), "run");
+    const lead = p.agents[p.lead]!;
+    const plain = buildUserPrompt(p, lead, []);
+    expect(plain).not.toContain("## Evidence");
+    put(p, "ab12cd34-use-x", prop("proposed", "2026-11-20", "Solo shape"));
+    expect(buildUserPrompt(p, lead, [])).not.toContain("## Evidence");
+    put(p, "ab12cd34-cli-reviewer-quote-yaml", prop("proposed", "2026-11-21", "From review"));
+    expect(buildUserPrompt(p, lead, [])).toContain("## Evidence");
+    expect(buildUserPrompt(p, lead, []).startsWith(plain.slice(0, 20))).toBe(true);
   });
 });

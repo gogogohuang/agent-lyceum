@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { proposalsDir, proposalsKindDir, recordsKindDir } from "../src/policy.js";
-import { checkDecisions, checkEvidence, listProposals, oldestPending, parseProposal, pendingProposals, PROPOSAL_MAX_BYTES, shortIdOf } from "../src/proposals.js";
+import { checkDecisions, checkEvidence, listProposals, oldestPending, parseProposal, pendingProposals, proposalOwner, PROPOSAL_MAX_BYTES, reviewerNames, shortIdOf } from "../src/proposals.js";
+import type { ResolvedProject } from "../src/config.js";
 import { git, initGitRepo, makeEnv, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -213,5 +214,57 @@ describe("checkEvidence (layer 2)", () => {
     initGitRepo(other, { "x.txt": "x\n" });
     expect(checkEvidence(prop(p, `  - commit: ${sha}`, { repo: other }), env.repo).strength).toBe("none");
     expect(checkEvidence(prop(p, `  - commit: ${git(other, "rev-parse", "HEAD")}`, { repo: other }), env.repo).strength).toBe("verified");
+  });
+});
+
+describe("reviewer finding (issue 177)", () => {
+  it("treats a role whose name ends with -reviewer as a reviewer, including instance 2, and never the lead", () => {
+    const agents = {
+      lead: { name: "lead" },
+      "cli-reviewer": { name: "cli-reviewer" },
+      "cli-reviewer--2": { name: "cli-reviewer--2", instance: { role: "cli-reviewer", k: 2 } },
+      "fe-member": { name: "fe-member" },
+    };
+    const project = { lead: "lead", agents } as unknown as ResolvedProject;
+    expect(reviewerNames(project)).toEqual(["cli-reviewer", "cli-reviewer--2"]);
+    expect(reviewerNames({ ...project, solo: "run" })).toEqual([]);
+  });
+
+  it("gives the longer reviewer name the file when one name is a prefix of the other", () => {
+    const names = ["cli-reviewer", "cli-reviewer--2"];
+    expect(proposalOwner("ab12cd34-cli-reviewer-quote-yaml", names)).toBe("cli-reviewer");
+    expect(proposalOwner("ab12cd34-cli-reviewer--2-quote-yaml", names)).toBe("cli-reviewer--2");
+    expect(proposalOwner("ab12cd34-use-x", names)).toBeUndefined();
+    expect(proposalOwner("ab12cd34-cli-reviewer", names)).toBeUndefined();
+  });
+
+  it("parses finding and keeps the evidence text, and a proposal without finding stays valid", () => {
+    env = makeEnv();
+    const p = env.project();
+    const withFinding = put(
+      p,
+      "lessons",
+      "ab12cd34-cli-reviewer-quote-yaml",
+      base(
+        { finding: "\n  mail: 20261128T010203456Z-cli-reviewer-aabbccdd.md\n  severity: major\n  class: quote-yaml" },
+        "  - path: src/a.ts:12 @ abc1234",
+      ),
+    );
+    const parsed = parseProposal("lessons", withFinding);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.finding).toEqual({ mail: "20261128T010203456Z-cli-reviewer-aabbccdd.md", severity: "major", className: "quote-yaml" });
+    expect(parsed.evidenceText).toEqual(["src/a.ts:12 @ abc1234"]);
+
+    const solo = put(p, "lessons", "ab12cd34-use-x", base({}, "  - mail: m1"));
+    expect(parseProposal("lessons", solo).problems).toEqual([]);
+    expect(parseProposal("lessons", solo).finding).toBeUndefined();
+  });
+
+  it("records a format problem when finding.severity is minor or nit, without rejecting a file that has no finding", () => {
+    env = makeEnv();
+    const p = env.project();
+    const minor = put(p, "lessons", "ab12cd34-cli-reviewer-nit", base({ finding: "\n  mail: m.md\n  severity: minor\n  class: style" }, "  - commit: abc1234"));
+    expect(parseProposal("lessons", minor).problems).toContain("finding.severity must be blocker or major");
+    expect(parseProposal("lessons", minor).finding?.severity).toBe("minor");
   });
 });

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { diagnoseProject } from "../src/doctor.js";
 import { proposalsDir } from "../src/policy.js";
 import { buildStatusReport, formatStatusReport } from "../src/status.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { makeEnv, registerReviewer, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -39,6 +39,22 @@ describe("status and doctor on proposals (spec 30)", () => {
     expect(text).toMatch(/warn: .*ab12cd34-bad.md: missing frontmatter/);
     expect(text).toMatch(/warn: .*ab12cd34-half.md: accepted without accepted_as/);
     expect(text).not.toContain("ab12cd34-rej");
+  });
+
+  it("warns when a reviewer proposal has no finding or a minor severity, and not for a solo file name", async () => {
+    env = makeEnv();
+    registerReviewer(env, "cli-reviewer");
+    const p = env.project();
+    put(p, "ab12cd34-cli-reviewer-no-finding", prop("status: proposed"));
+    put(p, "ab12cd34-cli-reviewer-nit", prop("status: proposed\nfinding:\n  mail: m.md\n  severity: nit\n  class: style"));
+    put(p, "ab12cd34-use-x", prop("status: proposed"));
+    const report = await diagnoseProject(p, { env: { ...process.env, PATH: path.join(env.root, "empty") } });
+    const text = report.checks.filter((c) => c.subject === "proposals").map((m) => `${m.level}: ${m.message}`).join("\n");
+    expect(text).toMatch(/ab12cd34-cli-reviewer-no-finding.md: finding is required/);
+    expect(text).toMatch(/finding.severity must be blocker or major/);
+    expect(text).not.toMatch(/use-x.md: finding is required/);
+    expect(text).toMatch(/cli-reviewer-no-finding.md: run must be a run id/);
+    expect(text).not.toMatch(/use-x.md: run must be a run id/);
   });
 
   it("neither says anything when there are no proposals", async () => {
