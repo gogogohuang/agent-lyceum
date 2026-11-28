@@ -27,7 +27,7 @@ import { collectDrafts, priorFailedAttempts, redoUserPrompt, type DraftsResult, 
 import { atomicWrite, readFileCapped } from "./fs-util.js";
 import type { RunOutcome } from "./schema.js";
 import { trailers, withTrailers, type WorkerRef } from "./attribution.js";
-import { agentGit, assertWorktreeRunnable, beginCheckoutRun, checkoutHeadProblem, collectAgentChanges, commitWorkspace, dirtyPaths, existingAgentWorkspace, finishCheckoutBranch, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, remoteBaseNote, restoreBorrowedEdits, restoreWorkspaceEdits, rollbackCheckoutStart, snapshotBase, snapshotCheckout, snapshotCommit, snapshotHead, toplevel, workspaceDirty, workspaceStatusPaths, workingTreeHash, PINNED_CONFIG, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
+import { agentGit, assertWorktreeRunnable, beginCheckoutRun, checkoutHeadProblem, collectAgentChanges, commitWorkspace, dirtyPaths, existingAgentWorkspace, finishCheckoutBranch, finishLeadBranch, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, refusedIntegration, remoteBaseNote, borrowedEdits, restoreWorkspaceEdits, rollbackCheckoutStart, snapshotBase, snapshotCheckout, snapshotCommit, snapshotHead, toplevel, workspaceDirty, workspaceStatusPaths, workingTreeHash, PINNED_CONFIG, type AgentWorkspace, type ChangeSet, type IntegrationResult, type ResultBranch, type WorkspacePlan, type WorkspaceMode } from "./worktree.js";
 import { bindRunProject, CHECKOUT_SCHEMA_VERSION, newRunId, newRunState, roundLimit, roundsLabel, saveRunState, type EndReason, type InstanceTable, type RunFailure, type RunState, type SentTopic, type VerifyRecord, type TriedModel } from "./run-store.js";
 import { soloProject } from "./solo.js";
 import { taskMessageBody, type PreparedTask } from "./task.js";
@@ -551,9 +551,11 @@ export class RunSession {
   }
 
   /**
-   * A read-only wake never joins the lead's branch. Only paths that changed during the wake are put back.
-   * Paths that were already dirty stay. This is not `reset --hard` and not a clean of the whole tree.
-   * Cursor denies `Write` on the repo. Claude and Codex rely on the OS sandbox. When that cannot block the write, the paths are still put back.
+   * A read-only wake in its own worktree puts back only the paths that changed. Paths that were already dirty stay.
+   * This is not `reset --hard` and not a clean of the whole tree.
+   * A wake with no worktree shares the project folder with the user, so it only notes a moved HEAD and new paths.
+   * Cursor denies `Write` on the repo. Claude and Codex rely on the OS sandbox. When that cannot block the write,
+   * a worktree is still put back; a borrowed folder is only noted.
    */
   private revertReadOnly(agent: ResolvedAgent, ws: AgentWorkspace | undefined, claim: ClaimRecord): void {
     const { project, log } = this;
@@ -562,9 +564,25 @@ export class RunSession {
     const snap = this.roSnaps.get(agent.name) ?? (claim.head ? { head: claim.head, dirty: claim.dirty ?? [] } : undefined);
     this.roSnaps.delete(agent.name);
     if (!snap) return;
+    if (!ws) {
+      let drift: { headMoved: boolean; paths: string[] };
+      try {
+        drift = borrowedEdits(project.dir, snap);
+      } catch (e) {
+        const message = (e as Error).message.split("\n")[0] ?? (e as Error).message;
+        this.note(`Could not compare ${agent.name}'s checkout with the start of the wake: ${message}. The project folder was left as it is.`);
+        return;
+      }
+      if (!drift.headMoved && !drift.paths.length) return;
+      log("read-only-left", { agent: agent.name, files: drift.paths, headMoved: drift.headMoved });
+      const moved = drift.headMoved ? " HEAD moved." : "";
+      const listed = drift.paths.length ? ` Paths: ${drift.paths.join(", ")}.` : "";
+      this.note(`${agent.name}'s wake has no worktree of its own. Changes in the project folder were left as they are, because this run cannot tell your edits from the agent's.${moved}${listed}`);
+      return;
+    }
     let restored: string[] = [];
     try {
-      restored = ws ? restoreWorkspaceEdits(ws, snap) : restoreBorrowedEdits(project.dir, snap);
+      restored = restoreWorkspaceEdits(ws, snap);
     } catch (e) {
       const message = (e as Error).message.split("\n")[0] ?? (e as Error).message;
       if (agent.name === project.lead) this.note(`Could not put ${agent.name}'s checkout back: ${message}`);
@@ -574,7 +592,6 @@ export class RunSession {
     if (!restored.length) return;
     log("read-only-restored", { agent: agent.name, files: restored, sandbox: sandboxOff ? "off" : "on" });
     const leadWake = agent.name === project.lead && !project.solo;
-    const where = ws ? "checkout" : "project folder";
     deliver(project, {
       from: "dispatcher",
       to: project.lead,
@@ -582,7 +599,7 @@ export class RunSession {
       subject: leadWake ? "Lead wake edited the repository" : `Read-only wake edited ${agent.name}`,
       body: leadWake
         ? `Your wake changed the repository. Those paths were put back. Files that were already changed were left as they were. Send the code change to a teammate. A one-line fix is \`run --agent <name>\` of the agent who writes it. The mail you sent was still delivered.`
-        : `The read-only wake of ${agent.name} changed its ${where}. Those paths were put back${sandboxOff ? " (the sandbox did not block the write)" : ""}. Files that were already changed were left as they were. The mail it sent was still delivered.`,
+        : `The read-only wake of ${agent.name} changed its checkout. Those paths were put back${sandboxOff ? " (the sandbox did not block the write)" : ""}. Files that were already changed were left as they were. The mail it sent was still delivered.`,
     });
   }
 

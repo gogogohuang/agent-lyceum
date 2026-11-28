@@ -6,8 +6,8 @@ import { runTeam } from "../src/dispatcher.js";
 import { outboxDir } from "../src/policy.js";
 import { loadRunState } from "../src/run-store.js";
 import { prepareTask } from "../src/task.js";
-import { commitWorkspace, existingAgentWorkspace } from "../src/worktree.js";
-import { FULL_DONE, initGitRepo, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
+import { commitWorkspace, existingAgentWorkspace, planWorkspace } from "../src/worktree.js";
+import { FULL_DONE, git, initGitRepo, makeEnv, withSections, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -169,5 +169,47 @@ describe("read-only wakes", () => {
     const leadWs = existingAgentWorkspace(env.project(), "run-1", "lead")!;
     expect(fs.existsSync(path.join(leadWs.dir, "left.txt"))).toBe(false);
     expect(fs.existsSync(path.join(fe.dir, "left.txt"))).toBe(false);
+  });
+
+  it("leaves edits the user makes while the lead borrows the project folder", async () => {
+    env = makeEnv();
+    initGitRepo(env.repo);
+    write(path.join(env.repo, "app.txt"), "v1\n");
+    git(env.repo, "add", "-A");
+    git(env.repo, "commit", "-qm", "app");
+    const sha = git(env.repo, "rev-parse", "HEAD");
+    git(env.repo, "update-ref", "refs/remotes/origin/main", sha);
+    git(env.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    git(env.repo, "remote", "add", "origin", "https://example.invalid/repo.git");
+    const project = env.project();
+    const runDir = path.join(project.paths.runs, "run-1");
+    const task = prepareTask({ text: "go", cwd: env.root, runDir });
+    const plan = planWorkspace(project, undefined, { fetch: () => ({ ok: false }) });
+    expect(plan).toMatchObject({ mode: "worktree", leadWorktree: false });
+    let userCommit = "";
+    const summary = await runTeam({
+      plan,
+      project,
+      task,
+      runDir,
+      log: () => {},
+      invoker: async (i) => {
+        expect(i.workspace).toBeUndefined();
+        write(path.join(env.repo, "user-committed.txt"), "mine\n");
+        git(env.repo, "add", "user-committed.txt");
+        git(env.repo, "commit", "-qm", "user commit");
+        userCommit = git(env.repo, "rev-parse", "HEAD");
+        write(path.join(env.repo, "app.txt"), "user edit\n");
+        write(path.join(env.repo, "user-untracked.txt"), "mine\n");
+        send(i, "lead", "done", "bye");
+        return OK;
+      },
+    });
+    expect(summary.outcome).toBe("completed");
+    expect(fs.readFileSync(path.join(env.repo, "app.txt"), "utf8")).toBe("user edit\n");
+    expect(fs.readFileSync(path.join(env.repo, "user-untracked.txt"), "utf8")).toBe("mine\n");
+    expect(fs.readFileSync(path.join(env.repo, "user-committed.txt"), "utf8")).toBe("mine\n");
+    expect(git(env.repo, "log", "--format=%H")).toContain(userCommit);
+    expect(loadRunState(runDir).notes?.join("\n")).toMatch(/left as they are/);
   });
 });

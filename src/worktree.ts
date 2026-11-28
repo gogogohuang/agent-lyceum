@@ -220,21 +220,15 @@ export function snapshotCheckout(dir: string): { head: string; dirty: string[] }
 }
 
 /**
- * Undo edits a read-only wake made in the user's checkout. Paths that were already dirty stay.
- * This does not `reset --hard` and does not `clean` the whole tree: a moved HEAD is put back with `reset --mixed`,
- * then only the new paths are restored. Returns the paths that were put back.
+ * What changed in a checkout that has no worktree of its own since `snap`. Does not change the checkout:
+ * a borrowed folder is shared with the user, so a new path or a moved HEAD is only reported.
+ * A path that was already dirty is not listed again.
  */
-export function restoreBorrowedEdits(dir: string, snap: { head: string; dirty: string[] }): string[] {
-  if (!isGitRepo(dir)) return [];
+export function borrowedEdits(dir: string, snap: { head: string; dirty: string[] }): { headMoved: boolean; paths: string[] } {
+  if (!isGitRepo(dir)) return { headMoved: false, paths: [] };
   const before = new Set(snap.dirty);
   const headNow = tryGit(dir, ["rev-parse", "HEAD"]);
-  if (headNow && headNow !== snap.head) runGit(dir, ["reset", "--mixed", snap.head]);
-  const touched = dirtyPaths(dir).filter((p) => !before.has(p));
-  return restoreTouched(touched, {
-    lsFiles: () => tryGit(dir, ["ls-files", "-z"]) ?? "",
-    checkout: (paths) => runGit(dir, ["checkout", "--", ...paths]),
-    clean: (paths) => runGit(dir, ["clean", "-fd", "--", ...paths]),
-  });
+  return { headMoved: Boolean(headNow && headNow !== snap.head), paths: dirtyPaths(dir).filter((p) => !before.has(p)) };
 }
 
 /** Dirty paths in an agent worktree, using pinned git. */
@@ -244,8 +238,8 @@ export function workspaceStatusPaths(ws: AgentWorkspace): string[] {
 }
 
 /**
- * Undo a read-only wake in an agent worktree. Same rule as `restoreBorrowedEdits`: earlier dirty paths stay,
- * and the tree is not `reset --hard` or cleaned wholesale. Returns the paths that were put back.
+ * Undo a read-only wake in an agent worktree. Earlier dirty paths stay, and the tree is not `reset --hard`
+ * or cleaned wholesale. Returns the paths that were put back. Never call this on `project.dir`.
  */
 export function restoreWorkspaceEdits(ws: AgentWorkspace, snap: { head: string; dirty: string[] }): string[] {
   assertNoNestedRepos(ws);

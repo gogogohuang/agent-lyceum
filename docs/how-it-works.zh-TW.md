@@ -10,7 +10,7 @@
 
 有待處理信件的成員會平行喚醒，一輪最多 `dispatcher.max_awake` 人（整數 1–16，預設 8；還沒被喚醒的人留到下一輪），且絕不與 lead 同時執行。lead 借用專案資料夾時也是這個上限。沒有 worktree 的 run 仍一次只醒一個人。它們在哪裡工作取決於資料夾；見[同時執行多個 task](#同時執行多個-task)。worktree 只隔離檔案，無法隔離對外部服務、資料庫或網路的副作用。
 
-lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`investigate` 是唯讀，寫了 `read_only: true` 的 task 也是（請人檢查別人的成果，包含請 QA，都是唯讀）。`feature` 還要有 `## Shape`。只有 lead 的 `task` 會採用這兩個欄位；其他人的 `playbook` 或 `read_only` 會去掉欄位後送達，並依原因各記一次。值不是這四種，或 `read_only` 不是布林，整封信退回。`## Acceptance criteria` 的每一項要是反引號裡的指令、檔名或測試名稱。整行只有 `None`、`` `None` ``、`as stated` 或 `同上` 會被退回。缺 `## Shape` 或驗收寫得無法檢查，會一直退回，不會送達。反引號裡只有一個單字也不算檢查。唯讀喚醒只能寫自己的記憶、outbox 與自己的 agent 目錄。repo 可讀。git 目錄與 `sandbox.write` 不可寫。唯讀喚醒只把這次改過的路徑放回去。原本就髒的路徑不動。這不是 `reset --hard`，也不會清掉整棵樹。喚醒前已經在、且上一筆 claim 不是唯讀時，那些改動會先提交再留下。當機後重跑也把唯讀 claim 的路徑放回去。沒有 worktree 的喚醒，包含借用專案資料夾的 run，也把那些路徑放回該資料夾。Cursor 在每次喚醒的設定裡拒絕 repo 的 `Write`。Claude Code 與 Codex 靠 OS sandbox。sandbox 沒開時，run log 記 `read-only-unenforced`，改過的路徑仍會放回去。
+lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`investigate` 是唯讀，寫了 `read_only: true` 的 task 也是（請人檢查別人的成果，包含請 QA，都是唯讀）。`feature` 還要有 `## Shape`。只有 lead 的 `task` 會採用這兩個欄位；其他人的 `playbook` 或 `read_only` 會去掉欄位後送達，並依原因各記一次。值不是這四種，或 `read_only` 不是布林，整封信退回。`## Acceptance criteria` 的每一項要是反引號裡的指令、檔名或測試名稱。整行只有 `None`、`` `None` ``、`as stated` 或 `同上` 會被退回。缺 `## Shape` 或驗收寫得無法檢查，會一直退回，不會送達。反引號裡只有一個單字也不算檢查。唯讀喚醒只能寫自己的記憶、outbox 與自己的 agent 目錄。repo 可讀。git 目錄與 `sandbox.write` 不可寫。自己的 worktree 裡，唯讀喚醒只把這次改過的路徑放回去。原本就髒的路徑不動。這不是 `reset --hard`，也不會清掉整棵樹。喚醒前已經在、且上一筆 claim 不是唯讀時，那些改動會先提交再留下。當機後重跑，worktree 也把唯讀 claim 的路徑放回去。沒有 worktree 的喚醒，包含借用專案資料夾的 run，不改該資料夾：run 記下 HEAD 有沒有移動、以及新出現的路徑，並維持原樣，因為它分不出你的修改和 agent 的修改。Cursor 在每次喚醒的設定裡拒絕 repo 的 `Write`。Claude Code 與 Codex 靠 OS sandbox。sandbox 沒開時，run log 記 `read-only-unenforced`。有 worktree 時，改過的路徑仍會放回去。
 
 每個 agent 的 runtime 都相同時，`completed` 不要求別人的 `verdict: pass`。只要有人用另一個 runtime，這封 done 會被退回，直到本段有一位不是實作者、也不是 lead 的該 runtime 隊友回了 `verdict: pass`。lead 自己的 pass 不算。處理過 task 本身不是實作者，就算沒寫 `read_only: true` 也一樣。實作者是這一段裡檔案被整合時記下的 `implementers`：reopen 之前寫過程式的人，不會繼續擋住這一段。沒有其他人能給這則 pass 時，done 會被收下。`verify.cross_runtime: false` 關掉這個閘門。小修改在另一個 runtime 的隊友沒有寫過程式時，仍需要這則 pass。`doctor` 會在除了 lead 以外的隊友都用同一個另一個 runtime 時註明這一點。
 
@@ -33,7 +33,7 @@ lead 在每封 task 上設 `playbook: investigate|fix|feature|refactor`。`inves
 已知限制：
 
 - worktree 的一輪（包含 lead 借用專案資料夾的那種）最多喚醒 `dispatcher.max_awake` 個成員（預設 8）。沒有 worktree 的 run 仍一次只醒一個人。
-- 團隊 run 的 lead 不改 repo，包含 `CLAUDE.md` 與 `AGENTS.md`。它寫信、紀錄、`COMMON.md`、交接筆記，以及 repo 以外的 `AGENT.md`。它在自己的 worktree 裡做的修改，會在這次喚醒結束時清掉。一行小修正是 `run --agent <name>`，指定實際寫 code 的 agent。`run --agent` 與 `call` 仍會改 repo。借用專案資料夾的唯讀喚醒只把這次改過的路徑放回去。
+- 團隊 run 的 lead 不改 repo，包含 `CLAUDE.md` 與 `AGENTS.md`。它寫信、紀錄、`COMMON.md`、交接筆記，以及 repo 以外的 `AGENT.md`。它在自己的 worktree 裡做的修改，會在這次喚醒結束時清掉。一行小修正是 `run --agent <name>`，指定實際寫 code 的 agent。`run --agent` 與 `call` 仍會改 repo。借用專案資料夾的唯讀喚醒不改該資料夾，只記下變動。
 - `COMMON.md` 與各 `AGENT.md` 由專案的所有 run 共用。每個 run 的防護只判斷它自己的 agent 工作期間發生的修改，所以某個 run 的修改會被保留。若該批喚醒期間同專案另一個 run 仍存活，且該批沒有任何 agent 可編輯該檔案，guard 不會還原這項變更（無法歸屬），改記 `protected-change-unattributed`；見[寫入範圍](write-scope.zh-TW.md)。
 - 兩個 run 修改同一個檔案時，要由你在合併時自行整合；agent-lyceum 從不自動合併。
 

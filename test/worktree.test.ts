@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildClaudeSettings } from "../src/adapters/claude.js";
 import { buildCodexInvocation } from "../src/adapters/codex.js";
 import { writePolicy } from "../src/policy.js";
-import { agentGit, assertCheckoutResumable, checkoutLeadBranch, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, finishCheckoutBranch, finishLeadBranch, PINNED_CONFIG, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, resolveRemoteBase, restoreBorrowedEdits, restoreWorkspaceEdits, snapshotBase, snapshotCheckout, snapshotHead, workspaceStatusPaths, type GitRunner, type WorkspacePlan } from "../src/worktree.js";
+import { agentGit, assertCheckoutResumable, checkoutLeadBranch, collectAgentChanges, commitWorkspace, dirtyPaths, discardWorkspaceEdits, finishCheckoutBranch, finishLeadBranch, PINNED_CONFIG, inspectWorkspace, integrateAgentChanges, prepareAgentWorkspace, recutLeadWorkspace, planWorkspace, isolationBlocker, resolveRemoteBase, borrowedEdits, restoreWorkspaceEdits, snapshotBase, snapshotCheckout, snapshotHead, workspaceStatusPaths, type GitRunner, type WorkspacePlan } from "../src/worktree.js";
 import { RunSession } from "../src/run-session.js";
 import { prepareTask } from "../src/task.js";
 import { git, initGitRepo, makeConcurrent, makeEnv, write, type ClaudeSettingsView, type TestEnv } from "./helpers.js";
@@ -929,8 +929,8 @@ describe("discardWorkspaceEdits", () => {
   });
 });
 
-describe("restoreBorrowedEdits", () => {
-  it("puts back only paths a read-only wake changed, and leaves paths that were already dirty", () => {
+describe("borrowedEdits", () => {
+  it("reports a moved HEAD and new paths, and does not change the checkout", () => {
     env = makeEnv();
     initGitRepo(env.repo);
     write(path.join(env.repo, "already.txt"), "user\n");
@@ -940,9 +940,11 @@ describe("restoreBorrowedEdits", () => {
     write(path.join(env.repo, "tracked.txt"), "new\n");
     git(env.repo, "add", "tracked.txt");
     git(env.repo, "commit", "-m", "agent");
-    restoreBorrowedEdits(env.repo, snap!);
-    expect(fs.existsSync(path.join(env.repo, "during.txt"))).toBe(false);
-    expect(fs.existsSync(path.join(env.repo, "tracked.txt"))).toBe(false);
+    const head = git(env.repo, "rev-parse", "HEAD");
+    expect(borrowedEdits(env.repo, snap!)).toEqual({ headMoved: true, paths: ["during.txt"] });
+    expect(git(env.repo, "rev-parse", "HEAD")).toBe(head);
+    expect(fs.readFileSync(path.join(env.repo, "during.txt"), "utf8")).toBe("agent\n");
+    expect(fs.readFileSync(path.join(env.repo, "tracked.txt"), "utf8")).toBe("new\n");
     expect(fs.readFileSync(path.join(env.repo, "already.txt"), "utf8")).toBe("user\n");
   });
 });
