@@ -31,6 +31,7 @@
 | [27](27-dispatcher-verify.md) | `done` 前由 dispatcher 執行確定性驗證（`verify`） | 高 | 高（在 agent sandbox 外執行專案指令、新設定鍵） | — |
 | [28](28-repeat-detect.md) | verify 重複失敗偵測（同樣的失敗、工作區沒變就提早降為 `partial`） | 低 | 低（誤判只會少一次退回，不會誤報成功；崩潰重播與 reopen 的比對對象） | — |
 | [30](30-solo-lesson-proposals.md) | 單獨執行的 agent 提案 lesson／decision，由 lead 決議（`proposals review／list`、`call -p`） | 中 | 中（guard 授權條件、提案區寫入面、各 runtime 強制程度不一） | [plan](../plans/2026-11-23-30-solo-lesson-proposals.md) |
+| [31](31-solo-reviewer.md) | solo run 內接 reviewer（`run --agent --reviewer`，草稿） | 中 | 中（done 處理新增階段、resume 重播） | — |
 
 建議順序：01 → 02 → 04（只做 tsconfig 與 lint）→ 03 → 04（重構）→ 05 → 06。
 
