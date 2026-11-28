@@ -3,10 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { readRegularFileNoFollow } from "./fs-util.js";
+import { roleOfName } from "./instances.js";
 import { escapesParent } from "./paths.js";
-import { mayEditProtected, proposalsDir, recordsDir, repoInstructionFiles, sharedContextFiles, sharedIndex } from "./policy.js";
+import { mayEditProtected, proposalsDir, recordsDir, repoInstructionFiles, reviewerNames, sharedContextFiles, sharedIndex } from "./policy.js";
 import { listRunLocks, lockHolderAlive } from "./project-lock.js";
-import { prefixOf, proposalStatusOf, shortIdOf } from "./proposals.js";
+import { prefixOf, proposalOwner, proposalStatusOf, shortIdOf } from "./proposals.js";
 
 export interface Violation {
   file: string;
@@ -48,6 +49,15 @@ export interface GuardOptions {
    * live or already finished (see `otherCallPrefixes`). Their proposals sit in the same tree: changes under those prefixes are theirs, not this agent's.
    */
   otherPrefixes?: (stamp: string) => string[];
+}
+
+/**
+ * Short ids of other calls, and of runs that started after `stamp`, excluding `selfId`. A normal run's proposal guard
+ * leaves files with these prefixes in place. It is not passed as `startedAfter`: that would keep every proposal change.
+ */
+export function proposalForeignPrefixes(home: string, projectRoot: string, runsDir: string, selfId: string): (stamp: string) => string[] {
+  const calls = otherCallPrefixes(home, projectRoot, selfId);
+  return (stamp) => [...new Set([...calls(stamp), ...runsStartedAfter(runsDir, stamp, selfId).map(shortIdOf)])];
 }
 
 /** The short ids of the calls other than `selfId` that hold a live project lock, or that started after `stamp` (their ids sort by start time). */
@@ -249,14 +259,20 @@ export class ProtectedGuard {
   }
 
   /**
-   * A solo agent may create and change only its own `proposals/<kind>/<short id>-<slug>.md`, and only while the file is
-   * `proposed` (spec 30, D-03). Everything else under the proposals tree is put back: other prefixes, other folders,
-   * `.archive/`, deletions, a file that was already decided (even one with its own prefix, e.g. after a resume), and a
-   * write of `accepted` or `rejected`. A file that is merely badly formed is let through; D-09 flags it for the lead.
-   * Not watched for an ordinary run: its members are held back by the write policy only (30.8).
+   * Solo: only its own `proposals/<kind>/<short id>-<slug>.md` while `proposed` (spec 30). A normal run: a reviewer may
+   * create and change only `proposals/lessons/<short id>-<agent>-<slug>.md` while it stays `proposed`; the lead may change
+   * proposals but not delete them. When the batch contains more than one of those writers, the change is `unattributed`
+   * and kept (issue 177).
    */
   private checkProposals(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
-    if (!this.project.solo) return;
+    if (this.project.solo) {
+      this.checkSoloProposals(running, violations, other);
+      return;
+    }
+    this.checkTeamProposals(running, violations, other);
+  }
+
+  private checkSoloProposals(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
     const prefix = this.ownPrefix();
     if (!prefix) return;
     const root = this.proposalsRoot();
@@ -296,6 +312,75 @@ export class ProtectedGuard {
       }
     }
     this.proposals = readTree(root);
+  }
+
+  /** A normal run. `other` (another live run) keeps every change, the same as records. */
+  private checkTeamProposals(running: ResolvedAgent[], violations: Violation[], other: string[]): void {
+    const prefix = this.ownPrefix();
+    if (!prefix) return;
+    const root = this.proposalsRoot();
+    if (isLink(path.dirname(root)) || isLink(path.dirname(path.dirname(root)))) return;
+    const now = readTree(root);
+    const suspects = running.map((a) => a.name);
+    const names = reviewerNames(this.project);
+    // A slot opened after the guard was built is not in `this.project.agents`. Its own `instance.role` still says it reviews.
+    const reviews = (a: ResolvedAgent): boolean => {
+      if (this.project.solo || a.name === this.project.lead) return false;
+      return (a.instance?.role ?? roleOfName(this.project.agents, a.name)).endsWith("-reviewer");
+    };
+    const reviewers = running.filter(reviews);
+    const leadIn = running.some((a) => a.name === this.project.lead);
+    const memberIn = running.some((a) => a.name !== this.project.lead && !reviews(a));
+    const fixedDirs = new Set<string>();
+    const theirs = new Set(this.opts.otherPrefixes?.(this.baseStamp) ?? []);
+    const ambiguous = (leadIn && reviewers.length > 0) || reviewers.length > 1 || (memberIn && (leadIn || reviewers.length > 0));
+    for (const file of new Set([...this.proposals.keys(), ...now.keys()])) {
+      const before = this.proposals.get(file) ?? null;
+      const cur = now.get(file) ?? null;
+      if (same(before, cur)) continue;
+      if (other.length || ambiguous) {
+        this.unattributed.push({ file, agents: suspects, otherRuns: other });
+        continue;
+      }
+      // A proposal of another call, or of a run that started during this window, is that run's own.
+      if (theirs.has(prefixOf(path.basename(file)))) continue;
+      if (leadIn) {
+        if (cur === null && before !== null) this.revertProposal(root, file, before, cur, suspects, violations, fixedDirs);
+        continue;
+      }
+      const reviewer = reviewers[0];
+      if (reviewer && this.reviewerMayKeep(file, root, before, cur, reviewer.name, prefix, names)) continue;
+      this.revertProposal(root, file, before, cur, suspects, violations, fixedDirs);
+    }
+    this.proposals = readTree(root);
+  }
+
+  /** A reviewer may keep `lessons/<short id>-<own name>-<slug>.md` only while it is still `proposed`. */
+  private reviewerMayKeep(file: string, root: string, before: Buffer | null, cur: Buffer | null, agentName: string, shortId: string, names: readonly string[]): boolean {
+    const rel = path.relative(root, file);
+    if (path.dirname(rel) !== "lessons" || !rel.endsWith(".md") || cur === null) return false;
+    const id = path.basename(file, ".md");
+    if (proposalOwner(id, names) !== agentName || !id.startsWith(`${shortId}-`)) return false;
+    if (before) {
+      const was = proposalStatusOf(before);
+      if (was === "accepted" || was === "rejected") return false;
+    }
+    const next = proposalStatusOf(cur);
+    return next !== "accepted" && next !== "rejected";
+  }
+
+  private revertProposal(root: string, file: string, before: Buffer | null, cur: Buffer | null, suspects: string[], violations: Violation[], fixedDirs: Set<string>): void {
+    const kept = this.keep(file, cur);
+    if (before === null) {
+      if (!insideRoot(root, path.dirname(file))) return;
+      fs.rmSync(file, { force: true });
+      violations.push({ file, action: "removed", suspects, ...kept });
+    } else {
+      if (!this.realDirs(root, path.dirname(file), fixedDirs, suspects, violations)) return;
+      fs.rmSync(file, { recursive: true, force: true });
+      fs.writeFileSync(file, before);
+      violations.push({ file, action: "restored", suspects, ...kept });
+    }
   }
 
   /**

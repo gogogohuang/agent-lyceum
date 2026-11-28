@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProtectedGuard, runsStartedAfter } from "../src/guard.js";
+import { ProtectedGuard, proposalForeignPrefixes, runsStartedAfter } from "../src/guard.js";
 import { proposalsDir, recordsDir } from "../src/policy.js";
 import { bindRunProject } from "../src/run-store.js";
 import { soloProject } from "../src/solo.js";
-import { makeEnv, write, type TestEnv } from "./helpers.js";
+import { makeEnv, registerReviewer, write, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 afterEach(() => env?.cleanup());
@@ -138,12 +138,14 @@ describe("guard: the proposals tree of a solo agent", () => {
     expect(fs.readFileSync(theirs, "utf8")).toBe(prop());
   });
 
-  it("is not watched for an ordinary run (members are held back by the write policy only)", () => {
+  it("puts back a proposal an ordinary member writes (issue 177; spec 30 left this to the write policy)", () => {
     env = makeEnv();
     const p = bindRunProject(env.project(), path.join(env.root, RUN), "run");
     const g = new ProtectedGuard(p);
-    write(path.join(proposalsDir(p), "lessons", "ffffffff-x.md"), prop());
-    expect(g.check([p.agents["fe-member"]!])).toEqual([]);
+    const f = path.join(proposalsDir(p), "lessons", "ffffffff-x.md");
+    write(f, prop());
+    expect(g.check([p.agents["fe-member"]!])).toMatchObject([{ file: f, action: "removed", suspects: ["fe-member"] }]);
+    expect(fs.existsSync(f)).toBe(false);
   });
 
   it("keeps changes while another run is live (unattributed) instead of reverting them", () => {
@@ -194,5 +196,166 @@ describe("guard: a run that started and ended inside the watched window", () => 
     live = ["late-run"];
     expect(g.check([agent])).toEqual([]);
     expect(g.takeUnattributed().map((u) => u.otherRuns)).toEqual([["late-run"]]);
+  });
+});
+
+describe("guard: a reviewer in an ordinary run (issue 177)", () => {
+  const RUN = "20261128T010203456Z-ab12cd34ef56ab12cd34ef56ab12cd34";
+  const proposed = (by: string) => `---\nstatus: proposed\ndate: 2026-11-28\ntitle: T\nproposed_by: ${by}\nrun: ${RUN}\nevidence:\n  - commit: abc1234\n---\nfacts\n`;
+  const accepted = proposed("cli-reviewer").replace("status: proposed", "status: accepted");
+
+  function team() {
+    env = makeEnv();
+    registerReviewer(env, "cli-reviewer");
+    registerReviewer(env, "qa-reviewer");
+    const p = bindRunProject(env.project(), path.join(env.project().paths.runs, RUN), "run");
+    return {
+      p,
+      reviewer: p.agents["cli-reviewer"]!,
+      other: p.agents["qa-reviewer"]!,
+      lead: p.agents[p.lead]!,
+      member: p.agents["fe-member"]!,
+      file: (name: string, kind = "lessons") => path.join(proposalsDir(p), kind, name),
+    };
+  }
+
+  it("lets a reviewer instance that is not in the agent table keep its own proposed lesson", () => {
+    const { p, reviewer, file } = team();
+    const slot = { ...reviewer, name: "cli-reviewer--2", instance: { role: "cli-reviewer", k: 2 } };
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer--2-quote-yaml.md");
+    write(f, proposed("cli-reviewer--2"));
+    expect(g.check([slot])).toEqual([]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
+  it("lets a reviewer create their own proposed lesson", () => {
+    const { p, reviewer, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(f, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
+  it("reverts a reviewer's write to the records", () => {
+    const { p, reviewer } = team();
+    const g = new ProtectedGuard(p);
+    const f = path.join(recordsDir(p), "lessons", "x.md");
+    write(f, "sneaky\n");
+    expect(g.check([reviewer])).toMatchObject([{ file: f, action: "removed", suspects: ["cli-reviewer"] }]);
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it("reverts another prefix, a deletion and a decision proposal", () => {
+    const { p, reviewer, file } = team();
+    const g = new ProtectedGuard(p);
+    const own = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(own, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+
+    const foreign = file("ab12cd34-qa-reviewer-other.md");
+    write(foreign, proposed("qa-reviewer"));
+    const decision = file("ab12cd34-cli-reviewer-x.md", "decisions");
+    write(decision, proposed("cli-reviewer"));
+    fs.rmSync(own);
+    const v = g.check([reviewer]);
+    expect(v.map((x) => x.file).sort()).toEqual([foreign, decision, own].sort());
+    expect(v.every((x) => x.suspects.includes("cli-reviewer"))).toBe(true);
+    expect(fs.existsSync(foreign)).toBe(false);
+    expect(fs.existsSync(decision)).toBe(false);
+    expect(fs.readFileSync(own, "utf8")).toContain("status: proposed");
+  });
+
+  it("restores a reviewer's own file when they set it to accepted", () => {
+    const { p, reviewer, file } = team();
+    const g = new ProtectedGuard(p);
+    const own = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(own, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+    write(own, accepted);
+    expect(g.check([reviewer])).toMatchObject([{ file: own, action: "restored" }]);
+    expect(fs.readFileSync(own, "utf8")).toContain("status: proposed");
+  });
+
+  it("restores a reviewer's own file that was already accepted", () => {
+    const { p, reviewer, file } = team();
+    const own = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(own, accepted);
+    const g = new ProtectedGuard(p);
+    write(own, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toMatchObject([{ file: own, action: "restored" }]);
+    expect(fs.readFileSync(own, "utf8")).toContain("status: accepted");
+  });
+
+  it("keeps a proposed file that has no finding", () => {
+    const { p, reviewer, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer-no-finding.md");
+    write(f, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
+  it("lets the lead mark a proposal accepted, and puts a deletion back", () => {
+    const { p, reviewer, lead, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(f, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+    write(f, accepted);
+    expect(g.check([lead])).toEqual([]);
+    expect(fs.readFileSync(f, "utf8")).toContain("status: accepted");
+    fs.rmSync(f);
+    expect(g.check([lead])).toMatchObject([{ file: f, action: "restored" }]);
+    expect(fs.readFileSync(f, "utf8")).toContain("status: accepted");
+  });
+
+  it("records an unattributed change when the lead and a reviewer are in the same batch", () => {
+    const { p, reviewer, lead, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(f, proposed("cli-reviewer"));
+    expect(g.check([reviewer])).toEqual([]);
+    write(f, accepted);
+    expect(g.check([lead, reviewer])).toEqual([]);
+    expect(g.takeUnattributed().map((u) => u.file)).toEqual([f]);
+    expect(fs.readFileSync(f, "utf8")).toContain("status: accepted");
+  });
+
+  it("records an unattributed change when two reviewers are in the same batch", () => {
+    const { p, reviewer, other, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-cli-reviewer-quote-yaml.md");
+    write(f, proposed("cli-reviewer"));
+    expect(g.check([reviewer, other]).map((v) => v.file)).not.toContain(f);
+    expect(g.takeUnattributed().map((u) => u.file)).toEqual([f]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
+  it("removes a proposal written by an ordinary member", () => {
+    const { p, member, file } = team();
+    const g = new ProtectedGuard(p);
+    const f = file("ab12cd34-fe-member-x.md");
+    write(f, proposed("fe-member"));
+    expect(g.check([member])).toMatchObject([{ file: f, action: "removed" }]);
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it("keeps a proposal a call or a run wrote during the window, and still removes the member's own", () => {
+    const { p, member, file } = team();
+    fs.mkdirSync(path.join(env.home, "calls", "29990101T000000000Z-cdef5678aaaaaaaaaaaaaaaaaaaaaaaa"), { recursive: true });
+    fs.mkdirSync(path.join(p.paths.runs, "29990101T000000000Z-9999aaaabbbbbbbbbbbbbbbbbbbbbbbb"), { recursive: true });
+    const g = new ProtectedGuard(p, () => [], { otherPrefixes: proposalForeignPrefixes(env.home, p.paths.root, p.paths.runs, RUN) });
+    const fromCall = file("cdef5678-from-call.md");
+    const fromRun = file("9999aaaa-from-run.md");
+    const own = file("ab12cd34-fe-member-x.md");
+    write(fromCall, proposed("fe-member"));
+    write(fromRun, proposed("fe-member"));
+    write(own, proposed("fe-member"));
+    expect(g.check([member]).map((v) => v.file)).toEqual([own]);
+    expect(fs.existsSync(fromCall)).toBe(true);
+    expect(fs.existsSync(fromRun)).toBe(true);
+    expect(fs.existsSync(own)).toBe(false);
   });
 });

@@ -265,6 +265,8 @@ agent-lyceum 會驗證結果：整理前存在的每個檔案，都必須還在�
 
 單獨執行的 agent（`run --agent` 或 `call -p`）不屬於任何團隊，它學到的東西沒有路徑進入專案 records，因為只有 lead 能寫 records。它可以改寫**提案**：在專案資料夾的 `proposals/lessons/` 或 `proposals/decisions/`（與 `shared/` 同層，不在 `records/` 之下）寫一個 Markdown 檔，`status: proposed`，寫下觀察到的事實、對原因的推測，以及至少一項 `evidence`（檔案路徑加行號與 commit、commit、信件，或指令加重點輸出）。檔名以這次 run 的短 id 開頭，prompt 會直接給它字面值。它只能新增與修改自己的 `proposed` 檔：在那裡寫的其他東西，以及寫進 records 的東西，都會被還原並回報。
 
+正常 run 裡，角色名以 `-reviewer` 結尾的成員也可以寫一筆 lesson 提案：`proposals/lessons/<短 id>-<自己的名字>-<slug>.md`，對象是 severity 為 `blocker` 或 `major` 的 finding。frontmatter 要有 `finding`（`mail` 是那封帶 `verdict:` 的 reply 檔名、`severity` 是 `blocker` 或 `major`、`class` 是一行），以及至少一筆可驗證的 evidence（帶 commit 的 `path`，或 `commit`）。`minor` 與 `nit` 不寫提案。reviewer 不能寫 records，也不能寫 `proposals/decisions/`。lead 收下時，新 record 的本文要有一行恰好是 `## Evidence`，並原樣抄下 evidence 與 finding。
+
 只有 lead 能決議提案：收下就**新建**一筆正式 record，並把提案標為 `status: accepted`、`accepted_as: <kind>/<id>`、`decided: <日期>`；拒絕就寫 `reject_reason` 與 `decided`。一般 run 的 lead 會看到待審提案（最多 10 筆，最舊的在前，附證據可驗證的程度），而 `accepted` 或 `rejected` 的決議不完整時，它的 `done` 會被拒絕。待審的提案永遠不擋 `done`。
 
 - `proposals list`：顯示有幾筆待審、最舊日期、證據與每一筆不完整的決議。不改任何東西。`status` 與 `doctor` 也會提示待審數量。

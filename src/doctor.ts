@@ -9,7 +9,8 @@ import { tidyAdvice } from "./memory-tidy.js";
 import { teamRunFindings } from "./review-gate.js";
 import { lessonGuardFindings, listRecords, RECORD_KINDS } from "./records.js";
 import { listRunLocks, listUnreadableRunLocks, lockHolderAlive } from "./project-lock.js";
-import { checkDecisions, listProposals, oldestPending, pendingProposals } from "./proposals.js";
+import { checkDecisions, checkFindingMail, isRunId, listProposals, oldestPending, pendingProposals, proposalOwner } from "./proposals.js";
+import { reviewerNames } from "./policy.js";
 import { runInvocation } from "./process-runner.js";
 import type { Runtime } from "./schema.js";
 import { validateProject } from "./validate.js";
@@ -267,8 +268,18 @@ export async function diagnoseProject(project: ResolvedProject, opts: ProbeOptio
   // Spec 30: proposals waiting for the lead, and decisions or files that are not in the right format.
   const waiting = pendingProposals(project);
   if (waiting.length) checks.push({ level: "info", subject: "proposals", message: `${waiting.length} proposal(s) wait for the lead (oldest ${oldestPending(waiting) ?? "unknown"}): \`agent-lyceum proposals review -p ${project.name}\`.` });
+  const reviewers = reviewerNames(project);
   for (const pr of listProposals(project)) {
     if (pr.problems.length && (pr.status === undefined || pr.status === "proposed")) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: ${pr.problems.join("; ")}.` });
+    const owner = proposalOwner(pr.id, reviewers);
+    if ((pr.status !== undefined && pr.status !== "proposed") || !owner) continue;
+    if (!isRunId(pr.run)) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: run must be a run id.` });
+    if (!pr.finding) checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: finding is required.` });
+    else if (pr.finding.mail && !/[\\/]/.test(pr.finding.mail) && !pr.finding.mail.includes("..")) {
+      const mail = checkFindingMail(project, pr.run, pr.finding.mail, owner);
+      if (mail === "missing") checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: finding.mail was not found.` });
+      else if (mail === "not-a-verdict-reply") checks.push({ level: "warn", subject: "proposals", message: `${pr.file}: finding.mail is not a reply with verdict.` });
+    }
   }
   for (const d of checkDecisions(listProposals(project), project)) checks.push({ level: "warn", subject: "proposals", message: `${d.file}: ${d.problem}.` });
 

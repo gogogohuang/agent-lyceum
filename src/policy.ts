@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedAgent, ResolvedProject } from "./config.js";
 import { findOnPath } from "./fs-util.js";
+import { roleOfName } from "./instances.js";
 import { canonicalPath } from "./paths.js";
 
 export type Level = "os" | "tool-rules" | "post-hoc" | "prompt-only" | "n/a";
@@ -58,6 +59,24 @@ export function proposalsDir(project: ResolvedProject): string {
 
 /** Whether the agent of this solo project may write proposals: `run --agent`, and `call -p` (a plain `call` has no project). */
 export const mayPropose = (project: ResolvedProject): boolean => project.solo === "run" || (project.solo === "call" && !!project.proposalsRef);
+
+/**
+ * Slot names that may write a lesson proposal in a normal run. The role name ends with `-reviewer`; the lead never counts.
+ * A solo project has none, so spec 30 is unchanged.
+ */
+export function reviewerNames(project: ResolvedProject): string[] {
+  if (project.solo) return [];
+  return Object.keys(project.agents).filter((name) => name !== project.lead && roleOfName(project.agents, name).endsWith("-reviewer"));
+}
+
+/** Whether this agent may write lesson proposals during a normal run, including a read-only review. */
+export const isReviewer = (project: ResolvedProject, agent: ResolvedAgent): boolean => reviewerNames(project).includes(agent.name);
+
+/** Create the proposals directory for a normal run that has a reviewer. A solo run keeps its own `mkdir`. */
+export function ensureReviewerProposalDir(project: ResolvedProject): void {
+  if (project.solo || reviewerNames(project).length === 0) return;
+  fs.mkdirSync(proposalsDir(project), { recursive: true });
+}
 
 export function proposalsKindDir(project: ResolvedProject, kind: "decisions" | "lessons"): string {
   return path.join(proposalsDir(project), kind);
@@ -210,7 +229,7 @@ export function writePolicy(project: ResolvedProject, agent: ResolvedAgent): Wri
     ...(shared && mayWriteShared ? [shared] : []),
     ...(isLead ? [recordsDir(project)] : []),
     // Proposals: the lead (it decides them) and a solo agent (it writes them); the guard holds the solo agent to its own `proposed` files.
-    ...(isLead || mayPropose(project) ? [proposalsDir(project)] : []),
+    ...(isLead || mayPropose(project) || isReviewer(project, agent) ? [proposalsDir(project)] : []),
     ...(grantOwnDir ? [ownDir] : []),
     // Spec 25: canonical, because the OS sandbox compares real paths (`/tmp` is `/private/tmp` on macOS).
     ...(agent.sandbox?.write ?? []).map(canonicalPath),
@@ -280,7 +299,7 @@ export function coordinatePolicy(project: ResolvedProject, agent: ResolvedAgent)
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(grantOwnDir ? [ownDir] : []),
     ...(isLead ? [recordsDir(project)] : []),
-    ...(isLead || mayPropose(project) ? [proposalsDir(project)] : []),
+    ...(isLead || mayPropose(project) || isReviewer(project, agent) ? [proposalsDir(project)] : []),
     ...(shared && agent.name === project.lead ? [shared] : []),
   ].filter(outside);
   return {
@@ -293,8 +312,9 @@ export function coordinatePolicy(project: ResolvedProject, agent: ResolvedAgent)
 
 /**
  * A read-only wake. `invokeWithSandboxChecks` skips `sandboxRefusal` when `input.policy` is set, so this must not
- * copy `sandbox.write` (nor the git dir, records, proposals, or `can_edit_agent_md` files) into the writable set.
- * The repo stays readable via `readDirs`.
+ * copy `sandbox.write` (nor the git dir, records, or `can_edit_agent_md` files) into the writable set.
+ * The repo stays readable via `readDirs`. A reviewer may still write `proposals/`: a review task is read-only, and that
+ * is when a blocker or major finding is filed. Records stay out.
  */
 export function readOnlyPolicy(project: ResolvedProject, agent: ResolvedAgent): WritePolicy {
   const normal = writePolicy(project, agent);
@@ -304,6 +324,7 @@ export function readOnlyPolicy(project: ResolvedProject, agent: ResolvedAgent): 
     ...memoryDirs(agent),
     ...(project.solo === "call" ? [] : [outboxDir(project, agent.name)]),
     ...(grantOwnDir ? [ownDir] : []),
+    ...(isReviewer(project, agent) ? [proposalsDir(project)] : []),
   ];
   return {
     allowDirs,

@@ -6,9 +6,9 @@ import { senderLabel, slotName } from "./instances.js";
 import type { Message } from "./mailbox.js";
 import type { Layer, MemoryFile, MissingPath, ProjectChanges } from "./memory-tidy.js";
 import { modelForTier } from "./tiers.js";
-import { checkEvidence, oldestPending, pendingProposals, PENDING_SHOWN, shortIdOf, type Proposal } from "./proposals.js";
+import { checkEvidence, oldestPending, pendingProposals, PENDING_SHOWN, proposalOwner, reviewerNames, shortIdOf, type Proposal } from "./proposals.js";
 import { activeRecordsBytes, buildRecordsView, effectiveActive, listRecords, RECORD_KINDS, RECORDS_BUDGET } from "./records.js";
-import { commonFile, mayPropose, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, proposalsDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
+import { commonFile, isReviewer, mayPropose, memoryDirs, outboxDir, ownAgentDirAllowed, projectAgentDir, proposalsDir, recordsKindDir, repoDirFor, sharedDir, sharedIndex } from "./policy.js";
 
 function memoryLabel(agent: ResolvedAgent, dir: string): string {
   if (dir === agent.memory.task) return "task (this task only, isolated)";
@@ -255,6 +255,24 @@ export function pendingProposalLines(project: ResolvedProject): string[] {
     `${pending.length} proposals await a decision (oldest: ${oldestPending(pending) ?? "unknown"}). Showing ${shown.length}:`,
     ...shown.map((p) => `- \`${p.file}\` — ${p.title} — ${strength(p)}`),
     `For each one, check the evidence yourself, then either create the record (a new file, not a copy) and set the proposal to \`status: accepted\` with \`accepted_as: <kind>/<id>\`, or set \`status: rejected\` with \`reject_reason\`. In both cases also write \`decided: <today's date>\`. Put a short summary of the evidence in the record's body. Active entries use ${used}; merge or supersede before you exceed it.`,
+    ...(shown.some((p) => proposalOwner(p.id, reviewerNames(project)))
+      ? ["A proposal whose file name is a reviewer's must be copied into the record under a heading that is exactly `## Evidence`: the evidence entries and the finding's mail, severity and class, verbatim. Accept it only when one evidence entry is a path at a commit or a commit. The program rejects the done otherwise."]
+      : []),
+  ];
+}
+
+/** What a reviewer in a normal run is told about filing a blocker or major finding (issue 177). Nothing for anyone else, and nothing without a bound run. */
+function reviewerProposalRules(project: ResolvedProject, agent: ResolvedAgent): string[] {
+  if (!isReviewer(project, agent) || !project.run) return [];
+  const prefix = shortIdOf(project.run.id);
+  const dir = proposalsDir(project);
+  return [
+    "",
+    "## Proposals",
+    "When a finding in your review has severity blocker or major, and it would change how a later run should work, write one proposal. Minor and nit findings are not proposals.",
+    `Write one Markdown file \`${prefix}-${agent.name}-<slug>.md\` in \`${dir}/lessons/\` only, not in decisions/. The prefix \`${prefix}-${agent.name}-\` is fixed for this run. The slug uses only lowercase letters, digits and \`-\`.`,
+    `Start the file with \`status: proposed\`, \`date\`, \`title\`, \`proposed_by\` (your name), \`run: ${project.run.id}\` and \`finding\` with \`mail\` (the file name you wrote in your outbox for the reply that carries \`verdict:\`; that same name is what is checked after the reply is sent), \`severity\` (\`blocker\` or \`major\`) and \`class\` (one line). \`evidence\` needs at least one verified entry: \`- path: file:line @ <commit sha>\` or \`- commit: <sha>\`. \`mail:\` and \`output:\` may be added but do not count as verified.`,
+    "Write the facts you observed first, then your guess about the cause, and mark it as a guess. Never set `status` to `accepted` or `rejected`. Never edit another agent's proposal, never delete a proposal, and never write the records.",
   ];
 }
 
@@ -435,6 +453,7 @@ export function buildSystemPrompt(project: ResolvedProject, agent: ResolvedAgent
   lines.push(...writeScopeRules(project, agent), PR_ATTRIBUTION_RULE, NO_DAEMONS_RULE);
   let text = lines.join("\n");
   if (isLead && project.run?.instances) text = `${text}\n\n${PARALLEL_SECTION(project.run.instances.max)}`;
+  text += reviewerProposalRules(project, agent).join("\n");
   if (isLead) {
     const members = Object.values(project.agents)
       .filter((a) => a.name !== project.lead && (!a.instance || a.instance.k === 1) && (a.tiers?.length ?? 0) >= 2)

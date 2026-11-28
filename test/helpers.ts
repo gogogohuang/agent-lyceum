@@ -46,6 +46,20 @@ export function withSections(type: string, text: string): string {
   return `${text}\n\n${type === "task" ? TASK_BODY : REPLY_BODY}`;
 }
 
+/** A role whose name ends with `-reviewer`. Project agents come from project.yaml; the persona file is the global default. */
+export function registerReviewer(env: TestEnv, name: string): void {
+  const projects = fs.readdirSync(path.join(env.home, "projects"));
+  const cfg = path.join(env.home, "projects", projects[0]!, "project.yaml");
+  const text = fs.readFileSync(cfg, "utf8");
+  if (!text.includes(`\n  ${name}:\n`)) {
+    fs.writeFileSync(cfg, text.replace("  fe-member:\n", `  ${name}:\n    runtime: claude-code\n    can_message: [lead]\n  fe-member:\n`));
+  }
+  const dir = path.join(env.home, "agents", name);
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, "AGENT.md");
+  if (!fs.existsSync(dest)) fs.copyFileSync(path.join(env.home, "agents", "fe-member", "AGENT.md"), dest);
+}
+
 export function write(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);
