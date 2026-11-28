@@ -344,6 +344,31 @@ describe("quota refresh follows subscribers", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("later pages joining after a failed read do not read again; the next attempt is the five-minute beat", async () => {
+    vi.useFakeTimers();
+    const { state, listen } = fakeListen();
+    const quota = vi.fn(async () => {
+      throw new Error("quota boom");
+    });
+    const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
+    const handler = state.handler as Handler;
+    const open = [openEvents(handler)];
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quota).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 3; i++) {
+      open.push(openEvents(handler));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS - 1_000);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(quota).toHaveBeenCalledTimes(2);
+    for (const events of open) events.close();
+    await page.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("retries a failed read on the five-minute beat, and a manual refresh does not push that beat past five minutes", async () => {
     vi.useFakeTimers();
     const { state, listen } = fakeListen();

@@ -166,19 +166,17 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
       clearQuotaTimer();
       return;
     }
-    // A disconnect that still leaves a page must not read and must not move the timer.
-    if (count < previous) return;
+    // Only the 0 → 1 transition may read or arm. A later page joining, and a
+    // disconnect that still leaves a page, must not read and must not move the
+    // timer, including after a failed read that left no cached quota.
+    if (previous !== 0) return;
     const remaining = hub.quotaRemaining(QUOTA_REFRESH_MS);
-    if (!quotaTimer) {
-      if (remaining > 0) {
-        armQuota(remaining);
-        return;
-      }
-      readIfIdle();
-      armQuota(QUOTA_REFRESH_MS);
+    if (remaining > 0) {
+      armQuota(remaining);
       return;
     }
-    if (remaining === 0) readIfIdle();
+    readIfIdle();
+    armQuota(QUOTA_REFRESH_MS);
   };
   const close = () =>
     new Promise<void>((resolve, reject) => {
