@@ -56,7 +56,7 @@ Its own data (config, mailboxes, logs, memory, worktrees) lives in `~/agent-lyce
 | `call <agent>` | Ask one global agent on its own, outside any project. [details](docs/commands.md#call) |
 | `demo` | Try a 3-agent team on a throwaway sample repo. [details](docs/commands.md#demo) |
 | `tidy` | Have agents tidy their own memory (archives, never deletes). [details](docs/commands.md#tidy) |
-| `proposals` | List, or have the lead decide, lesson proposals of agents that ran alone. [details](docs/commands.md#proposals) |
+| `proposals` | List proposals, or have the lead decide them. An agent that ran alone proposes a lesson or a decision; in a normal run, a role whose name ends with `-reviewer` can propose a lesson from a blocker or major finding. [details](docs/commands.md#proposals) |
 
 `agent-lyceum <command> --help` prints the full options. Ctrl-C cancels cleanly; [exit codes](docs/commands.md#exit-codes) tell scripts how a run ended.
 
