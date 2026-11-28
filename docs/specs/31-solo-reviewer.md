@@ -13,7 +13,7 @@
 
 目標：一次「實作 → 審查 → 修正 → 複審」留在同一個 run，不喚醒 lead。
 
-第一版不做：多位 reviewer；`call` 接 reviewer；`project.yaml` 的預設 reviewer；對沒帶 `--reviewer` 的舊 run 事後補審。
+第一版不做：多位 reviewer（待確認）；`call` 接 reviewer（待確認）；`project.yaml` 的預設 reviewer（待確認）；對沒帶 `--reviewer` 的舊 run 事後補審。
 
 ## 31.3 作法比較
 
@@ -23,25 +23,27 @@
 | B. 讓實作者可寄信給 reviewer（兩人團隊） | 改動少，但何時送審、要不要送由實作者決定，maker-checker 沒有保證 |
 | C. `resume <run> --agent <reviewer>` | 彈性高，但要手動接兩次以上，run 的 lead 中途換人，`solo_agent` 語意變複雜 |
 
-以下採 A。
+以下採 A（待確認）。
 
-## 31.4 決議
+## 31.4 決議草案
+
+標「待確認」的項目是撰寫時代為決定的內容，尚未逐項確認（清單同 #189）；31.7 列的是已確認的部分。
 
 | # | 內容 |
 |---|---|
-| D-01 | `run --agent <impl> --reviewer <name>`。`--reviewer` 沒有 `--agent`、與 `--agent` 同名、不是專案成員：拒絕，exit `1`。 |
+| D-01 | （待確認）`run --agent <impl> --reviewer <name>`。`--reviewer` 沒有 `--agent`、與 `--agent` 同名、不是專案成員：拒絕，exit `1`。 |
 | D-02 | run state 記 `solo_reviewer`；`resume`（含追加任務）沿用。沒有此欄位的 run 行為不變。 |
-| D-03 | 實作者仍是 solo 的 lead（不能寄信、不能 `ask`）。reviewer 只能寄一封帶 `verdict` 的 `reply` 給實作者，不能寄 `done`、不能 `ask`、不能改 `AGENT.md`。 |
-| D-04 | 順序：實作者寄 `done` → 完成契約 → `verify`（有設定時）→ 送審 → 結束 run。前兩關沒過不送審。 |
-| D-05 | 只有 `outcome: completed` 送審。`partial`／`blocked`／`failed` 照現況直接結束。 |
-| D-06 | 送審前先把實作者的改動 commit 在其 branch。dispatcher 寄給 reviewer 一封 `task`（`read_only: true`）：原始任務、`done` 報告、`base..head`。 |
+| D-03 | （待確認）實作者仍是 solo 的 lead（不能寄信、不能 `ask`）。reviewer 只能寄一封帶 `verdict` 的 `reply` 給實作者，不能寄 `done`、不能 `ask`、不能改 `AGENT.md`。 |
+| D-04 | （待確認）順序：實作者寄 `done` → 完成契約 → `verify`（有設定時）→ 送審 → 結束 run。前兩關沒過不送審。 |
+| D-05 | （待確認）只有 `outcome: completed` 送審。`partial`／`blocked`／`failed` 照現況直接結束。 |
+| D-06 | （待確認）送審前先把實作者的改動 commit 在其 branch。dispatcher 寄給 reviewer 一封 `task`（`read_only: true`）：原始任務、`done` 報告、`base..head`。 |
 | D-07 | `verdict: pass`：照現況結束，`done` 生效；verdict 寫入 `state.reviews`，commit 帶 `Reviewed-by`。 |
 | D-08 | `verdict: changes_requested`：退回 `done`，review 內文寄給實作者（沿用 session 與 worktree）。新的 `done` 要重跑 verify 與審查。 |
 | D-09 | 每段（run 或一次 reopen）最多退回 2 次；下一次仍是 `changes_requested` 時以 `partial`（exit `2`）結束，未解決的意見寫進 `result.md`。 |
-| D-10 | `verdict: fail`：不退回，直接 `partial`。 |
-| D-11 | reviewer 沒給 verdict：提醒，最多 2 次，之後 `partial`。喚醒本身失敗：照現有 retry／fallback；用盡後 run 為 `failed`，`resume` 從送審接續。 |
+| D-10 | （待確認）`verdict: fail`：不退回，直接 `partial`。 |
+| D-11 | （待確認）reviewer 沒給 verdict：提醒，最多 2 次，之後 `partial`。喚醒本身失敗：照現有 retry／fallback；用盡後 run 為 `failed`，`resume` 從送審接續。 |
 | D-12 | 不強制不同 runtime；兩者 runtime 相同時印一行 warn。`verify.cross_runtime` 不影響 solo run。 |
-| D-13 | 送審與修正的喚醒都算進 `max_rounds`。 |
+| D-13 | （待確認）送審與修正的喚醒都算進 `max_rounds`。 |
 
 ## 31.5 影響的檔案（初估）
 
