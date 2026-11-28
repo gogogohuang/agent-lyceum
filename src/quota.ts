@@ -68,9 +68,16 @@ function roundPercent(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
+const CLAUDE_USAGE = ["-p", "--no-session-persistence", "--output-format", "text", "/usage"];
+const CODEX_LIMITS = ["app-server", "--stdio"];
+const CODEX_LIMITS_NO_PLUGINS = ["app-server", "--disable", "plugins", "--stdio"];
+const CLAUDE_ADDED_OPTIONS = ["--safe-mode"];
+const CODEX_ADDED_OPTIONS = ["--disable", "plugins"];
+
 export async function claudeQuota(signal?: AbortSignal): Promise<QuotaReport> {
   try {
-    const text = await capture("claude", ["-p", "--no-session-persistence", "--output-format", "text", "/usage"], 20_000, signal);
+    let text = await capture("claude", ["--safe-mode", ...CLAUDE_USAGE], 20_000, signal);
+    if (optionRejected(text, CLAUDE_ADDED_OPTIONS)) text = await capture("claude", CLAUDE_USAGE, 20_000, signal);
     const windows = parseClaudeUsage(text.stdout);
     if (windows.length === 0) return { runtime: "claude", windows: [], error: firstLine(text.stderr) || firstLine(text.stdout) || "claude /usage 沒有回傳額度。" };
     return { runtime: "claude", windows };
@@ -82,7 +89,13 @@ export async function claudeQuota(signal?: AbortSignal): Promise<QuotaReport> {
 
 export async function codexQuota(signal?: AbortSignal): Promise<QuotaReport> {
   try {
-    const limits = await readCodexLimits(signal);
+    let limits: RateLimits;
+    try {
+      limits = await readCodexLimits(signal, CODEX_LIMITS_NO_PLUGINS);
+    } catch (error) {
+      if (isAbort(error) || !(error instanceof OptionRejected)) throw error;
+      limits = await readCodexLimits(signal, CODEX_LIMITS);
+    }
     return { runtime: "codex", windows: codexWindows(limits) };
   } catch (error) {
     if (isAbort(error)) throw error;
@@ -361,36 +374,61 @@ function firstLine(text: string): string {
   return text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
 }
 
-function capture(cmd: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
+/** An old CLI that does not know the new flag. Timeouts and aborts are not this. */
+class OptionRejected extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OptionRejected";
+  }
+}
+
+/** The rejection names one of the flags this version added. Any other unknown option stays a real failure. */
+function addedOptionRejected(text: string, added: readonly string[]): boolean {
+  for (const match of text.matchAll(/(?:unknown option|unexpected argument)\s+(['"]?)([^\s'"]+)\1/gi)) {
+    const name = match[2];
+    if (name && added.includes(name)) return true;
+  }
+  return false;
+}
+
+function optionRejected(out: { stdout: string; stderr: string; code: number | null }, added: readonly string[]): boolean {
+  return out.code !== 0 && out.code !== null && addedOptionRejected(`${out.stderr}\n${out.stdout}`, added);
+}
+
+function capture(cmd: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...(signal ? { signal } : {}) });
     let stdout = "";
     let stderr = "";
+    let settled = false;
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       child.kill();
       reject(new Error(`${cmd} 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應。`));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => (stdout += String(chunk)));
     child.stderr.on("data", (chunk) => (stderr += String(chunk)));
     child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       reject(error);
     });
-    child.on("close", () => {
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve({ stdout, stderr });
+      resolve({ stdout, stderr, code });
     });
   });
 }
 
-function readCodexLimits(signal?: AbortSignal): Promise<RateLimits> {
+function readCodexLimits(signal: AbortSignal | undefined, args: string[]): Promise<RateLimits> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], ...(signal ? { signal } : {}) });
+    const child = spawn("codex", args, { stdio: ["pipe", "pipe", "pipe"], ...(signal ? { signal } : {}) });
     let buf = "";
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error("codex 超過 20 秒沒有回應。"));
-    }, 20_000);
+    let stderr = "";
     let done = false;
     const finish = (error?: Error, limits?: RateLimits) => {
       if (done) return;
@@ -400,7 +438,16 @@ function readCodexLimits(signal?: AbortSignal): Promise<RateLimits> {
       if (error) reject(error);
       else resolve(limits ?? {});
     };
+    const timer = setTimeout(() => {
+      finish(new Error("codex 超過 20 秒沒有回應。"));
+    }, 20_000);
     child.on("error", (error) => finish(error));
+    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+    child.on("close", (code) => {
+      const text = `${stderr}\n${buf}`;
+      if (code !== 0 && code !== null && addedOptionRejected(text, CODEX_ADDED_OPTIONS)) finish(new OptionRejected(firstLine(text)));
+      else finish(new Error(firstLine(stderr) || firstLine(buf) || "codex 沒有回傳額度。"));
+    });
     child.stdout.on("data", (chunk) => {
       buf += String(chunk);
       let cut = buf.indexOf("\n");

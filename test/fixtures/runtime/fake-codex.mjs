@@ -23,9 +23,14 @@ const FAILURES = {
   unknown: "something unexpected happened",
 };
 const ev = (e) => console.log(JSON.stringify(e));
+const lifetimeMs = (() => {
+  const n = Number(process.env.FIXTURE_MAX_MS);
+  return Number.isFinite(n) && n > 0 ? n : 10 * 60 * 1000;
+})();
 const sleepForever = () => {
-  const gc = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "inherit" });
+  const gc = spawn(process.execPath, ["-e", `setTimeout(() => process.exit(0), ${lifetimeMs}); setInterval(() => {}, 1000);`], { stdio: "inherit" });
   if (process.env.FAKE_MARKER) fs.writeFileSync(process.env.FAKE_MARKER, JSON.stringify({ pid: process.pid, grandchild: gc.pid }));
+  setTimeout(() => process.exit(0), lifetimeMs);
   setInterval(() => {}, 1000);
 };
 const fail = (kind) => {

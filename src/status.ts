@@ -422,8 +422,17 @@ function fallbackView(a: ResolvedProject["agents"][string], state: RunState | un
   return { runtime: ran?.runtime ?? a.runtime, ...(model ? { model } : {}), ...(fallback ? { fallback } : {}), ...(cooldowns.length ? { cooldowns } : {}) };
 }
 
+/** Tidy hints for a status report. A failure is an empty list: a hint must not break status. */
+export function memoryAdviceLines(project: ResolvedProject): string[] {
+  try {
+    return tidyAdvice(project).map((a) => `${a.agent}: ${a.reason}`);
+  } catch {
+    return [];
+  }
+}
+
 /** The status of a project: its agents and one run (the newest running one, else the newest, or the one named by `runId`). */
-export function buildStatusReport(base: ResolvedProject, runId?: string, now = Date.now()): StatusReport {
+export function buildStatusReport(base: ResolvedProject, runId?: string, now = Date.now(), memoryAdvice?: string[]): StatusReport {
   let run: { dir: string; state: RunState } | undefined;
   if (runId) {
     const dir = path.join(base.paths.runs, runId);
@@ -433,12 +442,7 @@ export function buildStatusReport(base: ResolvedProject, runId?: string, now = D
   // Mail is per run: count the unread mail of the run being shown.
   const project = run ? bindRunProject(base, run.dir, run.state.mail_layout, run.state.instances) : base;
   const report = run ? buildRunReport(run, base) : undefined;
-  let advice: string[] = [];
-  try {
-    advice = tidyAdvice(base).map((a) => `${a.agent}: ${a.reason}`);
-  } catch {
-    /* a hint only: never let it break status */
-  }
+  const advice = memoryAdvice ?? memoryAdviceLines(base);
   const wakes = run?.state.wakes ?? [];
   const below = new Set<string>();
   for (const a of Object.values(project.agents)) {

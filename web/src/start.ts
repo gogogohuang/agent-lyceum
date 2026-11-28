@@ -33,9 +33,13 @@ const singleHeader = (v: string | string[] | undefined) => (Array.isArray(v) ? "
 
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
 
+/** How often a page that is watching `/events` asks the account usage commands again. */
+const QUOTA_REFRESH_MS = 5 * 60_000;
+
 /** Binds first; the hub, the quota reads and the timers start only once the port is ours, and are undone if that fails. */
 export async function startWebServer(opts: StartWebOptions): Promise<{ url: string; close: () => Promise<void> }> {
-  const hub = createWebHub(opts.factory);
+  let onSubscribers = (_count: number, _previous: number) => {};
+  const hub = createWebHub(opts.factory, { onSubscribers: (count, previous) => onSubscribers(count, previous) });
   const startedAt = new Date().toISOString();
   let boundPort = opts.port;
   const token = randomBytes(24).toString("hex");
@@ -138,11 +142,46 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
   boundPort = typeof address === "object" && address ? address.port : opts.port;
 
   let heartbeat: NodeJS.Timeout | undefined;
-  let quotaBeat: NodeJS.Timeout | undefined;
+  let quotaTimer: NodeJS.Timeout | undefined;
+  const clearQuotaTimer = () => {
+    if (quotaTimer) clearTimeout(quotaTimer);
+    quotaTimer = undefined;
+  };
+  const readIfIdle = () => {
+    if (hub.subscriberCount() === 0 || hub.quotaBusy()) return;
+    void hub.refreshQuota();
+  };
+  // The delay is the cadence. It does not ask again whether the cache is still fresh: a read that
+  // finishes after the timer was armed would otherwise skip the first beat.
+  const armQuota = (delayMs: number) => {
+    clearQuotaTimer();
+    quotaTimer = setTimeout(() => {
+      quotaTimer = undefined;
+      readIfIdle();
+      if (hub.subscriberCount() > 0) armQuota(QUOTA_REFRESH_MS);
+    }, delayMs);
+  };
+  onSubscribers = (count, previous) => {
+    if (count === 0) {
+      clearQuotaTimer();
+      return;
+    }
+    // Only the 0 → 1 transition may read or arm. A later page joining, and a
+    // disconnect that still leaves a page, must not read and must not move the
+    // timer, including after a failed read that left no cached quota.
+    if (previous !== 0) return;
+    const remaining = hub.quotaRemaining(QUOTA_REFRESH_MS);
+    if (remaining > 0) {
+      armQuota(remaining);
+      return;
+    }
+    readIfIdle();
+    armQuota(QUOTA_REFRESH_MS);
+  };
   const close = () =>
     new Promise<void>((resolve, reject) => {
       clearInterval(heartbeat);
-      clearInterval(quotaBeat);
+      clearQuotaTimer();
       hub.close();
       for (const socket of sockets) socket.destroy();
       server.close((err) => {
@@ -156,9 +195,7 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
   const url = `http://${shown}:${boundPort}/`;
   try {
     hub.start();
-    void hub.refreshQuota();
     heartbeat = setInterval(() => hub.beat(), opts.heartbeatMs ?? 5_000);
-    quotaBeat = setInterval(() => void hub.refreshQuota(), 60_000);
     if (opts.open) openBrowser(url);
   } catch (error) {
     await close().catch(() => {});

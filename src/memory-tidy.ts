@@ -688,6 +688,20 @@ export interface TidyAdvice {
 /** Hints only: project memory whose index is larger than what an agent is shown, or whose baseline is far behind. Never acts. */
 export function tidyAdvice(project: ResolvedProject): TidyAdvice[] {
   const out: TidyAdvice[] = [];
+  // One report walks every target. The repo check and each baseline count are shared; the text stays the same.
+  let repo: boolean | undefined;
+  const counts = new Map<string, number>();
+  const inRepo = (): boolean => {
+    if (repo === undefined) repo = fs.existsSync(project.dir) && isGitRepo(project.dir);
+    return repo;
+  };
+  const commitsSince = (since: string): number => {
+    const cached = counts.get(since);
+    if (cached !== undefined) return cached;
+    const n = Number(tryGit(project.dir, ["rev-list", "--count", `${since}..HEAD`]));
+    counts.set(since, n);
+    return n;
+  };
   for (const t of targetsFor(project, { layer: "project" })) {
     if (!fs.existsSync(t.dir)) continue;
     const s = memoryStats(t.dir);
@@ -696,8 +710,8 @@ export function tidyAdvice(project: ResolvedProject): TidyAdvice[] {
       continue;
     }
     const since = readTidyState(t.dir)?.head;
-    if (!since || !fs.existsSync(project.dir) || !isGitRepo(project.dir)) continue;
-    const n = Number(tryGit(project.dir, ["rev-list", "--count", `${since}..HEAD`]));
+    if (!since || !inRepo()) continue;
+    const n = commitsSince(since);
     if (Number.isFinite(n) && n >= ADVICE_COMMITS) out.push({ agent: t.agent, reason: `${n} commits since the last tidy` });
   }
   for (const kind of RECORD_KINDS) {

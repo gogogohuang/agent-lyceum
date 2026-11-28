@@ -14,12 +14,14 @@ export interface WatchFactory {
   summarize?(input: { runtime: "claude" | "codex"; prompt: string }): Promise<string>;
 }
 
-export function createWebHub(factory: WatchFactory) {
+export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (count: number, previous: number) => void }) {
   const watchers = new Map<string, ProjectWatch>();
   const latest = new Map<string, WatchFrame>();
   const listeners = new Set<(event: WebEvent) => void>();
   let quota: QuotaReport[] | undefined;
+  let quotaAt = 0;
   let quotaToken = 0;
+  let inflight = 0;
   const quotaAbort = new AbortController();
 
   const emit = (event: WebEvent) => {
@@ -73,15 +75,27 @@ export function createWebHub(factory: WatchFactory) {
   const refreshQuota = (): Promise<QuotaReport[] | undefined> => {
     if (!factory.quota) return Promise.resolve(quota);
     const token = ++quotaToken;
-    return factory
-      .quota(quotaAbort.signal)
+    inflight += 1;
+    const read = factory.quota;
+    // Call now, so a subscriber sees the in-flight read before the next turn. A throw still becomes a rejection.
+    let pending: Promise<QuotaReport[]>;
+    try {
+      pending = Promise.resolve(read(quotaAbort.signal));
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    return pending
       .then((reports) => {
         if (token !== quotaToken) return quota;
         quota = reports;
+        quotaAt = Date.now();
         emit({ type: "quota", reports });
         return reports;
       })
-      .catch(() => quota);
+      .catch(() => quota)
+      .finally(() => {
+        inflight -= 1;
+      });
   };
 
   const projectList = (): { name: string; frame: WatchFrame }[] =>
@@ -91,6 +105,17 @@ export function createWebHub(factory: WatchFactory) {
     start: sync,
     beat: sync,
     refreshQuota,
+    subscriberCount: () => listeners.size,
+    quotaBusy: () => inflight > 0,
+    /**
+     * Milliseconds until a successful read leaves the freshness window, capped at `maxAgeMs`.
+     * A missing or failed read has none left, so the next subscriber reads at once.
+     */
+    quotaRemaining: (maxAgeMs: number) => {
+      if (quota === undefined) return 0;
+      const left = maxAgeMs - (Date.now() - quotaAt);
+      return Math.min(maxAgeMs, Math.max(0, left));
+    },
     frame(name: string): WatchFrame | undefined {
       return latest.get(name);
     },
@@ -103,14 +128,21 @@ export function createWebHub(factory: WatchFactory) {
     },
     snapshot: projectList,
     subscribe(listener: (event: WebEvent) => void): () => void {
+      const previous = listeners.size;
       listeners.add(listener);
       const projects = projectList();
       try {
         listener({ type: "snapshot", projects, ...(quota ? { quota } : {}) });
       } catch {
         listeners.delete(listener);
+        return () => {};
       }
-      return () => listeners.delete(listener);
+      hooks?.onSubscribers?.(listeners.size, previous);
+      return () => {
+        const before = listeners.size;
+        if (!listeners.delete(listener)) return;
+        hooks?.onSubscribers?.(listeners.size, before);
+      };
     },
   };
 }

@@ -29,10 +29,15 @@ const dirs = args.flatMap((x, i) => (x === "--add-dir" ? [args[i + 1]] : []));
 const outbox = dirs.find((d) => d.endsWith(path.join("outbox", me)));
 const FULL = "## Result\nok\n\n## Files\n- a\n\n## Verification\nran tests\n\n## Decisions\nNone\n\n## Not done\nNone\n";
 
+const lifetimeMs = (() => {
+  const n = Number(process.env.FIXTURE_MAX_MS);
+  return Number.isFinite(n) && n > 0 ? n : 10 * 60 * 1000;
+})();
 const sleepForever = () => {
   if (process.env.FAKE_IGNORE_TERM) process.on("SIGTERM", () => {});
-  const gc = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "inherit" });
+  const gc = spawn(process.execPath, ["-e", `setTimeout(() => process.exit(0), ${lifetimeMs}); setInterval(() => {}, 1000);`], { stdio: "inherit" });
   if (process.env.FAKE_MARKER) fs.writeFileSync(process.env.FAKE_MARKER, JSON.stringify({ pid: process.pid, grandchild: gc.pid }));
+  setTimeout(() => process.exit(0), lifetimeMs);
   setInterval(() => {}, 1000);
 };
 const sendMail = (m) => {

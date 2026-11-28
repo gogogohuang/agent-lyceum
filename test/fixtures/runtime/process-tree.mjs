@@ -3,7 +3,14 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 
 const [mode, pidFile] = process.argv.slice(2);
-const childCode = `setInterval(() => {}, 1000); ${"process.stdout.write('');"}`;
+const lifetimeMs = (() => {
+  const n = Number(process.env.FIXTURE_MAX_MS);
+  return Number.isFinite(n) && n > 0 ? n : 10 * 60 * 1000;
+})();
+const childCode = `setTimeout(() => process.exit(0), ${lifetimeMs}); setInterval(() => {}, 1000); process.stdout.write('');`;
+const armLifetime = () => {
+  setTimeout(() => process.exit(0), lifetimeMs);
+};
 
 function grandchild() {
   // inherits our stdout/stderr, so it keeps the pipes open after we are gone
@@ -23,11 +30,13 @@ if (mode === "detach-exit") {
   const gc = spawn(process.execPath, ["-e", childCode], { stdio: "ignore", detached: true });
   if (pidFile) fs.writeFileSync(pidFile + ".self", String(process.pid));
   if (pidFile) fs.writeFileSync(pidFile, String(gc.pid));
+  armLifetime();
   setInterval(() => {}, 1000);
 } else if (mode === "ok") {
   process.stdout.write('not json\n{"result":"hello","session_id":"s1","usage":{"output_tokens":7}}\n');
 } else if (mode === "hang") {
   grandchild();
+  armLifetime();
   setInterval(() => {}, 1000);
 } else if (mode === "orphan") {
   grandchild();
@@ -37,6 +46,7 @@ if (mode === "detach-exit") {
   process.on("SIGTERM", () => {});
   grandchild();
   if (pidFile) fs.writeFileSync(pidFile + ".self", String(process.pid));
+  armLifetime();
   setInterval(() => {}, 1000);
 } else if (mode === "flood") {
   const chunk = Buffer.alloc(1024 * 1024, "x");
