@@ -270,8 +270,22 @@ describe("quota refresh follows subscribers", () => {
     await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS);
     expect(quota).toHaveBeenCalledTimes(1);
     resolveQuota([]);
-    await vi.waitFor(() => expect(quota.mock.results[0]?.status).toBe("fulfilled"));
+    await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS);
+    expect(quota).toHaveBeenCalledTimes(2);
+    events.close();
+    await page.close();
+  });
+
+  it("refreshes on the five-minute beat when the previous read finished after that beat was armed", async () => {
+    vi.useFakeTimers();
+    const { state, listen } = fakeListen();
+    const quota = vi.fn(() => new Promise<[]>((resolve) => setTimeout(() => resolve([]), 2_000)));
+    const page = await startWebServer(opts({ listen, factory: { list: () => [], watch: vi.fn(), quota } }));
+    const events = openEvents(state.handler as Handler);
+    expect(quota).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(QUOTA_INTERVAL_MS - 2_000);
     expect(quota).toHaveBeenCalledTimes(2);
     events.close();
     await page.close();

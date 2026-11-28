@@ -143,8 +143,11 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
 
   let heartbeat: NodeJS.Timeout | undefined;
   let quotaBeat: NodeJS.Timeout | undefined;
-  const refreshAutomatic = () => {
-    if (hub.subscriberCount() === 0 || hub.quotaBusy() || hub.quotaFresh(QUOTA_REFRESH_MS)) return;
+  const refreshAutomatic = (fromInterval: boolean) => {
+    if (hub.subscriberCount() === 0 || hub.quotaBusy()) return;
+    // A read that ends after the beat is armed is still inside the freshness window when the beat fires.
+    // The beat is the cadence, so only a new subscriber checks freshness.
+    if (!fromInterval && hub.quotaFresh(QUOTA_REFRESH_MS)) return;
     void hub.refreshQuota();
   };
   onSubscribers = (count) => {
@@ -153,8 +156,8 @@ export async function startWebServer(opts: StartWebOptions): Promise<{ url: stri
       quotaBeat = undefined;
       return;
     }
-    refreshAutomatic();
-    if (!quotaBeat) quotaBeat = setInterval(refreshAutomatic, QUOTA_REFRESH_MS);
+    refreshAutomatic(false);
+    if (!quotaBeat) quotaBeat = setInterval(() => refreshAutomatic(true), QUOTA_REFRESH_MS);
   };
   const close = () =>
     new Promise<void>((resolve, reject) => {

@@ -77,8 +77,14 @@ export function createWebHub(factory: WatchFactory, hooks?: { onSubscribers?: (c
     const token = ++quotaToken;
     inflight += 1;
     const read = factory.quota;
-    return Promise.resolve()
-      .then(() => read(quotaAbort.signal))
+    // Call now, so a subscriber sees the in-flight read before the next turn. A throw still becomes a rejection.
+    let pending: Promise<QuotaReport[]>;
+    try {
+      pending = Promise.resolve(read(quotaAbort.signal));
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    return pending
       .then((reports) => {
         if (token !== quotaToken) return quota;
         quota = reports;
